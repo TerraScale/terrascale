@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         private static async Task WithDeadlineAsync(Func<CancellationToken, Task> operation, CancellationToken caller)
         {
-            await WithDeadlineAsync(async token => { await operation(token).ConfigureAwait(false); return true; }, caller).ConfigureAwait(false);
+            await WithDeadlineAsync(async token => { await operation(token); return true; }, caller);
         }
 
         private static async Task<T> WithDeadlineAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken caller)
@@ -63,14 +63,13 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             deadline.CancelAfter(RequestDeadline);
             try
             {
-                var result = await operation(deadline.Token).ConfigureAwait(false);
+                var result = await operation(deadline.Token);
                 caller.ThrowIfCancellationRequested();
                 deadline.Token.ThrowIfCancellationRequested();
                 return result;
             }
             catch (Exception error)
             {
-                // Recheck even when synchronous parsing failed: cancellation wins over a malformed response.
                 caller.ThrowIfCancellationRequested();
                 if (deadline.IsCancellationRequested)
                     throw new TimeoutException("ts-auth did not answer within the request deadline.");

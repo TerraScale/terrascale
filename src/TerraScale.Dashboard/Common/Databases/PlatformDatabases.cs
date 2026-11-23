@@ -27,7 +27,8 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public static async Task HydrateAsync(OrganizationRecord org, ControlPlaneClient control, SessionRecord session, CancellationToken cancellationToken)
         {
-            using var json = await control.ListPlatformDatabasesAsync(ServiceCaller.User(session.AccessToken), cancellationToken) switch
+            var outcome = await control.ListPlatformDatabasesAsync(ServiceCaller.User(session.AccessToken), cancellationToken);
+            using var json = outcome switch
             {
                 JsonElement listed => JsonDocument.Parse(listed.GetRawText()),
                 TerraBaseRefusal refusal => throw new DatabaseProviderException((HttpStatusCode)refusal.Status),

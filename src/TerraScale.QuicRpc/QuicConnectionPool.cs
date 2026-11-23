@@ -14,6 +14,8 @@ namespace TerraScale.QuicRpc;
 [SupportedOSPlatform("windows")]
 internal sealed record class StreamLease(PeerSlot Slot, QuicConnection Connection, QuicStream Stream);
 
+internal readonly union StreamLeaseOutcome(StreamLease, QuicFault);
+
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
@@ -204,7 +206,7 @@ internal sealed class QuicConnectionPool(
     {
         if (_slots.TryRemove(nodeId, out var slot))
         {
-            await CloseSlotAsync(slot).ConfigureAwait(false);
+            await CloseSlotAsync(slot);
         }
     }
 
@@ -234,12 +236,15 @@ internal sealed class QuicConnectionPool(
         return Task.WhenAll(pumps);
     }
 
-    public async ValueTask<Result<StreamLease, QuicFault>> OpenStreamAsync(PeerSlot slot, QuicStreamType type, CallScope scope) =>
-        await GetConnectionAsync(slot, scope).ConfigureAwait(false) switch
+    public async ValueTask<StreamLeaseOutcome> OpenStreamAsync(PeerSlot slot, QuicStreamType type, CallScope scope)
+    {
+        var outcome = await GetConnectionAsync(slot, scope);
+        return outcome switch
         {
-            QuicConnection connection => await OpenOnAsync(slot, connection, type, true, scope).ConfigureAwait(false),
+            QuicConnection connection => await OpenOnAsync(slot, connection, type, true, scope),
             QuicFault fault => fault,
         };
+    }
 
     public void InvalidateIfDead(StreamLease lease, QuicFault fault)
     {
@@ -253,24 +258,28 @@ internal sealed class QuicConnectionPool(
     {
         foreach (var slot in _slots.Values)
         {
-            await CloseSlotAsync(slot).ConfigureAwait(false);
+            await CloseSlotAsync(slot);
         }
     }
 
-    private async ValueTask<Result<StreamLease, QuicFault>> OpenOnAsync(PeerSlot slot, QuicConnection connection, QuicStreamType type, bool reconnectIfDead, CallScope scope) =>
-        await QuicIo.OpenStreamAsync(connection, type, scope).ConfigureAwait(false) switch
+    private async ValueTask<StreamLeaseOutcome> OpenOnAsync(PeerSlot slot, QuicConnection connection, QuicStreamType type, bool reconnectIfDead, CallScope scope)
+    {
+        var outcome = await QuicIo.OpenStreamAsync(connection, type, scope);
+        return outcome switch
         {
             QuicStream stream => new StreamLease(slot, connection, stream),
-            QuicFault fault when reconnectIfDead && QuicFaults.IsDeadConnection(fault) => await ReopenAsync(slot, connection, type, scope).ConfigureAwait(false),
+            QuicFault fault when reconnectIfDead && QuicFaults.IsDeadConnection(fault) => await ReopenAsync(slot, connection, type, scope),
             QuicFault fault => fault,
         };
+    }
 
-    private async ValueTask<Result<StreamLease, QuicFault>> ReopenAsync(PeerSlot slot, QuicConnection dead, QuicStreamType type, CallScope scope)
+    private async ValueTask<StreamLeaseOutcome> ReopenAsync(PeerSlot slot, QuicConnection dead, QuicStreamType type, CallScope scope)
     {
         Invalidate(slot, dead);
-        return await GetConnectionAsync(slot, scope).ConfigureAwait(false) switch
+        var outcome = await GetConnectionAsync(slot, scope);
+        return outcome switch
         {
-            QuicConnection connection => await OpenOnAsync(slot, connection, type, false, scope).ConfigureAwait(false),
+            QuicConnection connection => await OpenOnAsync(slot, connection, type, false, scope),
             QuicFault fault => fault,
         };
     }
@@ -284,14 +293,14 @@ internal sealed class QuicConnectionPool(
         }
     }
 
-    private async ValueTask<Result<QuicConnection, QuicFault>> GetConnectionAsync(PeerSlot slot, CallScope scope)
+    private async ValueTask<QuicConnectionOpenOutcome> GetConnectionAsync(PeerSlot slot, CallScope scope)
     {
         if (slot.Current() is { } cached)
         {
             return cached;
         }
 
-        if (!await EnterGateAsync(slot, scope).ConfigureAwait(false))
+        if (!await EnterGateAsync(slot, scope))
         {
             return scope.Interrupted();
         }
@@ -311,13 +320,14 @@ internal sealed class QuicConnectionPool(
             if (slot.TakeStale() is { } stale)
             {
                 metrics.ConnectionClosed(QuicSide.Client);
-                await stale.Connection.DisposeAsync().ConfigureAwait(false);
+                await stale.Connection.DisposeAsync();
             }
 
             var peer = slot.Peer;
-            return await QuicIo.ConnectAsync(ConnectionOptions(peer), scope).ConfigureAwait(false) switch
+            var outcome = await QuicIo.ConnectAsync(ConnectionOptions(peer), scope);
+            return outcome switch
             {
-                QuicConnection connection => await ActivateAsync(slot, peer, connection).ConfigureAwait(false),
+                QuicConnection connection => await ActivateAsync(slot, peer, connection),
                 QuicFault fault => ConnectFailed(peer, fault),
             };
         }
@@ -331,7 +341,7 @@ internal sealed class QuicConnectionPool(
     {
         try
         {
-            await slot.ConnectGate.WaitAsync(scope.Token).ConfigureAwait(false);
+            await slot.ConnectGate.WaitAsync(scope.Token);
             return true;
         }
         catch (OperationCanceledException) when (!scope.Caller.IsCancellationRequested)
@@ -340,11 +350,11 @@ internal sealed class QuicConnectionPool(
         }
     }
 
-    private async ValueTask<Result<QuicConnection, QuicFault>> ActivateAsync(PeerSlot slot, QuicPeer peer, QuicConnection connection)
+    private async ValueTask<QuicConnectionOpenOutcome> ActivateAsync(PeerSlot slot, QuicPeer peer, QuicConnection connection)
     {
         if (!slot.TryActivate(new ActiveConnection(peer, connection), out var reconnect))
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await connection.DisposeAsync();
             return new TransportShutdown("The peer was removed from the QUIC client.");
         }
 
@@ -387,21 +397,21 @@ internal sealed class QuicConnectionPool(
     {
         foreach (var channel in slot.Close())
         {
-            await channel.DisposeAsync().ConfigureAwait(false);
+            await channel.DisposeAsync();
         }
 
         if (slot.Take() is { } active)
         {
-            var closed = await QuicIo.CloseAsync(active.Connection, QuicProtocol.CloseErrorCode).ConfigureAwait(false);
+            var closed = await QuicIo.CloseAsync(active.Connection, QuicProtocol.CloseErrorCode);
             Observe(closed);
             metrics.ConnectionClosed(QuicSide.Client);
-            await active.Connection.DisposeAsync().ConfigureAwait(false);
+            await active.Connection.DisposeAsync();
         }
     }
 
-    private void Observe(Result<Done, QuicFault> closed)
+    private void Observe(QuicConnectionCloseOutcome closed)
     {
-        if (closed switch { Done => null, QuicFault fault => fault } is { } failure)
+        if (closed switch { QuicConnectionClosed => null, QuicFault fault => fault } is { } failure)
         {
             metrics.Error(QuicSide.Client, failure);
         }

@@ -6,10 +6,9 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Data
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed record SavedQuery(string Id, string Name, string Sql, string DatabaseId, DateTimeOffset CreatedAt);
-    public readonly union SavedQueryResult(SavedQuery, Validation, Conflict, Forbidden);
-    public readonly union SavedQueryDeleted(Done, NotFound, Forbidden);
+    public readonly union SavedQueryResult(SavedQuery, DashboardValidation, DashboardConflict, DashboardForbidden);
+    public readonly union SavedQueryDeleted(Done, DashboardNotFound, DashboardForbidden);
 
     public sealed class SavedQueryService(DashboardDb storage, TimeProvider time, AccountService accounts)
     {
@@ -52,24 +51,24 @@ namespace TerraScale.Dashboard.Features.Data
 
             if (!context.CanWriteProjectData)
             {
-                return new Forbidden("Write access is required.");
+                return new DashboardForbidden("Write access is required.");
             }
 
             name = name.Trim();
             if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > 128)
             {
-                return new Validation("Saved query names use 1–128 characters.");
+                return new DashboardValidation("Saved query names use 1–128 characters.");
             }
 
             sql = sql.Trim();
             if (SqlValidation.Diagnostics(sql).FirstOrDefault(item => item.Severity == "error") is { } problem)
             {
-                return new Validation(problem.Message);
+                return new DashboardValidation(problem.Message);
             }
 
             if (!SqlValidation.StartsWithCommand(sql))
             {
-                return new Validation("Start the saved query with a SQL command such as SELECT or WITH.");
+                return new DashboardValidation("Start the saved query with a SQL command such as SELECT or WITH.");
             }
 
             var query = new SavedQuery(AccountService.NewId(), name, sql, databaseId, time.GetUtcNow());
@@ -91,7 +90,7 @@ namespace TerraScale.Dashboard.Features.Data
             }
             catch (Exception error) when (DashboardDb.IsDuplicate(error))
             {
-                return new Conflict("A saved query with this name already exists. Choose another name or delete the existing query.");
+                return new DashboardConflict("A saved query with this name already exists. Choose another name or delete the existing query.");
             }
 
             return query;
@@ -107,13 +106,13 @@ namespace TerraScale.Dashboard.Features.Data
 
             if (!context.CanWriteProjectData)
             {
-                return new Forbidden("Write access is required.");
+                return new DashboardForbidden("Write access is required.");
             }
 
             var scope = DatabaseService.Scope(context);
             await using var connection = await storage.OpenAsync(cancellationToken);
             return await connection.ExecuteAsync(Remove, new { Id = id, scope.OrganizationId, scope.ProjectId }) == 0
-                ? new NotFound("Saved query is unavailable.")
+                ? new DashboardNotFound("Saved query is unavailable.")
                 : new Done();
         }
     }

@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             var page = await client.SendAuthenticatedJsonAsync(HttpMethod.Get, TsAuthClient.ManagementRoute("/deletions"),
                 null, TsAuthIntegrationJsonContext.Default.TsAuthAcknowledgeDeletion,
                 TsAuthIntegrationJsonContext.Default.TsAuthDeletionPage,
-                TsAuthCredentials.Basic(clientId, clientSecret), HttpStatusCode.OK, 16 * 1024, ct).ConfigureAwait(false);
+                TsAuthCredentials.Basic(clientId, clientSecret), HttpStatusCode.OK, 16 * 1024, ct);
             if (page.Items is null || page.Items.Count > 20 || page.Items.Any(proof => !ValidDeletionProof(proof)))
             {
                 throw new TsAuthException(HttpStatusCode.OK, "ts-auth returned an invalid deletion proof page.", "invalid_response", null);

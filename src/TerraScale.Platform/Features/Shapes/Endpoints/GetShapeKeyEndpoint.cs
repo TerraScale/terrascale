@@ -1,7 +1,16 @@
 namespace TerraScale.Platform.Features.Shapes.Endpoints;
 
+public readonly union GetShapeKeyReply(
+    ShapeKeyResponse,
+    ShapeRefetch,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class GetShapeKeyEndpoint(ShapeReader reader)
-    : Endpoint<ShapeRouteRequest, Result<ShapeKeyResponse, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<ShapeRouteRequest, GetShapeKeyReply>
 {
     public override void Configure()
     {
@@ -14,7 +23,7 @@ public sealed class GetShapeKeyEndpoint(ShapeReader reader)
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<ShapeKeyResponse, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<GetShapeKeyReply> HandleAsync(
         ShapeRouteRequest request,
         CancellationToken cancellationToken)
     {
@@ -30,27 +39,33 @@ public sealed class GetShapeKeyEndpoint(ShapeReader reader)
         var keyId = ShapeParameters.Parameter(query, "key_id");
         if (handle is null || ShapeParameters.CheckHandle(handle) is not null || epoch is null || keyId is null)
         {
-            return new Validation("handle, epoch and key_id are required");
+            return new PlatformInvalidRequest("handle, epoch and key_id are required");
         }
 
         return ShapeQuery.From(request.Table, query) switch
         {
-            ShapeQuery shape => await reader.ResolveAsync(HttpContext, request, shape, cancellationToken) switch
+            ShapeQuery shape => await ResolveAsync(shape),
+            PlatformInvalidRequest invalid => invalid,
+        };
+
+        async ValueTask<GetShapeKeyReply> ResolveAsync(ShapeQuery shape)
+        {
+            var outcome = await reader.ResolveAsync(HttpContext, request, shape, cancellationToken);
+            return outcome switch
             {
                 ResolvedShape { Shape.Handle: var current } resolved when current != handle => ShapeReader.Refetch(resolved.Shape, "shape lineage changed"),
                 ResolvedShape resolved => reader.Key(resolved.Shape, epoch, keyId) switch
                 {
                     ShapeKeyResponse key => key,
                     ShapeRefetch refetch => refetch,
-                    Validation invalid => invalid,
+                    PlatformInvalidRequest invalid => invalid,
                 },
-                Validation invalid => invalid,
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-        };
+                PlatformInvalidRequest invalid => invalid,
+                PlatformUnauthorized unauthorized => unauthorized,
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

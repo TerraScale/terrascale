@@ -3,6 +3,8 @@ using System.Text;
 
 namespace TerraScale.Platform.Features.Functions;
 
+public readonly union FunctionInvokeOutcome(FunctionAnswer, PlatformNotFound, PlatformUnavailable);
+
 public sealed class FunctionInvoker(
     FunctionService functions,
     FunctionSecretSeal seal,
@@ -11,10 +13,10 @@ public sealed class FunctionInvoker(
     TimeProvider timeProvider) : IDisposable
 {
     private const int MaxConcurrent = 64;
-    private static readonly Unavailable Busy = new("function capacity is temporarily unavailable", "function_busy");
+    private static readonly PlatformUnavailable Busy = new("function capacity is temporarily unavailable", "function_busy");
     private readonly SemaphoreSlim _slots = new(MaxConcurrent, MaxConcurrent);
 
-    public async ValueTask<Result<FunctionAnswer, NotFound, Unavailable>> InvokeAsync(
+    public async ValueTask<FunctionInvokeOutcome> InvokeAsync(
         FunctionTarget target,
         string name,
         string trigger,
@@ -30,37 +32,45 @@ public sealed class FunctionInvoker(
 
         try
         {
-            return await functions.LoadAsync(target, name, cancellationToken) switch
+            var outcome = await functions.LoadAsync(target, name, cancellationToken);
+            return outcome switch
             {
-                FunctionCode code => await RunAsync(target, name, trigger, eventJson, bookmark, requestId, code, cancellationToken),
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                FunctionCode code => await RunAsync(code),
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
             };
         }
         finally
         {
             _slots.Release();
         }
+
+        async ValueTask<FunctionInvokeOutcome> RunAsync(FunctionCode code)
+        {
+            var secrets = OpenSecrets(target, name, code.Secrets);
+            return secrets switch
+            {
+                string opened => await ExecuteOpenedAsync(code.Source, opened),
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+
+        async ValueTask<FunctionInvokeOutcome> ExecuteOpenedAsync(string source, string secrets)
+        {
+            var outcome = await ExecuteAsync(target, name, trigger, eventJson, secrets, bookmark, requestId, source, cancellationToken);
+            return outcome switch
+            {
+                FunctionAnswer answer => answer,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
     public void Dispose() => _slots.Dispose();
 
-    private async ValueTask<Result<FunctionAnswer, NotFound, Unavailable>> RunAsync(
-        FunctionTarget target,
-        string name,
-        string trigger,
-        string eventJson,
-        string bookmark,
-        string? requestId,
-        FunctionCode code,
-        CancellationToken cancellationToken) =>
-        OpenSecrets(target, name, code.Secrets) switch
-        {
-            string secrets => await ExecuteAsync(target, name, trigger, eventJson, secrets, bookmark, requestId, code.Source, cancellationToken),
-            Unavailable unavailable => unavailable,
-        };
+    private readonly union ExecuteFunctionOutcome(FunctionAnswer, PlatformUnavailable);
 
-    private async ValueTask<Result<FunctionAnswer, NotFound, Unavailable>> ExecuteAsync(
+    private async ValueTask<ExecuteFunctionOutcome> ExecuteAsync(
         FunctionTarget target,
         string name,
         string trigger,
@@ -97,22 +107,25 @@ public sealed class FunctionInvoker(
             answer.Body.LongLength,
             trigger == "http" && error is null ? answer.Status : null);
         metrics.Invocation(trigger, error is null, elapsed.TotalMilliseconds);
-        return await functions.RecordAsync(target, name, log, CancellationToken.None) switch
+        var outcome = await functions.RecordAsync(target, name, log, CancellationToken.None);
+        return outcome switch
         {
-            Done => answer,
-            Unavailable unavailable => unavailable,
+            FunctionRunRecorded => answer,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private Result<string, Unavailable> OpenSecrets(FunctionTarget target, string name, IReadOnlyList<SealedSecret> stored)
+    private readonly union OpenFunctionSecretsOutcome(string, PlatformUnavailable);
+
+    private OpenFunctionSecretsOutcome OpenSecrets(FunctionTarget target, string name, IReadOnlyList<SealedSecret> stored)
     {
         var values = new Dictionary<string, string>(stored.Count, StringComparer.Ordinal);
         foreach (var secret in stored)
         {
-            Unavailable? failure = seal.Open(target.Database, name, secret.Name, secret.Sealed) switch
+            PlatformUnavailable? failure = seal.Open(target.Database, name, secret.Name, secret.Sealed) switch
             {
                 string value => Keep(values, secret.Name, value),
-                Unavailable unavailable => unavailable,
+                PlatformUnavailable unavailable => unavailable,
             };
             if (failure is not null)
             {
@@ -123,7 +136,7 @@ public sealed class FunctionInvoker(
         return JsonSerializer.Serialize<IReadOnlyDictionary<string, string>>(values, FunctionsJsonContext.Default.IReadOnlyDictionaryStringString);
     }
 
-    private static Unavailable? Keep(Dictionary<string, string> values, string name, string value)
+    private static PlatformUnavailable? Keep(Dictionary<string, string> values, string name, string value)
     {
         values[name] = value;
         return null;

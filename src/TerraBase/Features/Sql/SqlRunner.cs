@@ -4,11 +4,18 @@ using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Rules;
+using TerraBase.Hosting;
 using TerraBase.Storage;
 using TerraScale.Contracts.Cluster;
 using TerraScale.Contracts.Http;
 
 namespace TerraBase.Features.Sql;
+
+internal readonly union SqlCausalityOutcome(SqlCausality, SqlRefusal);
+
+internal readonly union SqlRunOutcome(SqlRun, SqlRefusal);
+
+internal readonly union SqlWaitOutcome(Completed, SqlRefusal);
 
 public sealed record SqlRun(IReadOnlyList<SqlResultSet> Results, CausalBookmark Bookmark, ConsistencyMode Mode, string? RulesVersion = null);
 
@@ -16,7 +23,7 @@ public sealed record SqlCausality(ConsistencyMode? Mode, CausalBookmark After);
 
 internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coordinator, RulesEnforcer rules, UsageMeter usage, QosAdmission qos, TerraBaseOptions options)
 {
-    public static Result<SqlCausality, SqlRefusal> Causality(HttpRequest request)
+    public static SqlCausalityOutcome Causality(HttpRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
         var after = CausalBookmark.Empty;
@@ -54,11 +61,11 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         response.Headers.CacheControl = "no-store";
     }
 
-    public ValueTask<Result<SqlRun, SqlRefusal>> RunAsync(
+    public ValueTask<SqlRunOutcome> RunAsync(
         ResolvedDatabase target, IReadOnlyList<SqlStatement> statements, SqlCausality causality, CancellationToken cancellationToken) =>
         RunAsync(target, statements, causality, serviceRead: false, cancellationToken);
 
-    public async ValueTask<Result<SqlRun, SqlRefusal>> RunAsync(
+    public async ValueTask<SqlRunOutcome> RunAsync(
         ResolvedDatabase target, IReadOnlyList<SqlStatement> statements, SqlCausality causality, bool serviceRead, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -76,7 +83,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         };
     }
 
-    public async ValueTask<Result<EnforcedSql, SqlRefusal>> PrepareAsync(
+    public async ValueTask<EnforcementOutcome> PrepareAsync(
         ResolvedDatabase target, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken, ISqlDatabaseSession? session = null)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -92,19 +99,20 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
             : new EnforcedSql([.. statements.Select(static statement => statement.Statement)], null);
     }
 
-    public async ValueTask<Result<Done, SqlRefusal>> WaitAsync(ResolvedDatabase target, CausalBookmark after, CancellationToken cancellationToken)
+    public async ValueTask<SqlWaitOutcome> WaitAsync(ResolvedDatabase target, CausalBookmark after, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(after);
         if (after.IsEmpty)
         {
-            return new Done();
+            return new Completed();
         }
 
-        return await coordinator.WaitForBookmarkAsync(target.Database.Id, after, options.QueryBudget, cancellationToken) switch
+        var outcome = await coordinator.WaitForBookmarkAsync(target.Database.Id, after, options.QueryBudget, cancellationToken);
+        return outcome switch
         {
-            Done or NotFound => new Done(),
-            RequestTimeout timeout => SqlRefusal.From(timeout),
+            BookmarkReached or DatabaseNotFound => new Completed(),
+            ClusterTimeout timeout => SqlRefusal.From(timeout),
         };
     }
 
@@ -122,7 +130,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     public static string Describe(CommitMetadata commit) =>
         string.Concat(commit.OriginRegion, ":", commit.Sequence.ToString(CultureInfo.InvariantCulture));
 
-    private async ValueTask<Result<SqlRun, SqlRefusal>> RunBatchAsync(
+    private async ValueTask<SqlRunOutcome> RunBatchAsync(
         ResolvedDatabase target, SqlBatch batch, SqlCausality causality, bool serviceRead, CancellationToken cancellationToken)
     {
         var firstWrite = FirstWrite(batch.Statements);
@@ -135,20 +143,20 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         var waited = await WaitAsync(target, causality.After, cancellationToken);
         return waited switch
         {
-            Done => await access.OpenAsync(target.Database, cancellationToken) switch
+            Completed => await access.OpenAsync(target.Database, cancellationToken) switch
             {
                 ISqlDatabaseSession session => await PrepareAsync(target, batch.Statements, cancellationToken, session) switch
                 {
                     EnforcedSql enforced => await ExecuteAsync(target, session, enforced.Statements, batch.Writes, mode, causality.After, enforced.RulesVersion, serviceRead, cancellationToken),
                     SqlRefusal refusal => refusal,
                 },
-                Unavailable unavailable => SqlRefusal.From(unavailable),
+                BackendUnavailable unavailable => SqlRefusal.From(unavailable),
             },
             SqlRefusal refusal => refusal,
         };
     }
 
-    private async ValueTask<Result<SqlRun, SqlRefusal>> ExecuteAsync(
+    private async ValueTask<SqlRunOutcome> ExecuteAsync(
         ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<SqlStatement> statements, bool writes, ConsistencyMode mode, CausalBookmark after,
         string? rulesVersion, bool serviceRead, CancellationToken cancellationToken)
     {
@@ -163,18 +171,19 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
                 SqlReadResult read => Finish(target, read.ResultSets, after.Merge(read.Observed), mode, wrote: false, rulesVersion),
                 SqlError error => SqlRefusal.From(error),
                 StorageBusy busy => SqlRefusal.From(busy),
-                RequestTimeout timeout => SqlRefusal.From(timeout),
+                StorageTimeout timeout => SqlRefusal.From(timeout),
             };
         }
 
-        return await coordinator.ExecuteWriteAsync(session, request, cancellationToken) switch
+        var outcome = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
+        return outcome switch
         {
             SqlWriteResult written => Finish(target, written.ResultSets, after.Merge(written.Commit.Bookmark).Merge(session.CurrentBookmark), written.Commit.Mode, wrote: true, rulesVersion),
             SqlError error => SqlRefusal.From(error),
             SerializationConflict conflict => SqlRefusal.From(conflict),
             SchemaMismatch mismatch => SqlRefusal.From(mismatch),
-            Unavailable unavailable => SqlRefusal.From(unavailable),
-            RequestTimeout timeout => SqlRefusal.From(timeout),
+            ClusterUnavailable unavailable => SqlRefusal.From(unavailable),
+            ClusterTimeout timeout => SqlRefusal.From(timeout),
             StorageBusy busy => SqlRefusal.From(busy),
         };
     }

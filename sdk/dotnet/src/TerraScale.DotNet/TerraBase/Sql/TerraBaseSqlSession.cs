@@ -7,19 +7,8 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>
-/// A SQL WebSocket session (<c>terrascale.sql.v2</c>). Outside a transaction every call runs as its own transaction;
-/// <see cref="BeginAsync(CancellationToken)"/> opens one that lasts at most 5 seconds, and <see cref="BeginStrongAsync"/> a
-/// strong one (<c>BEGIN STRONG</c>). Every frame carries the database's tracked <c>TerraScale-Bookmark</c> and every answer's
-/// bookmark is merged back into it, so the session and the database's REST calls read each other's writes. Calls may overlap; the server answers them in order.
-/// Nothing is resent. A lost committing answer closes the session with <c>write_outcome_unknown</c> (08007),
-/// retained for every later call. Without a committing request, a lost open transaction throws
-/// <see cref="TerraBaseSqlErrorCodes.TransactionRolledBack"/> until <see cref="RollbackAsync"/>. Dispose closes the socket,
-/// rolls back an open transaction and ends the session.
-/// </summary>
 public sealed class TerraBaseSqlSession : IAsyncDisposable
 {
-    /// <summary>The WebSocket subprotocol.</summary>
     public const string Subprotocol = "terrascale.sql.v2";
 
     private const int MaxFrameBytes = 1024 * 1024;
@@ -52,22 +41,12 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         link = Start(socket);
     }
 
-    /// <summary>Whether a transaction is open, as of the last answer.</summary>
     public bool InTransaction => transaction;
 
-    /// <summary>
-    /// The consistency the session asked for when it connected, used by calls and transactions without their own; null
-    /// leaves it to the database's <c>defaultConsistency</c>.
-    /// </summary>
     public TerraBaseConsistencyMode? Consistency { get; }
 
-    /// <summary>The newest <c>TerraScale-Bookmark</c> observed for the session's database, or empty before the first answer.</summary>
     public string Bookmark => bookmarks.Current;
 
-    /// <summary>
-    /// Merges a <c>TerraScale-Bookmark</c> from another process into the database's tracked bookmark; the session's next
-    /// frame observes it. Throws <see cref="ArgumentException"/> when <paramref name="bookmark"/> is not one TerraScale returned.
-    /// </summary>
     public void ObserveBookmark(string bookmark) => bookmarks.Observe(bookmark, nameof(bookmark));
 
     internal static async Task<TerraBaseSqlSession> ConnectAsync(TerraBaseConnection connection, string path, TerraBaseBookmarkTracker bookmarks,
@@ -75,42 +54,27 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         new(connection, path, bookmarks, consistency,
             await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken, UpgradeHeaders(bookmarks, consistency)).ConfigureAwait(false));
 
-    /// <summary>Runs one statement with positional arguments.</summary>
     public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args = null, CancellationToken cancellationToken = default) =>
         ExecuteAsync(new TerraBaseSqlStatement(sql, args), cancellationToken);
 
-    /// <summary>Runs one statement with named arguments.</summary>
     public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyDictionary<string, TerraBaseSqlValue> named, CancellationToken cancellationToken = default) =>
         ExecuteAsync(new TerraBaseSqlStatement(sql, Named: named), cancellationToken);
 
-    /// <summary>Runs one statement.</summary>
     public async Task<TerraBaseSqlStatementResult> ExecuteAsync(TerraBaseSqlStatement statement, CancellationToken cancellationToken = default) =>
         (await BatchAsync([statement], cancellationToken).ConfigureAwait(false))[0];
 
-    /// <summary>Runs one statement with per-call consistency or bookmark; consistency applies outside a transaction.</summary>
     public async Task<TerraBaseSqlStatementResult> ExecuteAsync(TerraBaseSqlStatement statement, TerraBaseSqlRequestOptions options, CancellationToken cancellationToken = default) =>
         (await BatchAsync([statement], options, cancellationToken).ConfigureAwait(false))[0];
 
-    /// <summary>Runs one statement and returns its rows.</summary>
     public async Task<IReadOnlyList<TerraBaseSqlRecord>> QueryAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args = null, CancellationToken cancellationToken = default) =>
         (await ExecuteAsync(sql, args, cancellationToken).ConfigureAwait(false)).Rows;
 
-    /// <summary>Runs one statement and maps its rows to <typeparamref name="T"/>; see <see cref="TerraBaseSqlRecord.As{T}"/>.</summary>
     public async Task<IReadOnlyList<T>> QueryAsync<T>(string sql, IReadOnlyList<TerraBaseSqlValue>? args, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken = default) =>
         (await ExecuteAsync(sql, args, cancellationToken).ConfigureAwait(false)).As(typeInfo);
 
-    /// <summary>
-    /// Runs 1 to 256 statements: as one transaction, all or nothing, outside a transaction, or inside the open one.
-    /// After a failed statement inside a transaction every call throws <see cref="TerraBaseSqlErrorCodes.TransactionAborted"/>
-    /// until <see cref="RollbackAsync"/> or <see cref="CommitAsync"/>.
-    /// </summary>
     public Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, CancellationToken cancellationToken = default) =>
         BatchAsync(statements, NoOptions, cancellationToken);
 
-    /// <summary>
-    /// Runs 1 to 256 statements like <see cref="BatchAsync(IReadOnlyList{TerraBaseSqlStatement}, CancellationToken)"/>, with the
-    /// consistency and bookmark of <paramref name="options"/>; the consistency applies outside a transaction.
-    /// </summary>
     public async Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, TerraBaseSqlRequestOptions options,
         CancellationToken cancellationToken = default)
     {
@@ -122,29 +86,17 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
             : throw new TerraBaseException(null, "TerraBase returned a result count that does not match the statements.", "invalid_response", null);
     }
 
-    /// <summary>Opens a transaction of at most 5 seconds with the session's <see cref="Consistency"/>.</summary>
     public Task BeginAsync(CancellationToken cancellationToken = default) => SendAsync("begin", null, null, null, cancellationToken);
 
-    /// <summary>
-    /// Opens a transaction of at most 5 seconds with <paramref name="consistency"/>; <see cref="TerraBaseConsistencyMode.Strong"/>
-    /// runs it serializable across regions and its commit may answer <see cref="TerraBaseSqlErrorCodes.SerializationConflict"/>.
-    /// </summary>
     public Task BeginAsync(TerraBaseConsistencyMode consistency, CancellationToken cancellationToken = default) =>
         SendAsync("begin", null, consistency, null, cancellationToken);
 
-    /// <summary>Opens a strong transaction (<c>BEGIN STRONG</c>) of at most 5 seconds.</summary>
     public Task BeginStrongAsync(CancellationToken cancellationToken = default) => BeginAsync(TerraBaseConsistencyMode.Strong, cancellationToken);
 
-    /// <summary>Commits the open transaction; after a failed statement it rolls back and throws <see cref="TerraBaseSqlErrorCodes.TransactionRolledBack"/>.</summary>
     public Task CommitAsync(CancellationToken cancellationToken = default) => SendAsync("commit", null, null, null, cancellationToken);
 
-    /// <summary>Rolls back the open transaction.</summary>
     public Task RollbackAsync(CancellationToken cancellationToken = default) => SendAsync("rollback", null, null, null, cancellationToken);
 
-    /// <summary>
-    /// Runs <paramref name="work"/> in a transaction: begins, runs, and commits; rolls back and rethrows when
-    /// <paramref name="work"/> throws.
-    /// </summary>
     public async Task<T> TransactionAsync<T>(Func<TerraBaseSqlSession, CancellationToken, Task<T>> work, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(work);
@@ -174,7 +126,6 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         return result;
     }
 
-    /// <inheritdoc cref="TransactionAsync{T}(Func{TerraBaseSqlSession, CancellationToken, Task{T}}, CancellationToken)"/>
     public Task TransactionAsync(Func<TerraBaseSqlSession, CancellationToken, Task> work, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(work);
@@ -185,7 +136,6 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }, cancellationToken);
     }
 
-    /// <summary>Closes the socket normally; an open transaction rolls back on the server. The session stays closed.</summary>
     public async ValueTask DisposeAsync()
     {
         if (disposed) return;

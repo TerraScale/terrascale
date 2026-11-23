@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Sso;
@@ -16,7 +15,7 @@ public sealed class VerifySsoDomainEndpoint(SsoConnections connections, Platform
         await connections.VerifyAsync(await this.OrganizationAsync(caller, Roles.Owner, cancellationToken), caller.Id, cancellationToken) switch
         {
             SsoConnectionRecord verified => this.Ok(verified),
-            NotFound failure => ErrorResults.ToResult(failure),
-            Conflict failure => ErrorResults.ToResult(failure),
+            AuthNotFound failure => ErrorResults.ToResult(failure),
+            AuthConflict failure => ErrorResults.ToResult(failure),
         };
 }

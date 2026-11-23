@@ -3,13 +3,14 @@ using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
-    public readonly union OnboardingSaveResult(string, Validation, Forbidden);
+    public readonly union OnboardingSaveResult(string, DashboardValidation, DashboardForbidden);
 
-    internal readonly union PersonalWorkspace(AccountContext, Validation);
+    public readonly union DisplayNameInput(string, DashboardValidation);
+
+    internal readonly union PersonalWorkspace(AccountContext, DashboardValidation);
 
     public sealed class OnboardingService(AccountService accounts, StripeBilling payments, IOnboardingProjectProvisioner projects)
     {
-        // Free first, then paid plans by price; the payment step offers Free by default.
         public async Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken)
         {
             return [.. (await payments.PlansAsync(cancellationToken)).OrderBy(plan => plan.PriceCents == 0 ? 0 : 1)
@@ -42,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
             var step = form["step"].ToString();
             if (step is not ("account-information" or "payment-method" or "project"))
             {
-                return new Validation("Choose a valid setup step.");
+                return new DashboardValidation("Choose a valid setup step.");
             }
 
             var context = await accounts.GetContextAsync(session, cancellationToken);
@@ -68,7 +69,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
         {
             return DisplayName(form["displayName"].ToString()) switch
             {
-                Validation invalid => invalid,
+                DashboardValidation invalid => invalid,
                 string displayName => await ApplyDisplayNameAsync(session, displayName, form["plan"].ToString(), cancellationToken)
             };
         }
@@ -91,14 +92,14 @@ namespace TerraScale.Dashboard.Features.Onboarding
         {
             if (context.Account.OnboardingStep != "payment-method")
             {
-                return new Validation("Complete the current setup step first.");
+                return new DashboardValidation("Complete the current setup step first.");
             }
 
             var plan = form["plan"].ToString();
             var selected = (await PlansAsync(cancellationToken)).FirstOrDefault(candidate => candidate.Key == plan);
             if (selected is null)
             {
-                return new Validation("Choose an available plan.");
+                return new DashboardValidation("Choose an available plan.");
             }
 
             if (selected.PriceCents == 0)
@@ -123,12 +124,13 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
             if (interval is not ("monthly" or "annual") || !selected.SupportsInterval(interval))
             {
-                return new Validation("Choose an available plan and billing interval.");
+                return new DashboardValidation("Choose an available plan and billing interval.");
             }
 
-            return await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken) switch
+            var outcome = await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
+            return outcome switch
             {
-                Validation invalid => invalid,
+                DashboardValidation invalid => invalid,
                 AccountContext personal => await payments.StartCheckoutAsync(personal, plan, interval, "/onboarding", cancellationToken)
             };
         }
@@ -137,23 +139,24 @@ namespace TerraScale.Dashboard.Features.Onboarding
         {
             if (context.Account.OnboardingStep != "project")
             {
-                return new Validation("Complete the current setup step first.");
+                return new DashboardValidation("Complete the current setup step first.");
             }
 
             var name = form["name"].ToString().Trim();
             if (name.Any(char.IsControl))
             {
-                return new Validation("Enter a valid project name.");
+                return new DashboardValidation("Enter a valid project name.");
             }
 
             if (name.EnumerateRunes().Count() > 100)
             {
-                return new Validation("Use a project name with 100 characters or fewer.");
+                return new DashboardValidation("Use a project name with 100 characters or fewer.");
             }
             var region = form["region"].ToString().Trim().ToUpperInvariant();
-            return await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken) switch
+            var outcome = await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
+            return outcome switch
             {
-                Validation invalid => invalid,
+                DashboardValidation invalid => invalid,
                 AccountContext personal => await CompleteProjectAsync(session, personal, name, region, cancellationToken)
             };
         }
@@ -162,7 +165,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
         {
             if (context.Organization is null || context.Project is null || !context.CanManage)
             {
-                return new Forbidden("Project membership is required.");
+                return new DashboardForbidden("Project membership is required.");
             }
 
             var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, region, cancellationToken);
@@ -196,25 +199,25 @@ namespace TerraScale.Dashboard.Features.Onboarding
         private async Task<PersonalWorkspace> SwitchToPersonalAsync(SessionRecord session, string personalOrganizationId, CancellationToken cancellationToken)
         {
             var personal = await accounts.SwitchOrganizationAsync(session, personalOrganizationId, cancellationToken);
-            return personal.Project?.IsDefault == true ? personal : new Validation("Your Personal workspace has no default project.");
+            return personal.Project?.IsDefault == true ? personal : new DashboardValidation("Your Personal workspace has no default project.");
         }
 
-        public static Valid<string> DisplayName(string raw)
+        public static DisplayNameInput DisplayName(string raw)
         {
             var name = raw.Trim();
             if (name.Length == 0)
             {
-                return new Validation("Enter your full name.", "displayName");
+                return new DashboardValidation("Enter your full name.");
             }
 
             if (name.Any(char.IsControl))
             {
-                return new Validation("Enter a valid name.", "displayName");
+                return new DashboardValidation("Enter a valid name.");
             }
 
             if (name.EnumerateRunes().Count() > 128)
             {
-                return new Validation("Use a name with 128 characters or fewer.", "displayName");
+                return new DashboardValidation("Use a name with 128 characters or fewer.");
             }
 
             return name;

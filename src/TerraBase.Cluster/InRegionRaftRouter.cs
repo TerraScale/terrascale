@@ -9,6 +9,10 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
+public sealed record InRegionReplicated;
+
+public readonly union InRegionReplicationOutcome(InRegionReplicated, ClusterUnavailable, ClusterTimeout);
+
 public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient client, DeltaReplicator replicator, ILoggerFactory loggerFactory) : IAsyncDisposable
 {
     private const long SnapshotThreshold = 4096;
@@ -57,7 +61,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
             shards[index] = new RaftShard(configuration, context, loggerFactory.CreateLogger<RaftShard>()) { AuditTrail = logs[index] };
             List<QuicRaftMember> members = [new QuicRaftMember(context, options.NodeId, options.ListenEndPoint, isRemote: false)];
             members.AddRange(options.RegionPeers.Select(peer => new QuicRaftMember(context, peer.NodeId, new DnsEndPoint(peer.Host, peer.QuicPort), isRemote: true)));
-            await shards[index].StartShardAsync(members, cancellationToken).ConfigureAwait(false);
+            await shards[index].StartShardAsync(members, cancellationToken);
         }
 
         Volatile.Write(ref _logs, logs);
@@ -65,17 +69,17 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
         ClusterLog.RaftStarted(_logger, options.Region, shards.Length, options.RegionPeers.Count + 1);
     }
 
-    public async ValueTask<Result<Done, Unavailable, RequestTimeout>> ReplicateAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
+    public async ValueTask<InRegionReplicationOutcome> ReplicateAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commit);
         if (!IsReplicated || commit.Sequence == 0)
         {
-            return new Done();
+            return new InRegionReplicated();
         }
 
         if (Volatile.Read(ref _shards) is not { Length: > 0 } shards)
         {
-            return new Unavailable("in-region raft is not started", "raft_not_ready");
+            return new ClusterUnavailable("in-region raft is not started", "raft_not_ready");
         }
 
         var shard = shards[ShardOf(databaseId)];
@@ -84,15 +88,15 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
         deadline.CancelAfter(options.RaftCommitTimeout);
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            var leader = await RaftBoundary.LeaderAsync(shard, options.RaftCommitTimeout, cancellationToken).ConfigureAwait(false);
+            var leader = await RaftBoundary.LeaderAsync(shard, options.RaftCommitTimeout, cancellationToken);
             if (leader is null)
             {
-                return new RequestTimeout("in-region raft leader election did not finish in time");
+                return new ClusterTimeout("in-region raft leader election did not finish in time");
             }
 
             var outcome = leader.IsRemote
-                ? await ForwardAsync(leader.NodeId, shard.Context.Shard, payload, deadline.Token, cancellationToken).ConfigureAwait(false)
-                : await RaftBoundary.ReplicateAsync(shard, payload, deadline.Token, cancellationToken).ConfigureAwait(false);
+                ? await ForwardAsync(leader.NodeId, shard.Context.Shard, payload, deadline.Token, cancellationToken)
+                : await RaftBoundary.ReplicateAsync(shard, payload, deadline.Token, cancellationToken);
             if (outcome == RaftProposeStatus.NotLeader)
             {
                 continue;
@@ -100,33 +104,33 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
 
             return outcome switch
             {
-                RaftProposeStatus.Committed => new Done(),
-                RaftProposeStatus.Failed when cancellationToken.IsCancellationRequested || deadline.IsCancellationRequested => new RequestTimeout("in-region raft quorum was not reached in time"),
-                RaftProposeStatus.Failed => new Unavailable("in-region raft quorum was not reached", "raft_quorum"),
-                RaftProposeStatus.NotLeader => new Unavailable("in-region raft leadership moved", "raft_leader_moving"),
+                RaftProposeStatus.Committed => new InRegionReplicated(),
+                RaftProposeStatus.Failed when cancellationToken.IsCancellationRequested || deadline.IsCancellationRequested => new ClusterTimeout("in-region raft quorum was not reached in time"),
+                RaftProposeStatus.Failed => new ClusterUnavailable("in-region raft quorum was not reached", "raft_quorum"),
+                RaftProposeStatus.NotLeader => new ClusterUnavailable("in-region raft leadership moved", "raft_leader_moving"),
                 _ => throw new UnreachableException(),
             };
         }
 
-        return new Unavailable("in-region raft leadership kept moving", "raft_leader_moving");
+        return new ClusterUnavailable("in-region raft leadership kept moving", "raft_leader_moving");
     }
 
     public async ValueTask DisposeAsync()
     {
         foreach (var shard in Interlocked.Exchange(ref _shards, []))
         {
-            await RaftBoundary.StopAsync(shard).ConfigureAwait(false);
+            await RaftBoundary.StopAsync(shard);
             foreach (var member in shard.Members)
             {
                 member.Dispose();
             }
 
-            await shard.DisposeAsync().ConfigureAwait(false);
+            await shard.DisposeAsync();
         }
 
         foreach (var log in Interlocked.Exchange(ref _logs, []))
         {
-            await log.DisposeAsync().ConfigureAwait(false);
+            await log.DisposeAsync();
         }
     }
 
@@ -137,15 +141,15 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
             return;
         }
 
-        var applied = await replicator.ApplyAsync(replicated.DatabaseId, [replicated.Commit], cancellationToken).ConfigureAwait(false);
+        var applied = await replicator.ApplyAsync(replicated.DatabaseId, [replicated.Commit], cancellationToken);
         var failure = applied switch
         {
             RemoteApplyOutcome => null,
-            NotFound notFound => notFound.Message,
+            DatabaseNotFound notFound => notFound.Message,
             SchemaMismatch mismatch => string.Concat("schema epoch ", mismatch.ActualEpoch.ToString(CultureInfo.InvariantCulture)),
             StorageCorrupted corrupted => corrupted.Message,
             StorageBusy busy => busy.Message,
-            Unavailable unavailable => unavailable.Message,
+            ClusterUnavailable unavailable => unavailable.Message,
         };
         if (failure is not null)
         {
@@ -158,11 +162,11 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
         var message = new RaftAppendMessage(shard, RaftAppendKind.Propose, default, 0, 0, 0, 0, 0, [new RaftWireEntry(0, null, false, payload)]);
         try
         {
-            var response = await client.CallAsync<RaftAppendMessage, RaftAppendResponse>(leaderNodeId, QuicMessageType.RaftAppendEntries, message, options.RaftCommitTimeout, deadline).ConfigureAwait(false);
+            var response = await client.CallAsync<RaftAppendMessage, RaftAppendResponse>(leaderNodeId, QuicMessageType.RaftAppendEntries, message, options.RaftCommitTimeout, deadline);
             return response switch
             {
                 RaftAppendResponse received => received.Status,
-                Unavailable or RequestTimeout or QuicRemoteError => RaftProposeStatus.Failed,
+                QuicUnavailable or QuicTimeout or QuicRemoteError => RaftProposeStatus.Failed,
             };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -174,7 +178,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
     private RaftShard? Shard(ushort index) =>
         Volatile.Read(ref _shards) is { } shards && index < shards.Length ? shards[index] : null;
 
-    private async ValueTask<Result<RaftVoteResponse, QuicRemoteError>> HandleVoteAsync(QuicCallContext context, RaftVoteMessage message, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<RaftVoteResponse>> HandleVoteAsync(QuicCallContext context, RaftVoteMessage message, CancellationToken cancellationToken)
     {
         if (Shard(message.Shard) is not { } shard)
         {
@@ -186,10 +190,10 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
             return new QuicRemoteError(QuicRemoteError.MalformedRequest, "unknown raft vote kind");
         }
 
-        return await shard.HandleVoteAsync(message, cancellationToken).ConfigureAwait(false);
+        return await shard.HandleVoteAsync(message, cancellationToken);
     }
 
-    private async ValueTask<Result<RaftAppendResponse, QuicRemoteError>> HandleAppendAsync(QuicCallContext context, RaftAppendMessage message, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<RaftAppendResponse>> HandleAppendAsync(QuicCallContext context, RaftAppendMessage message, CancellationToken cancellationToken)
     {
         if (Shard(message.Shard) is not { } shard)
         {
@@ -204,22 +208,22 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
             }
 
             var status = shard.Leader is { IsRemote: false }
-                ? await RaftBoundary.ReplicateAsync(shard, message.Entries[0].Payload.ToArray(), cancellationToken, cancellationToken).ConfigureAwait(false)
+                ? await RaftBoundary.ReplicateAsync(shard, message.Entries[0].Payload.ToArray(), cancellationToken, cancellationToken)
                 : RaftProposeStatus.NotLeader;
             return new RaftAppendResponse(shard.CurrentTerm, 0, 0, status);
         }
 
-        return await shard.HandleAppendAsync(message, cancellationToken).ConfigureAwait(false);
+        return await shard.HandleAppendAsync(message, cancellationToken);
     }
 
-    private async ValueTask<Result<RaftAppendResponse, QuicRemoteError>> HandleSnapshotAsync(QuicCallContext context, RaftSnapshotMessage message, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<RaftAppendResponse>> HandleSnapshotAsync(QuicCallContext context, RaftSnapshotMessage message, CancellationToken cancellationToken)
     {
         if (Shard(message.Shard) is not { } shard)
         {
             return NotReady();
         }
 
-        return await shard.HandleSnapshotAsync(message, cancellationToken).ConfigureAwait(false);
+        return await shard.HandleSnapshotAsync(message, cancellationToken);
     }
 
     private static QuicRemoteError NotReady() => new("raft_not_ready", "in-region raft shard is not started on this node");
@@ -236,7 +240,7 @@ internal static class RaftBoundary
 
         try
         {
-            return await shard.WaitForLeaderAsync(timeout, cancellationToken).ConfigureAwait(false);
+            return await shard.WaitForLeaderAsync(timeout, cancellationToken);
         }
         catch (TimeoutException)
         {
@@ -248,7 +252,7 @@ internal static class RaftBoundary
     {
         try
         {
-            await shard.ReplicateAsync(new RaftPayloadEntry(shard.CurrentTerm, null, false, false, payload), deadline).ConfigureAwait(false);
+            await shard.ReplicateAsync(new RaftPayloadEntry(shard.CurrentTerm, null, false, false, payload), deadline);
             return RaftProposeStatus.Committed;
         }
         catch (NotLeaderException)
@@ -269,7 +273,7 @@ internal static class RaftBoundary
     {
         try
         {
-            await shard.StopAsync(CancellationToken.None).ConfigureAwait(false);
+            await shard.StopAsync(CancellationToken.None);
         }
         catch (ObjectDisposedException)
         {

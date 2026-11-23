@@ -21,7 +21,9 @@ internal static class PgErrors
     public static PgError From(StorageBusy busy) =>
         new("55P03", busy.Message, Hint: $"retry after {busy.RetryAfter.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture)} ms");
 
-    public static PgError From(RequestTimeout timeout) => new("57014", "canceling statement due to statement timeout", Detail: timeout.Message);
+    public static PgError From(StorageTimeout timeout) => new("57014", "canceling statement due to statement timeout", Detail: timeout.Message);
+
+    public static PgError From(ClusterTimeout timeout) => new("57014", "canceling statement due to statement timeout", Detail: timeout.Message);
 
     public static PgError From(SerializationConflict conflict) =>
         new("40001", "could not serialize access due to concurrent update", Detail: conflict.Reason, Hint: "retry the transaction");
@@ -31,5 +33,5 @@ internal static class PgErrors
             Detail: $"schema epoch {mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture)} changed to {mismatch.ActualEpoch.ToString(CultureInfo.InvariantCulture)}",
             Hint: "retry the statement");
 
-    public static PgError From(Unavailable unavailable) => new("57P03", unavailable.Message, Detail: unavailable.Code, Hint: "retry the statement");
+    public static PgError From(ClusterUnavailable unavailable) => new("57P03", unavailable.Message, Detail: unavailable.Code, Hint: "retry the statement");
 }

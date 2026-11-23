@@ -2,7 +2,6 @@ using BenchmarkDotNet.Attributes;
 
 namespace TerraScale.Endpoints.Benchmarks;
 
-/// <summary>Prices the individual steps TerraScale adds per request, to explain HandlerBenchmarks.</summary>
 [MemoryDiagnoser]
 public class OverheadBenchmarks
 {

@@ -58,7 +58,8 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
             }
 
             var body = Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length);
-            return await billing.HandleWebhookAsync(body, http.Request.Headers["Stripe-Signature"].ToString(), http.RequestAborted) switch
+            var outcome = await billing.HandleWebhookAsync(body, http.Request.Headers["Stripe-Signature"].ToString(), http.RequestAborted);
+            return outcome switch
             {
                 Done => TypedResults.Ok(),
                 Rejected => TypedResults.BadRequest(),

@@ -6,10 +6,12 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.InternalApi;
 
+internal readonly union InternalAuthorizeResponse(CallerGrant, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class InternalAuthorizeEndpoint(DatabaseAccess access, CatalogStore catalog)
-    : Endpoint<AuthorizeRequest, Result<CallerGrant, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<AuthorizeRequest, InternalAuthorizeResponse>
 {
-    private static readonly Unauthorized MissingCaller = new("a bearer token, API key or peer credential is required", "invalid_key");
+    private static readonly CredentialRejected MissingCaller = new("a bearer token, API key or peer credential is required", "invalid_key");
 
     public override void Configure()
     {
@@ -23,7 +25,7 @@ internal sealed class InternalAuthorizeEndpoint(DatabaseAccess access, CatalogSt
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<CallerGrant, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<InternalAuthorizeResponse> HandleAsync(
         AuthorizeRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -38,34 +40,35 @@ internal sealed class InternalAuthorizeEndpoint(DatabaseAccess access, CatalogSt
             ? await access.DataAsync(caller, request.Project, database, cancellationToken) switch
             {
                 ResolvedDatabase target => await GrantAsync(caller, target.Project, target, request.Scopes, cancellationToken),
-                Validation invalid => invalid,
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                InvalidInput invalid => invalid,
+                CredentialRejected unauthorized => unauthorized,
+                CallerForbidden forbidden => forbidden,
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
             }
             : await access.ProjectAsync(caller, request.Project, scope, cancellationToken) switch
             {
                 ResolvedProject project => await GrantAsync(caller, project.Project, null, request.Scopes, cancellationToken),
-                Validation invalid => invalid,
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                InvalidInput invalid => invalid,
+                CredentialRejected unauthorized => unauthorized,
+                CallerForbidden forbidden => forbidden,
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
             };
     }
 
-    private async ValueTask<Result<CallerGrant, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> GrantAsync(
+    private async ValueTask<InternalAuthorizeResponse> GrantAsync(
         Caller caller, ProjectRecord project, ResolvedDatabase? target, IReadOnlyList<string> requested, CancellationToken cancellationToken)
     {
         List<string> granted = [];
         foreach (var scope in requested.Distinct(StringComparer.Ordinal))
         {
-            var allowed = await access.AuthorizeProjectAsync(caller, project, target?.Database, scope, cancellationToken) switch
+            var allowedOutcome = await access.AuthorizeProjectAsync(caller, project, target?.Database, scope, cancellationToken);
+            var allowed = allowedOutcome switch
             {
-                Done => scope != Scopes.SqlWrite || target is not { CanWrite: false },
-                Forbidden or NotFound => false,
-                Unavailable => false,
+                Completed => scope != Scopes.SqlWrite || target is not { CanWrite: false },
+                CallerForbidden or ResourceNotFound => false,
+                BackendUnavailable => false,
             };
             if (allowed)
             {
@@ -73,7 +76,8 @@ internal sealed class InternalAuthorizeEndpoint(DatabaseAccess access, CatalogSt
             }
         }
 
-        return await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken) switch
+        var outcome = await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken);
+        return outcome switch
         {
             OrganizationRecord organization => new CallerGrant(
                 organization.Id,
@@ -86,8 +90,8 @@ internal sealed class InternalAuthorizeEndpoint(DatabaseAccess access, CatalogSt
                 CallerContext.Actor(caller),
                 Roles(caller),
                 granted),
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 

@@ -3,8 +3,6 @@ using Microsoft.AspNetCore.Html;
 
 namespace TerraScale.Dashboard.Common.UI
 {
-    // Exact lucide paths from the established Go UI; these are decorative icons,
-    // never TerraScale product marks. Brand graphics remain file-backed assets.
     public static class Icons
     {
         private static readonly FrozenDictionary<string, string> Paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

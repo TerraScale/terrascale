@@ -11,18 +11,17 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.RateLimiting;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
 
-public readonly union PasskeyRenameResult(PasskeyCredentialEntry, Forbidden, NotFound, Conflict);
-public readonly union PasskeyDeleteResult(PasskeyCredentialEntry, Forbidden, NotFound, Conflict);
-public readonly union PasskeyVerifyResult(PasskeyCredentialEntry, Forbidden);
+public readonly union PasskeyRenameResult(PasskeyCredentialEntry, AuthForbidden, AuthNotFound, AuthConflict);
+public readonly union PasskeyDeleteResult(PasskeyCredentialEntry, AuthForbidden, AuthNotFound, AuthConflict);
+public readonly union PasskeyVerifyResult(PasskeyCredentialEntry, AuthForbidden);
 
-public readonly union WriteCheck(Done, Conflict);
+public readonly union WriteCheck(AuthCompleted, AuthConflict);
 
 public sealed class PasskeyCredentials(AuthData data, Credentials credentials, Users users, AttemptLimiter limiter, Fido2NetLib.Fido2 fido2, AuthOptions options, TimeProvider clock, IEmailSender email)
 {
@@ -66,20 +65,20 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         ArgumentException.ThrowIfNullOrWhiteSpace(credentialId);
         if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user)
         {
-            return new Forbidden("Sign in again before renaming a passkey.", "passkey_denied");
+            return new AuthForbidden("Sign in again before renaming a passkey.", "passkey_denied");
         }
 
         var entry = (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken)).FirstOrDefault(item => item.Value.CredentialId == credentialId);
         if (entry is null)
         {
-            return new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found");
+            return new AuthNotFound("No passkey with this id is enrolled for the account.", "passkey_not_found");
         }
 
         var renamed = entry.Value with { Name = name };
         return await this.WriteAsync([Change.Assert(user), Change.Update(entry, renamed)], cancellationToken) switch
         {
-            Done => renamed,
-            Conflict conflict => conflict,
+            AuthCompleted => renamed,
+            AuthConflict conflict => conflict,
         };
     }
 
@@ -89,26 +88,26 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         ArgumentException.ThrowIfNullOrWhiteSpace(credentialId);
         if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user)
         {
-            return new Forbidden("Sign in again before deleting a passkey.", "passkey_denied");
+            return new AuthForbidden("Sign in again before deleting a passkey.", "passkey_denied");
         }
 
         var entry = (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken)).FirstOrDefault(item => item.Value.CredentialId == credentialId);
         if (entry is null)
         {
-            return new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found");
+            return new AuthNotFound("No passkey with this id is enrolled for the account.", "passkey_not_found");
         }
 
         return await this.WriteAsync([Change.Assert(user), Change.Delete(entry)], cancellationToken) switch
         {
-            Done => entry.Value,
-            Conflict conflict => conflict,
+            AuthCompleted => entry.Value,
+            AuthConflict conflict => conflict,
         };
     }
 
     private async Task<WriteCheck> WriteAsync(IReadOnlyList<Change> changes, CancellationToken cancellationToken) =>
         await data.SaveAsync(changes, cancellationToken)
-            ? new Done()
-            : new Conflict("The passkey list changed; read it again and retry.", "version_conflict");
+            ? new AuthCompleted()
+            : new AuthConflict("The passkey list changed; read it again and retry.", "version_conflict");
 
     public async Task<IReadOnlyList<PasskeyCredentialEntry>> ListAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
@@ -251,7 +250,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             : null;
     }
 
-    internal static Forbidden DeniedEnroll() => new("The passkey registration failed verification; start again.", "passkey_denied");
+    internal static AuthForbidden DeniedEnroll() => new("The passkey registration failed verification; start again.", "passkey_denied");
 
     public async Task<bool> EnrolledAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         await data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(

@@ -1,8 +1,6 @@
 
 namespace TerraScale.Dashboard.Common.Accounts
 {
-    // A copied paid-plan contract, committed with the organization's cap. This
-    // hidden plan is domain state; it never changes the public plan catalog.
     public sealed record InternalBillingPolicy(string OrganizationId, string PlanId, string BasePlanKey, string ConfigurationId,
         BillingPlan Plan, PlanAllowances Allowances, PlanResourceLimits Resources,
         long WriteCentsPerMillion, long StorageCentsPerGBMonth)

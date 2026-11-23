@@ -5,7 +5,6 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -45,9 +44,9 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
         return (await EmailApi.ReadAsync<EmailAlertRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailAlertRequest request => await SendAsync(request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+            AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
         });
     }
 
@@ -59,7 +58,7 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
             request.DatabaseName is { } database && !DatabaseName().IsMatch(database) ||
             request.Threshold is not { } threshold || !double.IsFinite(threshold) || request.Value is not { } value || !double.IsFinite(value))
         {
-            return ErrorResults.ToResult(new Validation(
+            return ErrorResults.ToResult(new AuthValidation(
                 "organizationId, projectId and alertId must be ULIDs; state firing or resolved; ruleName 1 to 100 characters; a known metric; databaseName null or a database name; threshold and value finite numbers."));
         }
         var organization = request.OrganizationId!;

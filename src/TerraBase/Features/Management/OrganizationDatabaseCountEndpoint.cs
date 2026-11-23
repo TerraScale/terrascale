@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union OrganizationDatabaseCountResponse(CountBody, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class OrganizationDatabaseCountEndpoint(CatalogStore catalog)
-    : Endpoint<AdminInput, Result<CountBody, Forbidden, NotFound, Unavailable>>
+    : Endpoint<AdminInput, OrganizationDatabaseCountResponse>
 {
     public override void Configure()
     {
@@ -18,20 +20,20 @@ internal sealed class OrganizationDatabaseCountEndpoint(CatalogStore catalog)
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<CountBody, Forbidden, NotFound, Unavailable>> HandleAsync(AdminInput request, CancellationToken cancellationToken)
+    public override async ValueTask<OrganizationDatabaseCountResponse> HandleAsync(AdminInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!PlanFlow.IsOperator(HttpContext.Caller, "catalog.read"))
         {
-            return new Forbidden("counting databases needs the catalog.read grant", "forbidden_caller");
+            return new CallerForbidden("counting databases needs the catalog.read grant", "forbidden_caller");
         }
 
         return ManagementService.Id(request.Organization) is { } organizationId
             ? await catalog.CountOrganizationDatabasesAsync(organizationId, cancellationToken) switch
             {
                 long count => new CountBody(count),
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             }
-            : new NotFound("the organization does not exist", "unknown_organization");
+            : new ResourceNotFound("the organization does not exist", "unknown_organization");
     }
 }

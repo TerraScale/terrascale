@@ -6,10 +6,8 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
 {
-    // ts-auth owns key metadata and issuance. Secrets are returned once and never stored by the dashboard.
     public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time, TsAuthClient authClient)
     {
-        // One issuer page: 100 keys is its fixed page size; the dashboard asks for nothing more per page.
         public const int IssuerPageSize = 100;
 
         public async Task<ApiKeyListPage> ListPageAsync(AccountContext context, string? cursor, int limit, CancellationToken cancellationToken)
@@ -48,7 +46,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 }
             }
 
-            // A cursor the issuer already answered cannot advance: stop the traversal instead of looping.
             var next = page.Next;
             if (!string.IsNullOrEmpty(next) && next == cursor)
             {
@@ -58,7 +55,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new([.. items.OrderBy(key => key.Name, StringComparer.Ordinal)], string.IsNullOrEmpty(next) ? null : next);
         }
 
-        // Used only where the whole set is genuinely needed (expiry notifications); otherwise one page at a time.
         public async Task<IReadOnlyList<ProjectCredential>> ListAsync(AccountContext context, CancellationToken cancellationToken)
         {
             if (context.Project is null)
@@ -149,15 +145,12 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             {
                 throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
             }
-            // Whole seconds, so the expiry ts-auth echoes back compares exactly.
             DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
             _ = DatabaseService.Scope(context);
             var cidrs = CheckCidrs(allowedCidrs);
-            // ts-auth narrows by the database ULID only: a name could later reach a re-created database of that name.
             return new(name, permissions, database?.Id, expiresAt, cidrs);
         }
 
-        // Replaces the key's allowlist at ts-auth (same role as creating a key); an empty list allows any IP.
         public async Task<ProjectCredential> SetAllowedCidrsAsync(AccountContext context, string keyId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
         {
             if (!context.CanManageKeys)
@@ -181,7 +174,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return key;
         }
 
-        // The project's allowlist applies to every key in it, on top of each key's own list.
         public async Task<IReadOnlyList<string>> ProjectAllowedCidrsAsync(AccountContext context, CancellationToken cancellationToken)
         {
             return ProjectCidrs(context, await SendAsync(context, HttpMethod.Get, ProjectPath(DatabaseService.Scope(context)), null, cancellationToken));
@@ -235,7 +227,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             try { await client.RevokeProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
             catch (HttpRequestException)
             {
-                // A failed answer may hide a committed delete: report the key's real state, not the transport error.
                 try { await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
                 catch (HttpRequestException missing) when (missing.StatusCode == HttpStatusCode.NotFound) { return false; }
                 throw;
@@ -244,19 +235,16 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return true;
         }
 
-        // After ts-auth committed a create or revoke: the dashboard records who made it and from where.
         public Task RecordAsync(AccountService accounts, AccountContext context, string keyId, bool created, CancellationToken cancellationToken)
         {
             return accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, created ? "api_key.created" : "api_key.revoked", keyId, "api_key", time.GetUtcNow())), cancellationToken);
         }
 
-        // Callers exclude client aborts before treating cancellation as a dependency timeout.
         internal static bool FollowUpFailure(Exception error)
         {
             return error is HttpRequestException or IOException or JsonException or OperationCanceledException or TimeoutException || DatabaseResults.KnownFailure(error);
         }
 
-        // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
         public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken, string stepUpProof = "")
         {
             if (!context.CanManageKeys)
@@ -298,9 +286,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         public const int MaxPreviousSecretTtl = 86400;
         public const int MaxAllowedCidrs = 32;
-        // ts-auth must echo the exact network set it enforces. Compare canonical networks: host bits are masked,
-        // a bare address is /32 or /128, IPv6 spelling, duplicates and order do not matter, families never mix.
-        // An entry that does not parse never matches, so a widened or different echo is rejected.
         internal static bool SameCidrs(IReadOnlyList<string> requested, IReadOnlyList<string> returned)
         {
             static string? Network(string value)
@@ -329,7 +314,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var right = returned.Select(Network).ToHashSet(StringComparer.Ordinal);
             return !left.Contains(null) && !right.Contains(null) && left.SetEquals(right);
         }
-        // Light checks only: ts-auth validates and canonicalizes each entry and answers 400 with the reason.
         public static string[] ParseCidrs(string text)
         {
             return text.Split([',', ';', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -350,7 +334,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return key.ExpiresAt is { } expires && expires > now && expires - now <= TimeSpan.FromDays(7);
         }
 
-        // Key lifetimes offered on create, in days; 0 means the key works until it is revoked.
         public static readonly IReadOnlyList<int> ExpiryChoices = [0, 30, 90, 365];
 
         public static ProjectApiKeyMetadata Metadata(ProjectCredential key)
@@ -383,7 +366,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return $"/v1/terrascale/organizations/{scope.OrganizationId}/projects/{scope.ProjectId}";
         }
 
-        // ts-auth answers 400 with a reason for a bad CIDR; the user sees it. Other refusals keep their status.
         private async Task<JsonElement> SendAsync(AccountContext context, HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
         {
             using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, path)) { Content = content };
@@ -455,8 +437,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             {
                 throw new HttpRequestException("Credential returned invalid metadata or scope identity.");
             }
-            // The restriction is the database ULID; the name is looked up for display. A key stored narrowed by name (before
-            // narrowing by ULID) mints no token at ts-auth, and an ID no longer in the project is a deleted database.
             var narrowed = key.Database;
             var byId = narrowed is not null && TerraScaleIds.IsValid(narrowed);
             var name = narrowed is null ? null : byId ? context.Project!.Databases.GetValueOrDefault(narrowed)?.Name ?? "Deleted database"

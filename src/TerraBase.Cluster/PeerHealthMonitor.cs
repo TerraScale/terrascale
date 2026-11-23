@@ -31,7 +31,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
     {
         foreach (var state in _peers.Values)
         {
-            await RegisterAsync(state, cancellationToken).ConfigureAwait(false);
+            await RegisterAsync(state, cancellationToken);
         }
     }
 
@@ -45,9 +45,9 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
                 await Parallel.ForEachAsync(
                     _peers.Values,
                     new ParallelOptions { MaxDegreeOfParallelism = options.MaxReplicationParallelism, CancellationToken = cancellationToken },
-                    PingAsync).ConfigureAwait(false);
+                    PingAsync);
             }
-            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false));
+            while (await timer.WaitForNextTickAsync(cancellationToken));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -62,7 +62,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             return null;
         }
 
-        await PingAsync(state, cancellationToken).ConfigureAwait(false);
+        await PingAsync(state, cancellationToken);
         return state.Health;
     }
 
@@ -70,7 +70,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
     {
         if (!state.Registered)
         {
-            await RegisterAsync(state, cancellationToken).ConfigureAwait(false);
+            await RegisterAsync(state, cancellationToken);
             if (!state.Registered)
             {
                 Record(state, success: false, TimeSpan.Zero);
@@ -84,13 +84,13 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             QuicMessageType.Ping,
             new PingMessage(options.NodeId, options.Region, started, _instanceId),
             options.PingTimeout,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken);
         var (success, timedOut, remoteInstanceId) = response switch
         {
             PongMessage pong when string.Equals(pong.NodeId, state.Info.NodeId, StringComparison.Ordinal) => (true, false, pong.InstanceId),
             PongMessage => (false, false, 0L),
-            RequestTimeout => (false, true, 0L),
-            Unavailable or QuicRemoteError => (false, false, 0L),
+            QuicTimeout => (false, true, 0L),
+            QuicUnavailable or QuicRemoteError => (false, false, 0L),
         };
         if (remoteInstanceId != 0)
         {
@@ -117,7 +117,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
 
     private async ValueTask RegisterAsync(PeerState state, CancellationToken cancellationToken)
     {
-        if (await ResolveAsync(state.Info, cancellationToken).ConfigureAwait(false) is not { } address)
+        if (await ResolveAsync(state.Info, cancellationToken) is not { } address)
         {
             ClusterLog.PeerUnresolved(logger, state.Info.NodeId);
             return;
@@ -136,7 +136,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
 
         try
         {
-            var addresses = await Dns.GetHostAddressesAsync(peer.Host, cancellationToken).ConfigureAwait(false);
+            var addresses = await Dns.GetHostAddressesAsync(peer.Host, cancellationToken);
             return addresses.FirstOrDefault(static address => address.AddressFamily == AddressFamily.InterNetwork) ?? addresses.FirstOrDefault();
         }
         catch (SocketException)
@@ -145,7 +145,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
         }
     }
 
-    private ValueTask<Result<PongMessage, QuicRemoteError>> HandlePingAsync(QuicCallContext context, PingMessage message, CancellationToken cancellationToken)
+    private ValueTask<QuicHandlerOutcome<PongMessage>> HandlePingAsync(QuicCallContext context, PingMessage message, CancellationToken cancellationToken)
     {
         if (_peers.TryGetValue(message.NodeId, out var state))
         {
@@ -161,7 +161,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             }
         }
 
-        return ValueTask.FromResult<Result<PongMessage, QuicRemoteError>>(new PongMessage(options.NodeId, options.Region, message.SentAtTicks, _instanceId));
+        return ValueTask.FromResult<QuicHandlerOutcome<PongMessage>>(new PongMessage(options.NodeId, options.Region, message.SentAtTicks, _instanceId));
     }
 
     private sealed class PeerState(PeerNodeInfo info)

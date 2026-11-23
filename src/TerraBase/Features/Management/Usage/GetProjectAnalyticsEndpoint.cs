@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed class GetProjectAnalyticsEndpoint(DatabaseAccess access, UsageReports reports) : Endpoint<UsageInput, Result<AnalyticsBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+internal sealed class GetProjectAnalyticsEndpoint(DatabaseAccess access, UsageReports reports) : Endpoint<UsageInput, AnalyticsResponse>
 {
     public override void Configure()
     {
@@ -17,21 +17,22 @@ internal sealed class GetProjectAnalyticsEndpoint(DatabaseAccess access, UsageRe
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<AnalyticsBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(UsageInput request, CancellationToken cancellationToken)
+    public override async ValueTask<AnalyticsResponse> HandleAsync(UsageInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesRead, cancellationToken) switch
+        var outcome = await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesRead, cancellationToken);
+        return outcome switch
         {
             ResolvedProject resolved => await reports.AnalyticsAsync(UsageMeter.ProjectScope(resolved.Project.Id), cancellationToken) switch
             {
                 AnalyticsBody analytics => analytics,
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

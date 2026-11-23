@@ -3,8 +3,17 @@ using System.Net.WebSockets;
 
 namespace TerraScale.Platform.Features.Shapes.Endpoints;
 
+public readonly union GetShapeHintsReply(
+    ShapeSocketClosed,
+    ShapeRefetch,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier notifier, TimeProvider timeProvider)
-    : EndpointWithoutRequest<Result<ShapeSocketClosed, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : EndpointWithoutRequest<GetShapeHintsReply>
 {
     private static readonly TimeSpan AuthWindow = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Recheck = TimeSpan.FromSeconds(20);
@@ -23,13 +32,13 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<ShapeSocketClosed, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<GetShapeHintsReply> HandleAsync(
         CancellationToken cancellationToken)
     {
         var query = HttpContext.Request.Query;
         if (!HttpContext.WebSockets.IsWebSocketRequest)
         {
-            return new Validation("a WebSocket upgrade offering terrascale.shape.v1 is required");
+            return new PlatformInvalidRequest("a WebSocket upgrade offering terrascale.shape.v1 is required");
         }
 
         if (ShapeParameters.Only(query, "handle", "offset", "where", "columns") is { } unknown)
@@ -41,18 +50,18 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
         var offset = ShapeParameters.Parameter(query, "offset") is { } text ? ShapeOffset.ParseDecimal(text) : null;
         if (handle is null || ShapeParameters.CheckHandle(handle) is not null || offset is not { } start)
         {
-            return new Validation("handle and a decimal offset are required");
+            return new PlatformInvalidRequest("handle and a decimal offset are required");
         }
 
         var route = new ShapeRouteRequest(RouteValue("project"), RouteValue("database"), RouteValue("table"));
         return ShapeQuery.From(route.Table, query) switch
         {
             ShapeQuery shape => await ConnectAsync(route, shape, handle, start, cancellationToken),
-            Validation invalid => invalid,
+            PlatformInvalidRequest invalid => invalid,
         };
     }
 
-    private async ValueTask<Result<ShapeSocketClosed, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ConnectAsync(
+    private async ValueTask<GetShapeHintsReply> ConnectAsync(
         ShapeRouteRequest route,
         ShapeQuery query,
         string handle,
@@ -61,15 +70,16 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
     {
         if (HttpContext.Request.Headers.Authorization.Count > 0 || HttpContext.Request.Headers.ContainsKey(PlatformOptions.PeerCredentialHeader))
         {
-            return await reader.ResolveAsync(HttpContext, route, query, cancellationToken) switch
+            var outcome = await reader.ResolveAsync(HttpContext, route, query, cancellationToken);
+            return outcome switch
             {
                 ResolvedShape resolved when resolved.Shape.Handle != handle => ShapeReader.Refetch(resolved.Shape, "shape lineage changed"),
                 ResolvedShape resolved => await StreamAsync(await AcceptAsync(), route, resolved, offset, cancellationToken),
-                Validation invalid => invalid,
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                PlatformInvalidRequest invalid => invalid,
+                PlatformUnauthorized unauthorized => unauthorized,
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
             };
         }
 
@@ -86,11 +96,11 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
         {
             ResolvedShape resolved when resolved.Shape.Handle != handle => "must_refetch",
             ResolvedShape => null,
-            Validation => "invalid_request",
-            Unauthorized => "invalid_key",
-            Forbidden => "forbidden",
-            NotFound => "not_found",
-            Unavailable => "unavailable",
+            PlatformInvalidRequest => "invalid_request",
+            PlatformUnauthorized => "invalid_key",
+            PlatformForbidden => "forbidden",
+            PlatformNotFound => "not_found",
+            PlatformUnavailable => "unavailable",
         };
         if (refusal is not null)
         {
@@ -102,11 +112,11 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
         return resolvedAfterAuth switch
         {
             ResolvedShape resolved => await StreamAsync(socket, route, resolved, offset, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
@@ -121,11 +131,12 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
         {
             if (current.Shape.Head > offset)
             {
-                var manifest = await reader.ManifestAsync(current.Shape, offset, disconnected.Token) switch
+                var manifestOutcome = await reader.ManifestAsync(current.Shape, offset, disconnected.Token);
+                var manifest = manifestOutcome switch
                 {
                     ShapeMirrorManifest found => found,
                     ShapeRefetch => new ShapeMirrorManifest(current.Shape.Handle, []),
-                    Unavailable => new ShapeMirrorManifest(current.Shape.Handle, []),
+                    PlatformUnavailable => new ShapeMirrorManifest(current.Shape.Handle, []),
                 };
                 var next = current.Shape.Head.ToString(CultureInfo.InvariantCulture);
                 open = await SendAsync(socket, new ShapeHintFrame("new_data", current.Shape.Handle, offset.ToString(CultureInfo.InvariantCulture), next, manifest), disconnected.Token);
@@ -145,11 +156,11 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
             {
                 ResolvedShape next when next.Shape.Handle != current.Shape.Handle => "must_refetch",
                 ResolvedShape => null,
-                Validation => "must_refetch",
-                Unauthorized => "invalid_key",
-                Forbidden => "forbidden",
-                NotFound => "must_refetch",
-                Unavailable => recheck ? "unavailable" : null,
+                PlatformInvalidRequest => "must_refetch",
+                PlatformUnauthorized => "invalid_key",
+                PlatformForbidden => "forbidden",
+                PlatformNotFound => "must_refetch",
+                PlatformUnavailable => recheck ? "unavailable" : null,
             };
             if (step is not null)
             {
@@ -160,7 +171,7 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
             current = refreshed switch
             {
                 ResolvedShape next => next,
-                Validation or Unauthorized or Forbidden or NotFound or Unavailable => current,
+                PlatformInvalidRequest or PlatformUnauthorized or PlatformForbidden or PlatformNotFound or PlatformUnavailable => current,
             };
             if (recheck)
             {

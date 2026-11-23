@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union EnrolledProjectResponse(ProjectBody, InvalidInput, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class EnrollProjectEndpoint(CatalogStore catalog, TimeProvider time)
-    : Endpoint<EnrollmentInput, Result<ProjectBody, Validation, Forbidden, NotFound, Unavailable>>
+    : Endpoint<EnrollmentInput, EnrolledProjectResponse>
 {
     public override void Configure()
     {
@@ -19,34 +21,36 @@ internal sealed class EnrollProjectEndpoint(CatalogStore catalog, TimeProvider t
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<ProjectBody, Validation, Forbidden, NotFound, Unavailable>> HandleAsync(EnrollmentInput request, CancellationToken cancellationToken)
+    public override async ValueTask<EnrolledProjectResponse> HandleAsync(EnrollmentInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!PlanFlow.IsOperator(HttpContext.Caller, "closure"))
         {
-            return new Forbidden("enrollment needs an operator credential", "forbidden_caller");
+            return new CallerForbidden("enrollment needs an operator credential", "forbidden_caller");
         }
 
         if (ManagementService.Id(request.Project) is not { } projectId || ManagementService.Id(request.Organization) is not { } organizationId)
         {
-            return new Validation("project and organization must be canonical uppercase ULIDs", "invalid_request");
+            return new InvalidInput("project and organization must be canonical uppercase ULIDs", "invalid_request");
         }
 
-        var existing = await catalog.GetProjectAsync(projectId, cancellationToken) switch
+        var existingOutcome = await catalog.GetProjectAsync(projectId, cancellationToken);
+        var existing = existingOutcome switch
         {
             ProjectRecord project => project,
-            NotFound or Unavailable => null,
+            ResourceNotFound or BackendUnavailable => null,
         };
         var record = new ProjectRecord(projectId, organizationId, existing?.Name ?? projectId.ToString(), existing?.CreatedAt ?? time.GetUtcNow(), existing?.Plan);
-        return await catalog.GetOrganizationAsync(organizationId, cancellationToken) switch
+        var outcome = await catalog.GetOrganizationAsync(organizationId, cancellationToken);
+        return outcome switch
         {
             OrganizationRecord => await catalog.UpsertProjectAsync(record, cancellationToken) switch
             {
-                Done => ProjectBody.From(record),
-                Unavailable unavailable => unavailable,
+                Completed => ProjectBody.From(record),
+                BackendUnavailable unavailable => unavailable,
             },
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

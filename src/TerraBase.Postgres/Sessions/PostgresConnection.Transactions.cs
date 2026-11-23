@@ -5,6 +5,8 @@ using TerraScale.Contracts.Consistency;
 
 namespace TerraBase.Postgres.Sessions;
 
+internal readonly union PgTransactionResult(ISqlTransaction, PgError);
+
 internal sealed partial class PostgresConnection
 {
     private PgOutcome Begin(PgBeginCommand begin)
@@ -19,28 +21,29 @@ internal sealed partial class PostgresConnection
         return PgResult.Command("BEGIN");
     }
 
-    private async ValueTask<Result<ISqlTransaction, PgError>> EnsureTransactionAsync(PostgresTransactionBlock block, CancellationToken cancellationToken)
+    private async ValueTask<PgTransactionResult> EnsureTransactionAsync(PostgresTransactionBlock block, CancellationToken cancellationToken)
     {
         if (block.Active is { } active)
         {
-            return Result(active);
+            return Existing(active);
         }
 
         var options = new SqlTransactionOptions(block.Mode, block.Access, session.Bookmark);
-        return await session.Executor.BeginTransactionAsync(options, cancellationToken).ConfigureAwait(false) switch
+        var begun = await session.Executor.BeginTransactionAsync(options, cancellationToken);
+        return begun switch
         {
             ISqlTransaction transaction => Activate(block, transaction),
             StorageBusy busy => PgErrors.From(busy),
-            RequestTimeout timeout => PgErrors.From(timeout),
+            ClusterTimeout timeout => PgErrors.From(timeout),
         };
     }
 
-    private static Result<ISqlTransaction, PgError> Result(ISqlTransaction transaction) => new(transaction);
+    private static PgTransactionResult Existing(ISqlTransaction transaction) => new(transaction);
 
-    private static Result<ISqlTransaction, PgError> Activate(PostgresTransactionBlock block, ISqlTransaction transaction)
+    private static PgTransactionResult Activate(PostgresTransactionBlock block, ISqlTransaction transaction)
     {
         block.Active = transaction;
-        return Result(transaction);
+        return Existing(transaction);
     }
 
     private async ValueTask<PgOutcome> CommitAsync(CancellationToken cancellationToken)
@@ -52,11 +55,12 @@ internal sealed partial class PostgresConnection
 
         if (block.Failed)
         {
-            await EndTransactionAsync(block, rollback: true).ConfigureAwait(false);
+            await EndTransactionAsync(block, rollback: true);
             return PgResult.Command("ROLLBACK");
         }
 
-        return await FinishAsync(block, cancellationToken).ConfigureAwait(false) switch
+        var failure = await FinishAsync(block, cancellationToken);
+        return failure switch
         {
             PgError error => error,
             null => PgResult.Command("COMMIT"),
@@ -67,21 +71,21 @@ internal sealed partial class PostgresConnection
     {
         if (block.Active is not { } active)
         {
-            await EndTransactionAsync(block, rollback: false).ConfigureAwait(false);
+            await EndTransactionAsync(block, rollback: false);
             return null;
         }
 
-        var committed = await session.Executor.CommitAsync(active, cancellationToken).ConfigureAwait(false);
+        var committed = await session.Executor.CommitAsync(active, cancellationToken);
         var failure = committed switch
         {
             CommitMetadata metadata => Committed(metadata),
             SerializationConflict conflict => PgErrors.From(conflict),
             SchemaMismatch mismatch => PgErrors.From(mismatch),
-            Unavailable unavailable => PgErrors.From(unavailable),
-            RequestTimeout timeout => PgErrors.From(timeout),
+            ClusterUnavailable unavailable => PgErrors.From(unavailable),
+            ClusterTimeout timeout => PgErrors.From(timeout),
             StorageBusy busy => PgErrors.From(busy),
         };
-        await EndTransactionAsync(block, rollback: failure is not null).ConfigureAwait(false);
+        await EndTransactionAsync(block, rollback: failure is not null);
         return failure;
     }
 
@@ -98,7 +102,7 @@ internal sealed partial class PostgresConnection
             return new PgResult(null, [], "ROLLBACK", new PgNotice("25P01", "there is no transaction in progress"));
         }
 
-        await EndTransactionAsync(block, rollback: true).ConfigureAwait(false);
+        await EndTransactionAsync(block, rollback: true);
         return PgResult.Command("ROLLBACK");
     }
 
@@ -111,10 +115,10 @@ internal sealed partial class PostgresConnection
 
         if (commit)
         {
-            return await FinishAsync(block, closed).ConfigureAwait(false);
+            return await FinishAsync(block, closed);
         }
 
-        await EndTransactionAsync(block, rollback: true).ConfigureAwait(false);
+        await EndTransactionAsync(block, rollback: true);
         return null;
     }
 
@@ -134,10 +138,10 @@ internal sealed partial class PostgresConnection
         block.Active = null;
         if (rollback)
         {
-            await active.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            await active.RollbackAsync(CancellationToken.None);
         }
 
-        await active.DisposeAsync().ConfigureAwait(false);
+        await active.DisposeAsync();
     }
 
     private async ValueTask<PgOutcome> SavepointAsync(string sql, string tag, CancellationToken cancellationToken)
@@ -148,7 +152,8 @@ internal sealed partial class PostgresConnection
         }
 
         block.Savepoints = true;
-        return await ExecuteStatementAsync(new SqlStatement(sql, [], NoNamed), block.Access, cancellationToken).ConfigureAwait(false) switch
+        var executed = await ExecuteStatementAsync(new SqlStatement(sql, [], NoNamed), block.Access, cancellationToken);
+        return executed switch
         {
             SqlResultSet => PgResult.Command(tag),
             PgError error => error,
@@ -169,7 +174,7 @@ internal sealed partial class PostgresConnection
 
         var failed = block.Failed;
         block.Failed = false;
-        var outcome = await ExecuteStatementAsync(new SqlStatement($"ROLLBACK TO SAVEPOINT {command.Name}", [], NoNamed), block.Access, cancellationToken).ConfigureAwait(false);
+        var outcome = await ExecuteStatementAsync(new SqlStatement($"ROLLBACK TO SAVEPOINT {command.Name}", [], NoNamed), block.Access, cancellationToken);
         return outcome switch
         {
             SqlResultSet => PgResult.Command("ROLLBACK"),
@@ -316,7 +321,7 @@ internal sealed partial class PostgresConnection
 
         session.Statements.Clear();
         session.Portals.Clear();
-        await StopListeningAsync(session).ConfigureAwait(false);
+        await StopListeningAsync(session);
         foreach (var change in session.Settings.ResetAll())
         {
             session.Report(change);

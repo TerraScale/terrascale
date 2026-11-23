@@ -81,8 +81,8 @@ long balance = await session.TransactionAsync(async (tx, token) =>
 `TransactionAsync` begins, runs the callback and commits; when the callback throws it rolls back and rethrows.
 `BeginAsync`, `CommitAsync` and `RollbackAsync` are the explicit form. After a failed statement inside a transaction
 every call throws `transaction_aborted` until rollback; commit then rolls back and throws `transaction_rolled_back`.
-Session errors have a null `StatusCode`. A refused upgrade throws the usual `TerraBaseException` subclass (401, 404,
-421 `TerraBaseWrongRegionException`). The upgrade goes through the caller's `HttpClient` and its handlers with
+Session errors have a null `StatusCode`. A refused upgrade throws a `TerraBaseException` carrying the HTTP status.
+The upgrade goes through the caller's `HttpClient` and its handlers with
 the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT), and is
 never resent. A lost committing reply throws `write_outcome_unknown` (08007), and every later call throws the
 same error. If no committing request was sent, a lost open transaction throws `transaction_rolled_back` until
@@ -191,7 +191,7 @@ sorted by region id; the order has no meaning) and `AllRegions`. `CreateDatabase
 take a `TerraBaseDatabasePlacement` value made with `In` (one to nine distinct regions) or `EveryRegion`. TerraBase picks which region writes and
 moves that on its own when the set changes. `Database(projectId, name).GetRegionsAsync` reads each region's
 `AppliedBookmark`, `LagMs` (-1 when unknown) and `Healthy` as the answering region observes them, sampled at
-`ObservedAtUtc`; `Role` is optional. `CreateDatabaseAsync(project, name, defaultConsistency)` and
+`ObservedAtUtc`. `CreateDatabaseAsync(project, name, defaultConsistency)` and
 `SetDatabaseConsistencyAsync` set the database's `DefaultConsistency`, which `TerraBaseManagedDatabase` reports.
 Tests replay `contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
 (`AllRegions`) holds the database in every serving region, including regions added later
@@ -339,10 +339,8 @@ and `TerraBaseKeyExpiredException` (permanent; replace the key), `TerraBaseForbi
 `TerraBasePreconditionFailedException` (412) and `TerraBaseUnavailableException`
 (503). A request that exceeds the fixed 30-second deadline throws `TimeoutException`.
 An earlier `HttpClient.Timeout` also throws `TimeoutException`; caller cancellation
-remains `OperationCanceledException`. TerraBase refuses `503 remote_region_unavailable`,
-`confirmation_busy` and `catalog_stale` before it executes a request, so the SDK resends any request
-with a buffered body at most twice. Safe GET/HEAD reads also resend `429 tenant_busy`, `503 auth_unavailable`,
-`storage_busy` and `capacity`, gateway 502 and 504 answers, and a lost connection. Each resend asks the
+remains `OperationCanceledException`. The SDK resends safe GET/HEAD reads up to twice after `429 tenant_busy`,
+`503 auth_unavailable`, `storage_busy` or `capacity`, gateway 502 and 504 answers, or a lost connection. Each resend asks the
 `AccessTokenProvider` again and waits for `Retry-After` plus up to 250 ms, or full jitter over 250/500 ms; when that
 wait would pass the request deadline, the failure is thrown at once. Authentication errors never retry.
 A TerraBase push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
@@ -441,27 +439,12 @@ using a valid token; only missing, actually expired, or refused tokens require a
 ## Region-set placement
 
 Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
-and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
-with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
-Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
-`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+and from a rename. The response sorts `regions` by region ID. `placementVersion` changes with membership
+and stays unchanged for an identical set. Region status reports each region's applied bookmark, lag in
+milliseconds and health.
 A removed regional endpoint proxies to a region that holds the database in the unreleased server contract;
 see [source-only proxy behavior](../region-proxy.md). Use the global API origin.
 
-Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
-Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
-A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
-The SDK exposes `TerraBaseUnavailableException.ErrorCode == "replica_not_ready"` and `TerraBaseConflictException.ErrorCode == "move_in_progress"`. Neither code is automatically retried;
-general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
-The caller bounds this repeat loop to 90 seconds and propagates other errors:
-
-`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
-
-```csharp
-using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, placement: TerraBaseDatabasePlacement.In("fra"), cancellationToken: deadline.Token); break; }
-    catch (TerraBaseException e) when (e.ErrorCode == "replica_not_ready") { await Task.Delay(1000, deadline.Token); } }
-```
 
 ## Project Authentication management
 

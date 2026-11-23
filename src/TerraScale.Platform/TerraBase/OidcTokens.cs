@@ -6,6 +6,10 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace TerraScale.Platform.TerraBase;
 
+public sealed record TokenAccepted;
+
+public readonly union ValidateTokenOutcome(TokenAccepted, TokenRejected, PlatformUnavailable);
+
 public sealed record TokenRejected(string Message);
 
 public sealed class OidcTokens : IDisposable
@@ -26,11 +30,11 @@ public sealed class OidcTokens : IDisposable
         }
     }
 
-    public async ValueTask<Result<Done, TokenRejected, Unavailable>> ValidateAsync(string token, string project, CancellationToken cancellationToken)
+    public async ValueTask<ValidateTokenOutcome> ValidateAsync(string token, string project, CancellationToken cancellationToken)
     {
         if (_configuration is not { } configuration || _options.AuthIssuer is not { } issuer || _options.AuthAudience is not { } audience)
         {
-            return new Done();
+            return new TokenAccepted();
         }
 
         var invalid = new TokenRejected("the bearer token is invalid or expired");
@@ -65,11 +69,11 @@ public sealed class OidcTokens : IDisposable
         }
         catch (InvalidOperationException error)
         {
-            return new Unavailable($"the identity provider keys are unavailable: {error.Message}", "jwks_unavailable");
+            return new PlatformUnavailable($"the identity provider keys are unavailable: {error.Message}", "jwks_unavailable");
         }
         catch (IOException error)
         {
-            return new Unavailable($"the identity provider keys are unavailable: {error.Message}", "jwks_unavailable");
+            return new PlatformUnavailable($"the identity provider keys are unavailable: {error.Message}", "jwks_unavailable");
         }
 
         var result = await _handler.ValidateTokenAsync(token, new TokenValidationParameters
@@ -81,7 +85,7 @@ public sealed class OidcTokens : IDisposable
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(30),
         });
-        return result.IsValid ? new Done() : invalid;
+        return result.IsValid ? new TokenAccepted() : invalid;
     }
 
     public void Dispose() => _projects.Dispose();

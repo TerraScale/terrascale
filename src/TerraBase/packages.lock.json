@@ -266,14 +266,6 @@
       "terrascale.contracts": {
         "type": "Project",
         "dependencies": {
-          "TerraScale.DotNet": "[0.0.21, )",
-          "Ulid": "[1.4.1, )"
-        }
-      },
-      "terrascale.dotnet": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )",
           "Ulid": "[1.4.1, )"
         }
       },

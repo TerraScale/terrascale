@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -70,9 +69,9 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         return (await EmailApi.ReadAsync<EmailSupportRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailSupportRequest request => await SendAsync(request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+            AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
         });
     }
 
@@ -100,7 +99,7 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         }
         if (!await limiter.TryAcquireAsync(OidcIssuer.InstanceId, "support", user.Id, PerUserPerHour, TimeSpan.FromHours(1), cancellationToken))
         {
-            return ErrorResults.ToResult(new QuotaExceeded("Too many support requests; retry within the hour or email support@terrascale.tech.", "rate_limited"));
+            return ErrorResults.ToResult(new AuthQuotaExceeded("Too many support requests; retry within the hour or email support@terrascale.tech.", "rate_limited"));
         }
         var delivery = new SupportEmailDelivery(OidcIssuer.InstanceId, request.RequestId, user.Id, "sending");
         var reserved = Change.Insert(delivery);

@@ -345,7 +345,6 @@
       "terrascale.contracts": {
         "type": "Project",
         "dependencies": {
-          "TerraScale.DotNet": "[0.0.21, )",
           "Ulid": "[1.4.1, )"
         }
       },

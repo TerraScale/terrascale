@@ -33,9 +33,9 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 {
                     TsAuthPlatformPage<TsAuthPlatformInvitation> page => ProjectInvitationEndpoints.Page(http, context, page.Items, page.Next, previous: after is not null, after: after ?? "",
                         notice: http.Request.Query["revoked"] == "1" ? "Project invitation revoked. Its acceptance link no longer works." : ""),
-                    Forbidden error => ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: 403),
-                    Validation error => ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: 400),
-                    Unavailable => ProjectInvitationEndpoints.Page(http, context, [], error: "Project invitations could not be loaded. Reload this page to retry.", status: 503),
+                    DashboardForbidden error => ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: 403),
+                    DashboardValidation error => ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: 400),
+                    DashboardUnavailable => ProjectInvitationEndpoints.Page(http, context, [], error: "Project invitations could not be loaded. Reload this page to retry.", status: 503),
                 };
             }
             catch (AccountAccessException error) { return ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: error.StatusCode); }

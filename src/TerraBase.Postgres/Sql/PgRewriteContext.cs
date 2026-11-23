@@ -39,3 +39,5 @@ internal sealed record PgRewrite(
     internal IReadOnlyList<SqlValue> Bind(IReadOnlyList<SqlValue> parameters) =>
         LiftedLiterals.Count == 0 ? parameters : [.. parameters.Take(ParameterCount), .. LiftedLiterals];
 }
+
+internal readonly union PgRewriteResult(PgRewrite, PgError);

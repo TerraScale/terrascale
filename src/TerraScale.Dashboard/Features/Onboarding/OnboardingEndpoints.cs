@@ -88,11 +88,12 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
             try
             {
-                return await service.SaveAsync(session, form, context.RequestAborted) switch
+                var outcome = await service.SaveAsync(session, form, context.RequestAborted);
+                return outcome switch
                 {
                     string destination => HttpRedirects.SeeOther(destination),
-                    Validation invalid => await RenderAsync(context, sessions, accounts, service, backend, form, invalid.Message, 422),
-                    Forbidden refused => await RenderAsync(context, sessions, accounts, service, backend, form, refused.Message, 403)
+                    DashboardValidation invalid => await RenderAsync(context, sessions, accounts, service, backend, form, invalid.Message, 422),
+                    DashboardForbidden refused => await RenderAsync(context, sessions, accounts, service, backend, form, refused.Message, 403)
                 };
             }
             catch (OnboardingValidationException error)

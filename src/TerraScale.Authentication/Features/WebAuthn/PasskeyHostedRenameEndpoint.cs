@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.SignIn;
@@ -54,9 +53,9 @@ public sealed class PasskeyHostedRenameEndpoint(Sessions sessions, PasskeyCreden
         {
             PasskeyCredentialEntry => await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, null, cancellationToken,
                 notice: "Passkey renamed.", next: SignInFlow.SafeNext(this.HttpContext, form.Next)),
-            Forbidden error => ErrorResults.ToResult(error),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            AuthForbidden error => ErrorResults.ToResult(error),
+            AuthNotFound error => ErrorResults.ToResult(error),
+            AuthConflict error => ErrorResults.ToResult(error),
         };
     }
 }

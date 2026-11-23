@@ -2,7 +2,6 @@ using Dapper;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Platform;
@@ -13,7 +12,7 @@ public sealed record DashboardDeletionList(IReadOnlyList<DashboardDeletionProof>
 
 public sealed record DashboardDeletionAcknowledgement(string Scope, string SubjectId, string? OrganizationId);
 
-public readonly union DeletionAcknowledgementResult(Done, NotFound, Conflict);
+public readonly union DeletionAcknowledgementResult(AuthCompleted, AuthNotFound, AuthConflict);
 
 public sealed record DeletionCursorRecord(string Name, string? After)
 {
@@ -83,11 +82,11 @@ internal static class DashboardDeletionProofs
             if (job.Value.DashboardVerifiedAt is not null
                 || await data.SaveAsync(Change.Update(job, job.Value with { DashboardVerifiedAt = clock.GetUtcNow() }), cancellationToken))
             {
-                return new Done();
+                return new AuthCompleted();
             }
         }
 
-        return new Conflict("Retry acknowledgement of the same proof.", "deletion_changed");
+        return new AuthConflict("Retry acknowledgement of the same proof.", "deletion_changed");
     }
 
     private static DashboardDeletionProof? Proof(DeletionJob job) =>
@@ -96,5 +95,5 @@ internal static class DashboardDeletionProofs
             ? new(job.ErasureId!, job.Scope, job.SubjectId, job.Scope == "organization" ? job.SubjectId : job.OrganizationId)
             : null;
 
-    private static NotFound Missing() => new("No such deletion proof.", "not_found");
+    private static AuthNotFound Missing() => new("No such deletion proof.", "not_found");
 }

@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.Common.Usage
             {
                 throw new IOException("Database placement scope is invalid.");
             }
-            // AllRegions records can contain only home, not the current serving topology.
             if (databases.Any(database => database.AllRegions))
             {
                 return new(null, "All serving regions (count unavailable)");

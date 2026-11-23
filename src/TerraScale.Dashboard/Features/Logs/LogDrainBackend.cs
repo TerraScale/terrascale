@@ -7,7 +7,8 @@ namespace TerraScale.Dashboard.Features.Logs
     {
         public async Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken)
         {
-            var result = await terraBase.ReadLogsAsync(ServiceCaller.Operator, projectId, databaseId, after, cancellationToken) switch
+            var outcome = await terraBase.ReadLogsAsync(ServiceCaller.Operator, projectId, databaseId, after, cancellationToken);
+            var result = outcome switch
             {
                 TerraBaseRequestLogPage page => page,
                 TerraBaseRefusal { Status: StatusCodes.Status404NotFound } => new TerraBaseRequestLogPage(databaseId, [], false, false, after),

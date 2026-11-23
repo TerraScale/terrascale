@@ -5,6 +5,10 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Storage;
 
+public readonly union AuthTransaction<T>(T, AuthConflict);
+
+public readonly union AuthBatchWrite(AuthCompleted, AuthConflict, AuthUnavailable);
+
 public sealed class AuthData(AuthConnectionFactory connections)
 {
     private readonly AsyncLocal<WriteAudit?> audit = new();
@@ -85,13 +89,13 @@ public sealed class AuthData(AuthConnectionFactory connections)
             : await ExecuteInTransactionAsync(batch, connection, cancellationToken);
         return outcome switch
         {
-            Done => Committed(currentAudit, true),
-            Conflict => false,
-            Unavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
+            AuthCompleted => Committed(currentAudit, true),
+            AuthConflict => false,
+            AuthUnavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
         };
     }
 
-    public async Task<Result<T, Conflict>> TransactAsync<T>(Func<AuthTransaction, Task<T>> work, CancellationToken cancellationToken)
+    public async Task<AuthTransaction<T>> TransactAsync<T>(Func<AuthTransaction, Task<T>> work, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(work);
         await using var connection = await connections.OpenAsync(cancellationToken);
@@ -101,20 +105,21 @@ public sealed class AuthData(AuthConnectionFactory connections)
         var currentAudit = audit.Value;
         if (Plan(scope.Staged, currentAudit) is not { } batch)
         {
-            return new Conflict("A conditional write lost to a concurrent change.");
+            return new AuthConflict("A conditional write lost to a concurrent change.");
         }
 
-        Result<Done, Conflict, Unavailable> outcome = await ExecuteAsync(batch, connection, transaction, cancellationToken) switch
+        var executed = await ExecuteAsync(batch, connection, transaction, cancellationToken);
+        var outcome = executed switch
         {
-            Done => await CommitAsync(transaction, cancellationToken),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            AuthCompleted => await CommitAsync(transaction, cancellationToken),
+            AuthConflict conflict => conflict,
+            AuthUnavailable unavailable => unavailable,
         };
         return outcome switch
         {
-            Done => Committed(currentAudit, result),
-            Conflict conflict => conflict,
-            Unavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
+            AuthCompleted => Committed(currentAudit, result),
+            AuthConflict conflict => conflict,
+            AuthUnavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
         };
     }
 
@@ -178,18 +183,19 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return result;
     }
 
-    private static async Task<Result<Done, Conflict, Unavailable>> ExecuteInTransactionAsync(WriteBatch batch, DbConnection connection, CancellationToken cancellationToken)
+    private static async Task<AuthBatchWrite> ExecuteInTransactionAsync(WriteBatch batch, DbConnection connection, CancellationToken cancellationToken)
     {
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        return await ExecuteAsync(batch, connection, transaction, cancellationToken) switch
+        var executed = await ExecuteAsync(batch, connection, transaction, cancellationToken);
+        return executed switch
         {
-            Done => await CommitAsync(transaction, cancellationToken),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            AuthCompleted => await CommitAsync(transaction, cancellationToken),
+            AuthConflict conflict => conflict,
+            AuthUnavailable unavailable => unavailable,
         };
     }
 
-    private static async Task<Result<Done, Conflict, Unavailable>> ExecuteAsync(WriteBatch batch, DbConnection connection, DbTransaction? transaction, CancellationToken cancellationToken)
+    private static async Task<AuthBatchWrite> ExecuteAsync(WriteBatch batch, DbConnection connection, DbTransaction? transaction, CancellationToken cancellationToken)
     {
         foreach (var command in batch.Commands(connection, transaction))
         {
@@ -201,32 +207,32 @@ public sealed class AuthData(AuthConnectionFactory connections)
                 }
                 catch (TerraBaseException refused) when (refused.ErrorCode is { } code && IsConflict(code, refused.Message))
                 {
-                    return new Conflict("A conditional write lost to a concurrent change.");
+                    return new AuthConflict("A conditional write lost to a concurrent change.");
                 }
                 catch (Exception failure) when (IsUnavailable(failure))
                 {
-                    return new Unavailable(failure.GetType().Name);
+                    return new AuthUnavailable(failure.GetType().Name);
                 }
             }
         }
 
-        return new Done();
+        return new AuthCompleted();
     }
 
-    private static async Task<Result<Done, Conflict, Unavailable>> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken)
+    private static async Task<AuthBatchWrite> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken)
     {
         try
         {
             await transaction.CommitAsync(cancellationToken);
-            return new Done();
+            return new AuthCompleted();
         }
         catch (TerraBaseException refused) when (refused.ErrorCode is { } code && IsConflict(code, refused.Message))
         {
-            return new Conflict("A transaction lost to a concurrent change.");
+            return new AuthConflict("A transaction lost to a concurrent change.");
         }
         catch (Exception failure) when (IsUnavailable(failure))
         {
-            return new Unavailable(failure.GetType().Name);
+            return new AuthUnavailable(failure.GetType().Name);
         }
     }
 

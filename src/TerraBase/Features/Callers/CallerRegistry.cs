@@ -8,6 +8,8 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Callers;
 
+internal readonly union CallerRegistryOutcome(CallerRegistry, ConfigurationError);
+
 internal sealed record CallerKey(string Kid, string Caller, string Kind, JsonElement Jwk, IReadOnlyList<string> Grants, DateTimeOffset NotAfter);
 
 internal sealed record CallerList(int Version, IReadOnlyList<CallerKey>? Callers);
@@ -28,7 +30,7 @@ internal sealed class CallerRegistry(FrozenDictionary<string, CallerKey> keys, i
     public static bool IsGrant(string grant) => Grants.Contains(grant)
         || (grant.StartsWith("data:", StringComparison.Ordinal) && Ulid.TryParse(grant["data:".Length..], out _));
 
-    public static Result<CallerRegistry, ConfigurationError> FromProcess(TimeProvider time)
+    public static CallerRegistryOutcome FromProcess(TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(time);
         var path = Environment.GetEnvironmentVariable(FileVariable);

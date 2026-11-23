@@ -4,7 +4,6 @@ using System.Net.WebSockets;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>One transaction over a SQL WebSocket session, from <see cref="DbConnection.BeginTransactionAsync(CancellationToken)"/>.</summary>
 public sealed class TerraBaseDbTransaction : DbTransaction
 {
     private static readonly TimeSpan RollbackBound = TimeSpan.FromSeconds(5);
@@ -19,32 +18,18 @@ public sealed class TerraBaseDbTransaction : DbTransaction
         Consistency = consistency;
     }
 
-    /// <summary>The connection this transaction runs on.</summary>
     protected override DbConnection DbConnection => connection;
 
-    /// <summary>
-    /// The consistency the transaction began with; null when the database's <c>defaultConsistency</c> chose it.
-    /// </summary>
     public TerraBaseConsistencyMode? Consistency { get; }
 
-    /// <summary>
-    /// <see cref="System.Data.IsolationLevel.Serializable"/> for a strong transaction, which runs serializable across regions;
-    /// otherwise <see cref="System.Data.IsolationLevel.Unspecified"/>.
-    /// </summary>
     public override IsolationLevel IsolationLevel => Consistency == TerraBaseConsistencyMode.Strong ? IsolationLevel.Serializable : IsolationLevel.Unspecified;
 
     internal TerraBaseSqlSession Session => session;
 
-    /// <summary>Commits the transaction, then closes the session even when the commit throws.</summary>
     public override Task CommitAsync(CancellationToken cancellationToken) => FinishAsync(session.CommitAsync, cancellationToken);
 
-    /// <summary>Rolls the transaction back, then closes the session even when the rollback throws.</summary>
     public override Task RollbackAsync(CancellationToken cancellationToken) => FinishAsync(session.RollbackAsync, cancellationToken);
 
-    /// <summary>
-    /// Rolls back unless the transaction already committed or rolled back, then closes the session. The rollback waits at
-    /// most 5 seconds, TerraBase's transaction limit; after that the socket is aborted and the server rolls back.
-    /// </summary>
     public override async ValueTask DisposeAsync()
     {
         if (finished) return;
@@ -58,16 +43,10 @@ public sealed class TerraBaseDbTransaction : DbTransaction
         }
     }
 
-    /// <summary>The SDK is async-only; use <see cref="CommitAsync(CancellationToken)"/>.</summary>
     public override void Commit() => throw NotSync();
 
-    /// <summary>The SDK is async-only; use <see cref="RollbackAsync(CancellationToken)"/>.</summary>
     public override void Rollback() => throw NotSync();
 
-    /// <summary>
-    /// Aborts an open transaction without waiting: the session's socket closes at once and the server rolls the
-    /// transaction back. Never throws, so a synchronous dispose cannot mask the caller's own exception.
-    /// </summary>
     protected override void Dispose(bool disposing)
     {
         if (disposing) Abort();

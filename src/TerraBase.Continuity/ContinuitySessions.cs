@@ -1,14 +1,32 @@
 namespace TerraBase.Continuity;
 
+public sealed record ContinuityRawKey(ReadOnlyMemory<byte> Bytes);
+
+public sealed record ContinuityDatabaseKeyMissing(Ulid DatabaseId, string Message, string Code);
+
+public readonly union ContinuityRawKeyOutcome(ContinuityRawKey, ContinuityDatabaseKeyMissing);
+
+public sealed record CopyTargetDiscarded;
+
+public sealed record CopyTargetDiscardFailed(string Message, string Code);
+
+public readonly union DiscardCopyTargetOutcome(CopyTargetDiscarded, CopyTargetDiscardFailed);
+
+public sealed record ContinuitySessionMissing(Ulid DatabaseId, string Message, string Code);
+
+public sealed record ContinuitySessionUnavailable(string Message, string Code);
+
+public readonly union ContinuitySessionOutcome(ISqlDatabaseSession, ContinuitySessionMissing, ContinuitySessionUnavailable);
+
 public interface IContinuityDatabaseCatalog
 {
     ValueTask<IReadOnlyList<Ulid>> ListActiveDatabasesAsync(CancellationToken cancellationToken);
 
-    ValueTask<Result<ReadOnlyMemory<byte>, NotFound>> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<ContinuityRawKeyOutcome> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken);
 
     ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, Unavailable>> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<DiscardCopyTargetOutcome> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken);
 }
 
 public sealed class ContinuitySessions(ISqlStorageEngine engine, IContinuityDatabaseCatalog catalog)
@@ -17,30 +35,37 @@ public sealed class ContinuitySessions(ISqlStorageEngine engine, IContinuityData
 
     public IContinuityDatabaseCatalog Catalog => catalog;
 
-    public async ValueTask<Result<ReadOnlyMemory<byte>, NotFound>> ResolveKeyAsync(Ulid databaseId, CancellationToken cancellationToken) =>
-        await catalog.ResolveRawKeyAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+    public async ValueTask<ContinuityRawKeyOutcome> ResolveKeyAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var resolved = await catalog.ResolveRawKeyAsync(databaseId, cancellationToken);
+        return resolved switch
         {
-            ReadOnlyMemory<byte> key when key.Length == DatabaseOpenRequest.RawKeyLength => key,
-            ReadOnlyMemory<byte> => new NotFound("the catalog returned a raw key that is not 32 bytes", "invalid_database_key"),
-            NotFound notFound => notFound,
+            ContinuityRawKey key when key.Bytes.Length == DatabaseOpenRequest.RawKeyLength => key,
+            ContinuityRawKey => new ContinuityDatabaseKeyMissing(databaseId, "the catalog returned a raw key that is not 32 bytes", "invalid_database_key"),
+            ContinuityDatabaseKeyMissing missing => missing,
         };
+    }
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> OpenAsync(Ulid databaseId, CancellationToken cancellationToken) =>
-        await ResolveKeyAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+    public async ValueTask<ContinuitySessionOutcome> OpenAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveKeyAsync(databaseId, cancellationToken);
+        return resolved switch
         {
-            ReadOnlyMemory<byte> key => await OpenAsync(databaseId, key, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => notFound,
+            ContinuityRawKey key => await OpenAsync(databaseId, key.Bytes, cancellationToken),
+            ContinuityDatabaseKeyMissing missing => new ContinuitySessionMissing(missing.DatabaseId, missing.Message, missing.Code),
         };
+    }
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> OpenAsync(Ulid databaseId, ReadOnlyMemory<byte> rawKey, CancellationToken cancellationToken) =>
-        await engine.OpenAsync(new DatabaseOpenRequest(databaseId, rawKey), cancellationToken).ConfigureAwait(false) switch
+    public async ValueTask<ContinuitySessionOutcome> OpenAsync(Ulid databaseId, ReadOnlyMemory<byte> rawKey, CancellationToken cancellationToken)
+    {
+        var opened = await engine.OpenAsync(new DatabaseOpenRequest(databaseId, rawKey), cancellationToken);
+        return opened switch
         {
-            ISqlDatabaseSession session => Opened(session),
-            NotFound notFound => notFound,
-            Validation validation => new Unavailable(validation.Message, validation.Code),
-            StorageCorrupted corrupted => new Unavailable(corrupted.Message, "storage_corrupted"),
-            StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+            ISqlDatabaseSession session => session,
+            DatabaseNotFound missing => new ContinuitySessionMissing(missing.DatabaseId, missing.Message, "not_found"),
+            InvalidDatabaseRequest invalid => new ContinuitySessionUnavailable(invalid.Message, invalid.Code),
+            StorageCorrupted corrupted => new ContinuitySessionUnavailable(corrupted.Message, "storage_corrupted"),
+            StorageBusy busy => new ContinuitySessionUnavailable(busy.Message, "storage_busy"),
         };
-
-    private static Result<ISqlDatabaseSession, NotFound, Unavailable> Opened(ISqlDatabaseSession session) => session;
+    }
 }

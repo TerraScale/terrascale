@@ -1,4 +1,3 @@
-using TerraScale.Results;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -28,36 +27,40 @@ public sealed class ServiceTransport(HttpClient http)
 
     public Uri BaseAddress => http.BaseAddress ?? throw new InvalidOperationException("The service HttpClient has no base address.");
 
-    public Task<Result<T, TerraBaseRefusal>> SendAsync<T>(ServiceCaller caller, HttpMethod method, string path, JsonTypeInfo<T> response,
-        CancellationToken cancellationToken) =>
-        SendAsync(caller, method, path, null, response, null, cancellationToken);
+    public Task<TOutcome> SendAsync<TValue, TOutcome>(ServiceCaller caller, HttpMethod method, string path, JsonTypeInfo<TValue> response,
+        CancellationToken cancellationToken) where TOutcome : ITerraBaseOutcome<TOutcome, TValue> =>
+        SendAsync<TValue, TOutcome>(caller, method, path, null, response, null, cancellationToken);
 
-    public async Task<Result<T, TerraBaseRefusal>> SendAsync<T>(ServiceCaller caller, HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> response,
-        Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken)
+    public Task<TOutcome> SendAsync<TValue, TOutcome>(ServiceCaller caller, HttpMethod method, string path, HttpContent? content,
+        JsonTypeInfo<TValue> response, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken) where TOutcome : ITerraBaseOutcome<TOutcome, TValue> =>
+        SendMappedAsync(caller, method, path, content, response, headers, TOutcome.Accepted, TOutcome.Refused, cancellationToken);
+
+    public async Task<TOutcome> SendMappedAsync<TValue, TOutcome>(ServiceCaller caller, HttpMethod method, string path, HttpContent? content,
+        JsonTypeInfo<TValue> response, Action<HttpRequestHeaders>? headers, Func<TValue, TOutcome> accepted, Func<TerraBaseRefusal, TOutcome> refused,
+        CancellationToken cancellationToken)
     {
-        using var request = Request(caller, method, path, content, headers);
-        var answer = await ExchangeAsync(request, cancellationToken);
+        var answer = await SendRawAsync(caller, method, path, content, headers, cancellationToken);
         return answer switch
         {
-            RawAnswer { Status: >= 200 and < 300 } ok => Parse(ok, response),
+            RawAnswer { Status: >= 200 and < 300 } ok => Parse(ok, response, accepted, refused),
+            RawAnswer rejected => refused(Refusal(rejected)),
+            TerraBaseRefusal refusal => refused(refusal),
+        };
+    }
+
+    public async Task<TerraBaseActionOutcome> SendAsync(ServiceCaller caller, HttpMethod method, string path, HttpContent? content,
+        CancellationToken cancellationToken)
+    {
+        var answer = await SendRawAsync(caller, method, path, content, null, cancellationToken);
+        return answer switch
+        {
+            RawAnswer { Status: >= 200 and < 300 } => new TerraBaseCompleted(),
             RawAnswer refused => Refusal(refused),
             TerraBaseRefusal refusal => refusal,
         };
     }
 
-    public async Task<Result<Done, TerraBaseRefusal>> SendAsync(ServiceCaller caller, HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
-    {
-        using var request = Request(caller, method, path, content, null);
-        var answer = await ExchangeAsync(request, cancellationToken);
-        return answer switch
-        {
-            RawAnswer { Status: >= 200 and < 300 } => new Done(),
-            RawAnswer refused => Refusal(refused),
-            TerraBaseRefusal refusal => refusal,
-        };
-    }
-
-    public async Task<Result<RawAnswer, TerraBaseRefusal>> SendRawAsync(ServiceCaller caller, HttpMethod method, string path, HttpContent? content,
+    public async Task<TerraBaseRawOutcome> SendRawAsync(ServiceCaller caller, HttpMethod method, string path, HttpContent? content,
         Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken)
     {
         using var request = Request(caller, method, path, content, headers);
@@ -90,25 +93,27 @@ public sealed class ServiceTransport(HttpClient http)
             return refusal;
         }
 
-        return Parse(answer, ClientJson.Default.TerraBaseErrorEnvelope) switch
+        return Parse(answer, ClientJson.Default.TerraBaseErrorEnvelope, envelope => envelope switch
         {
-            TerraBaseErrorEnvelope { Error: { } error } => refusal with { Code = error.Code, Message = error.Message, SqlState = error.SqlState, Statement = error.Statement, Details = error.Details },
-            TerraBaseErrorEnvelope or TerraBaseRefusal => refusal,
-        };
+            { Error: { } error } => refusal with { Code = error.Code, Message = error.Message, SqlState = error.SqlState, Statement = error.Statement, Details = error.Details },
+            { Error: null } => refusal,
+        }, _ => refusal);
     }
 
-    public static Result<T, TerraBaseRefusal> Parse<T>(RawAnswer answer, JsonTypeInfo<T> typeInfo)
+    public static TOutcome Parse<TValue, TOutcome>(RawAnswer answer, JsonTypeInfo<TValue> typeInfo, Func<TValue, TOutcome> accepted,
+        Func<TerraBaseRefusal, TOutcome> refused)
     {
+        TValue? value;
         try
         {
-            return JsonSerializer.Deserialize(answer.Body, typeInfo) is { } value
-                ? value
-                : TerraBaseRefusal.Invalid("The service answered an empty JSON document.");
+            value = JsonSerializer.Deserialize(answer.Body, typeInfo);
         }
         catch (JsonException error)
         {
-            return TerraBaseRefusal.Invalid(string.Concat("The service answered invalid JSON: ", error.Message));
+            return refused(TerraBaseRefusal.Invalid(string.Concat("The service answered invalid JSON: ", error.Message)));
         }
+
+        return value is { } parsed ? accepted(parsed) : refused(TerraBaseRefusal.Invalid("The service answered an empty JSON document."));
     }
 
     private HttpRequestMessage Request(ServiceCaller caller, HttpMethod method, string path, HttpContent? content, Action<HttpRequestHeaders>? headers)
@@ -124,7 +129,7 @@ public sealed class ServiceTransport(HttpClient http)
         return request;
     }
 
-    private async Task<Result<RawAnswer, TerraBaseRefusal>> ExchangeAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    private async Task<TerraBaseRawOutcome> ExchangeAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         try
         {

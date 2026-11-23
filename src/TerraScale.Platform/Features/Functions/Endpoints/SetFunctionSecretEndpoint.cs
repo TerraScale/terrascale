@@ -1,7 +1,16 @@
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union SetFunctionSecretReply(
+    FunctionSecretBody,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
 public sealed class SetFunctionSecretEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<SetFunctionSecretRequest, Result<FunctionSecretBody, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>>
+    : Endpoint<SetFunctionSecretRequest, SetFunctionSecretReply>
 {
     public override void Configure()
     {
@@ -14,26 +23,33 @@ public sealed class SetFunctionSecretEndpoint(PlatformAccess access, FunctionSer
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FunctionSecretBody, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>> HandleAsync(
+    public override async ValueTask<SetFunctionSecretReply> HandleAsync(
         SetFunctionSecretRequest request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.SetSecretAsync(target, request.Function, request.Secret, request.Value, cancellationToken) switch
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<SetFunctionSecretReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.SetSecretAsync(target, request.Function, request.Secret, request.Value, cancellationToken);
+            return operation switch
             {
                 FunctionSecretBody secret => secret,
-                Validation invalid => invalid,
-                NotFound missing => missing,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformInvalidRequest invalid => invalid,
+                PlatformNotFound missing => missing,
+                PlatformConflict conflict => conflict,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

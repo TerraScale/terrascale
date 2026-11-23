@@ -30,15 +30,16 @@ internal sealed class SystemBootstrap(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         Func<CancellationToken, ValueTask>? sync = cluster.Peers.Count > 0 ? SyncSystemAsync : null;
-        var opened = await system.OpenAsync(cluster.IsBootstrapNode, sync, cancellationToken) switch
+        var openedOutcome = await system.OpenAsync(cluster.IsBootstrapNode, sync, cancellationToken);
+        var opened = openedOutcome switch
         {
-            Done when cluster.IsBootstrapNode => await platform.EnsureAsync(cancellationToken),
-            Done done => done,
+            Completed when cluster.IsBootstrapNode => await platform.EnsureAsync(cancellationToken),
+            Completed done => done,
             ConfigurationError error => error,
         };
         Failure = opened switch
         {
-            Done => null,
+            Completed => null,
             ConfigurationError error => error,
         };
         if (Failure is { } failure)

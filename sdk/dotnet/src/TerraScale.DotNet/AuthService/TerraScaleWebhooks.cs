@@ -6,18 +6,14 @@ using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet;
 
-/// <summary>One fixed refusal of a webhook delivery: missing_headers, invalid_timestamp, timestamp_out_of_tolerance, invalid_secret, signature_mismatch or invalid_body.</summary>
 public sealed record WebhookRefused(string ErrorCode, string Message);
 
-/// <summary>Either the delivery's parsed event JSON or its fixed refusal.</summary>
 public readonly union WebhookVerification(JsonElement, WebhookRefused);
 
-/// <summary>Verifies ts-auth end-user lifecycle webhook deliveries following the Standard Webhooks spec.</summary>
 public static class TerraScaleWebhooks
 {
     private const int ToleranceSeconds = 300;
 
-    /// <summary>Verifies the delivery's signatures and timestamp and returns the parsed event JSON, or the delivery's fixed refusal.</summary>
     public static WebhookVerification VerifyWebhook(string secret, IReadOnlyDictionary<string, string> headers, string rawBody, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(secret);

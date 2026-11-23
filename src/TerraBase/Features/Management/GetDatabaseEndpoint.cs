@@ -6,8 +6,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union GetDatabaseResponse(DatabaseBody, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class GetDatabaseEndpoint(DatabaseAccess access, TerraBaseOptions options, TimeProvider time)
-    : Endpoint<DatabaseInput, Result<DatabaseBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<DatabaseInput, GetDatabaseResponse>
 {
     public override void Configure()
     {
@@ -19,18 +21,19 @@ internal sealed class GetDatabaseEndpoint(DatabaseAccess access, TerraBaseOption
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<DatabaseBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<GetDatabaseResponse> HandleAsync(
         DatabaseInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken) switch
+        var outcome = await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => DatabaseBody.From(resolved.Database, options.Region, time.GetUtcNow()),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

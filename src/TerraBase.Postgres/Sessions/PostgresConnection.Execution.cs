@@ -8,6 +8,8 @@ using TerraScale.Contracts.Consistency;
 
 namespace TerraBase.Postgres.Sessions;
 
+internal readonly union PgStatementResult(SqlResultSet, PgError);
+
 internal sealed partial class PostgresConnection
 {
     private static readonly FrozenSet<string> CatalogBooleans = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
@@ -81,14 +83,15 @@ internal sealed partial class PostgresConnection
         }
 
         var statement = new SqlStatement(command.Rewrite.Sql, command.Rewrite.Bind(parameters), NoNamed);
-        return await ExecuteStatementAsync(statement, command.Access, cancellationToken) switch
+        var executed = await ExecuteStatementAsync(statement, command.Access, cancellationToken);
+        return executed switch
         {
             SqlResultSet set => ToResult(command, set, describedColumns),
             PgError error => error,
         };
     }
 
-    private async ValueTask<Result<SqlResultSet, PgError>> ExecuteStatementAsync(SqlStatement statement, SqlAccess access, CancellationToken cancellationToken)
+    private async ValueTask<PgStatementResult> ExecuteStatementAsync(SqlStatement statement, SqlAccess access, CancellationToken cancellationToken)
     {
         if (session.Transaction is { } block)
         {
@@ -97,15 +100,10 @@ internal sealed partial class PostgresConnection
                 return PgErrors.ReadOnlyTransaction;
             }
 
-            return await EnsureTransactionAsync(block, cancellationToken) switch
+            var ensured = await EnsureTransactionAsync(block, cancellationToken);
+            return ensured switch
             {
-                ISqlTransaction active => await active.ExecuteAsync(statement, cancellationToken) switch
-                {
-                    SqlResultSet set => set,
-                    SqlError error => PgErrors.From(error),
-                    StorageBusy busy => PgErrors.From(busy),
-                    RequestTimeout timeout => PgErrors.From(timeout),
-                },
+                ISqlTransaction active => await ExecuteInTransactionAsync(active, statement, cancellationToken),
                 PgError beginError => beginError,
             };
         }
@@ -113,28 +111,42 @@ internal sealed partial class PostgresConnection
         var request = new SqlStatementRequest(session.Executor.DatabaseId, [statement], access, session.Settings.DefaultMode, session.Bookmark);
         if (access == SqlAccess.Read)
         {
-            return await session.Executor.ReadAsync(request, cancellationToken) switch
+            var read = await session.Executor.ReadAsync(request, cancellationToken);
+            return read switch
             {
-                SqlReadResult read => Observed(read.Observed, read.ResultSets),
+                SqlReadResult result => Observed(result.Observed, result.ResultSets),
                 SqlError error => PgErrors.From(error),
                 StorageBusy busy => PgErrors.From(busy),
-                RequestTimeout timeout => PgErrors.From(timeout),
+                StorageTimeout timeout => PgErrors.From(timeout),
             };
         }
 
-        return await session.Executor.WriteAsync(request, cancellationToken) switch
+        var written = await session.Executor.WriteAsync(request, cancellationToken);
+        return written switch
         {
             SqlWriteResult write => Observed(write.Commit.Bookmark, write.ResultSets),
             SqlError error => PgErrors.From(error),
             SerializationConflict conflict => PgErrors.From(conflict),
             SchemaMismatch mismatch => PgErrors.From(mismatch),
-            Unavailable unavailable => PgErrors.From(unavailable),
-            RequestTimeout timeout => PgErrors.From(timeout),
+            ClusterUnavailable unavailable => PgErrors.From(unavailable),
+            ClusterTimeout timeout => PgErrors.From(timeout),
             StorageBusy busy => PgErrors.From(busy),
         };
     }
 
-    private Result<SqlResultSet, PgError> Observed(CausalBookmark bookmark, IReadOnlyList<SqlResultSet> sets)
+    private static async ValueTask<PgStatementResult> ExecuteInTransactionAsync(ISqlTransaction active, SqlStatement statement, CancellationToken cancellationToken)
+    {
+        var executed = await active.ExecuteAsync(statement, cancellationToken);
+        return executed switch
+        {
+            SqlResultSet set => set,
+            SqlError error => PgErrors.From(error),
+            StorageBusy busy => PgErrors.From(busy),
+            StorageTimeout timeout => PgErrors.From(timeout),
+        };
+    }
+
+    private PgStatementResult Observed(CausalBookmark bookmark, IReadOnlyList<SqlResultSet> sets)
     {
         session.Observe(bookmark);
         return sets.Count > 0 ? sets[0] : new SqlResultSet([], [], 0, 0);

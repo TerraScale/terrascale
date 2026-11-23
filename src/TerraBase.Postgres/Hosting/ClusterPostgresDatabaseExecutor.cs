@@ -10,19 +10,28 @@ public sealed class ClusterPostgresDatabaseExecutor(ISqlDatabaseSession session,
 
     public CausalBookmark CurrentBookmark => coordinator.CurrentBookmark(session.DatabaseId).Merge(session.CurrentBookmark);
 
-    public ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ReadAsync(
+    public ValueTask<SqlReadOutcome> ReadAsync(
         SqlStatementRequest request,
         CancellationToken cancellationToken) => session.ExecuteReadAsync(request, cancellationToken);
 
-    public ValueTask<Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> WriteAsync(
+    public ValueTask<ClusterWriteOutcome> WriteAsync(
         SqlStatementRequest request,
         CancellationToken cancellationToken) => coordinator.ExecuteWriteAsync(session, request, cancellationToken);
 
-    public ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(
+    public async ValueTask<ClusterBeginTransactionOutcome> BeginTransactionAsync(
         SqlTransactionOptions options,
-        CancellationToken cancellationToken) => session.BeginTransactionAsync(options, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var outcome = await session.BeginTransactionAsync(options, cancellationToken);
+        return outcome switch
+        {
+            ISqlTransaction transaction => new ClusterBeginTransactionOutcome(transaction),
+            StorageBusy busy => busy,
+            StorageTimeout timeout => new ClusterTimeout(timeout.Message, timeout.Code),
+        };
+    }
 
-    public ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitAsync(
+    public ValueTask<ClusterCommitTransactionOutcome> CommitAsync(
         ISqlTransaction transaction,
         CancellationToken cancellationToken) => coordinator.CommitTransactionAsync(session, transaction, cancellationToken);
 

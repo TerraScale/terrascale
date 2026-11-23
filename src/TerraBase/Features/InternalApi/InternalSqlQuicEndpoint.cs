@@ -22,7 +22,7 @@ internal sealed class InternalSqlQuicEndpoint(DatabaseAccess access, SqlRunner r
         _ = host.MapUnary<InternalSqlRequest, InternalSqlReply>(QuicMessageType.InternalSqlExecute, HandleAsync);
     }
 
-    private async ValueTask<Result<InternalSqlReply, QuicRemoteError>> HandleAsync(QuicCallContext context, InternalSqlRequest request, CancellationToken cancellationToken) =>
+    private async ValueTask<QuicHandlerOutcome<InternalSqlReply>> HandleAsync(QuicCallContext context, InternalSqlRequest request, CancellationToken cancellationToken) =>
         Causality(request) switch
         {
             SqlCausality causality => Statements(request.Statements) switch
@@ -33,22 +33,25 @@ internal sealed class InternalSqlQuicEndpoint(DatabaseAccess access, SqlRunner r
             SqlRefusal refusal => Refused(refusal.Status, refusal.Body),
         };
 
-    private async ValueTask<InternalSqlReply> RunAsync(Ulid databaseId, IReadOnlyList<SqlStatement> statements, SqlCausality causality, CancellationToken cancellationToken) =>
-        await access.DataByIdAsync(Platform, databaseId, cancellationToken) switch
+    private async ValueTask<InternalSqlReply> RunAsync(Ulid databaseId, IReadOnlyList<SqlStatement> statements, SqlCausality causality, CancellationToken cancellationToken)
+    {
+        var outcome = await access.DataByIdAsync(Platform, databaseId, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase target => await runner.RunAsync(target, statements, causality, cancellationToken) switch
             {
                 SqlRun run => Answer(run),
                 SqlRefusal refusal => Refused(refusal.Status, refusal.Body),
             },
-            Validation invalid => Refused(StatusCodes.Status400BadRequest, invalid.Code, invalid.Message),
-            Unauthorized unauthorized => Refused(StatusCodes.Status401Unauthorized, unauthorized.Code, unauthorized.Message),
-            Forbidden forbidden => Refused(StatusCodes.Status403Forbidden, forbidden.Code, forbidden.Message, forbidden.Details),
-            NotFound missing => Refused(StatusCodes.Status404NotFound, missing.Code, missing.Message),
-            Unavailable unavailable => Refused(StatusCodes.Status503ServiceUnavailable, unavailable.Code, unavailable.Message, unavailable.Details),
+            InvalidInput invalid => Refused(StatusCodes.Status400BadRequest, invalid.Code, invalid.Message),
+            CredentialRejected unauthorized => Refused(StatusCodes.Status401Unauthorized, unauthorized.Code, unauthorized.Message),
+            CallerForbidden forbidden => Refused(StatusCodes.Status403Forbidden, forbidden.Code, forbidden.Message, forbidden.Details),
+            ResourceNotFound missing => Refused(StatusCodes.Status404NotFound, missing.Code, missing.Message),
+            BackendUnavailable unavailable => Refused(StatusCodes.Status503ServiceUnavailable, unavailable.Code, unavailable.Message),
         };
+    }
 
-    private static Result<SqlCausality, SqlRefusal> Causality(InternalSqlRequest request)
+    private static SqlCausalityOutcome Causality(InternalSqlRequest request)
     {
         if (!CausalBookmark.TryDecode(request.Bookmark, out var after))
         {
@@ -65,7 +68,7 @@ internal sealed class InternalSqlQuicEndpoint(DatabaseAccess access, SqlRunner r
         return new SqlCausality(mode, after);
     }
 
-    private static Result<IReadOnlyList<SqlStatement>, SqlRefusal> Statements(ReadOnlyMemory<byte> payload)
+    private static SqlStatementsParse Statements(ReadOnlyMemory<byte> payload)
     {
         SqlExecuteRequest? request;
         try

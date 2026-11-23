@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -22,9 +21,9 @@ public sealed class AgentIdProofEndpoint(PlatformAuthentication authentication, 
         var request = await this.BodyAsync(AgentIdJson.Default.AgentIdProofRequest, cancellationToken);
         return await transactions.ProveAsync(transaction, request.Proof, cancellationToken) switch
         {
-            Done => TypedResults.NoContent(),
-            NotFound notFound => ErrorResults.ToResult(notFound),
-            Unauthorized unauthorized => ErrorResults.ToResult(unauthorized),
+            AuthCompleted => TypedResults.NoContent(),
+            AuthNotFound notFound => ErrorResults.ToResult(notFound),
+            AuthUnauthorized unauthorized => ErrorResults.ToResult(unauthorized),
         };
     }
 

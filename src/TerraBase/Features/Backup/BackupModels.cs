@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraBase.Hosting;
 using TerraScale.Contracts.Continuity;
 
 namespace TerraBase.Features.Backup;
@@ -73,7 +74,7 @@ public sealed record BackupPolicyBody(
 
 public sealed record NoTarget;
 
-public readonly union TargetChoice(NoTarget, DateTimeOffset, CausalBookmark, Validation);
+public readonly union TargetChoice(NoTarget, DateTimeOffset, CausalBookmark, InvalidInput);
 
 internal static class RestoreTargets
 {
@@ -81,7 +82,7 @@ internal static class RestoreTargets
     {
         if (pointInTime is not null && bookmark is { Length: > 0 })
         {
-            return new Validation("send exactly one of pointInTime or bookmark", "invalid_target");
+            return new InvalidInput("send exactly one of pointInTime or bookmark", "invalid_target");
         }
 
         if (pointInTime is { } time)
@@ -93,7 +94,7 @@ internal static class RestoreTargets
         {
             return CausalBookmark.TryDecode(encoded, out var parsed)
                 ? parsed
-                : new Validation("bookmark must be one bookmark returned by TerraScale", "invalid_bookmark");
+                : new InvalidInput("bookmark must be one bookmark returned by TerraScale", "invalid_bookmark");
         }
 
         return new NoTarget();

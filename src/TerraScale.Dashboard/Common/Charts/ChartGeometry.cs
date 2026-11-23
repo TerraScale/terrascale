@@ -32,7 +32,6 @@ namespace TerraScale.Dashboard.Common.Charts
             }
 
             var rounded = Math.Round(value, 1, MidpointRounding.AwayFromZero);
-            // Promote after rounding so a boundary never appears as 1000.0k/M/B.
             if (Math.Abs(rounded) >= 1000 && tier < suffixes.Length - 1)
             {
                 rounded = Math.Round(rounded / 1000, 1, MidpointRounding.AwayFromZero);

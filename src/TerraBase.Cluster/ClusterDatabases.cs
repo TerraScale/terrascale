@@ -4,7 +4,9 @@ using TerraScale.Contracts.Continuity;
 
 namespace TerraBase.Cluster;
 
-public delegate ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> DatabaseSessionResolver(Ulid databaseId, CancellationToken cancellationToken);
+public readonly union DatabaseResolveOutcome(ISqlDatabaseSession, DatabaseNotFound, ClusterUnavailable);
+
+public delegate ValueTask<DatabaseResolveOutcome> DatabaseSessionResolver(Ulid databaseId, CancellationToken cancellationToken);
 
 public sealed class ClusterDatabases(DatabaseSessionResolver resolver)
 {
@@ -37,18 +39,18 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver)
         return _catchUp.Writer.TryWrite(databaseId);
     }
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
-        var resolved = await resolver(databaseId, cancellationToken).ConfigureAwait(false);
+        var resolved = await resolver(databaseId, cancellationToken);
         return resolved switch
         {
             ISqlDatabaseSession session => Observed(session),
-            NotFound notFound => notFound,
-            Unavailable unavailable => unavailable,
+            DatabaseNotFound notFound => notFound,
+            ClusterUnavailable unavailable => unavailable,
         };
     }
 
-    private Result<ISqlDatabaseSession, NotFound, Unavailable> Observed(ISqlDatabaseSession session)
+    private DatabaseResolveOutcome Observed(ISqlDatabaseSession session)
     {
         Observe(session.DatabaseId, session.CurrentBookmark);
         return session;
@@ -80,7 +82,7 @@ public sealed class ChangefeedPublisher(IEnumerable<IChangefeedHub> hubs, TimePr
             commit.Hlc.WallMs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(commit.Hlc.WallMs) : timeProvider.GetUtcNow());
         foreach (var hub in _hubs)
         {
-            await hub.PublishAsync(entry, cancellationToken).ConfigureAwait(false);
+            await hub.PublishAsync(entry, cancellationToken);
         }
     }
 }

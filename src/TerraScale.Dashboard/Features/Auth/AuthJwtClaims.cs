@@ -5,7 +5,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // One signature and lifetime boundary for the issuer's ES256/P-256 tokens.
     internal static class AuthJwtClaims
     {
         internal const string OrganizationPickerClaim = "ts_org_picker";

@@ -4,6 +4,8 @@ namespace TerraBase.Storage;
 
 internal readonly union StatementOutcome(SqlResultSet, SqlError, StrongRequired);
 
+internal readonly union ReaderStatementOutcome(SqlResultSet, SqlError);
+
 internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
 {
     public CancellationToken CancellationToken { get; set; } = cancellationToken;
@@ -365,7 +367,7 @@ internal sealed partial class DatabaseSession
         }
     }
 
-    internal static Result<SqlResultSet, SqlError> ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, bool limitResults, CancellationToken cancellationToken)
+    internal static ReaderStatementOutcome ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, bool limitResults, CancellationToken cancellationToken)
     {
         if (!SqlLimits.StatementFits(statement.Sql))
         {

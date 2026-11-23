@@ -6,43 +6,27 @@ using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet;
 
-/// <summary>
-/// Entry point for ts-auth management API and OIDC operations against one
-/// ts-auth instance. Built over a caller-owned <see cref="HttpClient"/>; the
-/// underlying handler must disable automatic redirects. Every operation is sent
-/// once; ts-auth operations have no automatic retry or mutation replay. Expected
-/// failures return <see cref="AuthRefused"/>; guards throw <see cref="ArgumentException"/>,
-/// cancellation propagates and a missed deadline throws <see cref="TimeoutException"/>.
-/// </summary>
 public sealed partial class TerraScaleAuthClient
 {
     private const int MaxOperationBytes = 1_048_576;
     private const int MaxResponseBytes = 16 * 1024 * 1024;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
 
-    // Immutable header values shared by every request: one allocation, not one per call.
     private static readonly MediaTypeWithQualityHeaderValue AcceptJson = new("application/json");
     private static readonly MediaTypeHeaderValue JsonContentType = new("application/json");
 
-    private readonly HttpClient httpClient;
-    private readonly TerraScaleAuthClientOptions options;
+    private readonly HttpClient transport;
+    private readonly Uri origin;
 
-    /// <summary>
-    /// Creates a ts-auth client over a caller-owned <see cref="HttpClient"/>.
-    /// The client assigns <c>BaseAddress</c> to the HttpClient when it is null
-    /// and is never disposed. Requests remain bound to the validated configured
-    /// origin even if the caller later changes <c>BaseAddress</c>.
-    /// </summary>
     public TerraScaleAuthClient(HttpClient httpClient, TerraScaleAuthClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(options);
-        var optionSnapshot = options with { };
-        optionSnapshot.Validate();
+        (origin, InstanceSlug) = options.Validate();
 
         if (httpClient.BaseAddress is { } baseAddress)
         {
-            if (TerraScaleOrigin.Parse(baseAddress, "HttpClient.BaseAddress", nameof(httpClient), TerraScaleService.Auth) != optionSnapshot.BaseAddress)
+            if (TerraScaleOrigin.Parse(baseAddress, "HttpClient.BaseAddress", nameof(httpClient), TerraScaleService.Auth) != origin)
             {
                 throw new ArgumentException(
                     "HttpClient.BaseAddress conflicts with the configured ts-auth origin.",
@@ -50,31 +34,25 @@ public sealed partial class TerraScaleAuthClient
             }
         }
 
-        this.httpClient = httpClient;
-        this.options = optionSnapshot;
-        this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
+        transport = httpClient;
+        transport.BaseAddress ??= origin;
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
         Projects = new TerraScaleAuthProjectsClient(this);
     }
 
-    /// <summary>OIDC discovery, JWKS, token, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }
 
-    /// <summary>Platform organizations, projects, members and API keys, using a sign-in token or a project secret API key.</summary>
     public TerraScaleAuthPlatformClient Platform { get; }
 
-    /// <summary>Project tenant settings, end users, sessions and OAuth clients under <c>/v1/{project}</c>, using a sign-in token or a project secret API key.</summary>
     public TerraScaleAuthProjectsClient Projects { get; }
 
-    /// <summary>The validated instance slug every management route is scoped to.</summary>
-    internal string InstanceSlug => options.InstanceSlug!;
+    internal string InstanceSlug { get; }
 
     internal string ManagementRoute(string relative) => "/v1/" + TerraScaleAuthPaths.Escape(InstanceSlug) + relative;
 
 
 
-    /// <summary>One unauthenticated GET for OIDC metadata.</summary>
     private async Task<AuthResult<TResponse>> GetMetadataCoreAsync<TResponse>(
         string requestUri,
         JsonTypeInfo<TResponse> responseTypeInfo,
@@ -89,8 +67,6 @@ public sealed partial class TerraScaleAuthClient
         return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>One OAuth token form POST with client
-    /// authentication and the flat RFC 6749 error shape.</summary>
     private async Task<AuthResult<TResponse>> SendOAuthFormCoreAsync<TResponse>(
         string requestUri,
         IReadOnlyList<KeyValuePair<string, string>> formValues,
@@ -108,8 +84,6 @@ public sealed partial class TerraScaleAuthClient
         return status is null ? await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false) : status;
     }
 
-    /// <summary>One OAuth form POST whose success body is empty (revocation,
-    /// RFC 7009: unknown tokens also succeed).</summary>
     private async Task<AuthOutcome> SendOAuthFormForSuccessCoreAsync(
         string requestUri,
         IReadOnlyList<KeyValuePair<string, string>> formValues,
@@ -129,7 +103,6 @@ public sealed partial class TerraScaleAuthClient
         return new Done();
     }
 
-    /// <summary>One bearer-authenticated GET with a caller-provided access token (userinfo).</summary>
     private async Task<AuthResult<TResponse>> GetWithBearerCoreAsync<TResponse>(
         string requestUri,
         string accessToken,
@@ -271,7 +244,6 @@ public sealed partial class TerraScaleAuthClient
     private static Func<HttpContent?> CreateFormBodyFactory(IReadOnlyList<KeyValuePair<string, string>> values)
     {
         using var content = new FormUrlEncodedContent(values);
-        // FormUrlEncodedContent buffers synchronously; its computed length is exact.
         if (content.Headers.ContentLength > MaxOperationBytes)
         {
             throw new ArgumentException("The ts-auth form exceeds the request byte limit.", nameof(values));
@@ -291,13 +263,14 @@ public sealed partial class TerraScaleAuthClient
         string? deletionAuthorization = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var request = new HttpRequestMessage(method, new Uri(options.BaseAddress!, requestUri));
-        if (request.RequestUri!.Scheme == Uri.UriSchemeHttps)
+        var target = new Uri(origin, requestUri);
+        using var request = new HttpRequestMessage(method, target);
+        if (target.Scheme == Uri.UriSchemeHttps)
         {
             request.Version = HttpVersion.Version20;
             request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
         }
-        if (authentication.Kind == RequestAuthenticationKind.None && httpClient.DefaultRequestHeaders.Contains("Authorization"))
+        if (authentication.Kind == RequestAuthenticationKind.None && transport.DefaultRequestHeaders.Contains("Authorization"))
         {
             throw new InvalidOperationException("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
         }
@@ -315,7 +288,7 @@ public sealed partial class TerraScaleAuthClient
         {
             request.Content = content;
         }
-        return TerraScaleOrigin.Sent(await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), options.BaseAddress!);
+        return TerraScaleOrigin.Sent(await transport.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), origin);
     }
 
     private void ApplyAuthentication(HttpRequestMessage request, RequestAuthentication authentication)
@@ -352,7 +325,6 @@ public sealed partial class TerraScaleAuthClient
             return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth returned an unexpected response media type.");
         }
 
-        // Bound successful bodies before deserialization, including unknown-length responses.
         using var destination = new BoundedHttpBodyStream(MaxResponseBytes,
             () => new InvalidDataException(), cancellationToken);
         if (response.Content.Headers.ContentLength > MaxResponseBytes)
@@ -376,8 +348,6 @@ public sealed partial class TerraScaleAuthClient
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
-            // Raw JsonException internals (paths, fragments of the body) never
-            // escape to SDK consumers.
             return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth returned an invalid response body.");
         }
 

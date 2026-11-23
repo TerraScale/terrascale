@@ -24,7 +24,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             ReadResult read;
             try
             {
-                read = await input.ReadAsync(deadline.Token).ConfigureAwait(false);
+                read = await input.ReadAsync(deadline.Token);
             }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested)
             {
@@ -74,7 +74,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             ReadResult read;
             try
             {
-                read = await input.ReadAsync(linked.Token).ConfigureAwait(false);
+                read = await input.ReadAsync(linked.Token);
             }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {

@@ -5,7 +5,9 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.ApiKeys;
 
-internal sealed class RevokeApiKeyEndpoint(ApiKeyStore keys) : Endpoint<RevokeApiKeyInput, Result<Done, Forbidden, NotFound, Unavailable>>
+internal readonly union RevokeApiKeyResponse(Completed, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
+internal sealed class RevokeApiKeyEndpoint(ApiKeyStore keys) : Endpoint<RevokeApiKeyInput, RevokeApiKeyResponse>
 {
     public override void Configure()
     {
@@ -17,19 +19,20 @@ internal sealed class RevokeApiKeyEndpoint(ApiKeyStore keys) : Endpoint<RevokeAp
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<Done, Forbidden, NotFound, Unavailable>> HandleAsync(RevokeApiKeyInput request, CancellationToken cancellationToken)
+    public override async ValueTask<RevokeApiKeyResponse> HandleAsync(RevokeApiKeyInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!PlanFlow.IsOperator(HttpContext.Caller, "admin"))
         {
-            return new Forbidden("revoking API keys needs the admin grant", "forbidden_caller");
+            return new CallerForbidden("revoking API keys needs the admin grant", "forbidden_caller");
         }
 
-        return await keys.RevokeAsync(request.Key, cancellationToken) switch
+        var outcome = await keys.RevokeAsync(request.Key, cancellationToken);
+        return outcome switch
         {
-            Done done => done,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            Completed done => done,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

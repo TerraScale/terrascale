@@ -3,9 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
-    // Concrete return schemas preserve the Go wire shape on all supported MCP
-    // versions. A generic object return is wrapped by the official SDK on older
-    // protocol versions and hides these fields under an extra result property.
     public sealed record DashboardMcpContext(DashboardMcpUser User, DashboardMcpSelection Selection,
         IReadOnlyList<DashboardMcpOrganization> Organizations, string OrganizationCheckoutNotice = "");
 
@@ -16,7 +13,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
     public sealed record DashboardMcpSelection(string OrganizationId, string ProjectId);
 
-    // Keep member fields compatible while representing unavailable organization metadata honestly.
     public sealed record DashboardMcpOrganization(string Id, string Name,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Kind,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Status,

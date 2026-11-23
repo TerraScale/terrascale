@@ -1,14 +1,16 @@
 namespace TerraScale.Platform.Features.FileStorage;
 
+public sealed record ProjectClosed;
+
 public sealed record FileProjectOrganizationMismatch;
 
-public readonly union CloseFileProjectResult(Done, FileProjectOrganizationMismatch, Unavailable);
+public readonly union CloseFileProjectOutcome(ProjectClosed, FileProjectOrganizationMismatch, PlatformUnavailable);
 
 public sealed class ProjectFileErasure(PlatformStore store, S3FileObjectStore objects)
 {
     internal const string RegionsQuery = "SELECT region FROM platform_file_regions ORDER BY region";
 
-    public async ValueTask<CloseFileProjectResult> CloseAsync(Ulid project, Ulid organization, CancellationToken cancellationToken)
+    public async ValueTask<CloseFileProjectOutcome> CloseAsync(Ulid project, Ulid organization, CancellationToken cancellationToken)
     {
         var projectId = SqlValues.Text(project.ToString());
         var organizationId = SqlValues.Text(organization.ToString());
@@ -27,36 +29,36 @@ public sealed class ProjectFileErasure(PlatformStore store, S3FileObjectStore ob
         var closed = await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken);
         return closed switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[3].Rows.Count == 0 => new FileProjectOrganizationMismatch(),
-            IReadOnlyList<SqlHttpStatementResult> results =>
-                ToCloseResult(await SweepAsync(project, organization, Regions(results[4]), cancellationToken)),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[3].Rows.Count == 0 => new FileProjectOrganizationMismatch(),
+            SqlExecuteResponse { Results: var results } =>
+                ToCloseOutcome(await SweepAsync(project, organization, Regions(results[4]), cancellationToken)),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
     internal async ValueTask<ProjectPrefixErasure> SweepAsync(
         Ulid project, Ulid organization, IReadOnlyList<string> regions, CancellationToken cancellationToken)
     {
-        Unavailable? failure = null;
+        PlatformUnavailable? failure = null;
         foreach (var region in regions)
         {
             var erased = await objects.EraseProjectAsync(region, organization, project, cancellationToken);
             failure = erased switch
             {
-                Done => failure,
-                Unavailable unavailable => unavailable,
+                ProjectPrefixErased => failure,
+                PlatformUnavailable unavailable => unavailable,
             };
         }
 
-        return failure is null ? new Done() : failure;
+        return failure is null ? new ProjectPrefixErased() : failure;
     }
 
     internal static IReadOnlyList<string> Regions(SqlHttpStatementResult result) => [.. result.RowsOf().Select(static row => row.Text(0))];
 
-    private static CloseFileProjectResult ToCloseResult(ProjectPrefixErasure erased) => erased switch
+    private static CloseFileProjectOutcome ToCloseOutcome(ProjectPrefixErasure erased) => erased switch
     {
-        Done done => done,
-        Unavailable unavailable => unavailable,
+        ProjectPrefixErased => new ProjectClosed(),
+        PlatformUnavailable unavailable => unavailable,
     };
 }

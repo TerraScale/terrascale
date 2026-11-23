@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dapper;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -44,9 +43,9 @@ public sealed record AgentBody(string Id, string ProjectId, string OwnerUserId, 
 public sealed record AgentSharingRequest(bool? ShareOwnerEmail);
 public sealed record AgentPageBody(IReadOnlyList<AgentBody> Items, string? Next);
 
-public readonly union GetAgentResult(AgentBody, NotFound);
+public readonly union GetAgentResult(AgentBody, AuthNotFound);
 
-public readonly union ShareOwnerEmailResult(AgentBody, NotFound);
+public readonly union ShareOwnerEmailResult(AgentBody, AuthNotFound);
 
 public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, AgentLifecycleEvents events, AttemptLimiter limiter, TimeProvider clock, ILogger<AgentDirectory> logger)
 {
@@ -138,7 +137,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
     {
         var agent = (await this.AgentAsync(project, agentId, null, cancellationToken))?.Value;
         return agent is null
-            ? new NotFound("No such resource.")
+            ? new AuthNotFound("No such resource.")
             : (await this.BodiesAsync(project, [agent], cancellationToken))[0];
     }
 
@@ -226,7 +225,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         var agent = await this.AgentAsync(project, agentId, owner, cancellationToken);
         if (agent is null)
         {
-            return new NotFound("No such resource.");
+            return new AuthNotFound("No such resource.");
         }
 
         var shared = agent.Value with { ShareOwnerEmail = share };

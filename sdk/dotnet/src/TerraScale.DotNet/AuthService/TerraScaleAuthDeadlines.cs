@@ -63,7 +63,6 @@ public sealed partial class TerraScaleAuthClient
         }
         catch (Exception error)
         {
-            // Recheck even when synchronous parsing failed: cancellation wins over a malformed response.
             caller.ThrowIfCancellationRequested();
             if (deadline.IsCancellationRequested)
                 throw new TimeoutException("ts-auth did not answer within the request deadline.");

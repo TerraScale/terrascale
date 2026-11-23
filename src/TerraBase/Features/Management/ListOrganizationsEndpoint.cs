@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union ListOrganizationsResponse(PageBody<OrganizationBody>, InvalidInput, CredentialRejected, BackendUnavailable);
+
 internal sealed class ListOrganizationsEndpoint(CatalogStore catalog)
-    : Endpoint<PageInput, Result<PageBody<OrganizationBody>, Validation, Unauthorized, Unavailable>>
+    : Endpoint<PageInput, ListOrganizationsResponse>
 {
     public override void Configure()
     {
@@ -19,20 +21,20 @@ internal sealed class ListOrganizationsEndpoint(CatalogStore catalog)
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<PageBody<OrganizationBody>, Validation, Unauthorized, Unavailable>> HandleAsync(
+    public override async ValueTask<ListOrganizationsResponse> HandleAsync(
         PageInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         return (HttpContext.Caller, ManagementService.Limit(request.Limit)) switch
         {
-            (_, Validation invalid) => invalid,
+            (_, InvalidInput invalid) => invalid,
             (UserCaller user, int limit) => await catalog.ListOrganizationsAsync(user.UserId, request.After, limit, cancellationToken) switch
             {
                 CatalogPage<OrganizationRecord> page => new PageBody<OrganizationBody>([.. page.Items.Select(OrganizationBody.From)], page.Next),
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
             (AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or ProjectCaller or EndUserCaller, int) =>
-                new Unauthorized("listing organizations needs a ts-auth access token for a user", "unauthorized"),
+                new CredentialRejected("listing organizations needs a ts-auth access token for a user", "unauthorized"),
         };
     }
 }

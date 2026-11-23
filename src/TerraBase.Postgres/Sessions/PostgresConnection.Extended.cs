@@ -9,18 +9,18 @@ internal sealed partial class PostgresConnection
 {
     private async ValueTask<bool> ExtendedAsync(ValueTask<PgError?> step)
     {
-        if (await step.ConfigureAwait(false) is not { } error)
+        if (await step is not { } error)
         {
             return true;
         }
 
         Writer.Error(error);
-        await MarkFailedAsync().ConfigureAwait(false);
-        await EndImplicitAsync(commit: false).ConfigureAwait(false);
+        await MarkFailedAsync();
+        await EndImplicitAsync(commit: false);
         session.SkipUntilSync = true;
         if (error.Fatal)
         {
-            await Writer.FlushAsync(closed).ConfigureAwait(false);
+            await Writer.FlushAsync(closed);
             return false;
         }
 
@@ -64,7 +64,7 @@ internal sealed partial class PostgresConnection
             }
 
             if (Array.IndexOf(oids, 0) >= 0 && typed.Rewrite.ParameterColumns.Count > 0
-                && await InferParameterTypesAsync(typed, oids).ConfigureAwait(false) is { } inferenceError)
+                && await InferParameterTypesAsync(typed, oids) is { } inferenceError)
             {
                 return inferenceError;
             }
@@ -90,7 +90,7 @@ internal sealed partial class PostgresConnection
 
         var placeholders = string.Join(", ", Enumerable.Range(1, names.Count).Select(static number => "?" + number.ToString(CultureInfo.InvariantCulture)));
         var schema = $"SELECT m.name, p.name, p.type FROM sqlite_schema m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table', 'view') AND m.name COLLATE NOCASE IN ({placeholders})";
-        var outcome = await ReadMetadataAsync(schema, [.. names.Select(SqlValue.FromText)]).ConfigureAwait(false);
+        var outcome = await ReadMetadataAsync(schema, [.. names.Select(SqlValue.FromText)]);
         return outcome switch
         {
             SqlResultSet set => ApplyParameterTypes(command, oids, set),
@@ -143,12 +143,12 @@ internal sealed partial class PostgresConnection
         return null;
     }
 
-    private async ValueTask<Result<SqlResultSet, PgError>> ReadMetadataAsync(string sql, IReadOnlyList<SqlValue> parameters)
+    private async ValueTask<PgStatementResult> ReadMetadataAsync(string sql, IReadOnlyList<SqlValue> parameters)
     {
         using var scope = session.BeginStatement(closed);
         try
         {
-            return await ExecuteStatementAsync(new SqlStatement(sql, parameters, NoNamed), SqlAccess.Read, scope.Token).ConfigureAwait(false);
+            return await ExecuteStatementAsync(new SqlStatement(sql, parameters, NoNamed), SqlAccess.Read, scope.Token);
         }
         catch (OperationCanceledException) when (!closed.IsCancellationRequested)
         {
@@ -156,22 +156,22 @@ internal sealed partial class PostgresConnection
         }
     }
 
-    private ValueTask<PgError?> BindAsync(PgBindMessage message)
+    private PgError? Bind(PgBindMessage message)
     {
         if (!session.Statements.TryGetValue(message.Statement, out var statement))
         {
-            return ValueTask.FromResult<PgError?>(new PgError("26000", $"prepared statement \"{message.Statement}\" does not exist"));
+            return new PgError("26000", $"prepared statement \"{message.Statement}\" does not exist");
         }
 
         if (message.Parameters.Length != statement.ParameterOids.Length)
         {
-            return ValueTask.FromResult<PgError?>(new PgError("08P01",
-                $"bind message supplies {message.Parameters.Length.ToString(CultureInfo.InvariantCulture)} parameters, but prepared statement \"{message.Statement}\" requires {statement.ParameterOids.Length.ToString(CultureInfo.InvariantCulture)}"));
+            return new PgError("08P01",
+                $"bind message supplies {message.Parameters.Length.ToString(CultureInfo.InvariantCulture)} parameters, but prepared statement \"{message.Statement}\" requires {statement.ParameterOids.Length.ToString(CultureInfo.InvariantCulture)}");
         }
 
         if (message.ParameterFormats.Length > 1 && message.ParameterFormats.Length != message.Parameters.Length)
         {
-            return ValueTask.FromResult<PgError?>(new PgError("08P01", "bind message has an invalid number of parameter formats"));
+            return new PgError("08P01", "bind message has an invalid number of parameter formats");
         }
 
         var values = new SqlValue[message.Parameters.Length];
@@ -180,24 +180,24 @@ internal sealed partial class PostgresConnection
             var format = message.ParameterFormats.Length == 0 ? (short)0 : message.ParameterFormats[Math.Min(index, message.ParameterFormats.Length - 1)];
             if (!PgValueCodec.TryDecode(statement.ParameterOids[index], format, message.Parameters[index], out values[index]))
             {
-                return ValueTask.FromResult<PgError?>(new PgError("22P02",
-                    $"invalid input for parameter ${(index + 1).ToString(CultureInfo.InvariantCulture)} of type {PgOid.FormatName(statement.ParameterOids[index])}"));
+                return new PgError("22P02",
+                    $"invalid input for parameter ${(index + 1).ToString(CultureInfo.InvariantCulture)} of type {PgOid.FormatName(statement.ParameterOids[index])}");
             }
         }
 
         if (message.Portal.Length > 0 && session.Portals.ContainsKey(message.Portal))
         {
-            return ValueTask.FromResult<PgError?>(new PgError("42P03", $"cursor \"{message.Portal}\" already exists"));
+            return new PgError("42P03", $"cursor \"{message.Portal}\" already exists");
         }
 
         if (message.Portal.Length > 0 && session.Portals.Count >= PostgresLimits.MaxPortals)
         {
-            return ValueTask.FromResult<PgError?>(new PgError("54000", $"at most {PostgresLimits.MaxPortals.ToString(CultureInfo.InvariantCulture)} portals per session"));
+            return new PgError("54000", $"at most {PostgresLimits.MaxPortals.ToString(CultureInfo.InvariantCulture)} portals per session");
         }
 
         session.Portals[message.Portal] = new PgPortal(statement, values, message.ResultFormats) { Columns = statement.Described ? statement.Columns : null };
         Writer.Empty('2');
-        return ValueTask.FromResult<PgError?>(null);
+        return null;
     }
 
     private async ValueTask<PgError?> DescribeAsync(PgDescribeMessage message)
@@ -211,7 +211,8 @@ internal sealed partial class PostgresConnection
 
             if (!statement.Described)
             {
-                (IReadOnlyList<PgColumn>? Columns, PgError? Error) described = await DescribeColumnsAsync(statement.Command, [.. statement.ParameterOids.Select(static _ => SqlValue.Null)]).ConfigureAwait(false) switch
+                var columnsOutcome = await DescribeColumnsAsync(statement.Command, [.. statement.ParameterOids.Select(static _ => SqlValue.Null)]);
+                (IReadOnlyList<PgColumn>? Columns, PgError? Error) described = columnsOutcome switch
                 {
                     PgDescription description => (description.Columns, (PgError?)null),
                     PgError failure => (null, failure),
@@ -239,7 +240,8 @@ internal sealed partial class PostgresConnection
         {
             if (portal.Statement.Command is PgSqlCommand { Access: SqlAccess.Read } or PgShowCommand or PgCannedCommand && portal.Result is null)
             {
-                (PgResult? Result, PgError? Error) executed = await GuardAsync(portal.Statement.Command, portal.Parameters, null).ConfigureAwait(false) switch
+                var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, null);
+                (PgResult? Result, PgError? Error) executed = outcome switch
                 {
                     PgResult value => (value, (PgError?)null),
                     PgError failure => (null, failure),
@@ -254,7 +256,8 @@ internal sealed partial class PostgresConnection
             }
             else
             {
-                (IReadOnlyList<PgColumn>? Columns, PgError? Error) described = await DescribeColumnsAsync(portal.Statement.Command, portal.Parameters).ConfigureAwait(false) switch
+                var columnsOutcome = await DescribeColumnsAsync(portal.Statement.Command, portal.Parameters);
+                (IReadOnlyList<PgColumn>? Columns, PgError? Error) described = columnsOutcome switch
                 {
                     PgDescription description => (description.Columns, (PgError?)null),
                     PgError failure => (null, failure),
@@ -298,7 +301,8 @@ internal sealed partial class PostgresConnection
                 return null;
             }
 
-            (PgResult? Result, PgError? Error) executed = await GuardAsync(portal.Statement.Command, portal.Parameters, portal.Columns ?? portal.Statement.Columns).ConfigureAwait(false) switch
+            var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, portal.Columns ?? portal.Statement.Columns);
+            (PgResult? Result, PgError? Error) executed = outcome switch
             {
                 PgResult value => (value, (PgError?)null),
                 PgError failure => (null, failure),
@@ -329,7 +333,7 @@ internal sealed partial class PostgresConnection
                 return encodeError;
             }
 
-            if (Writer.ShouldFlush && !await Writer.FlushAsync(closed).ConfigureAwait(false))
+            if (Writer.ShouldFlush && !await Writer.FlushAsync(closed))
             {
                 return new PgError("08006", "the client stopped reading results", Fatal: true);
             }

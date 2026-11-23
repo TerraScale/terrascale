@@ -6,8 +6,6 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
-    // Outbound requests to URLs customers enter (alert webhooks, log drains). Only public HTTPS hosts are reachable:
-    // the URL is checked when saved, and every connection re-checks the addresses DNS returns at that moment.
     public interface ICustomerDelivery
     {
         Task<int> PostAsync(Uri url, byte[] body, IReadOnlyList<KeyValuePair<string, string>> headers, CancellationToken cancellationToken);
@@ -92,7 +90,6 @@ namespace TerraScale.Dashboard.Platform.Http
             if (address.AddressFamily == AddressFamily.InterNetwork)
             {
                 var b = address.GetAddressBytes();
-                // 0/8, 10/8, 100.64/10 (carrier-grade NAT and the NetBird mesh), 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.168/16, 198.18/15, multicast and reserved.
                 return !(b[0] is 0 or 10 or 127 || b[0] == 100 && b[1] is >= 64 and <= 127 || b[0] == 169 && b[1] == 254 || b[0] == 172 && b[1] is >= 16 and <= 31 ||
                     b[0] == 192 && b[1] == 0 && b[2] == 0 || b[0] == 192 && b[1] == 168 || b[0] == 198 && b[1] is 18 or 19 || b[0] >= 224);
             }
@@ -102,7 +99,6 @@ namespace TerraScale.Dashboard.Platform.Http
         }
     }
 
-    // A customer-provided secret at rest: AES-GCM under the dashboard encryption key, bound to its purpose and owner.
     public sealed record SealedSecret(string Nonce, string Ciphertext, string Tag)
     {
         public static SealedSecret Seal(string value, string key, string purpose)

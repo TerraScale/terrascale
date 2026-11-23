@@ -9,10 +9,12 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.InternalApi;
 
+internal readonly union InternalChangefeedResponse(ChangefeedLines, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 public sealed record InternalChangefeedInput(string? DatabaseId, string? After);
 
 internal sealed class InternalChangefeedEndpoint(DatabaseAccess access, IChangefeedHub hub)
-    : Endpoint<InternalChangefeedInput, Result<ChangefeedLines, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<InternalChangefeedInput, InternalChangefeedResponse>
 {
     public override void Configure()
     {
@@ -25,28 +27,29 @@ internal sealed class InternalChangefeedEndpoint(DatabaseAccess access, IChangef
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<ChangefeedLines, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<InternalChangefeedResponse> HandleAsync(
         InternalChangefeedInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (InternalRoute.DatabaseId(request.DatabaseId) is not { } databaseId)
         {
-            return new Validation("databaseId must be a canonical uppercase ULID", "invalid_database");
+            return new InvalidInput("databaseId must be a canonical uppercase ULID", "invalid_database");
         }
 
         if (!CausalBookmark.TryDecode(request.After, out var after))
         {
-            return new Validation("after must be a bookmark returned by TerraScale", "invalid_bookmark");
+            return new InvalidInput("after must be a bookmark returned by TerraScale", "invalid_bookmark");
         }
 
-        return await access.DataByIdAsync(HttpContext.Caller, databaseId, cancellationToken) switch
+        var outcome = await access.DataByIdAsync(HttpContext.Caller, databaseId, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase target => new ChangefeedLines(hub, new ChangefeedSubscription(target.Database.Id, after)),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

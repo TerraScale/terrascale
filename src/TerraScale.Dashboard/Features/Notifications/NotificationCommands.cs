@@ -8,7 +8,6 @@ namespace TerraScale.Dashboard.Features.Notifications
         int Critical, int Total, int Matching, int Page, int PageCount);
     public sealed record NotificationsMarked(int Marked);
 
-    // Shared pagination and CAS mutation keep native forms and MCP consistent.
     public static class NotificationCommands
     {
         public static Task<AccountContext> RefreshAsync(AccountService accounts, AccountContext context, CancellationToken cancellationToken, bool reload = false)
@@ -40,8 +39,6 @@ namespace TerraScale.Dashboard.Features.Notifications
                 {
                     throw new AccountAccessException("Notification is unavailable.", 404);
                 }
-                // The callback can run again after a stale producer version. Count
-                // only the changes in the attempt that actually commits.
                 marked = visible.Count(item => item.Unread);
                 foreach (var item in visible)
                 {

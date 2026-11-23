@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Sso;
@@ -52,7 +51,7 @@ public sealed class PutSsoConnectionEndpoint(SsoConnections connections, Platfor
         }, cancellationToken) switch
         {
             SsoConnectionRecord saved => this.Ok(saved),
-            Conflict failure => ErrorResults.ToResult(failure),
+            AuthConflict failure => ErrorResults.ToResult(failure),
         };
     }
 }

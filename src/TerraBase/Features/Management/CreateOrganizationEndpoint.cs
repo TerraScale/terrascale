@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union CreateOrganizationResponse(Created<OrganizationBody>, InvalidInput, CredentialRejected, StateConflict, BackendUnavailable);
+
 internal sealed class CreateOrganizationEndpoint(ManagementService management)
-    : Endpoint<NameInput, Result<Created<OrganizationBody>, Validation, Unauthorized, Conflict, Unavailable>>
+    : Endpoint<NameInput, CreateOrganizationResponse>
 {
     public override void Configure()
     {
@@ -18,17 +20,18 @@ internal sealed class CreateOrganizationEndpoint(ManagementService management)
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<Created<OrganizationBody>, Validation, Unauthorized, Conflict, Unavailable>> HandleAsync(
+    public override async ValueTask<CreateOrganizationResponse> HandleAsync(
         NameInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await management.CreateOrganizationAsync(HttpContext.Caller, request.Name, cancellationToken) switch
+        var outcome = await management.CreateOrganizationAsync(HttpContext.Caller, request.Name, cancellationToken);
+        return outcome switch
         {
             OrganizationRecord created => new Created<OrganizationBody>(string.Concat(ManagementRoute.Organizations, "/", created.Id.ToString()), OrganizationBody.From(created)),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var database = DemandPlacement(context, id);
                 if (database.Region.Length == 0)
                 {
-                    return DatabaseMutations.PlacementRefused(new Conflict("This database's regions are unavailable. Reload the page and try again."));
+                    return DatabaseMutations.PlacementRefused(new DatabaseStateConflict("This database's regions are unavailable. Reload the page and try again."));
                 }
 
                 var catalog = await backend.CatalogAsync(cancellationToken);
@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Common.Databases
                     var before = Ids(current);
                     if (!before.SetEquals(seen))
                     {
-                        return DatabaseMutations.PlacementRefused(new Conflict("This database's regions changed in another session. Check them and save again."));
+                        return DatabaseMutations.PlacementRefused(new DatabaseStateConflict("This database's regions changed in another session. Check them and save again."));
                     }
 
                     string[] selected = [.. regions.Select(code => before.FirstOrDefault(known => known.Equals(code.Trim(), StringComparison.OrdinalIgnoreCase)) ?? ResolveRegion(catalog, code).Id)
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.PlacementRefused(DatabaseMutations.ToFailure(error));
+                return DatabaseMutations.PlacementRefused(DatabaseMutations.ToRefusal(error));
             }
         }
 

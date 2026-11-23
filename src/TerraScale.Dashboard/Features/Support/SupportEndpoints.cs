@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Support
 
     public sealed record SupportMailAccepted(string Status);
 
-    public readonly union SupportMailResult(SupportMailAccepted, QuotaExceeded, Validation);
+    public readonly union SupportMailResult(SupportMailAccepted, DashboardQuotaExceeded, DashboardValidation);
 
     public interface ISupportMail
     {
@@ -41,12 +41,12 @@ namespace TerraScale.Dashboard.Features.Support
             using var response = await http.CreateClient("platform").SendAsync(message, cancellationToken);
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
-                return new QuotaExceeded("You sent too many support requests this hour. Email support@terrascale.tech instead.");
+                return new DashboardQuotaExceeded("You sent too many support requests this hour. Email support@terrascale.tech instead.");
             }
 
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.UnprocessableEntity)
             {
-                return new Validation("Check the organization, project and message, then send again.");
+                return new DashboardValidation("Check the organization, project and message, then send again.");
             }
 
             if (!response.IsSuccessStatusCode)
@@ -129,16 +129,26 @@ namespace TerraScale.Dashboard.Features.Support
             {
                 var delivery = await mail.SendAsync(new(draft.RequestId, context.UserId, organization.Id, project?.Id, draft.DatabaseId.Length == 0 ? null : draft.DatabaseId,
                     PlanCatalog.For(organization)?.Key ?? "free", draft.Severity, draft.Subject, draft.Message + (draft.RelatedRequestId.Length == 0 ? "" : "\nRequest ID: " + draft.RelatedRequestId)), http.RequestAborted);
-                if (delivery is not SupportMailAccepted accepted)
+                return delivery switch
                 {
-                    return delivery switch
-                    {
-                        QuotaExceeded error => await RefusedAsync(http, context, draft, error.Message, 429),
-                        Validation error => await RefusedAsync(http, context, draft, error.Message, 422),
-                        SupportMailAccepted => throw new UnreachableException(),
-                    };
+                    SupportMailAccepted accepted => await DeliveredAsync(accepted),
+                    DashboardQuotaExceeded error => await RefusedAsync(http, context, draft, error.Message, 429),
+                    DashboardValidation error => await RefusedAsync(http, context, draft, error.Message, 422),
+                };
+            }
+            catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException)
+            {
+                if (error is not AccountAccessException)
+                {
+                    logger.ASupportRequestCouldNotBe(error.GetType().Name);
                 }
 
+                return await RefusedAsync(http, context, draft, error is AccountAccessException access ? access.Message : "Support email is unavailable. Send again, or email support@terrascale.tech.",
+                    error is AccountAccessException { StatusCode: var code } ? code : 503);
+            }
+
+            async Task<IResult> DeliveredAsync(SupportMailAccepted accepted)
+            {
                 if (accepted.Status != "accepted")
                 {
                     throw new AccountAccessException("Your request could not be delivered. Send again, or email support@terrascale.tech.", 503);
@@ -154,16 +164,6 @@ namespace TerraScale.Dashboard.Features.Support
                 }
 
                 return HttpRedirects.SeeOther("/support?sent=" + draft.RequestId[^8..]);
-            }
-            catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException)
-            {
-                if (error is not AccountAccessException)
-                {
-                    logger.ASupportRequestCouldNotBe(error.GetType().Name);
-                }
-
-                return await RefusedAsync(http, context, draft, error is AccountAccessException access ? access.Message : "Support email is unavailable. Send again, or email support@terrascale.tech.",
-                    error is AccountAccessException { StatusCode: var code } ? code : 503);
             }
         }
 

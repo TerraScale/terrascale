@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -20,7 +19,7 @@ public sealed class CreateAgentIdClientEndpoint(PlatformAuthentication authentic
         var name = PlatformDirectory.Name(request.Name);
         if (name is not { Length: <= 64 })
         {
-            return ErrorResults.ToResult(new Validation("name must be 1 to 64 characters with a letter or digit."));
+            return ErrorResults.ToResult(new AuthValidation("name must be 1 to 64 characters with a letter or digit."));
         }
 
         List<string> redirects = [];
@@ -28,7 +27,7 @@ public sealed class CreateAgentIdClientEndpoint(PlatformAuthentication authentic
         {
             if (AgentIdClients.RedirectUri(value) is not { } redirect)
             {
-                return ErrorResults.ToResult(new Validation("Each redirect URI must be an absolute https URL in canonical form, without userinfo or fragment."));
+                return ErrorResults.ToResult(new AuthValidation("Each redirect URI must be an absolute https URL in canonical form, without userinfo or fragment."));
             }
 
             redirects.Add(redirect);
@@ -36,22 +35,22 @@ public sealed class CreateAgentIdClientEndpoint(PlatformAuthentication authentic
 
         if (redirects.Count is < 1 or > AgentIdClients.MaxRedirectUris || redirects.Distinct(StringComparer.Ordinal).Count() != redirects.Count)
         {
-            return ErrorResults.ToResult(new Validation("redirect_uris must hold 1 to 10 distinct URLs."));
+            return ErrorResults.ToResult(new AuthValidation("redirect_uris must hold 1 to 10 distinct URLs."));
         }
 
         var proof = await proofs.PrepareHeaderAsync(owner, this.HttpContext.Request, "create_oauth_client", null, cancellationToken);
         if (proof is null)
         {
-            return ErrorResults.ToResult(new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required"));
+            return ErrorResults.ToResult(new AuthForbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required"));
         }
 
         return await clients.CreateAsync(proof, name, redirects, cancellationToken) switch
         {
             AgentIdClientBody client => TypedResults.Json(client, AgentIdClientJson.Default.AgentIdClientBody, statusCode: StatusCodes.Status201Created)
                 .WithLocation(Root + "/" + client.ClientId),
-            NotFound notFound => ErrorResults.ToResult(notFound),
-            Conflict conflict => ErrorResults.ToResult(conflict),
-            Forbidden forbidden => ErrorResults.ToResult(forbidden),
+            AuthNotFound notFound => ErrorResults.ToResult(notFound),
+            AuthConflict conflict => ErrorResults.ToResult(conflict),
+            AuthForbidden forbidden => ErrorResults.ToResult(forbidden),
         };
     }
 }

@@ -7,6 +7,10 @@ using ZLogger;
 
 namespace TerraBase.Features.Management.Usage;
 
+internal readonly union UsageTotalsOutcome(IReadOnlyDictionary<string, long>, BackendUnavailable);
+
+internal readonly union UsageMonthsOutcome(IReadOnlyList<string>, BackendUnavailable);
+
 public static class UsageMetrics
 {
     public const string Requests = "requests";
@@ -50,20 +54,20 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
         _recorded.Add(value, new KeyValuePair<string, object?>("metric", metric));
     }
 
-    public async ValueTask<Result<IReadOnlyDictionary<string, long>, Unavailable>> ReadAsync(string scope, string month, CancellationToken cancellationToken) =>
+    public async ValueTask<UsageTotalsOutcome> ReadAsync(string scope, string month, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement("SELECT metric, value FROM usage_counters WHERE scope = ? AND month = ?", SqlBuild.Text(scope), SqlBuild.Text(month)),
             cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Totals(rows, scope, month),
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<Result<IReadOnlyList<string>, Unavailable>> MonthsAsync(string scope, CancellationToken cancellationToken) =>
+    public async ValueTask<UsageMonthsOutcome> MonthsAsync(string scope, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement("SELECT DISTINCT month FROM usage_counters WHERE scope = ? ORDER BY month DESC LIMIT 36", SqlBuild.Text(scope)),
             cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Months(rows),
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -108,8 +112,8 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
             failure = written switch
             {
                 SqlWriteResult => null,
-                Conflict conflict => conflict.Message,
-                Unavailable unavailable => unavailable.Message,
+                StateConflict conflict => conflict.Message,
+                BackendUnavailable unavailable => unavailable.Message,
             };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -128,7 +132,7 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
         }
     }
 
-    private Result<IReadOnlyDictionary<string, long>, Unavailable> Totals(IReadOnlyList<IReadOnlyList<SqlValue>> rows, string scope, string month)
+    private UsageTotalsOutcome Totals(IReadOnlyList<IReadOnlyList<SqlValue>> rows, string scope, string month)
     {
         Dictionary<string, long> totals = new(StringComparer.Ordinal);
         foreach (var metric in UsageMetrics.All)
@@ -144,5 +148,5 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
         return totals;
     }
 
-    private static Result<IReadOnlyList<string>, Unavailable> Months(IReadOnlyList<IReadOnlyList<SqlValue>> rows) => new([.. rows.Select(static row => row.TextAt(0))]);
+    private static UsageMonthsOutcome Months(IReadOnlyList<IReadOnlyList<SqlValue>> rows) => new([.. rows.Select(static row => row.TextAt(0))]);
 }

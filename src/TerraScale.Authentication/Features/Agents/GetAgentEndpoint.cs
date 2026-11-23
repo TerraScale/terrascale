@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -18,7 +17,7 @@ public sealed class GetAgentEndpoint(TenantDirectory tenants, PlatformAuthentica
         return await agents.GetAsync(project, this.RouteId("agent"), cancellationToken) switch
         {
             AgentBody agent => TypedResults.Json(agent, AgentJson.Default.AgentBody),
-            NotFound notFound => ErrorResults.ToResult(notFound),
+            AuthNotFound notFound => ErrorResults.ToResult(notFound),
         };
     }
 }

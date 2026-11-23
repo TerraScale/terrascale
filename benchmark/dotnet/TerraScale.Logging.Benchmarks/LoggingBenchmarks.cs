@@ -5,7 +5,6 @@ using ZLogger;
 
 namespace TerraScale.Logging.Benchmarks;
 
-/// <summary>Cost of one record through the TerraScale provider; output goes to a null sink.</summary>
 [MemoryDiagnoser]
 public class LoggingBenchmarks
 {

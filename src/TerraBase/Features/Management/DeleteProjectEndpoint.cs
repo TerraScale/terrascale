@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union DeleteProjectResponse(Completed, CredentialRejected, ResourceNotFound, StateConflict, BackendUnavailable);
+
 internal sealed class DeleteProjectEndpoint(ManagementService management, CatalogStore catalog)
-    : Endpoint<RouteInput, Result<Done, Unauthorized, NotFound, Conflict, Unavailable>>
+    : Endpoint<RouteInput, DeleteProjectResponse>
 {
     public override void Configure()
     {
@@ -18,20 +20,21 @@ internal sealed class DeleteProjectEndpoint(ManagementService management, Catalo
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<Done, Unauthorized, NotFound, Conflict, Unavailable>> HandleAsync(RouteInput request, CancellationToken cancellationToken)
+    public override async ValueTask<DeleteProjectResponse> HandleAsync(RouteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await ProjectFlow.OwnedProjectAsync(HttpContext.Caller, management, catalog, request, cancellationToken) switch
+        var outcome = await ProjectFlow.OwnedProjectAsync(HttpContext.Caller, management, catalog, request, cancellationToken);
+        return outcome switch
         {
             ProjectRecord project => await catalog.DeleteProjectAsync(project.Id, cancellationToken) switch
             {
-                Done done => done,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
+                Completed done => done,
+                StateConflict conflict => conflict,
+                BackendUnavailable unavailable => unavailable,
             },
-            Unauthorized unauthorized => unauthorized,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            CredentialRejected unauthorized => unauthorized,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

@@ -17,6 +17,8 @@ internal sealed record class OutboundStrongRelease(Ulid DatabaseId, StrongWoundM
 
 internal sealed record class OutboundDeltaAck(Ulid DatabaseId, DeltaAckMessage Message) : OutboundMessage(DatabaseId);
 
+public readonly union RemoteReplicationOutcome(RemoteApplyOutcome, DatabaseNotFound, SchemaMismatch, StorageCorrupted, StorageBusy, ClusterUnavailable);
+
 public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient client, ClusterDatabases databases, ChangefeedPublisher changefeed, StrongLockTable locks, ILogger<DeltaReplicator> logger) : IAsyncDisposable
 {
     private const int OutboundCapacity = 16384;
@@ -79,19 +81,19 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         }
     }
 
-    public async ValueTask<Result<RemoteApplyOutcome, NotFound, SchemaMismatch, StorageCorrupted, StorageBusy, Unavailable>> ApplyAsync(Ulid databaseId, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
+    public async ValueTask<RemoteReplicationOutcome> ApplyAsync(Ulid databaseId, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commits);
-        var resolved = await databases.ResolveAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        var resolved = await databases.ResolveAsync(databaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => await ApplyLeasedAsync(session, commits, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => notFound,
-            Unavailable unavailable => unavailable,
+            ISqlDatabaseSession session => await ApplyLeasedAsync(session, commits, cancellationToken),
+            DatabaseNotFound notFound => notFound,
+            ClusterUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<RemoteApplyOutcome, NotFound, SchemaMismatch, StorageCorrupted, StorageBusy, Unavailable>> ApplyToSessionAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
+    public async ValueTask<RemoteReplicationOutcome> ApplyToSessionAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(commits);
@@ -102,10 +104,10 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         }
 
         var before = session.CurrentBookmark;
-        var applied = await session.ApplyRemoteBatchAsync(new RemoteCommitBatch(session.DatabaseId, foreign), cancellationToken).ConfigureAwait(false);
+        var applied = await session.ApplyRemoteBatchAsync(new RemoteCommitBatch(session.DatabaseId, foreign), cancellationToken);
         return applied switch
         {
-            RemoteApplyOutcome outcome => await AppliedAsync(session.DatabaseId, foreign, before, outcome, cancellationToken).ConfigureAwait(false),
+            RemoteApplyOutcome outcome => await AppliedAsync(session.DatabaseId, foreign, before, outcome, cancellationToken),
             SchemaMismatch mismatch => mismatch,
             StorageCorrupted corrupted => corrupted,
             StorageBusy busy => busy,
@@ -119,25 +121,25 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             return;
         }
 
-        await _shutdown.CancelAsync().ConfigureAwait(false);
+        await _shutdown.CancelAsync();
         foreach (var outbox in _outboxes.Values)
         {
             outbox.Queue.Writer.TryComplete();
         }
 
-        await Task.WhenAll(_outboxes.Values.Select(static outbox => outbox.Pump)).ConfigureAwait(false);
+        await Task.WhenAll(_outboxes.Values.Select(static outbox => outbox.Pump));
         _shutdown.Dispose();
     }
 
-    private async ValueTask<Result<RemoteApplyOutcome, NotFound, SchemaMismatch, StorageCorrupted, StorageBusy, Unavailable>> ApplyLeasedAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
+    private async ValueTask<RemoteReplicationOutcome> ApplyLeasedAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
     {
-        await using (session.ConfigureAwait(false))
+        await using (session)
         {
-            return await ApplyToSessionAsync(session, commits, cancellationToken).ConfigureAwait(false);
+            return await ApplyToSessionAsync(session, commits, cancellationToken);
         }
     }
 
-    private async ValueTask<Result<RemoteApplyOutcome, NotFound, SchemaMismatch, StorageCorrupted, StorageBusy, Unavailable>> AppliedAsync(Ulid databaseId, CommitMetadata[] commits, CausalBookmark before, RemoteApplyOutcome outcome, CancellationToken cancellationToken)
+    private async ValueTask<RemoteReplicationOutcome> AppliedAsync(Ulid databaseId, CommitMetadata[] commits, CausalBookmark before, RemoteApplyOutcome outcome, CancellationToken cancellationToken)
     {
         databases.Observe(databaseId, outcome.Bookmark);
         Interlocked.Add(ref _applied, outcome.Applied);
@@ -155,7 +157,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             {
                 if (commit.Sequence > before.Get(commit.OriginRegion) && commit.Sequence <= outcome.Bookmark.Get(commit.OriginRegion))
                 {
-                    await changefeed.PublishAsync(databaseId, commit, cancellationToken).ConfigureAwait(false);
+                    await changefeed.PublishAsync(databaseId, commit, cancellationToken);
                 }
             }
         }
@@ -170,11 +172,11 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
     private async ValueTask HandleDeltaPushAsync(QuicCallContext context, DeltaPushMessage message, CancellationToken cancellationToken)
     {
-        var applied = await ApplyAsync(message.DatabaseId, message.Commits, cancellationToken).ConfigureAwait(false);
+        var applied = await ApplyAsync(message.DatabaseId, message.Commits, cancellationToken);
         var bookmark = applied switch
         {
             RemoteApplyOutcome outcome => outcome.Bookmark,
-            NotFound or SchemaMismatch or StorageCorrupted or StorageBusy or Unavailable => null,
+            DatabaseNotFound or SchemaMismatch or StorageCorrupted or StorageBusy or ClusterUnavailable => null,
         };
         if (bookmark is null)
         {
@@ -198,12 +200,12 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     private async ValueTask HandleStrongCommitAsync(QuicCallContext context, StrongCommitMessage message, CancellationToken cancellationToken)
     {
         var payload = message.Payload;
-        var applied = await ApplyAsync(payload.DatabaseId, [payload.Commit], cancellationToken).ConfigureAwait(false);
+        var applied = await ApplyAsync(payload.DatabaseId, [payload.Commit], cancellationToken);
         _ = locks.Release(payload.DatabaseId, payload.Commit.TxId);
         var failure = applied switch
         {
             RemoteApplyOutcome => null,
-            NotFound or SchemaMismatch or StorageCorrupted or StorageBusy or Unavailable => Describe(applied),
+            DatabaseNotFound or SchemaMismatch or StorageCorrupted or StorageBusy or ClusterUnavailable => Describe(applied),
         };
         if (failure is not null)
         {
@@ -218,14 +220,14 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         return ValueTask.CompletedTask;
     }
 
-    private static string Describe(Result<RemoteApplyOutcome, NotFound, SchemaMismatch, StorageCorrupted, StorageBusy, Unavailable> applied) => applied switch
+    private static string Describe(RemoteReplicationOutcome applied) => applied switch
     {
         RemoteApplyOutcome outcome => string.Concat("applied ", outcome.Applied.ToString(CultureInfo.InvariantCulture)),
-        NotFound notFound => notFound.Message ?? "database not found",
+        DatabaseNotFound notFound => notFound.Message,
         SchemaMismatch mismatch => string.Concat("schema epoch mismatch: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture), ", actual ", mismatch.ActualEpoch.ToString(CultureInfo.InvariantCulture)),
         StorageCorrupted corrupted => corrupted.Message,
         StorageBusy busy => busy.Message,
-        Unavailable unavailable => unavailable.Message,
+        ClusterUnavailable unavailable => unavailable.Message,
     };
 
     private void Enqueue(string nodeId, OutboundMessage message)
@@ -254,9 +256,9 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         var cancellationToken = _shutdown.Token;
         try
         {
-            await foreach (var message in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            await foreach (var message in reader.ReadAllAsync(cancellationToken))
             {
-                await SendAsync(nodeId, message, cancellationToken).ConfigureAwait(false);
+                await SendAsync(nodeId, message, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -270,16 +272,16 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         var channel = message.DatabaseId.ToString();
         var sent = message switch
         {
-            OutboundDelta delta => await client.PushAsync(nodeId, QuicMessageType.DeltaPush, delta.Message, channel, cancellationToken).ConfigureAwait(false),
-            OutboundStrongCommit commit => await client.PushAsync(nodeId, QuicMessageType.StrongCommit, commit.Message, channel, cancellationToken).ConfigureAwait(false),
-            OutboundStrongRelease release => await client.PushAsync(nodeId, QuicMessageType.StrongWound, release.Message, channel, cancellationToken).ConfigureAwait(false),
-            OutboundDeltaAck ack => await client.PushAsync(nodeId, QuicMessageType.DeltaAck, ack.Message, channel, cancellationToken).ConfigureAwait(false),
+            OutboundDelta delta => await client.PushAsync(nodeId, QuicMessageType.DeltaPush, delta.Message, channel, cancellationToken),
+            OutboundStrongCommit commit => await client.PushAsync(nodeId, QuicMessageType.StrongCommit, commit.Message, channel, cancellationToken),
+            OutboundStrongRelease release => await client.PushAsync(nodeId, QuicMessageType.StrongWound, release.Message, channel, cancellationToken),
+            OutboundDeltaAck ack => await client.PushAsync(nodeId, QuicMessageType.DeltaAck, ack.Message, channel, cancellationToken),
         };
         var failure = sent switch
         {
-            Done => null,
-            Unavailable unavailable => unavailable.Message,
-            RequestTimeout timeout => timeout.Message,
+            QuicSent => null,
+            QuicUnavailable unavailable => unavailable.Message,
+            QuicTimeout timeout => timeout.Message,
         };
         if (failure is not null)
         {

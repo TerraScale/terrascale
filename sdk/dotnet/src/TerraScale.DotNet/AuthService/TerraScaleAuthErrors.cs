@@ -4,12 +4,6 @@ using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet;
 
-/// <summary>
-/// Maps ts-auth error responses onto <see cref="AuthRefused"/>. The
-/// management API uses the nested envelope <c>{"error":{code,message}}</c>;
-/// the OAuth endpoints use the flat RFC 6749 shape
-/// <c>{"error":"code","error_description":"message"}</c>.
-/// </summary>
 internal static class TerraScaleAuthErrors
 {
     internal static async Task<AuthRefused> CreateAsync(
@@ -40,8 +34,6 @@ internal static class TerraScaleAuthErrors
 
     internal static AuthRefused InvalidResponse(string message) => new(null, message, "invalid_response");
 
-    /// <summary>Resolves Retry-After in both forms (delta seconds and HTTP
-    /// date), clamped to zero, so date-only headers are not dropped.</summary>
     internal static TimeSpan? ResolveRetryAfter(HttpResponseMessage? response)
     {
         if (response?.Headers.RetryAfter?.Delta is { } delta)
@@ -94,8 +86,6 @@ internal static class TerraScaleAuthErrors
         }
     }
 
-    // Fixed error identities from the source-pinned C# platform and legacy contracts and
-    // the OAuth error vocabulary. No producer-supplied free text is retained.
     private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
     {
         "already_member",

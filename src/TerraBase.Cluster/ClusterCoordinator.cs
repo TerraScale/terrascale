@@ -16,19 +16,19 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
 
     public CausalBookmark CurrentBookmark(Ulid databaseId) => databases.Current(databaseId);
 
-    public async ValueTask<Result<Done, NotFound, RequestTimeout>> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
+    public async ValueTask<ClusterWaitBookmarkOutcome> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bookmark);
-        var resolved = await databases.ResolveAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        var resolved = await databases.ResolveAsync(databaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => await WaitLeasedAsync(databases, session, bookmark, timeout, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => notFound,
-            Unavailable unavailable => new RequestTimeout(unavailable.Message),
+            ISqlDatabaseSession session => await WaitLeasedAsync(databases, session, bookmark, timeout, cancellationToken),
+            DatabaseNotFound notFound => notFound,
+            ClusterUnavailable unavailable => new ClusterTimeout(unavailable.Message),
         };
     }
 
-    public async ValueTask<Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> ExecuteWriteAsync(
+    public async ValueTask<ClusterWriteOutcome> ExecuteWriteAsync(
         ISqlDatabaseSession session,
         SqlStatementRequest request,
         CancellationToken cancellationToken)
@@ -39,25 +39,25 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         if (request.Mode == ConsistencyMode.Strong)
         {
             return IsLocalOnlyStrong(session.DatabaseId)
-                ? await ExecuteLocalStrongAsync(session, request, cancellationToken).ConfigureAwait(false)
-                : await strong.ExecuteAsync(session, request, cancellationToken).ConfigureAwait(false);
+                ? await ExecuteLocalStrongAsync(session, request, cancellationToken)
+                : await strong.ExecuteAsync(session, request, cancellationToken);
         }
 
-        var local = await session.ExecuteWriteAsync(request, cancellationToken).ConfigureAwait(false);
+        var local = await session.ExecuteWriteAsync(request, cancellationToken);
         return local switch
         {
-            SqlWriteResult written => Durable(written, await finalizer.FinalizeFastAsync(session.DatabaseId, written.Commit, cancellationToken).ConfigureAwait(false)),
+            SqlWriteResult written => Durable(written, await finalizer.FinalizeFastAsync(session.DatabaseId, written.Commit, cancellationToken)),
             StrongRequired => IsLocalOnlyStrong(session.DatabaseId)
-                ? await ExecuteLocalStrongAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken).ConfigureAwait(false)
-                : await strong.ExecuteAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken).ConfigureAwait(false),
+                ? await ExecuteLocalStrongAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken)
+                : await strong.ExecuteAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken),
             SqlError error => error,
             SchemaMismatch mismatch => mismatch,
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => new ClusterTimeout(timeout.Message, timeout.Code),
         };
     }
 
-    public async ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitTransactionAsync(
+    public async ValueTask<ClusterCommitTransactionOutcome> CommitTransactionAsync(
         ISqlDatabaseSession session,
         ISqlTransaction transaction,
         CancellationToken cancellationToken)
@@ -68,51 +68,51 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         if (transaction.Options.Mode == ConsistencyMode.Strong)
         {
             return IsLocalOnlyStrong(session.DatabaseId)
-                ? await CommitLocalStrongAsync(session, transaction, cancellationToken).ConfigureAwait(false)
-                : await strong.CommitTransactionAsync(session, transaction, cancellationToken).ConfigureAwait(false);
+                ? await CommitLocalStrongAsync(session, transaction, cancellationToken)
+                : await strong.CommitTransactionAsync(session, transaction, cancellationToken);
         }
 
-        var local = await transaction.CommitLocalAsync(cancellationToken).ConfigureAwait(false);
+        var local = await transaction.CommitLocalAsync(cancellationToken);
         return local switch
         {
-            CommitMetadata commit => Durable(commit, await finalizer.FinalizeFastAsync(session.DatabaseId, commit, cancellationToken).ConfigureAwait(false)),
+            CommitMetadata commit => Durable(commit, await finalizer.FinalizeFastAsync(session.DatabaseId, commit, cancellationToken)),
             StrongRequired required => new SerializationConflict(session.DatabaseId, transaction.TxId, string.Concat(StrongRequiredCode, ":", Reason(required.Reason))),
             SchemaMismatch mismatch => mismatch,
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => new ClusterTimeout(timeout.Message, timeout.Code),
         };
     }
 
-    public async ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(ISqlDatabaseSession session, SqlTransactionOptions options, CancellationToken cancellationToken)
+    public async ValueTask<ClusterBeginTransactionOutcome> BeginTransactionAsync(ISqlDatabaseSession session, SqlTransactionOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(options);
         databases.Track(session.DatabaseId);
-        var begun = await session.BeginTransactionAsync(options, cancellationToken).ConfigureAwait(false);
+        var begun = await session.BeginTransactionAsync(options, cancellationToken);
         return begun switch
         {
             ISqlTransaction transaction => Upgrading(new UpgradingTransaction(session, transaction)),
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => new ClusterTimeout(timeout.Message, timeout.Code),
         };
 
-        static Result<ISqlTransaction, StorageBusy, RequestTimeout> Upgrading(ISqlTransaction transaction) => new(transaction);
+        static ClusterBeginTransactionOutcome Upgrading(ISqlTransaction transaction) => new(transaction);
     }
 
-    private static async ValueTask<Result<Done, NotFound, RequestTimeout>> WaitLeasedAsync(ClusterDatabases databases, ISqlDatabaseSession session, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
+    private static async ValueTask<ClusterWaitBookmarkOutcome> WaitLeasedAsync(ClusterDatabases databases, ISqlDatabaseSession session, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        await using (session.ConfigureAwait(false))
+        await using (session)
         {
             if (!session.CurrentBookmark.Dominates(bookmark))
             {
                 _ = databases.RequestCatchUp(session.DatabaseId);
             }
 
-            var waited = await session.WaitForBookmarkAsync(bookmark, timeout, cancellationToken).ConfigureAwait(false);
+            var waited = await session.WaitForBookmarkAsync(bookmark, timeout, cancellationToken);
             return waited switch
             {
-                Done done => done,
-                RequestTimeout expired => expired,
+                BookmarkReached reached => reached,
+                StorageTimeout expired => new ClusterTimeout(expired.Message, expired.Code),
             };
         }
     }
@@ -120,63 +120,63 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
     private bool IsLocalOnlyStrong(Ulid databaseId) =>
         topology.StrongParticipants(databaseId) is [{ IsLocal: true }];
 
-    private async ValueTask<Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> ExecuteLocalStrongAsync(
+    private async ValueTask<ClusterWriteOutcome> ExecuteLocalStrongAsync(
         ISqlDatabaseSession session,
         SqlStatementRequest request,
         CancellationToken cancellationToken)
     {
-        var local = await session.ExecuteWriteAsync(request, cancellationToken).ConfigureAwait(false);
+        var local = await session.ExecuteWriteAsync(request, cancellationToken);
         return local switch
         {
-            SqlWriteResult written => await FinalizeLocalStrongAsync(session.DatabaseId, written, cancellationToken).ConfigureAwait(false),
-            StrongRequired => await strong.ExecuteAsync(session, request, cancellationToken).ConfigureAwait(false),
+            SqlWriteResult written => await FinalizeLocalStrongAsync(session.DatabaseId, written, cancellationToken),
+            StrongRequired => await strong.ExecuteAsync(session, request, cancellationToken),
             SqlError error => error,
             SchemaMismatch mismatch => mismatch,
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => new ClusterTimeout(timeout.Message, timeout.Code),
         };
     }
 
     private async ValueTask<SqlWriteResult> FinalizeLocalStrongAsync(Ulid databaseId, SqlWriteResult written, CancellationToken cancellationToken)
     {
-        await finalizer.FinalizeStrongAsync(databaseId, written.Commit, cancellationToken).ConfigureAwait(false);
+        await finalizer.FinalizeStrongAsync(databaseId, written.Commit, cancellationToken);
         return written;
     }
 
-    private async ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitLocalStrongAsync(
+    private async ValueTask<ClusterCommitTransactionOutcome> CommitLocalStrongAsync(
         ISqlDatabaseSession session,
         ISqlTransaction transaction,
         CancellationToken cancellationToken)
     {
-        var local = await transaction.CommitLocalAsync(cancellationToken).ConfigureAwait(false);
+        var local = await transaction.CommitLocalAsync(cancellationToken);
         return local switch
         {
-            CommitMetadata commit => await FinalizeLocalStrongCommitAsync(session.DatabaseId, commit, cancellationToken).ConfigureAwait(false),
+            CommitMetadata commit => await FinalizeLocalStrongCommitAsync(session.DatabaseId, commit, cancellationToken),
             StrongRequired required => new SerializationConflict(session.DatabaseId, transaction.TxId, string.Concat(StrongRequiredCode, ":", Reason(required.Reason))),
             SchemaMismatch mismatch => mismatch,
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => new ClusterTimeout(timeout.Message, timeout.Code),
         };
     }
 
     private async ValueTask<CommitMetadata> FinalizeLocalStrongCommitAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
     {
-        await finalizer.FinalizeStrongAsync(databaseId, commit, cancellationToken).ConfigureAwait(false);
+        await finalizer.FinalizeStrongAsync(databaseId, commit, cancellationToken);
         return commit;
     }
 
-    private static Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy> Durable(SqlWriteResult written, Result<Done, Unavailable, RequestTimeout> durable) => durable switch
+    private static ClusterWriteOutcome Durable(SqlWriteResult written, InRegionReplicationOutcome durable) => durable switch
     {
-        Done => written,
-        Unavailable unavailable => new Unavailable(string.Concat("committed locally; in-region quorum unconfirmed: ", unavailable.Message), "in_region_quorum_unconfirmed"),
-        RequestTimeout timeout => timeout,
+        InRegionReplicated => written,
+        ClusterUnavailable unavailable => new ClusterUnavailable(string.Concat("committed locally; in-region quorum unconfirmed: ", unavailable.Message), "in_region_quorum_unconfirmed"),
+        ClusterTimeout timeout => timeout,
     };
 
-    private static Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy> Durable(CommitMetadata commit, Result<Done, Unavailable, RequestTimeout> durable) => durable switch
+    private static ClusterCommitTransactionOutcome Durable(CommitMetadata commit, InRegionReplicationOutcome durable) => durable switch
     {
-        Done => commit,
-        Unavailable unavailable => new Unavailable(string.Concat("committed locally; in-region quorum unconfirmed: ", unavailable.Message), "in_region_quorum_unconfirmed"),
-        RequestTimeout timeout => timeout,
+        InRegionReplicated => commit,
+        ClusterUnavailable unavailable => new ClusterUnavailable(string.Concat("committed locally; in-region quorum unconfirmed: ", unavailable.Message), "in_region_quorum_unconfirmed"),
+        ClusterTimeout timeout => timeout,
     };
 
     private static string Reason(StrongRequiredReason reason) => reason switch
@@ -199,62 +199,62 @@ public sealed class UpgradingTransaction(ISqlDatabaseSession session, ISqlTransa
 
     public bool Upgraded { get; private set; }
 
-    public async ValueTask<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
+    public async ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(statement);
-        var executed = await _inner.ExecuteAsync(statement, cancellationToken).ConfigureAwait(false);
+        var executed = await _inner.ExecuteAsync(statement, cancellationToken);
         return executed switch
         {
             SqlResultSet result => Recorded(statement, result),
             SqlError error when Options.Mode == ConsistencyMode.Fast && string.Equals(error.Code, ClusterCoordinator.StrongRequiredCode, StringComparison.Ordinal)
-                => await UpgradeAsync(statement, cancellationToken).ConfigureAwait(false),
+                => await UpgradeAsync(statement, cancellationToken),
             SqlError error => error,
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => timeout,
         };
     }
 
-    public ValueTask<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> CommitLocalAsync(CancellationToken cancellationToken) =>
+    public ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken) =>
         _inner.CommitLocalAsync(cancellationToken);
 
-    public ValueTask<Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout>> StageAsync(CancellationToken cancellationToken) =>
+    public ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken) =>
         _inner.StageAsync(cancellationToken);
 
-    public ValueTask<Done> RollbackAsync(CancellationToken cancellationToken) => _inner.RollbackAsync(cancellationToken);
+    public ValueTask RollbackAsync(CancellationToken cancellationToken) => _inner.RollbackAsync(cancellationToken);
 
     public ValueTask DisposeAsync() => _inner.DisposeAsync();
 
-    private Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout> Recorded(SqlStatement statement, SqlResultSet result)
+    private TransactionExecuteResult Recorded(SqlStatement statement, SqlResultSet result)
     {
         _statements.Add(statement);
         return result;
     }
 
-    private async ValueTask<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> UpgradeAsync(SqlStatement statement, CancellationToken cancellationToken)
+    private async ValueTask<TransactionExecuteResult> UpgradeAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
         var options = _inner.Options with { Mode = ConsistencyMode.Strong };
-        _ = await _inner.RollbackAsync(cancellationToken).ConfigureAwait(false);
-        await _inner.DisposeAsync().ConfigureAwait(false);
-        var begun = await session.BeginTransactionAsync(options, cancellationToken).ConfigureAwait(false);
+        await _inner.RollbackAsync(cancellationToken);
+        await _inner.DisposeAsync();
+        var begun = await session.BeginTransactionAsync(options, cancellationToken);
         return begun switch
         {
-            ISqlTransaction transaction => await ReplayAsync(transaction, statement, cancellationToken).ConfigureAwait(false),
+            ISqlTransaction transaction => await ReplayAsync(transaction, statement, cancellationToken),
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => timeout,
         };
     }
 
-    private async ValueTask<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> ReplayAsync(ISqlTransaction strong, SqlStatement statement, CancellationToken cancellationToken)
+    private async ValueTask<TransactionExecuteResult> ReplayAsync(ISqlTransaction strong, SqlStatement statement, CancellationToken cancellationToken)
     {
         _inner = strong;
         Upgraded = true;
         foreach (var recorded in _statements)
         {
-            var replayed = await strong.ExecuteAsync(recorded, cancellationToken).ConfigureAwait(false);
+            var replayed = await strong.ExecuteAsync(recorded, cancellationToken);
             var succeeded = replayed switch
             {
                 SqlResultSet => true,
-                SqlError or StorageBusy or RequestTimeout => false,
+                SqlError or StorageBusy or StorageTimeout => false,
             };
             if (!succeeded)
             {
@@ -262,13 +262,13 @@ public sealed class UpgradingTransaction(ISqlDatabaseSession session, ISqlTransa
             }
         }
 
-        var executed = await strong.ExecuteAsync(statement, cancellationToken).ConfigureAwait(false);
+        var executed = await strong.ExecuteAsync(statement, cancellationToken);
         return executed switch
         {
             SqlResultSet result => Recorded(statement, result),
             SqlError error => error,
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            StorageTimeout timeout => timeout,
         };
     }
 }

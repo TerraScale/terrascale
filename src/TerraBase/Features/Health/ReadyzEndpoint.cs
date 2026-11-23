@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Health;
 
 internal sealed class ReadyzEndpoint(TerraBaseOptions options, NodeReadiness readiness, IHostApplicationLifetime lifetime)
-    : EndpointWithoutRequest<Result<StatusBody, UnavailableStatus<StatusBody>>>
+    : EndpointWithoutRequest<ReadinessResponse>
 {
     public override void Configure()
     {
@@ -18,10 +18,10 @@ internal sealed class ReadyzEndpoint(TerraBaseOptions options, NodeReadiness rea
         Metadata(ListenerMetadata.Probe);
     }
 
-    public override ValueTask<Result<StatusBody, UnavailableStatus<StatusBody>>> HandleAsync(CancellationToken cancellationToken)
+    public override ValueTask<ReadinessResponse> HandleAsync(CancellationToken cancellationToken)
     {
         var blocked = lifetime.ApplicationStopping.IsCancellationRequested ? "stopping" : readiness.Blocked;
-        Result<StatusBody, UnavailableStatus<StatusBody>> result = blocked is { } reason
+        ReadinessResponse result = blocked is { } reason
             ? new UnavailableStatus<StatusBody>(HealthStatus.For(HttpContext, "unavailable", options, reason), HealthJsonContext.Default)
             : HealthStatus.For(HttpContext, "ok", options);
         return ValueTask.FromResult(result);

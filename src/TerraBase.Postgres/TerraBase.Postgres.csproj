@@ -8,7 +8,6 @@
     <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Using Include="TerraScale.Results" />
     <Using Include="TerraScale.Contracts.Storage" />
   </ItemGroup>
 </Project>

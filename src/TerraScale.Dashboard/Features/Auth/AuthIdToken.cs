@@ -6,8 +6,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // ts-auth publishes ES256/P-256 keys. Reject every other algorithm rather
-    // than selecting a verifier from untrusted JWT headers.
     public static class AuthIdToken
     {
         public static AuthIdentity Validate(string? token, string issuer, string audience, string? nonce, TsAuthJwkSet keys, DateTimeOffset now)

@@ -1,7 +1,6 @@
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.SignIn;
@@ -31,18 +30,22 @@ public sealed class PasskeyHostedOptionsEndpoint(Sessions sessions, PasskeyCrede
             return TypedResults.NotFound();
         }
 
-        var denied = new Forbidden("Sign in again before enrolling a passkey.", "passkey_denied");
+        var denied = new AuthForbidden("Sign in again before enrolling a passkey.", "passkey_denied");
         ChallengedSignIn? pending = null;
         if (this.HttpContext.Request.Headers[RequiredMfaEnrollment.Header] is [{ } challenge])
         {
-            switch (await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken))
+            var enrollment = await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken);
+            var opened = enrollment switch
             {
-                case ChallengedSignIn allowed:
-                    pending = allowed;
-                    break;
-                case Forbidden error:
-                    return ErrorResults.ToResult(error);
+                ChallengedSignIn allowed => (SignIn: (ChallengedSignIn?)allowed, Failure: (AuthForbidden?)null),
+                AuthForbidden error => (SignIn: (ChallengedSignIn?)null, Failure: error),
+            };
+            if (opened.Failure is { } forbidden)
+            {
+                return ErrorResults.ToResult(forbidden);
             }
+
+            pending = opened.SignIn;
         }
 
         var live = pending is null ? await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) : null;

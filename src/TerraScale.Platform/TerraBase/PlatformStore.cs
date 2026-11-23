@@ -3,28 +3,31 @@ using ZLogger;
 
 namespace TerraScale.Platform.TerraBase;
 
+public readonly union PlatformStoreOutcome(SqlExecuteResponse, PlatformConflict, PlatformUnavailable);
+
 public sealed class PlatformStore(TerraBaseClient terraBase, PlatformOptions options)
 {
-    public async ValueTask<Result<IReadOnlyList<SqlHttpStatementResult>, Conflict, Unavailable>> ExecuteAsync(
+    public async ValueTask<PlatformStoreOutcome> ExecuteAsync(
         IReadOnlyList<SqlHttpStatement> statements,
         SqlContext context,
-        CancellationToken cancellationToken) =>
-        await terraBase.ExecuteAsync(options.StateDatabase, new SqlExecuteRequest(statements), context, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await terraBase.ExecuteAsync(options.StateDatabase, new SqlExecuteRequest(statements), context, cancellationToken);
+        return outcome switch
         {
-            SqlExecuteResponse response => Results(response),
+            SqlExecuteResponse response => response,
             SqlFailure { Error.Code: var code } failure when code.Contains("constraint", StringComparison.OrdinalIgnoreCase)
-                || code.Contains("unique", StringComparison.OrdinalIgnoreCase) => new Conflict(failure.Error.Message, "conflict"),
-            SqlFailure failure => new Unavailable($"the platform state database refused a statement: {failure.Error.Message}", "platform_state"),
-            NotFound => new Unavailable("the platform state database does not exist", "platform_state_missing"),
-            Unavailable unavailable => unavailable,
+                || code.Contains("unique", StringComparison.OrdinalIgnoreCase) => new PlatformConflict(failure.Error.Message, "conflict"),
+            SqlFailure failure => new PlatformUnavailable($"the platform state database refused a statement: {failure.Error.Message}", "platform_state"),
+            PlatformNotFound => new PlatformUnavailable("the platform state database does not exist", "platform_state_missing"),
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
-    public ValueTask<Result<IReadOnlyList<SqlHttpStatementResult>, Conflict, Unavailable>> ReadAsync(
+    public ValueTask<PlatformStoreOutcome> ReadAsync(
         SqlHttpStatement statement,
         CancellationToken cancellationToken) =>
         ExecuteAsync([statement], SqlContext.Fast, cancellationToken);
-
-    private static Result<IReadOnlyList<SqlHttpStatementResult>, Conflict, Unavailable> Results(SqlExecuteResponse response) => response.Results;
 }
 
 public sealed class PlatformSchema(
@@ -100,11 +103,12 @@ public sealed class PlatformSchema(
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), timeProvider);
         do
         {
-            var applied = await store.ExecuteAsync(statements, SqlContext.Strong, stoppingToken) switch
+            var appliedOutcome = await store.ExecuteAsync(statements, SqlContext.Strong, stoppingToken);
+            var applied = appliedOutcome switch
             {
-                IReadOnlyList<SqlHttpStatementResult> => true,
-                Conflict conflict => Failed(conflict.Message),
-                Unavailable unavailable => Failed(unavailable.Message),
+                SqlExecuteResponse => true,
+                PlatformConflict conflict => Failed(conflict.Message),
+                PlatformUnavailable unavailable => Failed(unavailable.Message),
             };
             if (applied)
             {

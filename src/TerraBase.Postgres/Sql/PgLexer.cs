@@ -31,7 +31,7 @@ internal static class PgLexer
     private const string OperatorCharacters = "+-*/<>=~!@#%^&|`?";
     private static readonly SearchValues<char> SpecialOperatorCharacters = SearchValues.Create("~!@#%^&|`?");
 
-    public static Result<PgToken[], PgError> Tokenize(string sql)
+    public static PgTokenizeResult Tokenize(string sql)
     {
         var tokens = new List<PgToken>((sql.Length / 4) + 4);
         var index = 0;
@@ -310,3 +310,5 @@ internal static class PgLexer
         return start + length;
     }
 }
+
+internal readonly union PgTokenizeResult(PgToken[], PgError);

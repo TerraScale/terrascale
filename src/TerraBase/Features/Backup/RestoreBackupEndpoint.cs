@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Backup;
 
-internal sealed class RestoreBackupEndpoint(BackupFlow flow) : Endpoint<BackupInput, Result<Accepted<RestoreOperationBody>, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>>
+internal sealed class RestoreBackupEndpoint(BackupFlow flow) : Endpoint<BackupInput, RestoreStartResponse>
 {
     public override void Configure()
     {
@@ -17,9 +17,9 @@ internal sealed class RestoreBackupEndpoint(BackupFlow flow) : Endpoint<BackupIn
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<Accepted<RestoreOperationBody>, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>> HandleAsync(BackupInput request, CancellationToken cancellationToken)
+    public override async ValueTask<RestoreStartResponse> HandleAsync(BackupInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await flow.RestoreAsync(HttpContext.Caller, request, ManagementService.Id(request.Backup) is { } backup ? new TargetChoice(backup.Time) : new TargetChoice(new Validation("backup must be a backup ULID", "invalid_backup")), cancellationToken);
+        return await flow.RestoreAsync(HttpContext.Caller, request, ManagementService.Id(request.Backup) is { } backup ? new TargetChoice(backup.Time) : new TargetChoice(new InvalidInput("backup must be a backup ULID", "invalid_backup")), cancellationToken);
     }
 }

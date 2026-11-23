@@ -2,8 +2,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // A project's own end-user tenant at ts-auth: settings, users, sessions and OAuth clients.
-    // Every call carries the signed-in user's own token; ts-auth checks the project role each time.
     public partial interface ITsAuthProjects
     {
         Task<TsAuthProjectInvitation> CreateInvitationAsync(SessionRecord session, string projectId, TsAuthCreateProjectInvitation request, CancellationToken cancellationToken);
@@ -14,7 +12,6 @@ namespace TerraScale.Dashboard.Features.Auth
         Task RejectWaitlistAsync(SessionRecord session, string projectId, string id, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TsAuthProjectSettingsUpdate update, CancellationToken cancellationToken);
-        // The update carries the provider's client secret; never log or store it.
         Task<TsAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TsAuthProjectProviderUpdate update, CancellationToken cancellationToken);
         Task<TsAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken);
         Task<TsAuthPlatformPage<TsAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken);
@@ -27,7 +24,6 @@ namespace TerraScale.Dashboard.Features.Auth
         Task SignOutUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
         Task RevokeSessionAsync(SessionRecord session, string projectId, string sessionId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
-        // A confidential client's secret is in this answer only; never log or store it.
         Task<TsAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TsAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken);
         Task<TsAuthProjectOAuthClient> UpdateClientAsync(SessionRecord session, string projectId, string clientId, TsAuthProjectClientUpdate request, string proof, CancellationToken cancellationToken);
         Task<TsAuthProjectClientSecret> RotateClientSecretAsync(SessionRecord session, string projectId, string clientId, string proof, CancellationToken cancellationToken);

@@ -3,6 +3,8 @@ using TerraScale.Contracts;
 
 namespace TerraScale.Platform.TerraBase;
 
+public readonly union InternalSqlOutcome(SqlExecuteResponse, SqlFailure, PlatformNotFound, PlatformUnavailable);
+
 public sealed record SqlFailure(int Status, ApiErrorBody Error);
 
 public sealed record SqlContext(string Bookmark, SqlConsistencyHint Hint)
@@ -16,24 +18,24 @@ public sealed record SqlContext(string Bookmark, SqlConsistencyHint Hint)
 
 public static class TerraBaseAnswers
 {
-    public static Result<SqlExecuteResponse, SqlFailure, NotFound, Unavailable> Sql(int status, ReadOnlySpan<byte> body)
+    public static InternalSqlOutcome Sql(int status, ReadOnlySpan<byte> body)
     {
         if (status == StatusCodes.Status200OK)
         {
             return Parse(body, TerraScaleContractsJsonContext.Default.SqlExecuteResponse) is { } response
                 ? response
-                : new Unavailable("TerraBase answered an unreadable SQL result", "terrabase_protocol");
+                : new PlatformUnavailable("TerraBase answered an unreadable SQL result", "terrabase_protocol");
         }
 
         var error = Error(status, body);
         return status switch
         {
-            StatusCodes.Status404NotFound => new NotFound(error.Message, error.Code),
+            StatusCodes.Status404NotFound => new PlatformNotFound(error.Message, error.Code),
             StatusCodes.Status400BadRequest or StatusCodes.Status409Conflict or StatusCodes.Status408RequestTimeout or StatusCodes.Status413PayloadTooLarge
                 or StatusCodes.Status422UnprocessableEntity or StatusCodes.Status504GatewayTimeout => new SqlFailure(status, error),
             StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden =>
-                new Unavailable("TerraBase refused the platform peer credential", "peer_credential_refused"),
-            _ => new Unavailable(error.Message, error.Code),
+                new PlatformUnavailable("TerraBase refused the platform peer credential", "peer_credential_refused"),
+            _ => new PlatformUnavailable(error.Message, error.Code),
         };
     }
 

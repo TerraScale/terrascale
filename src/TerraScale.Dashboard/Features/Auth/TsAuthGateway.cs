@@ -3,8 +3,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // The dashboard owns its ts-auth HTTP client for OIDC, the
-    // RFC 8693 exchange and the platform API.
     public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactory http, TimeProvider time, TsAuthClient authClient) : IAuthGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway
     {
         public async Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -17,9 +15,6 @@ namespace TerraScale.Dashboard.Features.Auth
             var client = Client();
             try
             {
-                // The owning issuer's userinfo validates signature, access-token
-                // type, revocation, the current user epoch and MFA state. ts-auth
-                // does not serve an introspection endpoint.
                 var user = await SessionUserInfoAsync(client, session, cancellationToken);
                 return user.Subject == session.UserId && user.EmailVerified == true &&
                     string.Equals(user.Email?.Trim(), session.Email.Trim(), StringComparison.OrdinalIgnoreCase);

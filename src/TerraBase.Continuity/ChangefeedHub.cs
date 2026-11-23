@@ -25,10 +25,10 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
             case 0:
                 return;
             case 1:
-                await DeliverAsync(targets[0].Writer, entry, cancellationToken).ConfigureAwait(false);
+                await DeliverAsync(targets[0].Writer, entry, cancellationToken);
                 return;
             default:
-                await Task.WhenAll(targets.Select(target => DeliverAsync(target.Writer, entry, cancellationToken).AsTask())).ConfigureAwait(false);
+                await Task.WhenAll(targets.Select(target => DeliverAsync(target.Writer, entry, cancellationToken).AsTask()));
                 return;
         }
     }
@@ -46,7 +46,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
         try
         {
             var cursor = new ChangefeedCursor(subscription.After);
-            await foreach (var entry in ReplayAsync(subscription, cursor, cancellationToken).ConfigureAwait(false))
+            await foreach (var entry in ReplayAsync(subscription, cursor, cancellationToken))
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -60,7 +60,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
                 }
             }
 
-            while (!cancellationToken.IsCancellationRequested && await channel.Reader.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
+            while (!cancellationToken.IsCancellationRequested && await channel.Reader.WaitToReadAsync(CancellationToken.None))
             {
                 while (!cancellationToken.IsCancellationRequested && channel.Reader.TryRead(out var entry))
                 {
@@ -74,7 +74,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
         }
         finally
         {
-            await registration.DisposeAsync().ConfigureAwait(false);
+            await registration.DisposeAsync();
             Detach(subscription.DatabaseId, channel);
             channel.Writer.TryComplete();
         }
@@ -82,7 +82,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
 
     private static async ValueTask DeliverAsync(ChannelWriter<ChangefeedEntry> writer, ChangefeedEntry entry, CancellationToken cancellationToken)
     {
-        while (await writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false))
+        while (await writer.WaitToWriteAsync(cancellationToken))
         {
             if (writer.TryWrite(entry))
             {
@@ -93,17 +93,18 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
 
     private async IAsyncEnumerable<ChangefeedEntry> ReplayAsync(ChangefeedSubscription subscription, ChangefeedCursor cursor, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var opened = await sessions.OpenAsync(subscription.DatabaseId, cancellationToken).ConfigureAwait(false) switch
+        var opened = await sessions.OpenAsync(subscription.DatabaseId, cancellationToken);
+        var sessionOrStop = opened switch
         {
             ISqlDatabaseSession available => available,
-            NotFound or Unavailable => null,
+            ContinuitySessionMissing or ContinuitySessionUnavailable => null,
         };
-        if (opened is not { } session)
+        if (sessionOrStop is not { } session)
         {
             yield break;
         }
 
-        await using (session.ConfigureAwait(false))
+        await using (session)
         {
             var upTo = session.CurrentBookmark;
             foreach (var (origin, last) in upTo.Entries)
@@ -111,9 +112,10 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
                 var next = subscription.After.Get(origin) + 1;
                 while (next <= last && !cancellationToken.IsCancellationRequested)
                 {
-                    var page = await session.ReadCommitLogAsync(origin, next, ReplayPageSize, cancellationToken).ConfigureAwait(false) switch
+                    var read = await session.ReadCommitLogAsync(origin, next, ReplayPageSize, cancellationToken);
+                    var page = read switch
                     {
-                        CommitLogPage read => read,
+                        CommitLogPage log => log,
                         CommitLogGap gap => Skip(subscription.DatabaseId, origin, gap),
                         StorageBusy busy => Stop(subscription.DatabaseId, origin, busy.Message),
                     };

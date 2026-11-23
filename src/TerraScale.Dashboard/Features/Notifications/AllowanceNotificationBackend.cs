@@ -13,7 +13,8 @@ namespace TerraScale.Dashboard.Features.Notifications
     {
         public async Task<AllowanceUsagePage?> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken)
         {
-            return await terraBase.ListAllowancesAsync(cancellationToken) switch
+            var outcome = await terraBase.ListAllowancesAsync(cancellationToken);
+            return outcome switch
             {
                 JsonElement answer when answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("items", out _) =>
                     answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty."),

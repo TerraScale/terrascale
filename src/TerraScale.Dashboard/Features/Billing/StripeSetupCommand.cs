@@ -6,9 +6,6 @@ using PortalFeatures = Stripe.BillingPortal.ConfigurationFeaturesOptions;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    /// <summary>Creates what StripeAuditCommand expects in the delivered identity's account: one product per paid plan, its
-    /// approved billing cadence and prices from PlanCatalog, contact-only Enterprise support, and the default billing portal.
-    /// A second run changes nothing.</summary>
     public sealed class StripeSetupCommand(IDashboardIdentity identity,
         Func<string, StripeClient>? clientFactory = null, TextWriter? output = null, TextWriter? error = null)
     {
@@ -52,7 +49,6 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 products.Add(product);
             }
-            // The same inventory the audit reads: every active recurring USD price, with its product.
             var prices = new List<Price>();
             await foreach (var price in client.V1.Prices.ListAutoPagingAsync(new()
             {
@@ -72,7 +68,6 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var enterprise = PlanCatalog.ComparisonPlans.Single(plan => plan.Key == "enterprise");
-            // Stripe support pricing does not make Enterprise a selectable dashboard plan.
             var setupPlans = PlanCatalog.Plans.Where(plan => plan.PriceCents > 0)
                 .SelectMany(plan => plan.CheckoutIntervals.Select(interval => (plan.Key, plan.Name, Interval: interval, Amount: plan.IntervalPriceCents(interval))))
                 .Append((enterprise.Key, Name: enterprise.Name + " support", Interval: "monthly", Amount: enterprise.PriceCents));
@@ -97,7 +92,6 @@ namespace TerraScale.Dashboard.Features.Billing
                         price.Product = product;
                     }
                 }
-                // Each plan has one product for both intervals: later intervals reuse the one just created or activated.
                 products.RemoveAll(known => known.Id == product.Id);
                 products.Add(product);
                 var interval = Interval;
@@ -120,7 +114,6 @@ namespace TerraScale.Dashboard.Features.Billing
                     }, cancellationToken: cancellationToken);
                     changes.Add("price_" + name + "_created");
                 }
-                // Keep exactly one published price per plan and interval.
                 foreach (var duplicate in matches.Skip(1))
                 {
                     await client.V1.Prices.UpdateAsync(duplicate.Id, new() { Active = false }, cancellationToken: cancellationToken);
@@ -146,7 +139,6 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 return;
             }
-            // Customers change plans in the dashboard, so the portal never offers subscription updates.
             var features = new PortalFeatures
             {
                 PaymentMethodUpdate = new() { Enabled = true },

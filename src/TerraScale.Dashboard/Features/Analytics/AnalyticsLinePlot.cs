@@ -4,7 +4,6 @@ using TerraScale.Dashboard.Common.Formatting;
 
 namespace TerraScale.Dashboard.Features.Analytics
 {
-    // Decimal preserves exact 64-bit counters alongside fractional millisecond observations.
     public sealed record AnalyticsSeries(string Name, decimal[] Values, bool[]? Missing = null);
     public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks,
         IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestDot> Markers, IReadOnlyList<RequestColumn> Columns)
@@ -35,7 +34,6 @@ namespace TerraScale.Dashboard.Features.Analytics
             }
 
             var maximum = series.SelectMany(row => row.Values.Where((value, index) => !Missing(row, index))).DefaultIfEmpty().Max();
-            // Four whole, round grid steps (1, 2 or 5 × 10ⁿ each): 40 → 0, 10, 20, 30, 40 rather than 0, 12, 25, 37, 50.
             var gridStep = Enumerable.Range(firstPower, 20 - firstPower).SelectMany(power => GridFactors.Select(factor => factor * Math.Pow(10, power))).First(value => value * 4 >= (double)maximum);
             var scale = maximum == 0 ? 1 : gridStep * 4;
             double X(int index)
@@ -80,7 +78,6 @@ namespace TerraScale.Dashboard.Features.Analytics
                 void Flush() { if (segment.Count == 0) { return; } segments.Add(ChartGeometry.Smooth([.. segment])); segment.Clear(); }
             }
             var columns = new List<RequestColumn>();
-            // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.
             var columnWidth = 660d / Math.Max(1, starts.Count - 1);
             for (var index = 0; index < starts.Count; index++)
             {

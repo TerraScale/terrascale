@@ -48,19 +48,21 @@ public sealed class FileSweeper(
             SqlValues.Number(now),
             SqlValues.Number(now - 60_000),
             SqlValues.Number(BatchSize));
-        var expired = await store.ReadAsync(statement, cancellationToken) switch
+        var expiredOutcome = await store.ReadAsync(statement, cancellationToken);
+        var expired = expiredOutcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => results[0].RowsOf().ToArray(),
-            Conflict conflict => Skip(conflict.Message),
-            Unavailable unavailable => Skip(unavailable.Message),
+            SqlExecuteResponse { Results: var results } => results[0].RowsOf().ToArray(),
+            PlatformConflict conflict => Skip(conflict.Message),
+            PlatformUnavailable unavailable => Skip(unavailable.Message),
         };
         foreach (var row in expired)
         {
             var key = S3FileObjectStore.Key(Ulid.Parse(row.Text(0)), Ulid.Parse(row.Text(1)), row.Text(2), row.Text(3));
-            var erased = await objects.DeleteAsync(row.Text(5), key, cancellationToken) switch
+            var erasedOutcome = await objects.DeleteAsync(row.Text(5), key, cancellationToken);
+            var erased = erasedOutcome switch
             {
-                Done => true,
-                Unavailable unavailable => Deferred(unavailable.Message),
+                FileObjectDeleted => true,
+                PlatformUnavailable unavailable => Deferred(unavailable.Message),
             };
             if (!erased)
             {
@@ -73,11 +75,12 @@ public sealed class FileSweeper(
                 SqlValues.Text(row.Text(2)),
                 SqlValues.Text(row.Text(3)),
                 SqlValues.Text(row.Text(4)));
-            var forgotten = await store.ExecuteAsync([forget], SqlContext.Fast, cancellationToken) switch
+            var forgottenOutcome = await store.ExecuteAsync([forget], SqlContext.Fast, cancellationToken);
+            var forgotten = forgottenOutcome switch
             {
-                IReadOnlyList<SqlHttpStatementResult> => true,
-                Conflict conflict => Deferred(conflict.Message),
-                Unavailable unavailable => Deferred(unavailable.Message),
+                SqlExecuteResponse => true,
+                PlatformConflict conflict => Deferred(conflict.Message),
+                PlatformUnavailable unavailable => Deferred(unavailable.Message),
             };
             if (!forgotten)
             {

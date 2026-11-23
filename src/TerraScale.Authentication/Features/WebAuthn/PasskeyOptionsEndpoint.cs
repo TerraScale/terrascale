@@ -1,6 +1,5 @@
 using System.Text.Json;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
 
@@ -22,6 +21,6 @@ public sealed class PasskeyOptionsEndpoint(PasskeyCredentials passkeys, Platform
         return await passkeys.OptionsAsync(caller, cancellationToken) is { } options
             ? TypedResults.Json(new PasskeyOptionsBody(options.Challenge, JsonDocument.Parse(options.Options.ToJson()).RootElement),
                 WebAuthnJson.Default.PasskeyOptionsBody)
-            : ErrorResults.ToResult(new Forbidden("Sign in again before enrolling a passkey.", "passkey_denied"));
+            : ErrorResults.ToResult(new AuthForbidden("Sign in again before enrolling a passkey.", "passkey_denied"));
     }
 }

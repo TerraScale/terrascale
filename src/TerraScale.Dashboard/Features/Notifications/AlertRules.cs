@@ -15,7 +15,6 @@ using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed record AlertRule(string Id, string Name, string Metric, double Threshold, string? DatabaseId, bool Email, string? WebhookUrl,
         DateTimeOffset CreatedAt, string State = "ok", DateTimeOffset? Since = null, string? AlertId = null, double? Value = null);
@@ -25,11 +24,11 @@ namespace TerraScale.Dashboard.Features.Notifications
     public sealed record AlertAnalytics(DateTimeOffset To, IReadOnlyList<AlertSeries> Items);
     public sealed record AlertEmail(string OrganizationId, string ProjectId, string AlertId, string State, string RuleName, string Metric, string? DatabaseName, double Threshold, double Value);
 
-    public readonly union AlertRuleCreated(AlertRuleWithSecret, Validation, Conflict, Forbidden, NotFound);
+    public readonly union AlertRuleCreated(AlertRuleWithSecret, DashboardValidation, DashboardConflict, DashboardForbidden, DashboardNotFound);
 
     public sealed record AlertRuleWithSecret(AlertRule Rule, string? Secret);
 
-    public readonly union AlertRuleChanged(Done, Validation, NotFound, Forbidden);
+    public readonly union AlertRuleChanged(Done, DashboardValidation, DashboardNotFound, DashboardForbidden);
 
     public interface IAlertSource
     {
@@ -73,32 +72,32 @@ namespace TerraScale.Dashboard.Features.Notifications
             if (Owner(context) is not { } owner)
             {
                 return context.Organization is null || context.Project is null
-                    ? new AlertRuleCreated(new NotFound("Select a project."))
-                    : new AlertRuleCreated(new Forbidden("Only organization owners manage alert rules."));
+                    ? new AlertRuleCreated(new DashboardNotFound("Select a project."))
+                    : new AlertRuleCreated(new DashboardForbidden("Only organization owners manage alert rules."));
             }
 
             var (organization, project) = owner;
             var name = form["name"].ToString().Trim();
             if (name.Length is 0 or > 64 || name.Any(char.IsControl))
             {
-                return new Validation("Name the rule in up to 64 characters.");
+                return new DashboardValidation("Name the rule in up to 64 characters.");
             }
 
             var metric = form["metric"].ToString();
             if (!Metrics.Contains(metric))
             {
-                return new Validation("Choose a metric.");
+                return new DashboardValidation("Choose a metric.");
             }
 
             if (Threshold(form["threshold"]) is not { } threshold)
             {
-                return new Validation("Enter a threshold greater than 0.");
+                return new DashboardValidation("Enter a threshold greater than 0.");
             }
 
             var databaseId = form["database"].ToString() is { Length: > 0 } selected ? selected : null;
             if (databaseId is not null && !project.Databases.ContainsKey(databaseId))
             {
-                return new Validation("Choose a database of this project.");
+                return new DashboardValidation("Choose a database of this project.");
             }
 
             var url = form["webhook"].ToString().Trim() is { Length: > 0 } text ? CustomerUrls.Validate(text).OriginalString : null;
@@ -145,7 +144,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 }
             }
 
-            return new Conflict($"A project can have up to {RuleLimit} alert rules.");
+            return new DashboardConflict($"A project can have up to {RuleLimit} alert rules.");
         }
 
         public async Task<AlertRuleChanged> DeleteAsync(AccountContext context, string id, CancellationToken cancellationToken)
@@ -153,15 +152,15 @@ namespace TerraScale.Dashboard.Features.Notifications
             if (Owner(context) is not { } owner)
             {
                 return context.Organization is null || context.Project is null
-                    ? new AlertRuleChanged(new NotFound("Select a project."))
-                    : new AlertRuleChanged(new Forbidden("Only organization owners manage alert rules."));
+                    ? new AlertRuleChanged(new DashboardNotFound("Select a project."))
+                    : new AlertRuleChanged(new DashboardForbidden("Only organization owners manage alert rules."));
             }
 
             var (organization, project) = owner;
             await using var connection = await storage.OpenAsync(cancellationToken);
             if (await connection.ExecuteAsync(RemoveRule, new { Id = id, OrganizationId = organization.Id, ProjectId = project.Id }) == 0)
             {
-                return new NotFound("Alert rule is unavailable.");
+                return new DashboardNotFound("Alert rule is unavailable.");
             }
 
             return new Done();
@@ -172,21 +171,21 @@ namespace TerraScale.Dashboard.Features.Notifications
             if (Owner(context) is not { } owner)
             {
                 return context.Organization is null || context.Project is null
-                    ? new AlertRuleChanged(new NotFound("Select a project."))
-                    : new AlertRuleChanged(new Forbidden("Only organization owners manage alert rules."));
+                    ? new AlertRuleChanged(new DashboardNotFound("Select a project."))
+                    : new AlertRuleChanged(new DashboardForbidden("Only organization owners manage alert rules."));
             }
 
             var (organization, project) = owner;
             if (Threshold(value) is not { } threshold)
             {
-                return new Validation("Enter a threshold greater than 0.");
+                return new DashboardValidation("Enter a threshold greater than 0.");
             }
 
             var version = AccountService.NewId();
             await using var connection = await storage.OpenAsync(cancellationToken);
             if (await connection.ExecuteAsync(SetThreshold, new { Id = id, OrganizationId = organization.Id, ProjectId = project.Id, Threshold = threshold, Version = version }) == 0)
             {
-                return new NotFound("Alert rule is unavailable.");
+                return new DashboardNotFound("Alert rule is unavailable.");
             }
 
             return new Done();

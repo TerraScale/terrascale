@@ -129,11 +129,12 @@ internal static class CompleteMonths
                 "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?, ?, ?, ?)",
                 SqlBuild.Text(scope), SqlBuild.Text(History), SqlBuild.Text(seed.Metric), SqlBuild.Integer(seed.Value))),
         ];
-        var refused = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken) switch
+        var written = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
+        var refused = written switch
         {
             SqlWriteResult => null,
-            Conflict conflict => conflict.Code,
-            Unavailable unavailable => unavailable.Code,
+            StateConflict conflict => conflict.Code,
+            BackendUnavailable unavailable => unavailable.Code,
         };
         UsageJourney.Require(refused is null, "seeding usage history failed: " + refused);
     }

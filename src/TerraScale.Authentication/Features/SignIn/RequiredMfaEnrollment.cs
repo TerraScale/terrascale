@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -7,7 +6,7 @@ using TerraScale.Authentication.Features.Sso;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-internal readonly union RequiredMfaPending(ChallengedSignIn, Forbidden);
+internal readonly union RequiredMfaPending(ChallengedSignIn, AuthForbidden);
 
 internal static class RequiredMfaEnrollment
 {
@@ -28,7 +27,7 @@ internal static class RequiredMfaEnrollment
             || !pending.User.InboxProven
             || await context.RequestServices.GetRequiredService<TotpCredentials>().HasAllowedFactorAsync(pending.User, pending.SsoProof is not null, cancellationToken))
         {
-            return new Forbidden("Start sign-in again and enroll an allowed factor.", "mfa_required");
+            return new AuthForbidden("Start sign-in again and enroll an allowed factor.", "mfa_required");
         }
 
         return pending;

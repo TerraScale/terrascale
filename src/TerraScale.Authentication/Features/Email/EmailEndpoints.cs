@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -91,9 +90,9 @@ public sealed record EmailRestoreRequest(
     [property: JsonPropertyName("expected_version")] long? ExpectedVersion,
     [property: JsonPropertyName("actor")] EmailActor? Actor);
 
-internal readonly union EmailBody<T>(T, Validation, PayloadTooLarge, UnsupportedMediaType);
+internal readonly union EmailBody<T>(T, AuthValidation, AuthPayloadTooLarge, AuthUnsupportedMediaType);
 
-internal readonly union SavedEmailConfig(EmailConfig, Conflict);
+internal readonly union SavedEmailConfig(EmailConfig, AuthConflict);
 
 internal static class EmailApi
 {
@@ -107,7 +106,7 @@ internal static class EmailApi
     {
         if (!context.Request.HasJsonContentType())
         {
-            return new UnsupportedMediaType("Send the body as application/json.");
+            return new AuthUnsupportedMediaType("Send the body as application/json.");
         }
 
         if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
@@ -120,18 +119,18 @@ internal static class EmailApi
             var value = await JsonSerializer.DeserializeAsync<T>(context.Request.Body, Json, cancellationToken);
             if (value is null)
             {
-                return new Validation("The body must be a JSON object.");
+                return new AuthValidation("The body must be a JSON object.");
             }
 
             return value;
         }
         catch (JsonException error)
         {
-            return new Validation($"The body is not valid JSON for this operation ({error.Path}).");
+            return new AuthValidation($"The body is not valid JSON for this operation ({error.Path}).");
         }
         catch (BadHttpRequestException error) when (error.StatusCode == StatusCodes.Status413PayloadTooLarge)
         {
-            return new PayloadTooLarge($"The body is larger than {MaxBodyBytes} bytes.");
+            return new AuthPayloadTooLarge($"The body is larger than {MaxBodyBytes} bytes.");
         }
     }
 
@@ -149,13 +148,13 @@ internal static class EmailApi
         version is >= 0 ? version.Value : throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "expected_version is required: the version last read, 0 before the first save.");
 
     public static SavedEmailConfig Saved(EmailConfig? saved, long expected) =>
-        saved is { } config ? new SavedEmailConfig(config) : new SavedEmailConfig(new Conflict(
+        saved is { } config ? new SavedEmailConfig(config) : new SavedEmailConfig(new AuthConflict(
             $"The email configuration is no longer at version {expected}; read it again and retry.", "version_conflict"));
 
     public static IResult Answer(SavedEmailConfig saved, Func<EmailConfig, IResult> answer) => saved switch
     {
         EmailConfig config => answer(config),
-        Conflict error => ErrorResults.ToResult(error),
+        AuthConflict error => ErrorResults.ToResult(error),
     };
 
     public static EmailConfig Draft(EmailConfig config, AuthEmailKind kind, string locale, EmailBranding? branding, EmailTemplateFields? fields) => config with
@@ -260,9 +259,9 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
         return (await EmailApi.ReadAsync<EmailBrandingRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailBrandingRequest request => await SaveAsync(request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+            AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
         });
     }
 
@@ -367,9 +366,9 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         return (await EmailApi.ReadAsync<EmailTemplateRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailTemplateRequest request => await SaveAsync(kind, locale, request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+            AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
         });
     }
 
@@ -412,9 +411,9 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
         return (await EmailApi.ReadAsync<EmailPreviewRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailPreviewRequest request => await RenderAsync(request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+            AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
         });
     }
 
@@ -466,9 +465,9 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
         return (await EmailApi.ReadAsync<EmailTestRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailTestRequest request => await SendAsync(request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+            AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
         });
     }
 
@@ -539,6 +538,8 @@ public sealed class ListEmailVersionsEndpoint(EmailSettings settings, AuthOption
     }
 }
 
+public readonly union EmailVersionLookup(EmailConfig, AuthNotFound);
+
 public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
@@ -559,14 +560,14 @@ public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions 
         ?? await Find(settings, this.HttpContext, cancellationToken) switch
         {
             EmailConfig config => TypedResults.Json(config),
-            NotFound error => ErrorResults.ToResult(error),
+            AuthNotFound error => ErrorResults.ToResult(error),
         };
 
-    internal static async Task<Found<EmailConfig>> Find(EmailSettings settings, HttpContext context, CancellationToken cancellationToken) =>
+    internal static async Task<EmailVersionLookup> Find(EmailSettings settings, HttpContext context, CancellationToken cancellationToken) =>
         long.TryParse(context.GetRouteValue("version") as string, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var version)
         && await settings.GetVersionAsync(OidcIssuer.InstanceId, version, cancellationToken) is { } config
             ? config
-            : new NotFound("No such version.");
+            : new AuthNotFound("No such version.");
 }
 
 public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
@@ -600,11 +601,11 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
             EmailConfig snapshot => await EmailApi.ReadAsync<EmailRestoreRequest>(this.HttpContext, cancellationToken) switch
             {
                 EmailRestoreRequest request => await SaveAsync(snapshot, request, cancellationToken),
-                Validation error => ErrorResults.ToResult(error),
-                PayloadTooLarge error => ErrorResults.ToResult(error),
-                UnsupportedMediaType error => ErrorResults.ToResult(error),
+                AuthValidation error => ErrorResults.ToResult(error),
+                AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+                AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
             },
-            NotFound error => ErrorResults.ToResult(error),
+            AuthNotFound error => ErrorResults.ToResult(error),
         });
     }
 

@@ -6,26 +6,18 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // ts-auth enrols, shows recovery codes and disables two-factor on its hosted security page.
     public sealed record AccountMfaStatus(bool Enabled, int RecoveryCodesRemaining, string ManageUrl);
 
-    // One of the account's enrolled passkeys, as ts-auth reports it.
     public sealed record AccountPasskey(string Id, string? Name, string Aaguid, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt);
 
-    // The caller's own two-factor status and an organization's two-factor policy, both owned by ts-auth.
     public interface ITsAuthMfa
     {
-        // Null when ts-auth does not report a status; unknown never means disabled.
         Task<AccountMfaStatus?> GetAccountMfaAsync(SessionRecord session, CancellationToken cancellationToken);
-        // Null when ts-auth does not report the passkeys; unknown never means none.
         Task<IReadOnlyList<AccountPasskey>?> GetAccountPasskeysAsync(SessionRecord session, CancellationToken cancellationToken);
-        // Null when ts-auth does not report the organization's policy.
         Task<bool?> GetRequireMfaAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
-        // Owner only; ts-auth refuses with mfa_not_enrolled while the caller has no two-factor.
         Task SetRequireMfaAsync(SessionRecord session, string organizationId, bool requireMfa, CancellationToken cancellationToken);
     }
 
-    // The selected organization requires two-factor and ts-auth refused this caller, who has none.
     public sealed class OrganizationMfaRequiredException(string organizationName, IReadOnlyList<(string Id, string Name)> others)
         : Exception(organizationName + " requires two-factor authentication.")
     {
@@ -33,7 +25,6 @@ namespace TerraScale.Dashboard.Features.Auth
         public IReadOnlyList<(string Id, string Name)> Others { get; } = others;
     }
 
-    // Account MFA routes use the same ts-auth origin and the user's own bearer.
     public sealed partial class TsAuthGateway : ITsAuthMfa
     {
         public const string MfaRequiredCode = "mfa_required";
@@ -109,7 +100,6 @@ namespace TerraScale.Dashboard.Features.Auth
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
 
-        // Refusals become account errors with ts-auth's fixed code, as on the SDK routes; server failures stay HttpRequestException.
         private async Task<JsonDocument> MfaCallAsync(HttpMethod method, string path, SessionRecord session, string? json, CancellationToken cancellationToken)
         {
             using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, "v1/" + Tenant + "/" + path));
@@ -139,7 +129,6 @@ namespace TerraScale.Dashboard.Features.Auth
         }
     }
 
-    // The page an organization that requires two-factor shows a member who has not set it up.
     public sealed record MfaRequiredPage(DocumentModel Document, string OrganizationName, string CsrfToken, IReadOnlyList<(string Id, string Name)> Others)
     {
         public string ManageUrl => TsAuthGateway.ManageMfaUrl;

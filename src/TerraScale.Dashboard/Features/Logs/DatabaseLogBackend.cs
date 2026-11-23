@@ -28,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Logs
             var access = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:read"], cancellationToken);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            var result = TerraBaseResults.Require(await terraBase.ReadLogsAsync(ServiceCaller.User(access), scope.ProjectId, database.Name, null, timeout.Token));
+            var result = (await terraBase.ReadLogsAsync(ServiceCaller.User(access), scope.ProjectId, database.Name, null, timeout.Token)).Require();
             var batch = Batch(result);
             Validate(batch, databaseId);
             return status.Length == 0 ? batch : batch with { Items = [.. batch.Items.Where(item => item.Status / 100 == status[0] - '0')] };

@@ -111,7 +111,7 @@ internal sealed class AtlasPublisher(
         while (await catalog.AllDatabasesAsync(after, 256, cancellationToken) switch
         {
             IReadOnlyList<DatabaseRecord> records => records,
-            Unavailable => [],
+            BackendUnavailable => [],
         } is { Count: > 0 } page)
         {
             foreach (var database in page.Where(database => database.PlacedIn(options.Region)))

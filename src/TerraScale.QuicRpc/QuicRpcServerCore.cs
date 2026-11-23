@@ -34,7 +34,7 @@ internal sealed class QuicRpcServerCore(
     private int _draining;
     private int _disposed;
 
-    public async ValueTask<Result<IPEndPoint, Unavailable>> StartAsync(CancellationToken cancellationToken)
+    public async ValueTask<QuicHostStartOutcome> StartAsync(CancellationToken cancellationToken)
     {
         var connectionOptions = ConnectionOptions();
         var listened = await QuicIo.ListenAsync(
@@ -44,7 +44,7 @@ internal sealed class QuicRpcServerCore(
                 ApplicationProtocols = [new SslApplicationProtocol(QuicProtocol.ApplicationProtocol)],
                 ConnectionOptionsCallback = (_, _, _) => ValueTask.FromResult(connectionOptions),
             },
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken);
         return listened switch
         {
             QuicListener listener => Listening(listener),
@@ -60,7 +60,7 @@ internal sealed class QuicRpcServerCore(
         }
 
         Volatile.Write(ref _draining, 1);
-        await _serverStreams.CancelAsync().ConfigureAwait(false);
+        await _serverStreams.CancelAsync();
         lock (_pushGate)
         {
             foreach (var pushStream in _pushStreams)
@@ -69,26 +69,27 @@ internal sealed class QuicRpcServerCore(
             }
         }
 
-        await _drain.CancelAsync().ConfigureAwait(false);
+        await _drain.CancelAsync();
         if (_listener is { } listener)
         {
-            await listener.DisposeAsync().ConfigureAwait(false);
+            await listener.DisposeAsync();
         }
 
-        await _acceptLoop.ConfigureAwait(false);
-        if (!await InFlightTracker.WaitAsync(_streams.DrainAsync(), QuicMeshLimits.DrainTimeout, timeProvider).ConfigureAwait(false))
+        await _acceptLoop;
+        if (!await InFlightTracker.WaitAsync(_streams.DrainAsync(), QuicMeshLimits.DrainTimeout, timeProvider))
         {
             QuicRpcLog.DrainTimedOut(logger, QuicMeshLimits.DrainTimeout);
         }
 
-        await _handlers.CancelAsync().ConfigureAwait(false);
+        await _handlers.CancelAsync();
         foreach (var connection in _live.Keys)
         {
-            Observe(await QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode).ConfigureAwait(false));
+            var closed = await QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode);
+            Observe(closed);
         }
 
-        await _closing.CancelAsync().ConfigureAwait(false);
-        await _connectionLoops.DrainAsync().ConfigureAwait(false);
+        await _closing.CancelAsync();
+        await _connectionLoops.DrainAsync();
         _drain.Dispose();
         _serverStreams.Dispose();
         _handlers.Dispose();
@@ -115,7 +116,7 @@ internal sealed class QuicRpcServerCore(
         },
     };
 
-    private Result<IPEndPoint, Unavailable> Listening(QuicListener listener)
+    private QuicHostStartOutcome Listening(QuicListener listener)
     {
         _listener = listener;
         _acceptLoop = AcceptConnectionsAsync(listener);
@@ -123,10 +124,10 @@ internal sealed class QuicRpcServerCore(
         return listener.LocalEndPoint;
     }
 
-    private Result<IPEndPoint, Unavailable> ListenFailed(QuicFault fault)
+    private QuicHostStartOutcome ListenFailed(QuicFault fault)
     {
         QuicRpcLog.ListenFailed(logger, options.ListenEndPoint, fault.Message);
-        return new Unavailable(fault.Message, "listen_failed");
+        return new QuicUnavailable(fault.Message, "listen_failed");
     }
 
     private async Task AcceptConnectionsAsync(QuicListener listener)
@@ -134,7 +135,7 @@ internal sealed class QuicRpcServerCore(
         using var scope = new CallScope(Timeout.InfiniteTimeSpan, timeProvider, _drain.Token, CancellationToken.None);
         while (!_drain.IsCancellationRequested)
         {
-            var accepted = await QuicIo.AcceptConnectionAsync(listener, scope).ConfigureAwait(false);
+            var accepted = await QuicIo.AcceptConnectionAsync(listener, scope);
             var admitted = accepted switch
             {
                 QuicConnection connection => Admit(connection),
@@ -171,22 +172,24 @@ internal sealed class QuicRpcServerCore(
     {
         try
         {
-            await using (connection.ConfigureAwait(false))
+            await using (connection)
             {
                 if (QuicMeshIdentity.ReadRemote(connection.RemoteCertificate) is not { } identity)
                 {
                     metrics.Error(QuicSide.Server, QuicErrorKind.PeerRejected);
                     QuicRpcLog.ConnectionRejected(logger, "the peer certificate carries no mesh identity");
-                    Observe(await QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode).ConfigureAwait(false));
+                    var rejected = await QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode);
+                    Observe(rejected);
                     return;
                 }
 
                 metrics.ConnectionOpened(QuicSide.Server, false);
                 QuicRpcLog.PeerConnected(logger, identity.NodeId, identity.Region, connection.RemoteEndPoint);
                 var streams = new InFlightTracker();
-                await AcceptStreamsAsync(connection, identity, streams).ConfigureAwait(false);
-                await streams.DrainAsync().ConfigureAwait(false);
-                Observe(await QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode).ConfigureAwait(false));
+                await AcceptStreamsAsync(connection, identity, streams);
+                await streams.DrainAsync();
+                var closed = await QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode);
+                Observe(closed);
                 metrics.ConnectionClosed(QuicSide.Server);
             }
         }
@@ -202,7 +205,7 @@ internal sealed class QuicRpcServerCore(
         using var scope = new CallScope(Timeout.InfiniteTimeSpan, timeProvider, _closing.Token, CancellationToken.None);
         while (true)
         {
-            var accepted = await QuicIo.AcceptStreamAsync(connection, scope).ConfigureAwait(false);
+            var accepted = await QuicIo.AcceptStreamAsync(connection, scope);
             var dispatched = accepted switch
             {
                 QuicStream stream => Dispatch(stream, identity, streams),
@@ -232,14 +235,14 @@ internal sealed class QuicRpcServerCore(
         var watcher = bidirectional ? CancelOnPeerAbortAsync(stream, cancellation, finished.Task) : Task.CompletedTask;
         try
         {
-            await RunGuardedAsync(stream, identity, bidirectional, cancellation.Token).ConfigureAwait(false);
+            await RunGuardedAsync(stream, identity, bidirectional, cancellation.Token);
         }
         finally
         {
             finished.TrySetResult();
-            await watcher.ConfigureAwait(false);
+            await watcher;
             cancellation.Dispose();
-            await stream.DisposeAsync().ConfigureAwait(false);
+            await stream.DisposeAsync();
             metrics.StreamClosed(QuicSide.Server);
             streams.Exit();
             _streams.Exit();
@@ -248,9 +251,9 @@ internal sealed class QuicRpcServerCore(
 
     private static async Task CancelOnPeerAbortAsync(QuicStream stream, CancellationTokenSource cancellation, Task finished)
     {
-        if (await QuicIo.PeerStoppedReadingAsync(stream, finished).ConfigureAwait(false))
+        if (await QuicIo.PeerStoppedReadingAsync(stream, finished))
         {
-            await cancellation.CancelAsync().ConfigureAwait(false);
+            await cancellation.CancelAsync();
         }
     }
 
@@ -267,11 +270,11 @@ internal sealed class QuicRpcServerCore(
         {
             if (bidirectional)
             {
-                await HandleBidirectionalAsync(stream, identity, cancellationToken).ConfigureAwait(false);
+                await HandleBidirectionalAsync(stream, identity, cancellationToken);
             }
             else
             {
-                await HandlePushStreamAsync(stream, identity, cancellationToken).ConfigureAwait(false);
+                await HandlePushStreamAsync(stream, identity, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -292,7 +295,7 @@ internal sealed class QuicRpcServerCore(
         FrameRead read;
         using (var requestScope = new CallScope(QuicMeshLimits.CallTimeout, timeProvider, cancellationToken, CancellationToken.None))
         {
-            read = await QuicIo.ReadFrameAsync(stream, requestScope).ConfigureAwait(false);
+            read = await QuicIo.ReadFrameAsync(stream, requestScope);
         }
 
         await (read switch
@@ -300,7 +303,7 @@ internal sealed class QuicRpcServerCore(
             PooledFrame frame => RespondAsync(stream, identity, frame, cancellationToken),
             StreamEnded => Refuse(stream, new ProtocolFault("The peer closed a bidirectional stream before its request frame.")),
             QuicFault fault => Refuse(stream, fault),
-        }).ConfigureAwait(false);
+        });
     }
 
     private Task Refuse(QuicStream stream, QuicFault fault)
@@ -322,7 +325,9 @@ internal sealed class QuicRpcServerCore(
             {
                 metrics.Error(QuicSide.Server, QuicErrorKind.Unmapped);
                 var unmapped = new QuicRemoteError(QuicRemoteError.UnmappedMessageType, $"No unary or server-stream handler is mapped for message type {header.MessageType}.");
-                Complete(context, QuicPattern.Unary, timeProvider.GetTimestamp(), await WriteErrorAsync(stream, context, unmapped, scope).ConfigureAwait(false), QuicOutcome.RemoteError);
+                var started = timeProvider.GetTimestamp();
+                var written = await WriteErrorAsync(stream, context, unmapped, scope);
+                Complete(context, QuicPattern.Unary, started, written, QuicOutcome.RemoteError);
                 return;
             }
 
@@ -330,18 +335,18 @@ internal sealed class QuicRpcServerCore(
             {
                 UnaryDispatch unary => RespondUnaryAsync(stream, context, unary, frame.Payload, scope),
                 StreamDispatch streaming => RespondStreamAsync(stream, context, streaming, frame.Payload, scope),
-            }).ConfigureAwait(false);
+            });
         }
     }
 
     private async Task RespondUnaryAsync(QuicStream stream, QuicCallContext context, UnaryDispatch unary, ReadOnlyMemory<byte> payload, CallScope scope)
     {
         var started = timeProvider.GetTimestamp();
-        var reply = await unary(context, payload, scope.Token).ConfigureAwait(false);
+        var reply = await unary(context, payload, scope.Token);
         var (written, outcome) = reply switch
         {
-            FrameBuilder builder => (await WriteBuilderAsync(stream, context, builder, QuicProtocol.ControlEndOfStream, true, scope).ConfigureAwait(false), QuicOutcome.Ok),
-            QuicRemoteError error => (await WriteErrorAsync(stream, context, error, scope).ConfigureAwait(false), QuicOutcome.RemoteError),
+            FrameBuilder builder => (await WriteBuilderAsync(stream, context, builder, QuicProtocol.ControlEndOfStream, true, scope), QuicOutcome.Ok),
+            QuicRemoteError error => (await WriteErrorAsync(stream, context, error, scope), QuicOutcome.RemoteError),
         };
         Complete(context, QuicPattern.Unary, started, written, outcome);
     }
@@ -352,7 +357,7 @@ internal sealed class QuicRpcServerCore(
         using var scope = new CallScope(Timeout.InfiniteTimeSpan, timeProvider, _serverStreams.Token, callScope.Token);
         try
         {
-            await StreamItemsAsync(stream, context, streaming, payload, scope, started).ConfigureAwait(false);
+            await StreamItemsAsync(stream, context, streaming, payload, scope, started);
         }
         catch (OperationCanceledException) when (_serverStreams.IsCancellationRequested && !callScope.Token.IsCancellationRequested)
         {
@@ -362,12 +367,12 @@ internal sealed class QuicRpcServerCore(
 
     private async Task StreamItemsAsync(QuicStream stream, QuicCallContext context, StreamDispatch streaming, ReadOnlyMemory<byte> payload, CallScope scope, long started)
     {
-        await foreach (var item in streaming(context, payload, scope.Token).ConfigureAwait(false))
+        await foreach (var item in streaming(context, payload, scope.Token))
         {
             var (written, terminal) = item switch
             {
-                FrameBuilder builder => (await WriteBuilderAsync(stream, context, builder, QuicProtocol.ControlNone, false, scope).ConfigureAwait(false), false),
-                QuicRemoteError error => (await WriteErrorAsync(stream, context, error, scope).ConfigureAwait(false), true),
+                FrameBuilder builder => (await WriteBuilderAsync(stream, context, builder, QuicProtocol.ControlNone, false, scope), false),
+                QuicRemoteError error => (await WriteErrorAsync(stream, context, error, scope), true),
             };
             if (_serverStreams.IsCancellationRequested)
             {
@@ -396,7 +401,7 @@ internal sealed class QuicRpcServerCore(
         }
 
         using var end = FrameBuilder.Empty();
-        var ended = await WriteBuilderAsync(stream, context, end, QuicProtocol.ControlEndOfStream, true, scope).ConfigureAwait(false);
+        var ended = await WriteBuilderAsync(stream, context, end, QuicProtocol.ControlEndOfStream, true, scope);
         Complete(context, QuicPattern.ServerStream, started, ended, QuicOutcome.Ok);
     }
 
@@ -422,10 +427,10 @@ internal sealed class QuicRpcServerCore(
             using var scope = new CallScope(Timeout.InfiniteTimeSpan, timeProvider, cancellationToken, CancellationToken.None);
             while (true)
             {
-                var read = await QuicIo.ReadFrameAsync(stream, scope).ConfigureAwait(false);
+                var read = await QuicIo.ReadFrameAsync(stream, scope);
                 var keepReading = read switch
                 {
-                    PooledFrame frame => await DispatchPushAsync(stream, identity, frame, cancellationToken).ConfigureAwait(false),
+                    PooledFrame frame => await DispatchPushAsync(stream, identity, frame, cancellationToken),
                     StreamEnded => false,
                     QuicFault fault => PushStreamFaulted(stream, fault),
                 };
@@ -465,9 +470,10 @@ internal sealed class QuicRpcServerCore(
                 return RejectPush(stream, context, started, $"no push handler is mapped for message type {header.MessageType}");
             }
 
-            return await dispatch(context, frame.Payload, cancellationToken).ConfigureAwait(false) switch
+            var outcome = await dispatch(context, frame.Payload, cancellationToken);
+            return outcome switch
             {
-                Done => AcceptedPush(context, started),
+                QuicSent => AcceptedPush(context, started),
                 QuicRemoteError error => RejectPush(stream, context, started, error.Message),
             };
         }
@@ -487,12 +493,12 @@ internal sealed class QuicRpcServerCore(
         return false;
     }
 
-    private async ValueTask<Result<Done, QuicFault>> WriteBuilderAsync(QuicStream stream, QuicCallContext context, FrameBuilder builder, byte control, bool completeWrites, CallScope scope)
+    private async ValueTask<QuicIoWriteOutcome> WriteBuilderAsync(QuicStream stream, QuicCallContext context, FrameBuilder builder, byte control, bool completeWrites, CallScope scope)
     {
         using (builder)
         {
             var encoded = builder.Seal(context.MessageTypeId, control, context.RequestId);
-            var written = await QuicIo.WriteAsync(stream, encoded, completeWrites, scope).ConfigureAwait(false);
+            var written = await QuicIo.WriteAsync(stream, encoded, completeWrites, scope);
             if (Fault(written) is null)
             {
                 metrics.Sent(QuicSide.Server, encoded.Length);
@@ -502,10 +508,10 @@ internal sealed class QuicRpcServerCore(
         }
     }
 
-    private ValueTask<Result<Done, QuicFault>> WriteErrorAsync(QuicStream stream, QuicCallContext context, QuicRemoteError error, CallScope scope) =>
+    private ValueTask<QuicIoWriteOutcome> WriteErrorAsync(QuicStream stream, QuicCallContext context, QuicRemoteError error, CallScope scope) =>
         WriteBuilderAsync(stream, context, FrameBuilder.EncodeError(error), QuicProtocol.ControlEndOfStream | QuicProtocol.ControlError, true, scope);
 
-    private void Complete(QuicCallContext context, QuicPattern pattern, long started, Result<Done, QuicFault> written, QuicOutcome outcome)
+    private void Complete(QuicCallContext context, QuicPattern pattern, long started, QuicIoWriteOutcome written, QuicOutcome outcome)
     {
         var final = Fault(written) is { } fault ? Faulted(fault) : outcome;
         metrics.Completed(QuicSide.Server, pattern, context.MessageTypeId, final, timeProvider.GetElapsedTime(started));
@@ -517,15 +523,15 @@ internal sealed class QuicRpcServerCore(
         return QuicOutcome.Unavailable;
     }
 
-    private static QuicFault? Fault(Result<Done, QuicFault> result) => result switch
+    private static QuicFault? Fault(QuicIoWriteOutcome result) => result switch
     {
-        Done => null,
+        QuicSent => null,
         QuicFault fault => fault,
     };
 
-    private void Observe(Result<Done, QuicFault> closed)
+    private void Observe(QuicConnectionCloseOutcome closed)
     {
-        if (Fault(closed) is { } fault)
+        if (closed switch { QuicConnectionClosed => null, QuicFault failure => failure } is { } fault)
         {
             metrics.Error(QuicSide.Server, fault);
         }

@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Catalog;
+using TerraBase.Hosting;
 using TerraScale.Contracts.ControlPlane;
 
 namespace TerraBase.Features.Platform;
@@ -26,11 +27,11 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
 
     public static bool IsPlatformProject(Ulid projectId) => projectId == AuthProjectId || projectId == DashboardProjectId || projectId == PlatformProjectId;
 
-    public async ValueTask<Result<Done, ConfigurationError>> EnsureAsync(CancellationToken cancellationToken)
+    public async ValueTask<SystemSetupOutcome> EnsureAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
         var organization = await catalog.UpsertOrganizationAsync(new OrganizationRecord(OrganizationId, "TerraScale", "platform", now, "enterprise", false), cancellationToken);
-        if (organization switch { Done => null, NotFound missing => missing.Message, Unavailable error => error.Message } is { } failed)
+        if (organization switch { Completed => null, ResourceNotFound missing => missing.Message, BackendUnavailable error => error.Message } is { } failed)
         {
             return new ConfigurationError(string.Concat("the platform organization could not be seeded: ", failed));
         }
@@ -38,16 +39,17 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
         foreach (var platform in Databases)
         {
             var project = await catalog.UpsertProjectAsync(new ProjectRecord(platform.ProjectId, OrganizationId, platform.ProjectName, now, "enterprise"), cancellationToken);
-            if (project switch { Done => null, Unavailable error => error.Message } is { } projectFailure)
+            if (project switch { Completed => null, BackendUnavailable error => error.Message } is { } projectFailure)
             {
                 return new ConfigurationError(string.Concat("the platform project could not be seeded: ", projectFailure));
             }
 
-            var seeded = await catalog.GetDatabaseAsync(platform.Id, cancellationToken) switch
+            var seededOutcome = await catalog.GetDatabaseAsync(platform.Id, cancellationToken);
+            var seeded = seededOutcome switch
             {
                 DatabaseRecord existing => await LocalAsync(existing, cancellationToken),
-                NotFound => await CreateAsync(platform, now, cancellationToken),
-                Unavailable error => error.Message,
+                ResourceNotFound => await CreateAsync(platform, now, cancellationToken),
+                BackendUnavailable error => error.Message,
             };
             if (seeded is not null)
             {
@@ -55,23 +57,27 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
             }
         }
 
-        return new Done();
+        return new Completed();
     }
 
-    private async ValueTask<string?> LocalAsync(DatabaseRecord record, CancellationToken cancellationToken) =>
-        await databases.OpenOrCreateAsync(record.Id, record.KeyId, record.Strict, cancellationToken) switch
+    private async ValueTask<string?> LocalAsync(DatabaseRecord record, CancellationToken cancellationToken)
+    {
+        var outcome = await databases.OpenOrCreateAsync(record.Id, record.KeyId, record.Strict, cancellationToken);
+        return outcome switch
         {
             ISqlDatabaseSession => null,
-            Unavailable error => error.Message,
+            BackendUnavailable error => error.Message,
         };
+    }
 
     private async ValueTask<string?> CreateAsync(PlatformDatabase platform, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var record = Record(platform, databases.ActiveKeyId, now);
-        return await catalog.UpsertDatabaseAsync(record, cancellationToken) switch
+        var outcome = await catalog.UpsertDatabaseAsync(record, cancellationToken);
+        return outcome switch
         {
-            Done => await LocalAsync(record, cancellationToken),
-            Unavailable error => error.Message,
+            Completed => await LocalAsync(record, cancellationToken),
+            BackendUnavailable error => error.Message,
         };
     }
 

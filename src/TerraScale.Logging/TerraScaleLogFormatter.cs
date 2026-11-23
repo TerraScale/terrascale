@@ -9,11 +9,6 @@ using ZLogger;
 
 namespace TerraScale.Logging;
 
-/// <summary>Writes each log entry as one line of compact JSON (TerraScale record v1).</summary>
-/// <remarks>
-/// Keys are written in a fixed order. State and scope properties that reuse a fixed key move to <c>attr.&lt;key&gt;</c>;
-/// any other repeated key keeps its first value. Formatting never throws: a failing <c>ToString()</c> becomes <c>&lt;unformattable&gt;</c>.
-/// </remarks>
 public sealed class TerraScaleLogFormatter : IZLoggerFormatter
 {
     private const string OriginalFormat = "{OriginalFormat}";
@@ -21,35 +16,30 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
     private const string AttributePrefix = "attr.";
     private const int TimestampLength = 27;
 
-    // Keys this formatter writes itself; a state or scope property with one of these names becomes attr.<name>.
     private static readonly HashSet<string> ReservedKeys = new(StringComparer.Ordinal)
     {
         "time", "level", "msg", "service", "region", "node", "trace_id", "span_id", "component", "event_id", "error", "stack",
     };
 
-    // One buffer per thread, reused across records. Taken while in use so a re-entrant log call gets its own.
     [ThreadStatic]
     private static Record? _spare;
 
     private readonly string _service;
-    private readonly string _region;
-    private readonly string _node;
+    private readonly string? _region;
+    private readonly string? _node;
     private readonly bool _journal;
 
-    /// <summary>Reads the TS_* and JOURNAL_STREAM variables once; <paramref name="environment"/> is replaced in tests.</summary>
     public TerraScaleLogFormatter(string service, Func<string, string?>? environment = null)
     {
         environment ??= Environment.GetEnvironmentVariable;
         _service = environment("TS_SERVICE") is { Length: > 0 } name ? name : service;
-        _region = environment("TS_REGION") ?? string.Empty;
-        _node = environment("TS_NODE") ?? string.Empty;
+        _region = environment("TS_REGION");
+        _node = environment("TS_NODE");
         _journal = !string.IsNullOrEmpty(environment("JOURNAL_STREAM"));
     }
 
-    /// <inheritdoc />
     public bool WithLineBreak => true;
 
-    /// <inheritdoc />
     public void FormatLogEntry(IBufferWriter<byte> writer, IZLoggerEntry entry)
     {
         var record = _spare ?? new Record();
@@ -145,9 +135,9 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
         json.WriteString("msg", message);
     }
 
-    private static void WriteIfPresent(Utf8JsonWriter json, string key, string value)
+    private static void WriteIfPresent(Utf8JsonWriter json, string key, string? value)
     {
-        if (value.Length > 0)
+        if (value is { Length: > 0 })
         {
             json.WriteString(key, value);
         }
@@ -162,7 +152,6 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
         }
     }
 
-    // Typed reads for the common types avoid boxing the value; every other type takes the boxed path.
     private static void WriteParameter(Utf8JsonWriter json, IZLoggerEntry entry, int index)
     {
         var type = entry.GetParameterType(index);
@@ -264,7 +253,7 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
     {
         try
         {
-            return value.ToString() ?? string.Empty;
+            return value.ToString() is { } text ? text : Unformattable;
         }
         catch (Exception)
         {
@@ -280,8 +269,6 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
         _ => "INFO",
     };
 
-    // Syslog priorities; journald strips the prefix and stores PRIORITY.
-    // INFO records are state changes (notice); often-run units use LogLevelMax=notice to drop systemd's per-run lines.
     private static ReadOnlySpan<byte> JournalPriority(LogLevel level) => level switch
     {
         LogLevel.Trace or LogLevel.Debug => "<7>"u8,
@@ -303,7 +290,6 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
 
         public Utf8JsonWriter Json { get; }
 
-        /// <summary>Starts an empty record, after the optional journald prefix.</summary>
         public void Reset(ReadOnlySpan<byte> prefix)
         {
             Bytes.Clear();
@@ -313,7 +299,6 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
             Bytes.Advance(prefix.Length);
         }
 
-        /// <summary>Flushes the JSON and ends the line.</summary>
         public void Finish()
         {
             Json.Flush();
@@ -321,7 +306,6 @@ public sealed class TerraScaleLogFormatter : IZLoggerFormatter
             Bytes.Advance(1);
         }
 
-        /// <summary>Returns the key to write, or null when an earlier property already used it.</summary>
         public string? ClaimKey(string key)
         {
             var name = ReservedKeys.Contains(key) ? AttributePrefix + key : key;

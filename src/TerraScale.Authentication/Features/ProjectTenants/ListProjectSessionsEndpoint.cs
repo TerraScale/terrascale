@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
@@ -22,7 +21,7 @@ public sealed class ListProjectSessionsEndpoint(TenantDirectory tenants, Platfor
         {
             if (!PlatformDirectory.IsId(requested))
             {
-                return ErrorResults.ToResult(new Validation("user must be a user id."));
+                return ErrorResults.ToResult(new AuthValidation("user must be a user id."));
             }
 
             user = requested;

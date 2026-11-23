@@ -2,21 +2,21 @@ namespace TerraScale.Platform.Features.FileStorage;
 
 public sealed record FileAccessRules(string? Owner, FileAccessPolicy? Read, FileAccessPolicy? Write)
 {
-    public Validation? Check()
+    public PlatformInvalidRequest? Check()
     {
         if (Owner is not null && !IsPointer(Owner))
         {
-            return new Validation("owner must be a JSON Pointer of 1 to 16 object members", "invalid_rules");
+            return new PlatformInvalidRequest("owner must be a JSON Pointer of 1 to 16 object members", "invalid_rules");
         }
 
         if (Owner is not null && Segments(Owner).FirstOrDefault() == "id")
         {
-            return new Validation("owner cannot address the virtual record id", "invalid_rules");
+            return new PlatformInvalidRequest("owner cannot address the virtual record id", "invalid_rules");
         }
 
         if (Read is null || Write is null || !Valid(Read) || !Valid(Write) || (Owner is null && (Read.Owner || Write.Owner)))
         {
-            return new Validation("read and write require bounded roles; owner grants require an owner pointer", "invalid_rules");
+            return new PlatformInvalidRequest("read and write require bounded roles; owner grants require an owner pointer", "invalid_rules");
         }
 
         return null;

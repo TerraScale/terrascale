@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
@@ -27,10 +26,10 @@ public sealed class RequestEmailChangeEndpoint(EmailChanges changes, StepUpProof
         return await changes.RequestAsync(caller, this.HttpContext.Request, body.NewEmail, proofs, cancellationToken) switch
         {
             EmailChangeBody requested => TypedResults.Json(requested, EmailChangeJson.Default.EmailChangeBody, statusCode: StatusCodes.Status202Accepted),
-            Validation failure => ErrorResults.ToResult(failure),
-            Conflict failure => ErrorResults.ToResult(failure),
-            QuotaExceeded failure => ErrorResults.ToResult(failure),
-            Forbidden failure => ErrorResults.ToResult(failure),
+            AuthValidation failure => ErrorResults.ToResult(failure),
+            AuthConflict failure => ErrorResults.ToResult(failure),
+            AuthQuotaExceeded failure => ErrorResults.ToResult(failure),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
         };
     }
 }
@@ -50,9 +49,9 @@ public sealed class ConfirmEmailChangeEndpoint(EmailChanges changes, PlatformAut
     {
         return await changes.ConfirmAsync(caller, (await this.BodyAsync(EmailChangeJson.Default.ConfirmEmailChangeRequest, cancellationToken)).Code, cancellationToken) switch
         {
-            Done => TypedResults.NoContent(),
-            Forbidden failure => ErrorResults.ToResult(failure),
-            Conflict failure => ErrorResults.ToResult(failure),
+            AuthCompleted => TypedResults.NoContent(),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
+            AuthConflict failure => ErrorResults.ToResult(failure),
         };
     }
 }
@@ -95,7 +94,7 @@ public sealed class CancelEmailChangeEndpoint(EmailChanges changes, AuthOptions 
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is null)
         {
-            return ErrorResults.ToResult(new Forbidden("Submit the form from the cancel page."));
+            return ErrorResults.ToResult(new AuthForbidden("Submit the form from the cancel page."));
         }
 
         var form = this.HttpContext.Request.Form;

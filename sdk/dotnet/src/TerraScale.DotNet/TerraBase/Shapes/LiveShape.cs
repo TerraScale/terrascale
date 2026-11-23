@@ -8,7 +8,6 @@ using System.Threading.Channels;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>A table snapshot followed by commit-ordered changes. Enumeration cancellation closes its transports.</summary>
 public sealed partial class LiveShape
 {
     private readonly TerraBaseConnection connection;
@@ -30,7 +29,6 @@ public sealed partial class LiveShape
         columns = options.Columns is null ? null : string.Join(',', options.Columns);
     }
 
-    /// <summary>Yields immutable rows after each applied page and on connection status changes; authentication failures terminate the stream.</summary>
     public async IAsyncEnumerable<ShapeView> WatchAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -103,10 +101,15 @@ public sealed partial class LiveShape
                                 if (hint.GetProperty("handle").GetString() != handle) throw new TerraBaseConflictException(HttpStatusCode.Conflict, "Shape lineage changed.", "must_refetch", null);
                                 var type = hint.GetProperty("type").GetString();
                                 if (type == "provisional" && hint.GetProperty("offset").GetString() == offset && hint.GetProperty("local").GetString() != local) break;
-                                if (type == "new_data" && long.Parse(hint.GetProperty("next_offset").GetString()!, CultureInfo.InvariantCulture) > long.Parse(offset, CultureInfo.InvariantCulture))
+                                if (type == "new_data")
                                 {
-                                    poll = false;
-                                    break;
+                                    var next = hint.GetProperty("next_offset").GetString();
+                                    if (!long.TryParse(next, CultureInfo.InvariantCulture, out var nextOffset)) throw InvalidResponse();
+                                    if (nextOffset > long.Parse(offset, CultureInfo.InvariantCulture))
+                                    {
+                                        poll = false;
+                                        break;
+                                    }
                                 }
                                 if (type is not ("provisional" or "new_data")) throw InvalidResponse();
                             }
@@ -125,7 +128,7 @@ public sealed partial class LiveShape
                         var message = opened.Response;
                         if (message.StatusCode == HttpStatusCode.TemporaryRedirect)
                         {
-                            var original = message.RequestMessage!.RequestUri!;
+                            var original = opened.RequestUri;
                             var location = message.Headers.Location ?? throw InvalidResponse();
                             var target = new Uri(original, location);
                             if (handle is not null || target.GetLeftPart(UriPartial.Authority) != original.GetLeftPart(UriPartial.Authority) || target.AbsolutePath != original.AbsolutePath)

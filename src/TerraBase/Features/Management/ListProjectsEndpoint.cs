@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union ListProjectsResponse(PageBody<ProjectBody>, InvalidInput, CredentialRejected, ResourceNotFound, BackendUnavailable);
+
 internal sealed class ListProjectsEndpoint(ManagementService management, CatalogStore catalog)
-    : Endpoint<PageInput, Result<PageBody<ProjectBody>, Validation, Unauthorized, NotFound, Unavailable>>
+    : Endpoint<PageInput, ListProjectsResponse>
 {
     public override void Configure()
     {
@@ -18,7 +20,7 @@ internal sealed class ListProjectsEndpoint(ManagementService management, Catalog
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<PageBody<ProjectBody>, Validation, Unauthorized, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<ListProjectsResponse> HandleAsync(
         PageInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -29,13 +31,13 @@ internal sealed class ListProjectsEndpoint(ManagementService management, Catalog
                 OrganizationRecord organization => await catalog.ListProjectsAsync(organization.Id, request.After, limit, cancellationToken) switch
                 {
                     CatalogPage<ProjectRecord> page => new PageBody<ProjectBody>([.. page.Items.Select(ProjectBody.From)], page.Next),
-                    Unavailable unavailable => unavailable,
+                    BackendUnavailable unavailable => unavailable,
                 },
-                Unauthorized unauthorized => unauthorized,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                CredentialRejected unauthorized => unauthorized,
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
+            InvalidInput invalid => invalid,
         };
     }
 }

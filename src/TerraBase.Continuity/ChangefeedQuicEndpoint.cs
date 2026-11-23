@@ -5,6 +5,12 @@ using TerraScale.QuicRpc.Messages;
 
 namespace TerraBase.Continuity;
 
+public sealed record ChangefeedPeerUnavailable(string Message, string Code);
+
+public sealed record ChangefeedPeerTimeout(string Message, string Code);
+
+public readonly union ChangefeedStreamItem(ChangefeedEntry, ChangefeedPeerUnavailable, ChangefeedPeerTimeout, QuicRemoteError);
+
 public static class ChangefeedQuicEndpointExtensions
 {
     extension(QuicRpcHost host)
@@ -22,20 +28,20 @@ public static class ChangefeedQuicEndpointExtensions
         }
     }
 
-    private static async IAsyncEnumerable<Result<ChangefeedEntryMessage, QuicRemoteError>> StreamAsync(
+    private static async IAsyncEnumerable<QuicHandlerOutcome<ChangefeedEntryMessage>> StreamAsync(
         IChangefeedHub hub,
         ChangefeedSubscription subscription,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await foreach (var entry in hub.SubscribeAsync(subscription, cancellationToken).ConfigureAwait(false))
+        await foreach (var entry in hub.SubscribeAsync(subscription, cancellationToken))
         {
             yield return ChangefeedEntryMessage.From(entry);
         }
     }
 
-    private static async IAsyncEnumerable<Result<ChangefeedEntryMessage, QuicRemoteError>> RejectAsync(QuicRemoteError rejected)
+    private static async IAsyncEnumerable<QuicHandlerOutcome<ChangefeedEntryMessage>> RejectAsync(QuicRemoteError rejected)
     {
-        await Task.CompletedTask.ConfigureAwait(false);
+        await Task.CompletedTask;
         yield return rejected;
     }
 }
@@ -51,7 +57,7 @@ public sealed class ChangefeedQuicEndpoint(ChangefeedHub hub) : IQuicEndpoints
 
 public sealed class ChangefeedQuicClient(QuicRpcClient client)
 {
-    public async IAsyncEnumerable<Result<ChangefeedEntry, Unavailable, RequestTimeout, QuicRemoteError>> SubscribeAsync(
+    public async IAsyncEnumerable<ChangefeedStreamItem> SubscribeAsync(
         string peerId,
         ChangefeedSubscription subscription,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -63,21 +69,26 @@ public sealed class ChangefeedQuicClient(QuicRpcClient client)
             QuicMessageType.ChangefeedSubscribe,
             ChangefeedSubscribeMessage.From(subscription),
             cancellationToken);
-        await foreach (var item in stream.ConfigureAwait(false))
+        await foreach (var item in stream)
         {
-            yield return item switch
+            var decoded = item switch
             {
                 ChangefeedEntryMessage message => Decode(message),
-                Unavailable unavailable => unavailable,
-                RequestTimeout timeout => timeout,
+                QuicUnavailable unavailable => new ChangefeedPeerUnavailable(unavailable.Message, unavailable.Code),
+                QuicTimeout timeout => new ChangefeedPeerTimeout(timeout.Message, timeout.Code),
                 QuicRemoteError error => error,
             };
+            yield return decoded;
         }
     }
 
-    private static Result<ChangefeedEntry, Unavailable, RequestTimeout, QuicRemoteError> Decode(ChangefeedEntryMessage message) => message.ToEntry() switch
+    private static ChangefeedStreamItem Decode(ChangefeedEntryMessage message)
     {
-        ChangefeedEntry entry => entry,
-        QuicRemoteError error => error,
-    };
+        var entry = message.ToEntry();
+        return entry switch
+        {
+            ChangefeedEntry decoded => decoded,
+            QuicRemoteError error => error,
+        };
+    }
 }

@@ -6,9 +6,8 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
-    public readonly union LeaveResult(Done, Conflict);
+    public readonly union LeaveResult(Done, DashboardConflict);
 
     public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, IAuthStepUpGateway stepUp, TimeProvider time)
     {
@@ -18,12 +17,12 @@ namespace TerraScale.Dashboard.Features.Organizations
             var org = context.Organization!;
             if (org.Kind == "personal" || context.Role == "owner")
             {
-                return new Conflict("Owners must transfer ownership before leaving a business organization.");
+                return new DashboardConflict("Owners must transfer ownership before leaving a business organization.");
             }
 
             if (context.Organizations.Count < 2)
             {
-                return new Conflict("Keep another accessible organization before leaving.");
+                return new DashboardConflict("Keep another accessible organization before leaving.");
             }
 
             await platform.LeaveOrganizationAsync(context.Session, org.Id, cancellationToken);

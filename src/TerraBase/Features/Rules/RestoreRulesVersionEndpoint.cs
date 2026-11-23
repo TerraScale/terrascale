@@ -21,20 +21,21 @@ internal sealed class RestoreRulesVersionEndpoint(RulesService rules, RulesStore
     public override async ValueTask<RulesWriteResponse> HandleAsync(RulesRouteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken) switch
+        var outcome = await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => await store.VersionAsync(resolved.Database.Id, request.Version, cancellationToken) switch
             {
                 StoredRules version => RulesWrites.Map(await rules.DeployAsync(HttpContext.Caller, request.Project, request.Database, version.Rules,
                     RulesRoute.IfMatch(HttpContext.Request), RulesRoute.IfNoneMatchAny(HttpContext.Request), cancellationToken)),
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

@@ -10,7 +10,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public string CreatedByUserId { get; init; } = "";
         public string? DatabaseName { get; init; }
         public IReadOnlyList<string>? AllowedCidrs { get; init; }
-        // UTC instant until which the key string before the last rotation still works; empty when no grace period is active.
         public string PreviousSecretExpiresAt { get; init; } = "";
     }
     public sealed record ProjectCredentialMetadata(string KeyId, string ProjectId, string Name, string Prefix, string LastFour, IReadOnlyList<string> Scopes,
@@ -39,7 +38,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     [JsonSerializable(typeof(RotateProjectCredentialRequest))]
     internal sealed partial class ApiKeyContractJson : JsonSerializerContext;
 
-    // Remaining allowlist update bodies are not yet exposed by the SDK.
     internal sealed record AuthAllowedCidrsBody([property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs);
 
     [JsonSourceGenerationOptions(RespectNullableAnnotations = true)]

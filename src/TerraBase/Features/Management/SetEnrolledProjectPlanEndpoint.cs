@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 internal sealed class SetEnrolledProjectPlanEndpoint(CatalogStore catalog)
-    : Endpoint<PlanInput, Result<ProjectBody, Validation, Forbidden, NotFound, Unavailable>>
+    : Endpoint<PlanInput, EnrolledProjectResponse>
 {
     public override void Configure()
     {
@@ -18,34 +18,35 @@ internal sealed class SetEnrolledProjectPlanEndpoint(CatalogStore catalog)
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<ProjectBody, Validation, Forbidden, NotFound, Unavailable>> HandleAsync(PlanInput request, CancellationToken cancellationToken)
+    public override async ValueTask<EnrolledProjectResponse> HandleAsync(PlanInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!PlanFlow.IsOperator(HttpContext.Caller, "plans"))
         {
-            return new Forbidden("setting a plan needs the plans grant", "forbidden_caller");
+            return new CallerForbidden("setting a plan needs the plans grant", "forbidden_caller");
         }
 
         if (!Plans.IsPlan(request.Plan))
         {
-            return new Validation("plan must be hobby, starter, pro, team or enterprise", "invalid_plan");
+            return new InvalidInput("plan must be hobby, starter, pro, team or enterprise", "invalid_plan");
         }
 
         if (ManagementService.Id(request.Project) is not { } id)
         {
-            return new NotFound("the project does not exist", "unknown_project");
+            return new ResourceNotFound("the project does not exist", "unknown_project");
         }
 
-        return await catalog.SetProjectPlanAsync(id, request.Plan, cancellationToken) switch
+        var outcome = await catalog.SetProjectPlanAsync(id, request.Plan, cancellationToken);
+        return outcome switch
         {
-            Done => await catalog.GetProjectAsync(id, cancellationToken) switch
+            Completed => await catalog.GetProjectAsync(id, cancellationToken) switch
             {
                 ProjectRecord project => ProjectBody.From(project),
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
             },
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

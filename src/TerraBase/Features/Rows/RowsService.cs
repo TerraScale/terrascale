@@ -6,9 +6,18 @@ using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Rules;
 using TerraBase.Features.Sql;
+using TerraBase.Hosting;
 using TerraScale.Contracts.Cluster;
 
 namespace TerraBase.Features.Rows;
+
+internal readonly union RowKeyParse(long, InvalidInput);
+
+internal readonly union RowPlanOutcome(PlannedRow, RowRefused, SqlRefusal);
+
+internal readonly union RowClausesOutcome(IReadOnlyList<string>, SqlRefusal);
+
+internal readonly union RowConditionOutcome(string, SqlRefusal);
 
 internal enum RowAction
 {
@@ -33,23 +42,26 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     public const int MaxOperations = 100;
 
     public async ValueTask<RowsOutcome> RunAsync(
-        Caller caller, string? project, string? database, IReadOnlyList<RowCommand> commands, bool batch, CancellationToken cancellationToken) =>
-        await access.DataAsync(caller, project, database, cancellationToken) switch
+        Caller caller, string? project, string? database, IReadOnlyList<RowCommand> commands, bool batch, CancellationToken cancellationToken)
+    {
+        var outcome = await access.DataAsync(caller, project, database, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase target => await access.OpenAsync(target.Database, cancellationToken) switch
             {
                 ISqlDatabaseSession session => await ExecuteAsync(target, session, commands, batch, cancellationToken),
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 
-    public static Result<long, Validation> Key(string? raw) =>
-        long.TryParse(raw, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var key) ? key : new Validation("key must be the row's integer key", "invalid_key");
+    public static RowKeyParse Key(string? raw) =>
+        long.TryParse(raw, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var key) ? key : new InvalidInput("key must be the row's integer key", "invalid_key");
 
     private async ValueTask<RowsOutcome> ExecuteAsync(
         ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<RowCommand> commands, bool batch, CancellationToken cancellationToken)
@@ -63,7 +75,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         var set = target.EndUser is null ? null : await rules.CurrentAsync(target.Database.Id, cancellationToken) switch
         {
             StoredRules current => current.Rules,
-            NotFound or Unavailable => new RulesSet(new Dictionary<string, RulesTable>()),
+            ResourceNotFound or BackendUnavailable => new RulesSet(new Dictionary<string, RulesTable>()),
         };
         var now = time.GetUtcNow();
         List<PlannedRow> planned = [];
@@ -71,13 +83,13 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         {
             if (commands[index].Table is not { Length: > 0 } table)
             {
-                return new Validation("table names the table", "invalid_table");
+                return new InvalidInput("table names the table", "invalid_table");
             }
 
             var tableColumns = await RulesService.TableColumnsAsync(session, table, cancellationToken);
             if (tableColumns.Count == 0)
             {
-                return new NotFound(string.Concat("the database has no table ", table), "unknown_table");
+                return new ResourceNotFound(string.Concat("the database has no table ", table), "unknown_table");
             }
 
             var built = Build(commands[index], table, tableColumns, set, target.EndUser, now, new Position(index, batch));
@@ -112,8 +124,8 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                 SqlError error => new RowsOutcome(SqlRefusal.From(error)),
                 SerializationConflict conflict => new RowsOutcome(SqlRefusal.From(conflict)),
                 SchemaMismatch mismatch => new RowsOutcome(SqlRefusal.From(mismatch)),
-                Unavailable unavailable => new RowsOutcome(SqlRefusal.From(unavailable)),
-                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                ClusterUnavailable unavailable => new RowsOutcome(SqlRefusal.From(unavailable)),
+                ClusterTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
                 StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
             }
             : await session.ExecuteReadAsync(request, cancellationToken) switch
@@ -121,7 +133,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                 SqlReadResult read => Answers(target, read.ResultSets, commands, batch, wrote: false),
                 SqlError error => new RowsOutcome(SqlRefusal.From(error)),
                 StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
-                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                StorageTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
             };
         return outcome;
     }
@@ -134,7 +146,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         {
             ISqlTransaction transaction => await RunBatchTransactionAsync(target, session, transaction, commands, planned, cancellationToken),
             StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
-            RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+            ClusterTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
         };
     }
 
@@ -152,11 +164,11 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                     SqlResultSet result => CollectOrRefuse(results, result, commands[index], index),
                     SqlError error => new RowsOutcome(SqlRefusal.From(error)),
                     StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
-                    RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                    StorageTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
                 };
                 if (failure is { } refused)
                 {
-                    _ = await transaction.RollbackAsync(cancellationToken);
+                    await transaction.RollbackAsync(cancellationToken);
                     return refused;
                 }
             }
@@ -167,8 +179,8 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                 CommitMetadata => Answers(target, results, commands, batch: true, wrote: true),
                 SerializationConflict conflict => new RowsOutcome(SqlRefusal.From(conflict)),
                 SchemaMismatch mismatch => new RowsOutcome(SqlRefusal.From(mismatch)),
-                Unavailable unavailable => new RowsOutcome(SqlRefusal.From(unavailable)),
-                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                ClusterUnavailable unavailable => new RowsOutcome(SqlRefusal.From(unavailable)),
+                ClusterTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
                 StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
             };
         }
@@ -209,22 +221,17 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
 
         var request = new SqlStatementRequest(target.Database.Id, [.. checks.Select(static item => item.Check)], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
         var read = await session.ExecuteReadAsync(request, cancellationToken);
-        var results = read switch
+        return read switch
         {
-            SqlReadResult answered => answered.ResultSets,
-            SqlError or StorageBusy or RequestTimeout => null,
+            SqlReadResult answered => Checked(answered.ResultSets, checks, commands, batch),
+            SqlError error => new RowsOutcome(SqlRefusal.From(error)),
+            StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
+            StorageTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
         };
-        if (results is null)
-        {
-            return read switch
-            {
-                SqlError error => new RowsOutcome(SqlRefusal.From(error)),
-                StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
-                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
-                SqlReadResult => throw new UnreachableException(),
-            };
-        }
+    }
 
+    private static RowsOutcome? Checked(IReadOnlyList<SqlResultSet> results, List<(int Index, SqlStatement Check)> checks, IReadOnlyList<RowCommand> commands, bool batch)
+    {
         for (var at = 0; at < checks.Count && at < results.Count; at++)
         {
             if (results[at].Rows is not [var row, ..] || !IsTrue(row[0]))
@@ -281,7 +288,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         public RowsErrorDetails Details(string table, string column) => new(Table: table, Column: column, Index: Batch ? Index : null);
     }
 
-    private static Result<PlannedRow, RowRefused, SqlRefusal> Build(
+    private static RowPlanOutcome Build(
         RowCommand command, string tableName, IReadOnlyList<TableColumn> tableColumns, RulesSet? set, RulesAuth? auth, DateTimeOffset now, Position position)
     {
         IReadOnlyList<string> columns = [.. tableColumns.Select(static column => column.Name)];
@@ -355,7 +362,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         };
     }
 
-    private static Result<PlannedRow, RowRefused, SqlRefusal> Create(
+    private static RowPlanOutcome Create(
         string table, string readable, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<TableColumn> tableColumns,
         IReadOnlyList<string> columns, int index, long renderTime)
     {
@@ -403,7 +410,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         };
     }
 
-    private static Result<PlannedRow, RowRefused, SqlRefusal> Update(
+    private static RowPlanOutcome Update(
         string table, string readable, long key, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns,
         int index, long renderTime)
     {
@@ -444,7 +451,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     private static string Conjunction(string condition, IReadOnlyList<string> clauses) =>
         clauses.Count == 0 ? condition : string.Concat(condition, " AND ", string.Join(" AND ", clauses));
 
-    private static Result<IReadOnlyList<string>, SqlRefusal> Validations(RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns, int index, long renderTime)
+    private static RowClausesOutcome Validations(RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns, int index, long renderTime)
     {
         if (auth is null || rule?.Validate is not { Count: > 0 } clauses)
         {
@@ -457,7 +464,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             var compiled = RulesCompiler.Compile(clause, columns, RulesOperation.Validate) switch
             {
                 CompiledCondition ready => ready,
-                Validation => null,
+                InvalidInput => null,
             };
             if (compiled is null)
             {
@@ -470,9 +477,9 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         return Clauses(rendered);
     }
 
-    private static Result<IReadOnlyList<string>, SqlRefusal> Clauses(IReadOnlyList<string> clauses) => new(clauses);
+    private static RowClausesOutcome Clauses(IReadOnlyList<string> clauses) => new(clauses);
 
-    private static Result<string, SqlRefusal> Condition(
+    private static RowConditionOutcome Condition(
         string? condition, RulesAuth? auth, RulesOperation operation, IReadOnlyList<string> columns, int index, long renderTime, string? newPrefix = null,
         string? rowPrefix = null)
     {
@@ -489,7 +496,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         return RulesCompiler.Compile(condition, columns, operation) switch
         {
             CompiledCondition compiled => RulesCompiler.Render(compiled, auth, renderTime, newPrefix, rowPrefix),
-            Validation refused => new SqlRefusal("rules_invalid", refused.Message, "42501", index, StatusCodes.Status403Forbidden),
+            InvalidInput refused => new SqlRefusal("rules_invalid", refused.Message, "42501", index, StatusCodes.Status403Forbidden),
         };
     }
 

@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.Features.Billing
         public bool PaymentMethodUnavailable { get; init; }
         public BillingDetails? Details { get; init; }
         public bool DetailsUnavailable { get; init; }
-        // Operation-unit overage already on Stripe this month; null when it could not be read.
         public long? OverageUnits { get; init; }
         public TerraScale.Dashboard.Features.Billing.InternalBill? InternalBill { get; init; }
         public bool CanManage => Binding?.Kind != "internal" && Shell.Context.Role == "owner" && Shell.Context.Organization is { Status: "active", Archived: false, DeletionRequested: false, InternalBilling: null } organization && organization.OwnerUserId == Shell.Context.UserId;

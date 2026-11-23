@@ -35,27 +35,21 @@ namespace TerraScale.Dashboard.Features.Databases
                 var placed = regionsContract
                     ? await databases.PlaceRegionsAsync(context, id, Selection(form, ""), [.. form["offered"].OfType<string>()], http.RequestAborted)
                     : await ApplyAsync(databases, backend, context, id, Selection(form, ""), http.RequestAborted);
-                switch (placed)
+                return placed switch
                 {
-                    case RegionsCopying pending:
-                        return DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest
-                            ? await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
-                                status: StatusCodes.Status202Accepted, regions: new(asked, pending.Message))
-                            : TypedResults.Problem(pending.Message, statusCode: StatusCodes.Status503ServiceUnavailable,
-                                extensions: new Dictionary<string, object?> { ["code"] = RegionsCopying.Code });
-                    case Failure failure when !(DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) || DatabaseMutations.StatusOf(failure) == 404:
-                        return DatabaseResults.PageFailureOf(http, context, failure);
-                    case Failure failure:
-                        return await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
-                            DatabaseMutations.MessageOf(failure), status: DatabaseMutations.StatusOf(failure), regions: new(asked, ""));
-                    case DatabaseRecord database when http.Request.IsDatastarRequest:
-                        return await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
-                            regions: new(asked, ""));
-                    case DatabaseRecord database:
-                        return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : TypedResults.Json(DatabaseEndpoints.DatabaseOutput(database));
-                }
-
-                throw new UnreachableException();
+                    RegionsCopying pending => DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest
+                        ? await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
+                            status: StatusCodes.Status202Accepted, regions: new(asked, pending.Message))
+                        : TypedResults.Problem(pending.Message, statusCode: StatusCodes.Status503ServiceUnavailable,
+                            extensions: new Dictionary<string, object?> { ["code"] = RegionsCopying.Code }),
+                    DatabaseRefusal failure when !(DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) || failure.Status == 404 =>
+                        DatabaseResults.PageFailureOf(http, context, failure),
+                    DatabaseRefusal failure => await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend,
+                        databases, failure.Message, status: failure.Status, regions: new(asked, "")),
+                    DatabaseRecord when http.Request.IsDatastarRequest => await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id,
+                        "replication", backend, databases, regions: new(asked, "")),
+                    DatabaseRecord database => DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : TypedResults.Json(DatabaseEndpoints.DatabaseOutput(database)),
+                };
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
@@ -82,7 +76,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var database = DatabaseService.Database(context, id);
             if (database.Region.Length == 0)
             {
-                return DatabaseMutations.PlacementRefused(new Conflict("This database's regions are unavailable. Reload the page and try again."));
+                return DatabaseMutations.PlacementRefused(new DatabaseStateConflict("This database's regions are unavailable. Reload the page and try again."));
             }
 
             var catalog = await backend.RegionsAsync(cancellationToken);
@@ -112,19 +106,23 @@ namespace TerraScale.Dashboard.Features.Databases
             if (database.AllRegions || !others.ToHashSet(StringComparer.Ordinal).SetEquals(staged))
             {
                 var stagedResult = await databases.PlaceAsync(context, id, staged, false, cancellationToken);
-                if (stagedResult is Failure stagedFailure)
+                var stagedFailure = stagedResult switch
+                {
+                    DatabaseRecord => null,
+                    DatabaseRefusal refusal => refusal,
+                };
+                if (stagedFailure is not null)
                 {
                     return stagedFailure;
                 }
             }
 
             var moved = await databases.MoveHomeAsync(context, id, successor, cancellationToken);
-            if (moved is Failure movedFailure)
+            return moved switch
             {
-                return movedFailure;
-            }
-
-            return PlacementOf(await databases.PlaceAsync(context, id, [.. wanted.Where(region => region != successor)], false, cancellationToken));
+                DatabaseRecord => PlacementOf(await databases.PlaceAsync(context, id, [.. wanted.Where(region => region != successor)], false, cancellationToken)),
+                DatabaseRefusal movedFailure => movedFailure,
+            };
         }
 
         private static PlacementResult PlacementOf(DatabaseMutation mutation)
@@ -132,7 +130,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return mutation switch
             {
                 DatabaseRecord database => database,
-                Failure failure => failure
+                DatabaseRefusal failure => failure
             };
         }
     }

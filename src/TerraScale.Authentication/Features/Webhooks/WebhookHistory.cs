@@ -1,7 +1,6 @@
 using System.Text.Json.Serialization;
 using Dapper;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
@@ -31,16 +30,18 @@ public sealed record WebhookDeliveryBody(string Id, string EventId, string Statu
 
 public sealed record WebhookDeliveryPage(IReadOnlyList<WebhookDeliveryBody> Items, string? Next);
 
+public readonly union WebhookEventList(WebhookEventPage, AuthValidation);
+
 public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProvider clock)
 {
     public static WebhookEventBody Body(WebhookOutboxRecord row) => new(row.EventId, row.EventType, row.OccurredAt,
         new(row.UserId, row.Email, row.Provider, row.SessionId, row.EndpointId, row.ActorId, row.Reason, row.OrganizationId, row.OrganizationRole, row.AgentId, row.AgentKeyId));
 
-    public async Task<Valid<WebhookEventPage>> EventsAsync(string projectId, string? after, int limit, CancellationToken cancellationToken)
+    public async Task<WebhookEventList> EventsAsync(string projectId, string? after, int limit, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrEmpty(after) && !TerraScaleIds.IsValid(after))
         {
-            return new Validation("after must be an event ULID.", "invalid_request");
+            return new AuthValidation("after must be an event ULID.", "invalid_request");
         }
 
         var now = clock.GetUtcNow();

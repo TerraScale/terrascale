@@ -12,8 +12,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rules;
 
+internal readonly union TestRulesResponse(RulesTestBody, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, DatabaseAccess access, TimeProvider time)
-    : Endpoint<RulesTestInput, Result<RulesTestBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<RulesTestInput, TestRulesResponse>
 {
     public override void Configure()
     {
@@ -29,7 +31,7 @@ internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, Da
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<RulesTestBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<TestRulesResponse> HandleAsync(
         RulesTestInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -44,11 +46,12 @@ internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, Da
         if (parsed is not { } operation || request.Operation is not { } name || request.Table is not { Length: > 0 } table
             || request.Auth is not { Uid: { Length: > 0 } uid } auth)
         {
-            return new Validation("table, operation (read, create, update or delete) and auth.uid are required", "invalid_request");
+            return new InvalidInput("table, operation (read, create, update or delete) and auth.uid are required", "invalid_request");
         }
 
         var simulation = new Simulation(table, operation, name, Auth(uid, auth), request);
-        return await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken) switch
+        var outcome = await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => await access.OpenAsync(resolved.Database, cancellationToken) switch
             {
@@ -57,16 +60,16 @@ internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, Da
                     : await store.CurrentAsync(resolved.Database.Id, cancellationToken) switch
                     {
                         StoredRules current => await SimulateAsync(session, current.Rules, draft: false, simulation, cancellationToken),
-                        NotFound => await SimulateAsync(session, new RulesSet(new Dictionary<string, RulesTable>()), draft: false, simulation, cancellationToken),
-                        Unavailable unavailable => unavailable,
+                        ResourceNotFound => await SimulateAsync(session, new RulesSet(new Dictionary<string, RulesTable>()), draft: false, simulation, cancellationToken),
+                        BackendUnavailable unavailable => unavailable,
                     },
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -84,7 +87,7 @@ internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, Da
         return document.RootElement.Clone();
     }
 
-    private async ValueTask<Result<RulesTestBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> SimulateAsync(
+    private async ValueTask<TestRulesResponse> SimulateAsync(
         ISqlDatabaseSession session, RulesSet set, bool draft, Simulation simulation, CancellationToken cancellationToken)
     {
         var rule = set.Table(simulation.Table);
@@ -203,7 +206,7 @@ internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, Da
             var compiled = RulesCompiler.Compile(condition, columns, operation) switch
             {
                 CompiledCondition ready => ready,
-                Validation => null,
+                InvalidInput => null,
             };
             if (compiled is null || columns.Count == 0)
             {
@@ -218,10 +221,11 @@ internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, Da
                 .Append(") AS row_values, (SELECT ").Append(Projection(projected, args)).Append(") AS new")
                 .ToString();
             var request = new SqlStatementRequest(session.DatabaseId, [SqlBuild.Statement(sql, [.. args])], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
-            return await session.ExecuteReadAsync(request, cancellationToken) switch
+            var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+            return outcome switch
             {
                 SqlReadResult { ResultSets: [.., { Rows: [[var allowed, ..], ..] }] } => allowed.TryGetIntegral(out var value) && value != 0,
-                SqlReadResult or SqlError or StorageBusy or RequestTimeout => false,
+                SqlReadResult or SqlError or StorageBusy or StorageTimeout => false,
             };
         }
 

@@ -33,7 +33,11 @@ namespace TerraScale.Dashboard.Features.Databases
             async Task<DatabaseConflictList> ConflictsAsync()
             {
                 var listing = await conflicts.ListAsync(Scope(organizationId, projectId), databaseId, table, since, until, limit, before, Cancellation);
-                return listing is DatabaseConflictList result ? result : throw DatabaseMutations.ToError(DatabaseMutations.RefusedConflict(listing));
+                return listing switch
+                {
+                    DatabaseConflictList result => result,
+                    DatabaseInvalid invalid => throw DatabaseMutations.ToError(invalid),
+                };
             }
         }
 
@@ -46,9 +50,11 @@ namespace TerraScale.Dashboard.Features.Databases
             var db = DatabaseService.Database(context, databaseId);
             var output = await DatabaseOutput(db);
             var configured = await databases.ConfiguredPlacementAsync(output.Placement, Cancellation);
-            var placement = configured is not IReadOnlyList<DatabaseRegion> regions
-                ? throw DatabaseMutations.ToError(DatabaseMutations.RefusedConfigured(configured))
-                : regions;
+            var placement = configured switch
+            {
+                IReadOnlyList<DatabaseRegion> regions => regions,
+                DatabaseInvalid invalid => throw DatabaseMutations.ToError(invalid),
+            };
             string? unavailable = null;
             bool? backupsEnabled = null;
             try
@@ -67,7 +73,6 @@ namespace TerraScale.Dashboard.Features.Databases
                 (error is not OperationCanceledException || !Cancellation.IsCancellationRequested))
             { unavailable = unavailable is null ? "Backup measurements are unavailable." : unavailable + " Backup measurements are unavailable."; }
             return new(db.Id, db.Name, db.Status, db.Region, output.Placement, db.CreatedAt, db.AllRegions, db.Endpoint,
-                // MCP labels are an existing response contract, independent of page display casing.
                 [.. placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code })],
                 unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId), db.ExpiresAt);
         }
@@ -79,9 +84,11 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = Scope(organizationId, projectId);
             DatabaseService.Scope(context);
             var created = await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours);
-            return created is DatabaseRecord database
-                ? await DatabaseOutput(database)
-                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(created));
+            return created switch
+            {
+                DatabaseRecord database => await DatabaseOutput(database),
+                DatabaseRefusal refusal => throw DatabaseMutations.ToError(refusal),
+            };
         }
 
         [McpAccess(McpAccess.Write)]
@@ -95,9 +102,11 @@ namespace TerraScale.Dashboard.Features.Databases
                 return new McpRestoreStart(started.OperationId, started.Status, name.Trim());
             }
             var branched = await databases.BranchAsync(context, databaseId, name, Cancellation, ttlHours);
-            return branched is DatabaseRecord database
-                ? await DatabaseOutput(database)
-                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(branched));
+            return branched switch
+            {
+                DatabaseRecord database => await DatabaseOutput(database),
+                DatabaseRefusal refusal => throw DatabaseMutations.ToError(refusal),
+            };
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -109,9 +118,11 @@ namespace TerraScale.Dashboard.Features.Databases
                 throw new AccountAccessException("Supply ttlHours or clear=true, exclusively.", 422);
             }
             var saved = await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation);
-            return saved is DatabaseRecord database
-                ? await DatabaseOutput(database)
-                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(saved));
+            return saved switch
+            {
+                DatabaseRecord database => await DatabaseOutput(database),
+                DatabaseRefusal refusal => throw DatabaseMutations.ToError(refusal),
+            };
         }
 
         [McpAccess(McpAccess.Destructive)]

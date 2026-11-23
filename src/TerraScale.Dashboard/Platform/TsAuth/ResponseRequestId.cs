@@ -2,7 +2,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 {
     internal static class ResponseRequestId
     {
-        // Accept exactly one canonical ULID; never retain arbitrary responder text.
         internal static string? Read(HttpResponseMessage? response)
         {
             if (response is null || !response.Headers.TryGetValues("X-Request-ID", out var values)) return null;

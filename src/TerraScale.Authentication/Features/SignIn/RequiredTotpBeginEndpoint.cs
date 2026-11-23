@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Http.Metadata;
 using QRCoder;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Endpoints;
@@ -35,7 +34,7 @@ public sealed class RequiredTotpBeginEndpoint(TotpCredentials mfa, AuthOptions o
         return pending switch
         {
             ChallengedSignIn challenged => await EnrollAsync(challenged),
-            Forbidden error => ErrorResults.ToResult(error),
+            AuthForbidden error => ErrorResults.ToResult(error),
         };
 
         async ValueTask<IResult> EnrollAsync(ChallengedSignIn challenged)
@@ -43,7 +42,7 @@ public sealed class RequiredTotpBeginEndpoint(TotpCredentials mfa, AuthOptions o
             var enrollment = await mfa.BeginAsync(challenged.User, new MfaAuthorization(Change.Assert(challenged.User), challenged.ExpiresAt), cancellationToken);
             if (enrollment is null)
             {
-                return ErrorResults.ToResult(new Conflict("An authenticator is already enrolled. Sign in again.", "mfa_enrolled"));
+                return ErrorResults.ToResult(new AuthConflict("An authenticator is already enrolled. Sign in again.", "mfa_enrolled"));
             }
 
             using var qr = QRCodeGenerator.GenerateQrCode(enrollment.ProvisioningUri, QRCodeGenerator.ECCLevel.M);

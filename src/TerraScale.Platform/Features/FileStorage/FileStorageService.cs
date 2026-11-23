@@ -2,6 +2,60 @@ using System.Text;
 
 namespace TerraScale.Platform.Features.FileStorage;
 
+public sealed record BucketDeleted;
+
+public sealed record FileDeleted;
+
+public readonly union CreateBucketOutcome(
+    FileBucket,
+    PlatformInvalidRequest,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
+public readonly union ListBucketsOutcome(FileBucketPage, PlatformForbidden, PlatformUnavailable);
+
+public readonly union SetBucketRulesOutcome(
+    FileBucket,
+    PlatformInvalidRequest,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
+public readonly union DeleteBucketOutcome(
+    BucketDeleted,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
+public readonly union CreateUploadOutcome(
+    UploadCreated,
+    PlatformInvalidRequest,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
+public readonly union CompleteUploadOutcome(
+    FileObject,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
+public readonly union ListFilesOutcome(FileObjectPage, PlatformForbidden, PlatformNotFound, PlatformUnavailable);
+
+public readonly union CreateDownloadOutcome(
+    FileSignedUrl,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
+public readonly union DeleteFileOutcome(FileDeleted, PlatformForbidden, PlatformNotFound, PlatformUnavailable);
+
 public sealed class FileStorageService(PlatformStore store, S3FileObjectStore objects, PlatformOptions options, PlatformMetrics metrics, TimeProvider timeProvider)
 {
     public static readonly TimeSpan UploadLifetime = TimeSpan.FromMinutes(5);
@@ -9,12 +63,12 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
     private const int Page = 50;
     private const int ScanRows = 1000;
     private const long MaxFileBytes = 100 * 1024 * 1024;
-    private static readonly Forbidden Denied = new("the bucket rules deny this operation", "access_denied");
-    private static readonly NotFound Missing = new("the bucket or file does not exist", "not_found");
-    private static readonly Conflict LiveFiles =
+    private static readonly PlatformForbidden Denied = new("the bucket rules deny this operation", "access_denied");
+    private static readonly PlatformNotFound Missing = new("the bucket or file does not exist", "not_found");
+    private static readonly PlatformConflict LiveFiles =
         new("delete the bucket's files and let uploads in progress complete or expire before deleting the bucket", "bucket_not_empty");
 
-    public async ValueTask<Result<FileBucket, Validation, Forbidden, NotFound, Conflict, Unavailable>> CreateBucketAsync(
+    public async ValueTask<CreateBucketOutcome> CreateBucketAsync(
         FileScope scope,
         string? name,
         FileAccessRules? rules,
@@ -27,7 +81,7 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
 
         if (!FileRoutes.IsName(name) || rules is null)
         {
-            return new Validation("name must be a lowercase name of at most 63 characters; rules are required");
+            return new PlatformInvalidRequest("name must be a lowercase name of at most 63 characters; rules are required");
         }
 
         if (rules.Check() is { } invalid)
@@ -60,18 +114,19 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
                 project),
         ];
         metrics.FileOperation("create_bucket");
-        return await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].Rows.Count > 0 => new NotFound("the project is closed", "project_not_found"),
-            IReadOnlyList<SqlHttpStatementResult> results when results[1].Rows.Count > 0 => new Conflict("a bucket with that name already exists"),
-            IReadOnlyList<SqlHttpStatementResult> results when results[2].RowsAffected == 0 => new Conflict($"a project may have at most {MaxBuckets} buckets"),
-            IReadOnlyList<SqlHttpStatementResult> => bucket,
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[0].Rows.Count > 0 => new PlatformNotFound("the project is closed", "project_not_found"),
+            SqlExecuteResponse { Results: var results } when results[1].Rows.Count > 0 => new PlatformConflict("a bucket with that name already exists"),
+            SqlExecuteResponse { Results: var results } when results[2].RowsAffected == 0 => new PlatformConflict($"a project may have at most {MaxBuckets} buckets"),
+            SqlExecuteResponse => bucket,
+            PlatformConflict conflict => conflict,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FileBucketPage, Forbidden, Unavailable>> ListBucketsAsync(FileScope scope, string? after, CancellationToken cancellationToken)
+    public async ValueTask<ListBucketsOutcome> ListBucketsAsync(FileScope scope, string? after, CancellationToken cancellationToken)
     {
         if (!scope.Access.IsAdministrator)
         {
@@ -83,15 +138,16 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             SqlValues.Text(scope.Project.ToString()),
             SqlValues.Text(after ?? "0"),
             SqlValues.Number(Page + 1));
-        return await store.ReadAsync(statement, cancellationToken) switch
+        var outcome = await store.ReadAsync(statement, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => Paged(results[0].RowsOf().Select(Bucket).OfType<FileBucket>().ToList()),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => Paged(results[0].RowsOf().Select(Bucket).OfType<FileBucket>().ToList()),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FileBucket, Validation, Forbidden, NotFound, Conflict, Unavailable>> SetRulesAsync(
+    public async ValueTask<SetBucketRulesOutcome> SetRulesAsync(
         FileScope scope,
         string bucket,
         FileAccessRules? rules,
@@ -104,7 +160,7 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
 
         if (rules is null)
         {
-            return new Validation("rules are required");
+            return new PlatformInvalidRequest("rules are required");
         }
 
         if (rules.Check() is { } invalid)
@@ -112,31 +168,57 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             return invalid;
         }
 
-        return await BucketAsync(scope, bucket, cancellationToken) switch
+        var outcome = await BucketAsync(scope, bucket, cancellationToken);
+        return outcome switch
         {
-            FileBucket saved when saved.Rules.Owner != rules.Owner => new Conflict("the owner pointer is immutable"),
-            FileBucket saved => await SaveRulesAsync(scope, saved with { Rules = rules }, cancellationToken),
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            FileBucket saved when saved.Rules.Owner != rules.Owner => new PlatformConflict("the owner pointer is immutable"),
+            FileBucket saved => await UpdateRulesAsync(saved),
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<SetBucketRulesOutcome> UpdateRulesAsync(FileBucket saved)
+        {
+            var outcome = await SaveRulesAsync(scope, saved with { Rules = rules }, cancellationToken);
+            return outcome switch
+            {
+                FileBucket updated => updated,
+                PlatformNotFound missing => missing,
+                PlatformConflict conflict => conflict,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
-    public async ValueTask<Result<Done, Forbidden, NotFound, Conflict, Unavailable>> DeleteBucketAsync(FileScope scope, string bucket, CancellationToken cancellationToken)
+    public async ValueTask<DeleteBucketOutcome> DeleteBucketAsync(FileScope scope, string bucket, CancellationToken cancellationToken)
     {
         if (!scope.Access.IsAdministrator)
         {
             return Denied;
         }
 
-        return await BucketAsync(scope, bucket, cancellationToken) switch
+        var outcome = await BucketAsync(scope, bucket, cancellationToken);
+        return outcome switch
         {
-            FileBucket saved => await EraseBucketAsync(scope, saved, cancellationToken),
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            FileBucket saved => await DeleteAsync(saved),
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<DeleteBucketOutcome> DeleteAsync(FileBucket saved)
+        {
+            var outcome = await EraseBucketAsync(scope, saved, cancellationToken);
+            return outcome switch
+            {
+                BucketDeleted deleted => deleted,
+                PlatformNotFound missing => missing,
+                PlatformConflict conflict => conflict,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
-    public async ValueTask<Result<UploadCreated, Validation, Forbidden, NotFound, Unavailable>> CreateUploadAsync(
+    public async ValueTask<CreateUploadOutcome> CreateUploadAsync(
         FileScope scope,
         CreateFileUploadRequest request,
         CancellationToken cancellationToken)
@@ -146,86 +228,141 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             || request.Size is < 1 or > MaxFileBytes || request.Metadata.ValueKind != JsonValueKind.Object
             || request.Metadata.GetRawText().Length > 16 * 1024 || request.Sha256 is not { } sha256 || !IsChecksum(sha256))
         {
-            return new Validation("provide name, contentType, size (1-104857600), base64 SHA-256 and object metadata (at most 16 KiB)");
+            return new PlatformInvalidRequest("provide name, contentType, size (1-104857600), base64 SHA-256 and object metadata (at most 16 KiB)");
         }
 
         var now = timeProvider.GetUtcNow();
         var file = new FileObject(Ulid.NewUlid(now).ToString(), name, contentType, request.Size, sha256, request.Metadata.Clone(), "pending", now + UploadLifetime);
-        return await BucketAsync(scope, request.Bucket, cancellationToken) switch
+        var outcome = await BucketAsync(scope, request.Bucket, cancellationToken);
+        return outcome switch
         {
             FileBucket saved when scope.Access.Grant.DatabaseRestricted || !saved.Rules.CanCreate(scope.Access, file.Metadata) => Denied,
             FileBucket saved => objects.Upload(saved.Region, S3FileObjectStore.Key(scope.Organization, scope.Project, saved.Id, file.Id), file) switch
             {
-                FileSignedUrl signed => await ReserveAsync(scope, saved, file, signed, cancellationToken),
-                Unavailable unavailable => unavailable,
+                FileSignedUrl signed => await ReserveSignedAsync(saved, signed),
+                PlatformUnavailable unavailable => unavailable,
             },
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<CreateUploadOutcome> ReserveSignedAsync(FileBucket saved, FileSignedUrl signed)
+        {
+            var outcome = await ReserveAsync(scope, saved, file, signed, cancellationToken);
+            return outcome switch
+            {
+                UploadCreated created => created,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
-    public async ValueTask<Result<FileObject, Forbidden, NotFound, Conflict, Unavailable>> CompleteUploadAsync(
+    public async ValueTask<CompleteUploadOutcome> CompleteUploadAsync(
         FileScope scope,
         string bucket,
         string file,
-        CancellationToken cancellationToken) =>
-        await FileAsync(scope, bucket, file, write: true, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await FileAsync(scope, bucket, file, write: true, cancellationToken);
+        return outcome switch
         {
             LocatedFile { File.Status: "ready" } located => located.File,
             LocatedFile { File.Status: "deleted" } => Missing,
-            LocatedFile located when located.File.UploadExpiresAt <= timeProvider.GetUtcNow() => new Conflict("the upload reservation expired"),
-            LocatedFile located => await VerifyAsync(scope, located.Bucket, located.File, cancellationToken),
-            Forbidden denied => denied,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            LocatedFile located when located.File.UploadExpiresAt <= timeProvider.GetUtcNow() => new PlatformConflict("the upload reservation expired"),
+            LocatedFile located => await CompleteVerifiedAsync(located),
+            PlatformForbidden denied => denied,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<Result<FileObjectPage, Forbidden, NotFound, Unavailable>> ListFilesAsync(
+        async ValueTask<CompleteUploadOutcome> CompleteVerifiedAsync(LocatedFile located)
+        {
+            var outcome = await VerifyAsync(scope, located.Bucket, located.File, cancellationToken);
+            return outcome switch
+            {
+                FileObject ready => ready,
+                PlatformConflict conflict => conflict,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+    }
+
+    public async ValueTask<ListFilesOutcome> ListFilesAsync(
         FileScope scope,
         string bucket,
         string? after,
-        CancellationToken cancellationToken) =>
-        await BucketAsync(scope, bucket, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await BucketAsync(scope, bucket, cancellationToken);
+        return outcome switch
         {
             FileBucket saved when scope.Access.Grant.DatabaseRestricted || (scope.Access.Grant.EndUser && !saved.Rules.Grants(scope.Access, write: false)) => Denied,
-            FileBucket saved => await ListReadyAsync(scope, saved, after, cancellationToken),
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            FileBucket saved => await ListVisibleAsync(saved),
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<Result<FileSignedUrl, Forbidden, NotFound, Conflict, Unavailable>> DownloadAsync(
+        async ValueTask<ListFilesOutcome> ListVisibleAsync(FileBucket saved)
+        {
+            var outcome = await ListReadyAsync(scope, saved, after, cancellationToken);
+            return outcome switch
+            {
+                FileObjectPage page => page,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+    }
+
+    public async ValueTask<CreateDownloadOutcome> DownloadAsync(
         FileScope scope,
         string bucket,
         string file,
-        CancellationToken cancellationToken) =>
-        await FileAsync(scope, bucket, file, write: false, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await FileAsync(scope, bucket, file, write: false, cancellationToken);
+        return outcome switch
         {
             LocatedFile { File.Status: "ready" } located =>
                 objects.Download(located.Bucket.Region, S3FileObjectStore.Key(scope.Organization, scope.Project, located.Bucket.Id, located.File.Id), located.File) switch
                 {
                     FileSignedUrl signed => Downloaded(signed),
-                    Unavailable unavailable => unavailable,
+                    PlatformUnavailable unavailable => unavailable,
                 },
             LocatedFile { File.Status: "deleted" } => Missing,
-            LocatedFile => new Conflict("the upload is not complete"),
-            Forbidden denied => denied,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            LocatedFile => new PlatformConflict("the upload is not complete"),
+            PlatformForbidden denied => denied,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
-    public async ValueTask<Result<Done, Forbidden, NotFound, Unavailable>> DeleteFileAsync(
+    public async ValueTask<DeleteFileOutcome> DeleteFileAsync(
         FileScope scope,
         string bucket,
         string file,
-        CancellationToken cancellationToken) =>
-        await FileAsync(scope, bucket, file, write: true, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await FileAsync(scope, bucket, file, write: true, cancellationToken);
+        return outcome switch
         {
-            LocatedFile { File.Status: "deleted" } => new Done(),
-            LocatedFile located => await MarkDeletedAsync(scope, located.Bucket, located.File, cancellationToken),
-            Forbidden denied => denied,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            LocatedFile { File.Status: "deleted" } => new FileDeleted(),
+            LocatedFile located => await DeleteLocatedAsync(located),
+            PlatformForbidden denied => denied,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<DeleteFileOutcome> DeleteLocatedAsync(LocatedFile located)
+        {
+            var outcome = await MarkDeletedAsync(scope, located.Bucket, located.File, cancellationToken);
+            return outcome switch
+            {
+                FileDeleted deleted => deleted,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+    }
 
     private FileSignedUrl Downloaded(FileSignedUrl signed)
     {
@@ -233,7 +370,9 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
         return signed;
     }
 
-    private async ValueTask<Result<FileBucket, Validation, Forbidden, NotFound, Conflict, Unavailable>> SaveRulesAsync(
+    private readonly union SaveBucketRulesOutcome(FileBucket, PlatformNotFound, PlatformConflict, PlatformUnavailable);
+
+    private async ValueTask<SaveBucketRulesOutcome> SaveRulesAsync(
         FileScope scope,
         FileBucket bucket,
         CancellationToken cancellationToken)
@@ -243,31 +382,35 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             SqlValues.Text(JsonSerializer.Serialize(bucket.Rules, FileStorageJsonContext.Default.FileAccessRules)),
             SqlValues.Text(scope.Project.ToString()),
             SqlValues.Text(bucket.Id));
-        return await store.ExecuteAsync([statement], SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync([statement], SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].RowsAffected == 0 => Missing,
-            IReadOnlyList<SqlHttpStatementResult> => bucket,
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[0].RowsAffected == 0 => Missing,
+            SqlExecuteResponse => bucket,
+            PlatformConflict conflict => conflict,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<Done, Forbidden, NotFound, Conflict, Unavailable>> EraseBucketAsync(FileScope scope, FileBucket bucket, CancellationToken cancellationToken)
+    private readonly union EraseBucketOutcome(BucketDeleted, PlatformNotFound, PlatformConflict, PlatformUnavailable);
+
+    private async ValueTask<EraseBucketOutcome> EraseBucketAsync(FileScope scope, FileBucket bucket, CancellationToken cancellationToken)
     {
         var statement = SqlValues.Statement(
             "SELECT id, status, upload_expires_at FROM platform_files WHERE project_id = ? AND bucket_id = ? LIMIT ?",
             SqlValues.Text(scope.Project.ToString()),
             SqlValues.Text(bucket.Id),
             SqlValues.Number(ScanRows + 1));
-        return await store.ReadAsync(statement, cancellationToken) switch
+        var outcome = await store.ReadAsync(statement, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => await EraseFilesAsync(scope, bucket, results[0], cancellationToken),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => await EraseFilesAsync(scope, bucket, results[0], cancellationToken),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<Done, Forbidden, NotFound, Conflict, Unavailable>> EraseFilesAsync(
+    private async ValueTask<EraseBucketOutcome> EraseFilesAsync(
         FileScope scope,
         FileBucket bucket,
         SqlHttpStatementResult rows,
@@ -282,14 +425,15 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
 
         foreach (var file in files)
         {
-            var failed = await objects.DeleteAsync(bucket.Region, S3FileObjectStore.Key(scope.Organization, scope.Project, bucket.Id, file.Id), cancellationToken) switch
+            var failedOutcome = await objects.DeleteAsync(bucket.Region, S3FileObjectStore.Key(scope.Organization, scope.Project, bucket.Id, file.Id), cancellationToken);
+            var failed = failedOutcome switch
             {
-                Done => false,
-                Unavailable => true,
+                FileObjectDeleted => false,
+                PlatformUnavailable => true,
             };
             if (failed)
             {
-                return new Unavailable("the bucket's deleted files are still being erased; retry", "files_unavailable");
+                return new PlatformUnavailable("the bucket's deleted files are still being erased; retry", "files_unavailable");
             }
         }
 
@@ -301,16 +445,19 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             SqlValues.Statement("DELETE FROM platform_buckets WHERE project_id = ? AND id = ?", project, id),
         ];
         metrics.FileOperation("delete_bucket");
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[1].RowsAffected == 0 => Missing,
-            IReadOnlyList<SqlHttpStatementResult> => new Done(),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[1].RowsAffected == 0 => Missing,
+            SqlExecuteResponse => new BucketDeleted(),
+            PlatformConflict conflict => conflict,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<UploadCreated, Validation, Forbidden, NotFound, Unavailable>> ReserveAsync(
+    private readonly union ReserveUploadOutcome(UploadCreated, PlatformNotFound, PlatformUnavailable);
+
+    private async ValueTask<ReserveUploadOutcome> ReserveAsync(
         FileScope scope,
         FileBucket bucket,
         FileObject file,
@@ -329,28 +476,34 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             SqlValues.Text(scope.Project.ToString()),
             SqlValues.Text(bucket.Id));
         metrics.FileOperation("upload");
-        return await store.ExecuteAsync([statement], SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync([statement], SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].RowsAffected == 0 => Missing,
-            IReadOnlyList<SqlHttpStatementResult> => new UploadCreated(signed),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[0].RowsAffected == 0 => Missing,
+            SqlExecuteResponse => new UploadCreated(signed),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<FileObject, Forbidden, NotFound, Conflict, Unavailable>> VerifyAsync(
+    private async ValueTask<SaveFileOutcome> VerifyAsync(
         FileScope scope,
         FileBucket bucket,
         FileObject file,
-        CancellationToken cancellationToken) =>
-        await objects.VerifyAsync(bucket.Region, S3FileObjectStore.Key(scope.Organization, scope.Project, bucket.Id, file.Id), file, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await objects.VerifyAsync(bucket.Region, S3FileObjectStore.Key(scope.Organization, scope.Project, bucket.Id, file.Id), file, cancellationToken);
+        return outcome switch
         {
             true => await SaveAsync(scope, bucket, file with { Status = "ready" }, "pending", cancellationToken),
-            false => new Conflict("the uploaded file does not match the reserved size and checksum"),
-            Unavailable unavailable => unavailable,
+            false => new PlatformConflict("the uploaded file does not match the reserved size and checksum"),
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
-    private async ValueTask<Result<Done, Forbidden, NotFound, Unavailable>> MarkDeletedAsync(
+    private readonly union MarkFileDeletedOutcome(FileDeleted, PlatformUnavailable);
+
+    private async ValueTask<MarkFileDeletedOutcome> MarkDeletedAsync(
         FileScope scope,
         FileBucket bucket,
         FileObject file,
@@ -363,17 +516,18 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
         }
 
         metrics.FileOperation("delete");
-        return await SaveAsync(scope, bucket, file with { Status = "deleted", DeleteAfter = after }, file.Status, cancellationToken) switch
+        var outcome = await SaveAsync(scope, bucket, file with { Status = "deleted", DeleteAfter = after }, file.Status, cancellationToken);
+        return outcome switch
         {
-            FileObject => new Done(),
-            Forbidden denied => denied,
-            NotFound missing => missing,
-            Conflict => new Done(),
-            Unavailable unavailable => unavailable,
+            FileObject => new FileDeleted(),
+            PlatformConflict => new FileDeleted(),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<FileObject, Forbidden, NotFound, Conflict, Unavailable>> SaveAsync(
+    private readonly union SaveFileOutcome(FileObject, PlatformConflict, PlatformUnavailable);
+
+    private async ValueTask<SaveFileOutcome> SaveAsync(
         FileScope scope,
         FileBucket bucket,
         FileObject file,
@@ -389,16 +543,19 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             SqlValues.Text(bucket.Id),
             SqlValues.Text(file.Id),
             SqlValues.Text(expectedStatus));
-        return await store.ExecuteAsync([statement], SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync([statement], SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].RowsAffected == 0 => new Conflict("the file changed concurrently; retry"),
-            IReadOnlyList<SqlHttpStatementResult> => file,
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[0].RowsAffected == 0 => new PlatformConflict("the file changed concurrently; retry"),
+            SqlExecuteResponse => file,
+            PlatformConflict conflict => conflict,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<FileObjectPage, Forbidden, NotFound, Unavailable>> ListReadyAsync(
+    private readonly union ListReadyFilesOutcome(FileObjectPage, PlatformUnavailable);
+
+    private async ValueTask<ListReadyFilesOutcome> ListReadyAsync(
         FileScope scope,
         FileBucket bucket,
         string? after,
@@ -410,11 +567,12 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             SqlValues.Text(bucket.Id),
             SqlValues.Text(after ?? "0"),
             SqlValues.Number(ScanRows));
-        return await store.ReadAsync(statement, cancellationToken) switch
+        var outcome = await store.ReadAsync(statement, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => Visible(scope, bucket, results[0]),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => Visible(scope, bucket, results[0]),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
@@ -445,7 +603,9 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
         return new FileObjectPage(items, rows.Rows.Count == ScanRows ? last : null);
     }
 
-    private async ValueTask<Result<FileBucket, NotFound, Unavailable>> BucketAsync(FileScope scope, string bucket, CancellationToken cancellationToken)
+    private readonly union ReadBucketOutcome(FileBucket, PlatformNotFound, PlatformUnavailable);
+
+    private async ValueTask<ReadBucketOutcome> BucketAsync(FileScope scope, string bucket, CancellationToken cancellationToken)
     {
         if (!Ulid.TryParse(bucket, out _))
         {
@@ -456,15 +616,18 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             "SELECT id, name, region, rules FROM platform_buckets WHERE project_id = ? AND id = ?",
             SqlValues.Text(scope.Project.ToString()),
             SqlValues.Text(bucket));
-        return await store.ReadAsync(statement, cancellationToken) switch
+        var outcome = await store.ReadAsync(statement, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => results[0].FirstRow() is { } row && Bucket(row) is { } saved ? saved : Missing,
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => results[0].FirstRow() is { } row && Bucket(row) is { } saved ? saved : Missing,
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<LocatedFile, Forbidden, NotFound, Unavailable>> FileAsync(
+    private readonly union LocateFileOutcome(LocatedFile, PlatformForbidden, PlatformNotFound, PlatformUnavailable);
+
+    private async ValueTask<LocateFileOutcome> FileAsync(
         FileScope scope,
         string bucket,
         string file,
@@ -482,15 +645,16 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
             SqlValues.Statement("SELECT id, name, region, rules FROM platform_buckets WHERE project_id = ? AND id = ?", project, SqlValues.Text(bucket)),
             SqlValues.Statement("SELECT body FROM platform_files WHERE project_id = ? AND bucket_id = ? AND id = ?", project, SqlValues.Text(bucket), SqlValues.Text(file)),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => Located(scope, results, write),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => Located(scope, results, write),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private static Result<LocatedFile, Forbidden, NotFound, Unavailable> Located(
+    private static LocateFileOutcome Located(
         FileScope scope,
         IReadOnlyList<SqlHttpStatementResult> results,
         bool write)
@@ -504,7 +668,7 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
         return bucket.Rules.Allows(scope.Access, file.Metadata, write) ? new LocatedFile(bucket, file) : Denied;
     }
 
-    private static Result<FileBucketPage, Forbidden, Unavailable> Paged(List<FileBucket> buckets) =>
+    private static FileBucketPage Paged(List<FileBucket> buckets) =>
         buckets.Count > Page ? new FileBucketPage(buckets[..Page], buckets[Page - 1].Id) : new FileBucketPage(buckets, null);
 
     private static FileBucket? Bucket(SqlRow row) =>

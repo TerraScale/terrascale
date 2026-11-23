@@ -1,3 +1,4 @@
+using TerraBase.Hosting;
 using TerraScale.Contracts.Cluster;
 using TerraScale.Contracts.Http;
 
@@ -60,9 +61,14 @@ public sealed record SqlRefusal(
     public static SqlRefusal From(StorageBusy busy) =>
         new("storage_busy", busy.Message, "55P03", 0, StatusCodes.Status503ServiceUnavailable, busy.RetryAfter > TimeSpan.Zero ? busy.RetryAfter : TimeSpan.FromSeconds(1));
 
-    public static SqlRefusal From(RequestTimeout timeout) => new("request_timeout", timeout.Message, "57014", 0, StatusCodes.Status504GatewayTimeout);
+    public static SqlRefusal From(StorageTimeout timeout) => new("request_timeout", timeout.Message, "57014", 0, StatusCodes.Status504GatewayTimeout);
 
-    public static SqlRefusal From(Unavailable unavailable) =>
+    public static SqlRefusal From(ClusterTimeout timeout) => new("request_timeout", timeout.Message, "57014", 0, StatusCodes.Status504GatewayTimeout);
+
+    public static SqlRefusal From(ClusterUnavailable unavailable) =>
+        new(unavailable.Code, unavailable.Message, "57P03", 0, StatusCodes.Status503ServiceUnavailable, TimeSpan.FromSeconds(1));
+
+    public static SqlRefusal From(BackendUnavailable unavailable) =>
         new(unavailable.Code, unavailable.Message, "57P03", 0, StatusCodes.Status503ServiceUnavailable, TimeSpan.FromSeconds(1));
 
     private static string MapCode(string code, string sqlState) => (code, sqlState) switch

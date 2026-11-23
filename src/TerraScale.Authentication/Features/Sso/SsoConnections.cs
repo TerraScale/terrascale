@@ -9,7 +9,6 @@ using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
@@ -81,7 +80,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
         ArgumentNullException.ThrowIfNull(change);
         if (await this.ForOrganizationAsync(organizationId, cancellationToken) is { } own && own.Value.Domain != domain)
         {
-            return new Conflict("This organization has a connection for another domain; delete it first.");
+            return new AuthConflict("This organization has a connection for another domain; delete it first.");
         }
 
         for (var attempt = 0; attempt < 3; attempt++)
@@ -91,7 +90,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
             var mine = existing?.Value.OrganizationId == organizationId;
             if (existing is { Value.VerifiedAt: not null } && !mine && await platform.OrganizationAsync(existing.Value.OrganizationId, cancellationToken) is not null)
             {
-                return new Conflict("Another organization verified this domain.");
+                return new AuthConflict("Another organization verified this domain.");
             }
 
             var start = mine ? existing!.Value : new SsoConnectionRecord(Instance, domain, organizationId, Oidc, Roles.Member, Tokens.RandomToken(32), now, now);
@@ -114,7 +113,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
         var found = await this.ForOrganizationAsync(organizationId, cancellationToken);
         if (found is null)
         {
-            return new NotFound("No such resource.");
+            return new AuthNotFound("No such resource.");
         }
 
         if (found.Value.VerifiedAt is not null)
@@ -124,7 +123,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
 
         if (!await this.PublishedAsync(found.Value, cancellationToken))
         {
-            return new Conflict($"No TXT record {RecordLabel}.{found.Value.Domain} with the verification value was found; DNS changes can take a few minutes.", "domain_unverified");
+            return new AuthConflict($"No TXT record {RecordLabel}.{found.Value.Domain} with the verification value was found; DNS changes can take a few minutes.", "domain_unverified");
         }
 
         var verified = found.Value with { VerifiedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow() };
@@ -134,7 +133,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
                 platform.Audit(organizationId, actor, "sso.verified", null, verified.Domain),
             ], cancellationToken)
             ? verified
-            : new Conflict("The connection changed; retry.");
+            : new AuthConflict("The connection changed; retry.");
     }
 
     public async Task<DeleteConnectionResult> DeleteAsync(string organizationId, string actor, CancellationToken cancellationToken)
@@ -142,7 +141,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
         var found = await this.ForOrganizationAsync(organizationId, cancellationToken);
         if (found is null)
         {
-            return new NotFound("No such resource.");
+            return new AuthNotFound("No such resource.");
         }
 
         if (!await data.SaveAsync(
@@ -151,10 +150,10 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
                 platform.Audit(organizationId, actor, "sso.deleted", null, found.Value.Domain),
             ], cancellationToken))
         {
-            return new Conflict("The connection changed; retry.");
+            return new AuthConflict("The connection changed; retry.");
         }
 
-        return new Done();
+        return new AuthCompleted();
     }
 
     public string Seal(string domain, string secret) => SecretBox.Seal(options.MasterKey, Encoding.UTF8.GetBytes(secret), SecretContext(domain));
@@ -217,6 +216,6 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
     private static partial Regex DomainPattern();
 }
 
-public readonly union PutConnectionResult(SsoConnectionRecord, Conflict);
-public readonly union VerifyConnectionResult(SsoConnectionRecord, NotFound, Conflict);
-public readonly union DeleteConnectionResult(Done, NotFound, Conflict);
+public readonly union PutConnectionResult(SsoConnectionRecord, AuthConflict);
+public readonly union VerifyConnectionResult(SsoConnectionRecord, AuthNotFound, AuthConflict);
+public readonly union DeleteConnectionResult(AuthCompleted, AuthNotFound, AuthConflict);

@@ -36,7 +36,6 @@
 
   <ItemGroup>
     <Using Include="System.Text.Json" />
-    <Using Include="TerraScale.Results" />
     <Using Include="TerraScale.Contracts.Consistency" />
     <Using Include="TerraScale.Contracts.Http" />
     <Using Include="TerraScale.QuicRpc.Messages" />

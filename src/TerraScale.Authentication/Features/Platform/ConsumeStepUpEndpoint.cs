@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
@@ -20,20 +19,20 @@ public sealed class ConsumeStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
         {
             if (body.Purpose is not ("change_plan" or "delete_organization") || body.OperationReceipt is not null || body.OrganizationId is null)
             {
-                return ErrorResults.ToResult(new Validation("Use ts-auth change_plan or delete_organization with its organization_id and without an operation_receipt."));
+                return ErrorResults.ToResult(new AuthValidation("Use ts-auth change_plan or delete_organization with its organization_id and without an operation_receipt."));
             }
         }
         else if (body.Audience != "ts-dashboard" || body.Purpose is not ("create_pat" or "delete_account")
             || (body.Purpose == "delete_account") != (body.OperationReceipt is not null) || body.OrganizationId is not null)
         {
-            return ErrorResults.ToResult(new Validation("Use ts-dashboard create_pat, or delete_account with its operation_receipt, without an organization_id."));
+            return ErrorResults.ToResult(new AuthValidation("Use ts-dashboard create_pat, or delete_account with its operation_receipt, without an organization_id."));
         }
 
         return body.OperationReceipt is null
             ? await this.ConsumeProofAsync(caller, body, null, cancellationToken)
             : DeletionReceiptHeader.Hash(body.OperationReceipt) switch
             {
-                Validation invalid => ErrorResults.ToResult(invalid),
+                AuthValidation invalid => ErrorResults.ToResult(invalid),
                 string hash => await this.ConsumeProofAsync(caller, body, hash, cancellationToken),
             };
     }
@@ -44,6 +43,6 @@ public sealed class ConsumeStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
             StepUpConsumption consumed => consumed.OperationGrant is { } grant
                 ? TypedResults.Json(new StepUpGrantBody(grant), StepUpJson.Default.StepUpGrantBody)
                 : TypedResults.NoContent(),
-            Forbidden failure => ErrorResults.ToResult(failure),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
         };
 }

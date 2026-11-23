@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -26,9 +25,9 @@ public sealed record EmailChangeBody(
     [property: JsonPropertyName("new_email")] string NewEmail,
     [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt);
 
-public readonly union EmailChangeRequestResult(EmailChangeBody, Validation, Conflict, QuotaExceeded, Forbidden);
+public readonly union EmailChangeRequestResult(EmailChangeBody, AuthValidation, AuthConflict, AuthQuotaExceeded, AuthForbidden);
 
-public readonly union EmailChangeConfirmResult(Done, Forbidden, Conflict);
+public readonly union EmailChangeConfirmResult(AuthCompleted, AuthForbidden, AuthConflict);
 
 public sealed record EmailChangeRecord(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string NewEmail,
     string CodeHash, string CancelHash, DateTimeOffset ExpiresAt, int FailedAttempts, IReadOnlyList<CredentialBinding> Bindings)
@@ -54,7 +53,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         ArgumentNullException.ThrowIfNull(proofs);
         if (Users.NormalizeEmail(newEmail) is not { } normalized || normalized == caller.Email)
         {
-            return new Validation("new_email must be a valid address other than the current one.");
+            return new AuthValidation("new_email must be a valid address other than the current one.");
         }
 
         if (await users.FindByEmailAsync(caller.InstanceId, normalized, cancellationToken) is not null)
@@ -66,7 +65,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
             || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-target", normalized, MaxRequests, TimeSpan.FromHours(1), cancellationToken)
             || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-global", caller.InstanceId, MaxGlobalRequests, TimeSpan.FromHours(1), cancellationToken))
         {
-            return new QuotaExceeded("Too many email change requests; retry later.", "rate_limited");
+            return new AuthQuotaExceeded("Too many email change requests; retry later.", "rate_limited");
         }
 
         using var codeSlot = mail.Reserve();
@@ -75,7 +74,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
             "change_email", "ts-auth", null, cancellationToken) switch
         {
             StepUpConsumption consumption => await this.IssueAsync(caller, consumption.Caller, normalized, proofs, codeSlot, noticeSlot, cancellationToken),
-            Forbidden failure => failure,
+            AuthForbidden failure => failure,
         };
     }
 
@@ -144,7 +143,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
                 cancellationToken);
             if (changed == true)
             {
-                return new Done();
+                return new AuthCompleted();
             }
 
             return changed == false ? EmailTaken() : Denied();
@@ -188,9 +187,9 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         Convert.ToHexStringLower(HMACSHA256.HashData(this.digestKey, Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture,
             $"{caller.InstanceId.Length}:{caller.InstanceId}{caller.Id.Length}:{caller.Id}{newEmail.Length}:{newEmail}{code}"))));
 
-    private static Forbidden Denied() => new("No matching pending email change; request a new one.", "email_change_denied");
+    private static AuthForbidden Denied() => new("No matching pending email change; request a new one.", "email_change_denied");
 
-    private static Conflict EmailTaken() => new("Another account already uses that email address.", "email_taken");
+    private static AuthConflict EmailTaken() => new("Another account already uses that email address.", "email_taken");
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

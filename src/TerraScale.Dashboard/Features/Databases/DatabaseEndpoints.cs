@@ -105,19 +105,14 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 var regions = Regions(form, context);
                 var created = await databases.CreateAsync(context, form["name"].ToString(), regions[0], http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), [.. regions.Skip(1)]);
-                switch (created)
+                return created switch
                 {
-                    case DatabaseRecord database when http.Request.IsDatastarRequest:
-                        return await ListPageAsync(http, context, backend, databases, createdName: database.Name);
-                    case DatabaseRecord database:
-                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : TypedResults.Json(DatabaseOutput(database), statusCode: 201);
-                    case Failure refusal:
-                        return WantsHtml(http) || http.Request.IsDatastarRequest
-                            ? await ListPageAsync(http, context, backend, databases, error: DatabaseMutations.MessageOf(refusal), openCreate: true, name: form["name"].ToString(), status: DatabaseMutations.StatusOf(refusal), selection: Picked(form) ? Chosen(form) : null)
-                            : DatabaseResults.ToResult(refusal);
-                }
-
-                throw new UnreachableException();
+                    DatabaseRecord database when http.Request.IsDatastarRequest => await ListPageAsync(http, context, backend, databases, createdName: database.Name),
+                    DatabaseRecord database => WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : TypedResults.Json(DatabaseOutput(database), statusCode: 201),
+                    DatabaseRefusal refusal => WantsHtml(http) || http.Request.IsDatastarRequest
+                        ? await ListPageAsync(http, context, backend, databases, error: refusal.Message, openCreate: true, name: form["name"].ToString(), status: refusal.Status, selection: Picked(form) ? Chosen(form) : null)
+                        : DatabaseResults.ToResult(refusal),
+                };
             }
             catch (Exception error) when (KnownFailure(error))
             {
@@ -169,27 +164,23 @@ namespace TerraScale.Dashboard.Features.Databases
                         return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "backups") + "?restore=" + started.OperationId) :
                             TypedResults.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
                     }
-                    var refusal = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
-                    if (refusal is DatabaseRecord branch)
+                    var branched = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
+                    return branched switch
                     {
-                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : TypedResults.Json(DatabaseOutput(branch), statusCode: 201);
-                    }
-
-                    var branchFailure = DatabaseMutations.RefusedMutation(refusal);
-                    return WantsHtml(http) && DatabaseMutations.StatusOf(branchFailure) != 404
-                        ? await DetailPageAsync(http, context, id, "branches", backend, databases, DatabaseMutations.MessageOf(branchFailure), false, DatabaseMutations.StatusOf(branchFailure), branchName: form["name"].ToString(), ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString())
-                        : DatabaseResults.PageFailureOf(http, context, branchFailure);
+                        DatabaseRecord branch => WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : TypedResults.Json(DatabaseOutput(branch), statusCode: 201),
+                        DatabaseRefusal branchFailure => WantsHtml(http) && branchFailure.Status != 404
+                            ? await DetailPageAsync(http, context, id, "branches", backend, databases, branchFailure.Message, false, branchFailure.Status, branchName: form["name"].ToString(), ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString())
+                            : DatabaseResults.PageFailureOf(http, context, branchFailure),
+                    };
                 }
                 var deleted = await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
-                if (deleted is Done)
+                return deleted switch
                 {
-                    return WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : TypedResults.NoContent();
-                }
-
-                var deleteFailure = DatabaseMutations.RefusedDeletion(deleted);
-                return WantsHtml(http) && DatabaseMutations.StatusOf(deleteFailure) != 404
-                    ? await DetailPageAsync(http, context, id, "danger", backend, databases, DatabaseMutations.MessageOf(deleteFailure), action == "delete", DatabaseMutations.StatusOf(deleteFailure))
-                    : DatabaseResults.PageFailureOf(http, context, deleteFailure);
+                    Done => WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : TypedResults.NoContent(),
+                    DatabaseRefusal deleteFailure => WantsHtml(http) && deleteFailure.Status != 404
+                        ? await DetailPageAsync(http, context, id, "danger", backend, databases, deleteFailure.Message, action == "delete", deleteFailure.Status)
+                        : DatabaseResults.PageFailureOf(http, context, deleteFailure),
+                };
             }
             catch (Exception error) when (KnownFailure(error))
             {
@@ -316,9 +307,11 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     var listing = await http.RequestServices.GetRequiredService<DatabaseConflicts>()
                         .ListAsync(context, database.Id, table, since, until, 50, before, http.RequestAborted);
-                    return listing is DatabaseConflictList conflicts
-                        ? new(conflicts, table, since, until, before)
-                        : new(null, table, since, until, before, DatabaseMutations.MessageOf(DatabaseMutations.RefusedConflict(listing)));
+                    return listing switch
+                    {
+                        DatabaseConflictList conflicts => new(conflicts, table, since, until, before),
+                        DatabaseInvalid invalid => new(null, table, since, until, before, invalid.Message),
+                    };
                 }
                 catch (Exception failure) when (failure is HttpRequestException or IOException or System.Text.Json.JsonException or InvalidOperationException
                     || KnownFailure(failure) || failure is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)

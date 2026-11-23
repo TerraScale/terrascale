@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
@@ -33,7 +32,7 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
         {
             return await (DeletionReceiptHeader.Read(this.HttpContext.Request, required: true) switch
             {
-                Validation missing => ValueTask.FromResult(ErrorResults.ToResult(missing)),
+                AuthValidation missing => ValueTask.FromResult(ErrorResults.ToResult(missing)),
                 string receipt => new ValueTask<IResult>(this.StatusAsync(receipt, cancellationToken)),
             });
         }
@@ -51,7 +50,7 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
         {
             if (values.Count != 1 || !PlatformDirectory.IsId(values[0]!))
             {
-                return ErrorResults.ToResult(new Validation("organization must be one canonical ULID."));
+                return ErrorResults.ToResult(new AuthValidation("organization must be one canonical ULID."));
             }
 
             organization = values[0];
@@ -61,33 +60,35 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
         {
             true => TypedResults.NoContent(),
             false => TypedResults.Accepted(default(string)),
-            NotFound failure => ErrorResults.ToResult(failure),
-            Conflict failure => ErrorResults.ToResult(failure),
+            AuthNotFound failure => ErrorResults.ToResult(failure),
+            AuthConflict failure => ErrorResults.ToResult(failure),
         };
     }
 }
+
+internal readonly union DeletionReceiptRead(string, AuthValidation);
 
 internal static class DeletionReceiptHeader
 {
     internal const string Name = "X-TerraScale-Deletion-Receipt";
 
-    internal static Valid<string> Read(HttpRequest request, bool required = false)
+    internal static DeletionReceiptRead Read(HttpRequest request, bool required = false)
     {
         if (!request.Headers.TryGetValue(Name, out var values) && !required)
         {
             return string.Empty;
         }
 
-        return values.Count == 1 ? Hash(values[0]) : new Validation("Present one deletion receipt.");
+        return values.Count == 1 ? Hash(values[0]) : new AuthValidation("Present one deletion receipt.");
     }
 
-    internal static Valid<string> Hash(string? value)
+    internal static DeletionReceiptRead Hash(string? value)
     {
         if (value is not { Length: 43 }
             || !value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_')
             || !"AEIMQUYcgkosw048".Contains(value[^1]))
         {
-            return new Validation("Present one canonical 32-byte base64url deletion receipt.");
+            return new AuthValidation("Present one canonical 32-byte base64url deletion receipt.");
         }
 
         return Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(value)));

@@ -26,12 +26,12 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
         if (!session.CurrentBookmark.Dominates(originBookmark))
         {
             var behind = isRemoteCoordinator
-                ? !await antiEntropy.PullUntilAsync(session, coordinatorNodeId, originBookmark, options.StrongPrepareTimeout / 2, cancellationToken).ConfigureAwait(false)
-                : await WaitLocalCatchUpAsync(session, payload.DatabaseId, originBookmark, cancellationToken).ConfigureAwait(false);
+                ? !await antiEntropy.PullUntilAsync(session, coordinatorNodeId, originBookmark, options.StrongPrepareTimeout / 2, cancellationToken)
+                : await WaitLocalCatchUpAsync(session, payload.DatabaseId, originBookmark, cancellationToken);
             if (behind)
             {
                 _ = databases.RequestCatchUp(payload.DatabaseId);
-                return new Unavailable("participant has not applied the origin's causal history yet", "participant_behind");
+                return new ClusterUnavailable("participant has not applied the origin's causal history yet", "participant_behind");
             }
         }
 
@@ -49,7 +49,7 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
             {
                 LockGranted => await GrantedAsync(session, payload, seen, cancellationToken),
                 LockDenied denied => Denied(payload, denied.Winner),
-                LockWoundRequired wound => await WoundAllAsync(payload, wound.Victims, cancellationToken).ConfigureAwait(false),
+                LockWoundRequired wound => await WoundAllAsync(payload, wound.Victims, cancellationToken),
             };
             if (decision is { } decided)
             {
@@ -63,11 +63,11 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
     private async ValueTask<bool> WaitLocalCatchUpAsync(ISqlDatabaseSession session, Ulid databaseId, CausalBookmark originBookmark, CancellationToken cancellationToken)
     {
         _ = databases.RequestCatchUp(databaseId);
-        var caughtUp = await session.WaitForBookmarkAsync(originBookmark, options.StrongPrepareTimeout / 2, cancellationToken).ConfigureAwait(false);
+        var caughtUp = await session.WaitForBookmarkAsync(originBookmark, options.StrongPrepareTimeout / 2, cancellationToken);
         return caughtUp switch
         {
-            Done => false,
-            RequestTimeout => true,
+            BookmarkReached => false,
+            StorageTimeout => true,
         };
     }
 
@@ -90,11 +90,11 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
     {
         foreach (var victim in victims)
         {
-            var decision = await WoundAsync(victim, payload, cancellationToken).ConfigureAwait(false);
+            var decision = await WoundAsync(victim, payload, cancellationToken);
             var cleared = decision switch
             {
                 WoundDecision.Aborted => Wound(victim, payload),
-                WoundDecision.Committed or WoundDecision.Committing => await locks.WaitReleasedAsync(victim.TxId, options.StrongPrepareTimeout / 2, cancellationToken).ConfigureAwait(false),
+                WoundDecision.Committed or WoundDecision.Committing => await locks.WaitReleasedAsync(victim.TxId, options.StrongPrepareTimeout / 2, cancellationToken),
                 null => false,
                 _ => throw new UnreachableException(),
             };
@@ -122,11 +122,11 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
         }
 
         var message = new StrongWoundMessage(new StrongWoundPayload(victim.DatabaseId, victim.TxId, winner.TxId, winner.Priority));
-        var response = await client.CallAsync<StrongWoundMessage, StrongWoundResponseMessage>(victim.CoordinatorNodeId, QuicMessageType.StrongWound, message, options.WoundTimeout, cancellationToken).ConfigureAwait(false);
+        var response = await client.CallAsync<StrongWoundMessage, StrongWoundResponseMessage>(victim.CoordinatorNodeId, QuicMessageType.StrongWound, message, options.WoundTimeout, cancellationToken);
         return response switch
         {
             StrongWoundResponseMessage answer => answer.Decision,
-            Unavailable or RequestTimeout or QuicRemoteError => null,
+            QuicUnavailable or QuicTimeout or QuicRemoteError => null,
         };
     }
 
@@ -141,52 +141,52 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
 
         return validated switch
         {
-            Done => null,
+            ReadSetValid => null,
             ReadSetConflict conflict => Vote(new ReadSetStale(payload.TxId, conflict.StaleKeys, conflict.StaleTables)),
             SchemaMismatch mismatch => Vote(new SchemaEpochStale(payload.TxId, mismatch.ExpectedEpoch, mismatch.ActualEpoch)),
-            StorageBusy busy => Vote(new Unavailable(busy.Message, "storage_busy")),
+            StorageBusy busy => Vote(new ClusterUnavailable(busy.Message, "storage_busy")),
         };
     }
 
     private static bool Covered(ISqlDatabaseSession session, CausalBookmark? seen) => seen is { } origin && origin.Dominates(session.CurrentBookmark);
 
-    private static ValueTask<Result<Done, ReadSetConflict, SchemaMismatch, StorageBusy>> ValidateReadSetAsync(ISqlDatabaseSession session, StrongPreparePayload payload, bool covered, CancellationToken cancellationToken) =>
+    private static ValueTask<ValidateReadSetOutcome> ValidateReadSetAsync(ISqlDatabaseSession session, StrongPreparePayload payload, bool covered, CancellationToken cancellationToken) =>
         session.ValidateReadSetAsync(payload.ReadSnapshot, payload.ReadSet, covered ? [] : payload.ScannedTables, payload.SchemaEpoch, cancellationToken);
 
-    private async ValueTask<Result<StrongPrepareResponseMessage, QuicRemoteError>> HandlePrepareAsync(QuicCallContext context, StrongPrepareMessage message, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<StrongPrepareResponseMessage>> HandlePrepareAsync(QuicCallContext context, StrongPrepareMessage message, CancellationToken cancellationToken)
     {
-        var resolved = await databases.ResolveAsync(message.Payload.DatabaseId, cancellationToken).ConfigureAwait(false);
+        var resolved = await databases.ResolveAsync(message.Payload.DatabaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => await PrepareLeasedAsync(session, message, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => new QuicRemoteError("database_not_found", notFound.Message ?? "database not found"),
-            Unavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
+            ISqlDatabaseSession session => await PrepareLeasedAsync(session, message, cancellationToken),
+            DatabaseNotFound notFound => new QuicRemoteError("database_not_found", notFound.Message),
+            ClusterUnavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
         };
     }
 
-    private async ValueTask<Result<StrongPrepareResponseMessage, QuicRemoteError>> PrepareLeasedAsync(ISqlDatabaseSession session, StrongPrepareMessage message, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<StrongPrepareResponseMessage>> PrepareLeasedAsync(ISqlDatabaseSession session, StrongPrepareMessage message, CancellationToken cancellationToken)
     {
-        await using (session.ConfigureAwait(false))
+        await using (session)
         {
-            var vote = await PrepareAsync(session, message.Payload, message.CoordinatorNodeId, message.OriginBookmark, cancellationToken).ConfigureAwait(false);
+            var vote = await PrepareAsync(session, message.Payload, message.CoordinatorNodeId, message.OriginBookmark, cancellationToken);
             return vote switch
             {
                 Prepared prepared => Respond(prepared),
                 Wounded wounded => Respond(wounded),
                 ReadSetStale stale => Respond(stale),
                 SchemaEpochStale epoch => Respond(epoch),
-                Unavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
+                ClusterUnavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
             };
         }
     }
 
     private static StrongVote? Vote(StrongVote vote) => vote;
 
-    private static Result<StrongPrepareResponseMessage, QuicRemoteError> Respond(StrongPrepareOutcome outcome) => new StrongPrepareResponseMessage(outcome);
+    private static QuicHandlerOutcome<StrongPrepareResponseMessage> Respond(StrongPrepareOutcome outcome) => new StrongPrepareResponseMessage(outcome);
 
-    private ValueTask<Result<StrongWoundResponseMessage, QuicRemoteError>> HandleWoundAsync(QuicCallContext context, StrongWoundMessage message, CancellationToken cancellationToken)
+    private ValueTask<QuicHandlerOutcome<StrongWoundResponseMessage>> HandleWoundAsync(QuicCallContext context, StrongWoundMessage message, CancellationToken cancellationToken)
     {
         var decision = registry.TryWound(message.Payload.TxId);
-        return ValueTask.FromResult<Result<StrongWoundResponseMessage, QuicRemoteError>>(new StrongWoundResponseMessage(decision));
+        return ValueTask.FromResult<QuicHandlerOutcome<StrongWoundResponseMessage>>(new StrongWoundResponseMessage(decision));
     }
 }

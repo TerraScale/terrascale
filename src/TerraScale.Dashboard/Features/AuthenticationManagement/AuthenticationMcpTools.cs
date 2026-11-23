@@ -8,7 +8,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
 {
-    // The project's end-user authentication at ts-auth, called with the caller's own sign-in token.
     [McpServerToolType]
     public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountService accounts, ITsAuthProjects projects)
     {
@@ -96,12 +95,12 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public async Task<TsAuthProjectOAuthClient> CreateClient(string name, string type, IReadOnlyList<string> redirectUris, string? organizationId = null, string? projectId = null)
         {
             _ = await Fresh(organizationId, projectId, true);
-            _ = AuthenticationConsole.NewClient(name, type, redirectUris) switch
+            var request = AuthenticationConsole.NewClient(name, type, redirectUris);
+            throw request switch
             {
-                TsAuthProjectCreateOAuthClient => (object?)null,
-                Validation error => throw new AccountAccessException(error.Message, 422),
+                TsAuthProjectCreateOAuthClient => StepUpFlow.Required(),
+                DashboardValidation error => new AccountAccessException(error.Message, 422),
             };
-            throw StepUpFlow.Required();
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -121,19 +120,18 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             string? name = null, string? logoUrl = null, string? themeColor = null, string? organizationId = null, string? projectId = null, bool? magicLink = null, bool? username = null)
         {
             var context = await Fresh(organizationId, projectId, true);
-            // Omitted arguments keep their current value, so read the settings first.
             var current = await projects.GetSettingsAsync(context.Session, context.Project!.Id, Cancellation);
             var methods = passcode is null && password is null && signUpMode is null && magicLink is null && username is null ? null
                 : AuthenticationConsole.Methods(passcode ?? current.Methods.Passcode, password ?? current.Methods.Password, signUpMode ?? current.Methods.SignUpMode, magicLink ?? current.Methods.MagicLink, username ?? current.Methods.Username) switch
                 {
                     TsAuthProjectMethods value => value,
-                    Validation error => throw new AccountAccessException(error.Message, 422),
+                    DashboardValidation error => throw new AccountAccessException(error.Message, 422),
                 };
             var branding = name is null && logoUrl is null && themeColor is null ? null
                 : AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor) switch
                 {
                     TsAuthProjectBranding value => current.Branding with { Name = value.Name, LogoUrl = value.LogoUrl, ThemeColor = value.ThemeColor },
-                    Validation error => throw new AccountAccessException(error.Message, 422),
+                    DashboardValidation error => throw new AccountAccessException(error.Message, 422),
                 };
             return await projects.UpdateSettingsAsync(context.Session, context.Project!.Id, new(methods, branding), Cancellation);
         }
@@ -148,7 +146,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var update = AuthenticationConsole.Provider(provider, clientId, clientSecret, issuer, teamId, keyId, tenant, oauth2) switch
             {
                 TsAuthProjectProviderUpdate value => value,
-                Validation error => throw new AccountAccessException(error.Message, 422),
+                DashboardValidation error => throw new AccountAccessException(error.Message, 422),
             };
             return await projects.SetProviderAsync(context.Session, context.Project!.Id, provider, update, Cancellation);
         }
@@ -170,7 +168,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         private async Task<AccountContext> Fresh(string? organizationId, string? projectId, bool manage)
         {
             var context = await AccountScope.RefreshAsync(accounts, DashboardMcp.Scope(http.HttpContext, organizationId, projectId), Cancellation, requireProject: true);
-            // The caller's live project role, as ts-auth checks it: viewer reads, admin changes. Organization roles grant nothing more.
             if (context.Project?.Role is not ("viewer" or "member" or "admin"))
             {
                 throw new AccountAccessException("Project access is required.");

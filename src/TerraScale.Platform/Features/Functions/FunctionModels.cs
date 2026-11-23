@@ -103,11 +103,11 @@ public static partial class FunctionNames
     public const string Description = "Project-token database functions. Deploy, logs, stats, secrets and delete require sql:read and sql:write; "
         + "invoke requires sql:read. A function is JavaScript defining handler(event); it runs with the function's authority against the database.";
 
-    public static Validation? Check(string function) =>
-        NamePattern().IsMatch(function) ? null : new Validation("function must be a lowercase name of at most 63 characters");
+    public static PlatformInvalidRequest? Check(string function) =>
+        NamePattern().IsMatch(function) ? null : new PlatformInvalidRequest("function must be a lowercase name of at most 63 characters");
 
-    public static Validation? CheckSecret(string secret) =>
-        SecretPattern().IsMatch(secret) ? null : new Validation("secret name must match ^[A-Z_][A-Z0-9_]{0,63}$");
+    public static PlatformInvalidRequest? CheckSecret(string secret) =>
+        SecretPattern().IsMatch(secret) ? null : new PlatformInvalidRequest("secret name must match ^[A-Z_][A-Z0-9_]{0,63}$");
 
     [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z", RegexOptions.CultureInvariant)]
     private static partial Regex NamePattern();

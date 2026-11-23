@@ -6,6 +6,8 @@ namespace TerraBase.Continuity;
 
 internal sealed record OperationFailed(string Message, bool ArchiveMayHelp = false);
 
+internal readonly union ContinuityCopyOutcome(CausalBookmark, OperationFailed);
+
 public sealed class DatabaseRestorer(
     ContinuitySessions sessions,
     StorageEngineOptions storage,
@@ -20,20 +22,27 @@ public sealed class DatabaseRestorer(
 
     internal StorageLayout Layout => _layout;
 
-    internal Result<Done, Unavailable> RecoverStaging() => ContinuityFiles.ListDirectories(_layout.StagingRoot) switch
+    internal ContinuityFileOutcome RecoverStaging()
     {
-        IReadOnlyList<string> stagings => RecoverAll(stagings),
-        Unavailable unavailable => unavailable,
-    };
-
-    internal async ValueTask<Result<CausalBookmark, OperationFailed>> CopyAsync(Ulid operationId, Ulid sourceId, Ulid targetId, RestoreTarget target, CancellationToken cancellationToken) =>
-        await sessions.ResolveKeyAsync(targetId, cancellationToken).ConfigureAwait(false) switch
+        var listed = ContinuityFiles.ListDirectories(_layout.StagingRoot);
+        return listed switch
         {
-            ReadOnlyMemory<byte> targetKey => await BuildAsync(operationId, sourceId, targetId, targetKey, target, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => new OperationFailed(notFound.Message ?? "target database key not found"),
+            IReadOnlyList<string> stagings => RecoverAll(stagings),
+            ContinuityIoFailure failure => failure,
         };
+    }
 
-    internal async ValueTask<Result<CausalBookmark, OperationFailed>> RewindAsync(
+    internal async ValueTask<ContinuityCopyOutcome> CopyAsync(Ulid operationId, Ulid sourceId, Ulid targetId, RestoreTarget target, CancellationToken cancellationToken)
+    {
+        var resolved = await sessions.ResolveKeyAsync(targetId, cancellationToken);
+        return resolved switch
+        {
+            ContinuityRawKey targetKey => await BuildAsync(operationId, sourceId, targetId, targetKey.Bytes, target, cancellationToken),
+            ContinuityDatabaseKeyMissing missing => new OperationFailed(missing.Message),
+        };
+    }
+
+    internal async ValueTask<ContinuityCopyOutcome> RewindAsync(
         Ulid operationId,
         Ulid databaseId,
         RestoreTarget target,
@@ -44,7 +53,7 @@ public sealed class DatabaseRestorer(
         {
             if (!notifyPeers)
             {
-                await sessions.Catalog.DatabaseReplacedAsync(databaseId, null, cancellationToken).ConfigureAwait(false);
+                await sessions.Catalog.DatabaseReplacedAsync(databaseId, null, cancellationToken);
                 return target switch
                 {
                     CausalBookmark bookmark => bookmark,
@@ -56,49 +65,64 @@ public sealed class DatabaseRestorer(
         }
 
         var temporary = Ulid.NewUlid(timeProvider.GetUtcNow());
-        return await sessions.ResolveKeyAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+        var resolved = await sessions.ResolveKeyAsync(databaseId, cancellationToken);
+        return resolved switch
         {
-            ReadOnlyMemory<byte> key => await BuildAsync(operationId, databaseId, temporary, key, target, cancellationToken).ConfigureAwait(false) switch
-            {
-                CausalBookmark bookmark => await SwapAsync(operationId, databaseId, temporary, key, bookmark, notifyPeers, cancellationToken).ConfigureAwait(false),
-                OperationFailed failed => failed,
-            },
-            NotFound notFound => new OperationFailed(notFound.Message ?? "database key not found"),
+            ContinuityRawKey key => await Built(await BuildAsync(operationId, databaseId, temporary, key.Bytes, target, cancellationToken), operationId, databaseId, temporary, key.Bytes, notifyPeers, cancellationToken),
+            ContinuityDatabaseKeyMissing missing => new OperationFailed(missing.Message),
         };
     }
 
-    private Result<Done, Unavailable> RecoverAll(IReadOnlyList<string> stagings)
+    private async ValueTask<ContinuityCopyOutcome> Built(
+        ContinuityCopyOutcome built,
+        Ulid operationId,
+        Ulid databaseId,
+        Ulid temporary,
+        ReadOnlyMemory<byte> key,
+        bool notifyPeers,
+        CancellationToken cancellationToken) => built switch
+        {
+            CausalBookmark bookmark => await SwapAsync(operationId, databaseId, temporary, key, bookmark, notifyPeers, cancellationToken),
+            OperationFailed failed => failed,
+        };
+
+    private ContinuityFileOutcome RecoverAll(IReadOnlyList<string> stagings)
     {
         foreach (var staging in stagings)
         {
-            var recovered = FinishInterruptedSwap(Path.Combine(staging, RewoundDirectoryName)) switch
+            var finished = FinishInterruptedSwap(Path.Combine(staging, RewoundDirectoryName));
+            var recovered = finished switch
             {
-                Done => ContinuityFiles.DeleteDirectory(staging),
-                Unavailable unavailable => unavailable,
+                ContinuityFilesChanged => ContinuityFiles.DeleteDirectory(staging),
+                ContinuityIoFailure io => io,
             };
-            var failure = recovered switch
+            var ioFailure = recovered switch
             {
-                Done => null,
-                Unavailable unavailable => unavailable,
+                ContinuityFilesChanged => (ContinuityIoFailure?)null,
+                ContinuityIoFailure io => io,
             };
-            if (failure is not null)
+            if (ioFailure is not null)
             {
-                return failure;
+                return ioFailure;
             }
         }
 
         return ContinuityFiles.DeleteDirectory(_layout.StagingRoot);
     }
 
-    private Result<Done, Unavailable> FinishInterruptedSwap(string rewound) => ContinuityFiles.ListFiles(rewound, "*.db") switch
+    private ContinuityFileOutcome FinishInterruptedSwap(string rewound)
     {
-        IReadOnlyList<string> { Count: 1 } files when Ulid.TryParse(Path.GetFileNameWithoutExtension(files[0]), out var databaseId) && !_layout.DirectoryExists(databaseId) =>
-            ContinuityFiles.MoveDirectory(rewound, _layout.DatabaseDirectory(databaseId)),
-        IReadOnlyList<string> => new Done(),
-        Unavailable unavailable => unavailable,
-    };
+        var listed = ContinuityFiles.ListFiles(rewound, "*.db");
+        return listed switch
+        {
+            IReadOnlyList<string> { Count: 1 } files when Ulid.TryParse(Path.GetFileNameWithoutExtension(files[0]), out var databaseId) && !_layout.DirectoryExists(databaseId) =>
+                ContinuityFiles.MoveDirectory(rewound, _layout.DatabaseDirectory(databaseId)),
+            IReadOnlyList<string> => new ContinuityFilesChanged(),
+            ContinuityIoFailure failure => failure,
+        };
+    }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> BuildAsync(
+    private async ValueTask<ContinuityCopyOutcome> BuildAsync(
         Ulid operationId,
         Ulid sourceId,
         Ulid targetId,
@@ -111,14 +135,15 @@ public sealed class DatabaseRestorer(
             return new OperationFailed("target database already exists on this node");
         }
 
-        return await sessions.ResolveKeyAsync(sourceId, cancellationToken).ConfigureAwait(false) switch
+        var resolved = await sessions.ResolveKeyAsync(sourceId, cancellationToken);
+        return resolved switch
         {
-            ReadOnlyMemory<byte> sourceKey => await BuildWithKeyAsync(operationId, sourceId, sourceKey, targetId, targetKey, target, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => new OperationFailed(notFound.Message ?? "source database key not found"),
+            ContinuityRawKey sourceKey => await BuildWithKeyAsync(operationId, sourceId, sourceKey.Bytes, targetId, targetKey, target, cancellationToken),
+            ContinuityDatabaseKeyMissing missing => new OperationFailed(missing.Message),
         };
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> BuildWithKeyAsync(
+    private async ValueTask<ContinuityCopyOutcome> BuildWithKeyAsync(
         Ulid operationId,
         Ulid sourceId,
         ReadOnlyMemory<byte> sourceKey,
@@ -127,64 +152,67 @@ public sealed class DatabaseRestorer(
         RestoreTarget target,
         CancellationToken cancellationToken)
     {
-        var local = await sessions.OpenAsync(sourceId, sourceKey, cancellationToken).ConfigureAwait(false) switch
+        var opened = await sessions.OpenAsync(sourceId, sourceKey, cancellationToken);
+        var local = opened switch
         {
-            ISqlDatabaseSession session => await BranchLocalAsync(session, targetId, targetKey, target, cancellationToken).ConfigureAwait(false),
-            NotFound => Local(new OperationFailed("source database is not stored on this node", ArchiveMayHelp: true)),
-            Unavailable unavailable => Local(new OperationFailed(unavailable.Message)),
+            ISqlDatabaseSession session => await BranchLocalAsync(session, targetId, targetKey, target, cancellationToken),
+            ContinuitySessionMissing => new OperationFailed("source database is not stored on this node", ArchiveMayHelp: true),
+            ContinuitySessionUnavailable unavailable => new OperationFailed(unavailable.Message),
         };
         return local switch
         {
             CausalBookmark bookmark => bookmark,
             OperationFailed { ArchiveMayHelp: true } failed when manifests.IsEnabled =>
-                await BuildFromArchiveAsync(operationId, sourceId, sourceKey, targetId, targetKey, target, cancellationToken).ConfigureAwait(false),
+                await BuildFromArchiveAsync(operationId, sourceId, sourceKey, targetId, targetKey, target, cancellationToken),
             OperationFailed failed => failed,
         };
-
-        static Result<CausalBookmark, OperationFailed> Local(OperationFailed failed) => failed;
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> BranchLocalAsync(
+    private async ValueTask<ContinuityCopyOutcome> BranchLocalAsync(
         ISqlDatabaseSession source,
         Ulid targetId,
         ReadOnlyMemory<byte> targetKey,
         RestoreTarget target,
         CancellationToken cancellationToken)
     {
-        await using (source.ConfigureAwait(false))
+        await using (source)
         {
-            return await ResolveAsync(source, target, CausalBookmark.Empty, cancellationToken).ConfigureAwait(false) switch
+            var resolved = await ResolveAsync(source, target, CausalBookmark.Empty, cancellationToken);
+            return resolved switch
             {
-                CausalBookmark at => await BranchAsync(sessions.Engine, source.DatabaseId, targetId, targetKey, at, cancellationToken).ConfigureAwait(false),
+                CausalBookmark at => await BranchAsync(sessions.Engine, source.DatabaseId, targetId, targetKey, at, cancellationToken),
                 OperationFailed failed => failed,
             };
         }
     }
 
-    private static async ValueTask<Result<CausalBookmark, OperationFailed>> BranchAsync(
+    private static async ValueTask<ContinuityCopyOutcome> BranchAsync(
         ISqlStorageEngine engine,
         Ulid sourceId,
         Ulid targetId,
         ReadOnlyMemory<byte> targetKey,
         CausalBookmark at,
-        CancellationToken cancellationToken) =>
-        await engine.BranchAsync(new DatabaseBranchRequest(sourceId, targetId, targetKey, at), cancellationToken).ConfigureAwait(false) switch
+        CancellationToken cancellationToken)
+    {
+        var branched = await engine.BranchAsync(new DatabaseBranchRequest(sourceId, targetId, targetKey, at), cancellationToken);
+        return branched switch
         {
-            ISqlDatabaseSession branch => await CloseBranchAsync(branch).ConfigureAwait(false),
-            NotFound notFound => new OperationFailed(notFound.Message ?? "source database is not open", ArchiveMayHelp: true),
-            Validation validation => new OperationFailed(validation.Message, ArchiveMayHelp: true),
-            Conflict conflict => new OperationFailed(conflict.Message),
+            ISqlDatabaseSession branch => await CloseBranchAsync(branch),
+            DatabaseNotFound missing => new OperationFailed(missing.Message, ArchiveMayHelp: true),
+            InvalidDatabaseRequest invalid => new OperationFailed(invalid.Message, ArchiveMayHelp: true),
+            DatabaseAlreadyExists exists => new OperationFailed(exists.Message),
             StorageBusy busy => new OperationFailed(busy.Message),
         };
+    }
 
-    private static async ValueTask<Result<CausalBookmark, OperationFailed>> CloseBranchAsync(ISqlDatabaseSession branch)
+    private static async ValueTask<ContinuityCopyOutcome> CloseBranchAsync(ISqlDatabaseSession branch)
     {
         var bookmark = branch.CurrentBookmark;
-        await branch.DisposeAsync().ConfigureAwait(false);
+        await branch.DisposeAsync();
         return bookmark;
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> BuildFromArchiveAsync(
+    private async ValueTask<ContinuityCopyOutcome> BuildFromArchiveAsync(
         Ulid operationId,
         Ulid sourceId,
         ReadOnlyMemory<byte> sourceKey,
@@ -193,14 +221,15 @@ public sealed class DatabaseRestorer(
         RestoreTarget target,
         CancellationToken cancellationToken)
     {
-        return await manifests.LoadAsync(sourceId, cancellationToken).ConfigureAwait(false) switch
+        var loaded = await manifests.LoadAsync(sourceId, cancellationToken);
+        return loaded switch
         {
-            ArchiveManifest manifest => await BuildFromManifestAsync(operationId, manifest, sourceId, sourceKey, targetId, targetKey, target, cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => new OperationFailed(unavailable.Message),
+            ArchiveManifest manifest => await BuildFromManifestAsync(operationId, manifest, sourceId, sourceKey, targetId, targetKey, target, cancellationToken),
+            ContinuityUnavailable unavailable => new OperationFailed(unavailable.Message),
         };
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> BuildFromManifestAsync(
+    private async ValueTask<ContinuityCopyOutcome> BuildFromManifestAsync(
         Ulid operationId,
         ArchiveManifest manifest,
         Ulid sourceId,
@@ -216,13 +245,13 @@ public sealed class DatabaseRestorer(
         }
 
         var staging = _layout.StagingDirectory(operationId);
-        if (await DownloadAsync(staging, sourceId, manifest, snapshot, target, cancellationToken).ConfigureAwait(false) is { } downloadFailure)
+        if (await DownloadAsync(staging, sourceId, manifest, snapshot, target, cancellationToken) is { } downloadFailure)
         {
             Cleanup(staging);
             return downloadFailure;
         }
 
-        var staged = await BranchInStagingAsync(staging, sourceId, sourceKey, targetId, targetKey, snapshot.Bookmark, target, cancellationToken).ConfigureAwait(false);
+        var staged = await BranchInStagingAsync(staging, sourceId, sourceKey, targetId, targetKey, snapshot.Bookmark, target, cancellationToken);
         var placed = staged switch
         {
             CausalBookmark bookmark => Place(ContinuityFiles.MoveDirectory(StorageLayout.DatabaseDirectoryIn(staging, targetId), _layout.DatabaseDirectory(targetId)), bookmark),
@@ -231,14 +260,14 @@ public sealed class DatabaseRestorer(
         Cleanup(staging);
         return placed;
 
-        static Result<CausalBookmark, OperationFailed> Place(Result<Done, Unavailable> moved, CausalBookmark bookmark) => moved switch
+        static ContinuityCopyOutcome Place(ContinuityFileOutcome moved, CausalBookmark bookmark) => moved switch
         {
-            Done => bookmark,
-            Unavailable unavailable => new OperationFailed(unavailable.Message),
+            ContinuityFilesChanged => bookmark,
+            ContinuityIoFailure failure => new OperationFailed(failure.Message),
         };
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> BranchInStagingAsync(
+    private async ValueTask<ContinuityCopyOutcome> BranchInStagingAsync(
         string staging,
         Ulid sourceId,
         ReadOnlyMemory<byte> sourceKey,
@@ -249,20 +278,21 @@ public sealed class DatabaseRestorer(
         CancellationToken cancellationToken)
     {
         var engine = new SqliteStorageEngine(storage with { RootDirectory = staging }, timeProvider);
-        await using (engine.ConfigureAwait(false))
+        await using (engine)
         {
-            return await engine.OpenAsync(new DatabaseOpenRequest(sourceId, sourceKey), cancellationToken).ConfigureAwait(false) switch
+            var opened = await engine.OpenAsync(new DatabaseOpenRequest(sourceId, sourceKey), cancellationToken);
+            return opened switch
             {
-                ISqlDatabaseSession source => await BranchStagedAsync(engine, source, targetId, targetKey, floor, target, cancellationToken).ConfigureAwait(false),
-                NotFound notFound => new OperationFailed(notFound.Message ?? "archived snapshot could not be staged"),
-                Validation validation => new OperationFailed(validation.Message),
+                ISqlDatabaseSession source => await BranchStagedAsync(engine, source, targetId, targetKey, floor, target, cancellationToken),
+                DatabaseNotFound missing => new OperationFailed(missing.Message),
+                InvalidDatabaseRequest invalid => new OperationFailed(invalid.Message),
                 StorageCorrupted corrupted => new OperationFailed(string.Concat("archived history is corrupted: ", corrupted.Message)),
                 StorageBusy busy => new OperationFailed(busy.Message),
             };
         }
     }
 
-    private static async ValueTask<Result<CausalBookmark, OperationFailed>> BranchStagedAsync(
+    private static async ValueTask<ContinuityCopyOutcome> BranchStagedAsync(
         SqliteStorageEngine engine,
         ISqlDatabaseSession source,
         Ulid targetId,
@@ -271,14 +301,15 @@ public sealed class DatabaseRestorer(
         RestoreTarget target,
         CancellationToken cancellationToken)
     {
-        await using (source.ConfigureAwait(false))
+        await using (source)
         {
-            var resolved = await ResolveAsync(source, target, floor, cancellationToken).ConfigureAwait(false) switch
+            var resolved = await ResolveAsync(source, target, floor, cancellationToken);
+            var branched = resolved switch
             {
-                CausalBookmark at => await BranchAsync(engine, source.DatabaseId, targetId, targetKey, at, cancellationToken).ConfigureAwait(false),
+                CausalBookmark at => await BranchAsync(engine, source.DatabaseId, targetId, targetKey, at, cancellationToken),
                 OperationFailed failed => failed,
             };
-            return resolved switch
+            return branched switch
             {
                 CausalBookmark bookmark => bookmark,
                 OperationFailed failed => failed with { ArchiveMayHelp = false },
@@ -301,7 +332,8 @@ public sealed class DatabaseRestorer(
             return created;
         }
 
-        if (Downloaded(await manifests.Store.DownloadToFileAsync(snapshot.Archived.Key, databaseFile, cancellationToken).ConfigureAwait(false)) is { } fetched)
+        var downloaded = await manifests.Store.DownloadToFileAsync(snapshot.Archived.Key, databaseFile, cancellationToken);
+        if (Downloaded(downloaded) is { } fetched)
         {
             return fetched;
         }
@@ -324,7 +356,8 @@ public sealed class DatabaseRestorer(
                 }
 
                 var path = StorageLayout.SegmentFileIn(staging, sourceId, segment.Origin, segment.FirstSequence, segment.LastSequence);
-                if (Downloaded(await manifests.Store.DownloadToFileAsync(segment.Key, path, cancellationToken).ConfigureAwait(false)) is { } failure)
+                var segmentDownload = await manifests.Store.DownloadToFileAsync(segment.Key, path, cancellationToken);
+                if (Downloaded(segmentDownload) is { } failure)
                 {
                     return failure;
                 }
@@ -334,7 +367,7 @@ public sealed class DatabaseRestorer(
         return null;
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> SwapAsync(
+    private async ValueTask<ContinuityCopyOutcome> SwapAsync(
         Ulid operationId,
         Ulid databaseId,
         Ulid temporary,
@@ -351,7 +384,7 @@ public sealed class DatabaseRestorer(
             return created;
         }
 
-        if (await CopyRewoundHistoryAsync(temporary, key, rewound, databaseId, bookmark, cancellationToken).ConfigureAwait(false) is { } historyFailure)
+        if (await CopyRewoundHistoryAsync(temporary, key, rewound, databaseId, bookmark, cancellationToken) is { } historyFailure)
         {
             Cleanup(staging);
             return historyFailure;
@@ -368,14 +401,15 @@ public sealed class DatabaseRestorer(
             return removed;
         }
 
-        var deleted = await sessions.Engine.DeleteAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+        var deleted = await sessions.Engine.DeleteAsync(databaseId, cancellationToken);
+        var deleteFailure = deleted switch
         {
-            Done or NotFound => null,
+            DatabaseDeleted or DatabaseNotFound => (OperationFailed?)null,
             StorageBusy busy => new OperationFailed(string.Concat("current database could not be closed for the rewind: ", busy.Message)),
         };
-        if (deleted is not null)
+        if (deleteFailure is not null)
         {
-            return deleted;
+            return deleteFailure;
         }
 
         if (Local(ContinuityFiles.MoveDirectory(rewound, _layout.DatabaseDirectory(databaseId))) is { } placed)
@@ -384,7 +418,7 @@ public sealed class DatabaseRestorer(
         }
 
         Cleanup(staging);
-        await sessions.Catalog.DatabaseReplacedAsync(databaseId, notifyPeers ? bookmark : null, cancellationToken).ConfigureAwait(false);
+        await sessions.Catalog.DatabaseReplacedAsync(databaseId, notifyPeers ? bookmark : null, cancellationToken);
         return bookmark;
     }
 
@@ -394,13 +428,16 @@ public sealed class DatabaseRestorer(
         string destination,
         Ulid databaseId,
         CausalBookmark bookmark,
-        CancellationToken cancellationToken) =>
-        await sessions.OpenAsync(temporary, key, cancellationToken).ConfigureAwait(false) switch
+        CancellationToken cancellationToken)
+    {
+        var opened = await sessions.OpenAsync(temporary, key, cancellationToken);
+        return opened switch
         {
-            ISqlDatabaseSession session => await CopyAndCloseAsync(session, destination, databaseId, key, bookmark).ConfigureAwait(false),
-            NotFound => null,
-            Unavailable unavailable => new OperationFailed(unavailable.Message),
+            ISqlDatabaseSession session => await CopyAndCloseAsync(session, destination, databaseId, key, bookmark),
+            ContinuitySessionMissing => null,
+            ContinuitySessionUnavailable unavailable => new OperationFailed(unavailable.Message),
         };
+    }
 
     private static async ValueTask<OperationFailed?> CopyAndCloseAsync(
         ISqlDatabaseSession session,
@@ -409,7 +446,7 @@ public sealed class DatabaseRestorer(
         ReadOnlyMemory<byte> key,
         CausalBookmark bookmark)
     {
-        await using (session.ConfigureAwait(false))
+        await using (session)
         {
             return SqliteStorageEngine.CopyHistory(session, destination, databaseId, key, bookmark) is { } busy
                 ? new OperationFailed(busy.Message)
@@ -417,13 +454,16 @@ public sealed class DatabaseRestorer(
         }
     }
 
-    private static OperationFailed? MoveDatabaseFiles(string directory, string prefix, string destination, string replacement) =>
-        ContinuityFiles.ListFiles(directory, string.Concat(prefix, "*")) switch
+    private static OperationFailed? MoveDatabaseFiles(string directory, string prefix, string destination, string replacement)
+    {
+        var listed = ContinuityFiles.ListFiles(directory, string.Concat(prefix, "*"));
+        return listed switch
         {
             IReadOnlyList<string> { Count: 0 } => new OperationFailed("rewound database file is missing"),
             IReadOnlyList<string> files => MoveAll(files, prefix, destination, replacement),
-            Unavailable unavailable => new OperationFailed(unavailable.Message),
+            ContinuityIoFailure failure => new OperationFailed(failure.Message),
         };
+    }
 
     private static OperationFailed? MoveAll(IReadOnlyList<string> files, string prefix, string destination, string replacement)
     {
@@ -439,14 +479,14 @@ public sealed class DatabaseRestorer(
         return null;
     }
 
-    private static async ValueTask<Result<CausalBookmark, OperationFailed>> ResolveAsync(ISqlDatabaseSession session, RestoreTarget target, CausalBookmark floor, CancellationToken cancellationToken) =>
+    private static async ValueTask<ContinuityCopyOutcome> ResolveAsync(ISqlDatabaseSession session, RestoreTarget target, CausalBookmark floor, CancellationToken cancellationToken) =>
         target switch
         {
-            DateTimeOffset at => await ResolveTimeAsync(session, at, floor, cancellationToken).ConfigureAwait(false),
+            DateTimeOffset at => await ResolveTimeAsync(session, at, floor, cancellationToken),
             CausalBookmark bookmark => bookmark,
         };
 
-    private static async ValueTask<Result<CausalBookmark, OperationFailed>> ResolveTimeAsync(ISqlDatabaseSession session, DateTimeOffset at, CausalBookmark floor, CancellationToken cancellationToken)
+    private static async ValueTask<ContinuityCopyOutcome> ResolveTimeAsync(ISqlDatabaseSession session, DateTimeOffset at, CausalBookmark floor, CancellationToken cancellationToken)
     {
         var limit = at.ToUnixTimeMilliseconds();
         Dictionary<string, long> resolved = new(StringComparer.Ordinal);
@@ -460,7 +500,8 @@ public sealed class DatabaseRestorer(
             var scan = new TimeScan(origin, limit, floor.Get(origin) + 1);
             while (scan.Continues(current))
             {
-                scan.Apply(await session.ReadCommitLogAsync(origin, scan.Next, ScanPageSize, cancellationToken).ConfigureAwait(false));
+                var read = await session.ReadCommitLogAsync(origin, scan.Next, ScanPageSize, cancellationToken);
+                scan.Apply(read);
             }
 
             if (scan.Failure is { } failure)
@@ -509,30 +550,31 @@ public sealed class DatabaseRestorer(
         CausalBookmark bookmark => bookmark.IsEmpty || segment.FirstSequence <= bookmark.Get(segment.Origin),
     };
 
-    private static OperationFailed? Local(Result<Done, Unavailable> result) => result switch
+    private static OperationFailed? Local(ContinuityFileOutcome result) => result switch
     {
-        Done => null,
-        Unavailable unavailable => new OperationFailed(unavailable.Message),
+        ContinuityFilesChanged => null,
+        ContinuityIoFailure failure => new OperationFailed(failure.Message),
     };
 
-    private static OperationFailed? Downloaded(Result<long, NotFound, Unavailable, RequestTimeout> result) => result switch
+    private static OperationFailed? Downloaded(ArchiveDownloadOutcome result) => result switch
     {
         long => null,
-        NotFound notFound => new OperationFailed(string.Concat("archived object is missing: ", notFound.Message)),
-        Unavailable unavailable => new OperationFailed(unavailable.Message),
-        RequestTimeout timeout => new OperationFailed(timeout.Message),
+        ArchiveObjectMissing missing => new OperationFailed(string.Concat("archived object is missing: ", missing.Message)),
+        ArchiveUnavailable unavailable => new OperationFailed(unavailable.Message),
+        ArchiveTimedOut timeout => new OperationFailed(timeout.Message),
     };
 
     private void Cleanup(string staging)
     {
-        var cleaned = ContinuityFiles.DeleteDirectory(staging) switch
+        var cleaned = ContinuityFiles.DeleteDirectory(staging);
+        var reason = cleaned switch
         {
-            Done => null,
-            Unavailable unavailable => unavailable.Message,
+            ContinuityFilesChanged => (string?)null,
+            ContinuityIoFailure failure => failure.Message,
         };
-        if (cleaned is not null)
+        if (reason is not null)
         {
-            ContinuityLog.StagingCleanupFailed(logger, cleaned);
+            ContinuityLog.StagingCleanupFailed(logger, reason);
         }
     }
 
@@ -548,7 +590,7 @@ public sealed class DatabaseRestorer(
 
         public bool Continues(long current) => !_complete && Failure is null && Next <= current;
 
-        public void Apply(Result<CommitLogPage, CommitLogGap, StorageBusy> read) => Failure = read switch
+        public void Apply(ReadCommitLogOutcome read) => Failure = read switch
         {
             CommitLogPage page => Accept(page),
             CommitLogGap gap => new OperationFailed(string.Concat("commit log for origin ", origin, " no longer holds history before sequence ", gap.OldestAvailable.ToString(CultureInfo.InvariantCulture)), ArchiveMayHelp: true),

@@ -52,8 +52,8 @@ internal sealed class RaftShard(RaftMemberConfiguration configuration, RaftShard
     {
         context.StateVersion = AuditTrail.Version;
         context.Owner = this;
-        var scope = await ChangeConfigurationAsync(cancellationToken).ConfigureAwait(false);
-        await using (scope.ConfigureAwait(false))
+        var scope = await ChangeConfigurationAsync(cancellationToken);
+        await using (scope)
         {
             foreach (var member in members)
             {
@@ -61,7 +61,7 @@ internal sealed class RaftShard(RaftMemberConfiguration configuration, RaftShard
             }
         }
 
-        await StartAsync(cancellationToken).ConfigureAwait(false);
+        await StartAsync(cancellationToken);
         StartFollowing();
     }
 
@@ -76,34 +76,34 @@ internal sealed class RaftShard(RaftMemberConfiguration configuration, RaftShard
 
     public async ValueTask<RaftAppendResponse> HandleAppendAsync(RaftAppendMessage message, CancellationToken cancellationToken)
     {
-        var result = await ReceiveAppendAsync(message, cancellationToken).ConfigureAwait(false);
+        var result = await ReceiveAppendAsync(message, cancellationToken);
         return new RaftAppendResponse(result.Term, (byte)result.Value.Result, result.Value.LastIndex, RaftProposeStatus.Committed);
     }
 
     public async ValueTask<RaftAppendResponse> HandleSnapshotAsync(RaftSnapshotMessage message, CancellationToken cancellationToken)
     {
-        var result = await ReceiveSnapshotAsync(message, cancellationToken).ConfigureAwait(false);
+        var result = await ReceiveSnapshotAsync(message, cancellationToken);
         return new RaftAppendResponse(result.Term, (byte)result.Value, 0, RaftProposeStatus.Committed);
     }
 
     private async ValueTask<RaftVoteResponse> VoteResponseAsync(RaftVoteMessage message, CancellationToken cancellationToken)
     {
-        var vote = await ReceiveVoteAsync(message, cancellationToken).ConfigureAwait(false);
+        var vote = await ReceiveVoteAsync(message, cancellationToken);
         return new RaftVoteResponse(vote.Term, vote.Value ? 1 : 0, true);
     }
 
     private async ValueTask<RaftVoteResponse> PreVoteResponseAsync(RaftVoteMessage message, CancellationToken cancellationToken)
     {
-        var preVote = await ReceivePreVoteAsync(message, cancellationToken).ConfigureAwait(false);
+        var preVote = await ReceivePreVoteAsync(message, cancellationToken);
         return new RaftVoteResponse(preVote.Term, (long)preVote.Value, true);
     }
 
     private async ValueTask<RaftVoteResponse> ResignResponseAsync(CancellationToken cancellationToken) =>
-        new(0, await ResignAsync(cancellationToken).ConfigureAwait(false) ? 1 : 0, true);
+        new(0, await ResignAsync(cancellationToken) ? 1 : 0, true);
 
     private async ValueTask<RaftVoteResponse> SynchronizeResponseAsync(long commitIndex, CancellationToken cancellationToken)
     {
-        var index = await SynchronizeAsync(commitIndex, cancellationToken).ConfigureAwait(false);
+        var index = await SynchronizeAsync(commitIndex, cancellationToken);
         return new RaftVoteResponse(0, index.GetValueOrDefault(), index.HasValue);
     }
 
@@ -116,9 +116,9 @@ internal sealed class RaftShard(RaftMemberConfiguration configuration, RaftShard
     private async ValueTask<Result<ReplicationStatus>> ReceiveAppendAsync(RaftAppendMessage message, CancellationToken cancellationToken)
     {
         var producer = new RaftEntryProducer(message.Entries);
-        await using (producer.ConfigureAwait(false))
+        await using (producer)
         {
-            return await AppendEntriesAsync(message.Sender, message.Term, producer, message.PrevLogIndex, message.PrevLogTerm, message.CommitIndex, message.StateVersion, cancellationToken).ConfigureAwait(false);
+            return await AppendEntriesAsync(message.Sender, message.Term, producer, message.PrevLogIndex, message.PrevLogTerm, message.CommitIndex, message.StateVersion, cancellationToken);
         }
     }
 
@@ -141,10 +141,10 @@ internal sealed class RaftShardStateMachine(IStateMachine snapshots, Func<Replic
     {
         if (!entry.IsConfiguration && !entry.IsSnapshot && ReplicatedCommit.Decode(Payload(entry)) is { } commit)
         {
-            await apply(commit, token).ConfigureAwait(false);
+            await apply(commit, token);
         }
 
-        return await snapshots.ApplyAsync(entry, token).ConfigureAwait(false);
+        return await snapshots.ApplyAsync(entry, token);
     }
 
     private static ReadOnlySpan<byte> Payload(LogEntry entry)

@@ -8,13 +8,11 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public interface ITsAuthProviders
     {
-        // Null means unavailable, not an account with no linked providers.
         Task<IReadOnlyList<string>?> ListProvidersAsync(SessionRecord session, CancellationToken cancellationToken);
         Task UnlinkProviderAsync(SessionRecord session, string provider, string code, CancellationToken cancellationToken);
         Task SendUnlinkCodeAsync(SessionRecord session, string provider, CancellationToken cancellationToken);
     }
 
-    // Account provider routes use the platform client and the user's original sign-in bearer.
     public sealed partial class TsAuthGateway : ITsAuthProviders
     {
         public static bool IsSignInProvider(string provider)
@@ -55,7 +53,6 @@ namespace TerraScale.Dashboard.Features.Auth
             {
                 throw new AccountAccessException("Enter the six-digit code from your latest sign-in email.", 422);
             }
-            // Only validated ASCII digits enter the JSON; never retain or log the code.
             using var response = await ProviderCallAsync(HttpMethod.Delete, session, "/" + provider, "{\"code\":\"" + code + "\"}", cancellationToken);
             if (response.StatusCode != HttpStatusCode.NoContent)
             {

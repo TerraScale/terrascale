@@ -1,7 +1,9 @@
 namespace TerraScale.Platform.Hosting;
 
+public readonly union ReadyzReply(HealthStatus, PlatformUnavailable);
+
 public sealed class ReadyzEndpoint(PlatformOptions options, PlatformReadiness readiness, TerraBaseClient terraBase)
-    : EndpointWithoutRequest<Result<HealthStatus, Unavailable>>
+    : EndpointWithoutRequest<ReadyzReply>
 {
     public override void Configure()
     {
@@ -12,17 +14,18 @@ public sealed class ReadyzEndpoint(PlatformOptions options, PlatformReadiness re
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<HealthStatus, Unavailable>> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<ReadyzReply> HandleAsync(CancellationToken cancellationToken)
     {
         if (!readiness.SchemaReady)
         {
-            return new Unavailable("the platform schema is not in place yet", "not_ready");
+            return new PlatformUnavailable("the platform schema is not in place yet", "not_ready");
         }
 
-        return await terraBase.PingAsync(cancellationToken) switch
+        var outcome = await terraBase.PingAsync(cancellationToken);
+        return outcome switch
         {
-            Done => new HealthStatus("ready", options.Region, options.Node),
-            Unavailable unavailable => unavailable,
+            TerraBaseHealthy => new HealthStatus("ready", options.Region, options.Node),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 }

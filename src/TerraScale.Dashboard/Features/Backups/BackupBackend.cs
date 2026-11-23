@@ -1,4 +1,3 @@
-using TerraScale.Results;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using TerraScale.Dashboard.Platform.Clients;
@@ -109,12 +108,14 @@ namespace TerraScale.Dashboard.Features.Backups
             ArgumentNullException.ThrowIfNull(home);
             var caller = ServiceCaller.User(await AccessAsync(scope, ["databases:write"], cancellationToken));
             var removed = await terraBase.DeleteBackupDestinationAsync(caller, scope.ProjectId, cancellationToken);
-            switch (removed)
+            var refused = removed switch
             {
-                case Done:
-                    return;
-                case TerraBaseRefusal refusal:
-                    throw Failure(refusal.Exception(), "");
+                TerraBaseCompleted => null,
+                TerraBaseRefusal refusal => refusal,
+            };
+            if (refused is not null)
+            {
+                throw Failure(refused.Exception(), "");
             }
         }
 
@@ -164,7 +165,7 @@ namespace TerraScale.Dashboard.Features.Backups
         public async Task<ManagedDatabase> RestoreTargetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string targetName, CancellationToken cancellationToken)
         {
             var token = await AccessAsync(scope, ["databases:read"], cancellationToken);
-            var readback = TerraBaseResults.Require(await terraBase.GetDatabaseAsync(ServiceCaller.User(token), scope.ProjectId, targetName, cancellationToken));
+            var readback = (await terraBase.GetDatabaseAsync(ServiceCaller.User(token), scope.ProjectId, targetName, cancellationToken)).Require();
             var placed = new ManagedDatabase(readback.Id, readback.ProjectId, readback.Name, readback.CreatedAt, readback.BranchedFrom,
                 readback.HomeRegion, readback.ReplicaRegions, readback.AllRegions);
             if (!TerraScaleIds.IsValid(placed.Id) || placed.ProjectId != scope.ProjectId ||
@@ -187,12 +188,13 @@ namespace TerraScale.Dashboard.Features.Backups
             };
         }
 
-        private async Task<T> CallAsync<T>(DatabaseScope scope, DatabaseRegion home, string[] permissions, Func<ServiceCaller, Task<Result<JsonElement, TerraBaseRefusal>>> call,
+        private async Task<T> CallAsync<T>(DatabaseScope scope, DatabaseRegion home, string[] permissions, Func<ServiceCaller, Task<TerraBaseJsonOutcome>> call,
             JsonTypeInfo<T> type, CancellationToken cancellationToken, string operation = "")
         {
             ArgumentNullException.ThrowIfNull(home);
             var caller = ServiceCaller.User(await AccessAsync(scope, permissions, cancellationToken));
-            return await call(caller) switch
+            var outcome = await call(caller);
+            return outcome switch
             {
                 JsonElement answer => answer.Deserialize(type) ?? throw new JsonException("Invalid backup response."),
                 TerraBaseRefusal refusal => throw Failure(refusal.Exception(), operation),

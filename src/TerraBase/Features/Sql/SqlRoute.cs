@@ -1,18 +1,22 @@
+using TerraBase.Hosting;
+
 namespace TerraBase.Features.Sql;
+
+internal readonly union ExecuteSqlResponse(ExecuteBody, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
 internal static class SqlRoute
 {
     public const string Database = "/v1/projects/{project}/databases/{database}";
 
-    public static Result<ExecuteBody, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable> V2(
-        Result<SqlRun, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable> outcome) => outcome switch
+    public static ExecuteSqlResponse V2(
+        SqlRunResolution outcome) => outcome switch
         {
             SqlRun run => new ExecuteBody(SqlWire.Results(run.Results), run.Bookmark.Encode(), ConsistencyHeaders.Format(run.Mode)),
             SqlRefusal refusal => refusal,
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
 }

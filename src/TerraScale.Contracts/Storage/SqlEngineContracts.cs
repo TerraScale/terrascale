@@ -227,19 +227,89 @@ public sealed record DatabaseSnapshot(
 
 public sealed record SqlTransactionOptions(ConsistencyMode Mode, SqlAccess Access, CausalBookmark After);
 
+public sealed record ReadSetValid;
+
+public sealed record StagedWriteAborted;
+
+public sealed record SegmentImported;
+
+public sealed record BookmarkReached;
+
+public sealed record DatabaseDeleted;
+
+public sealed record DatabaseShredded;
+
+public sealed record DatabaseNotFound(Ulid DatabaseId, string Message = "database not found");
+
+public sealed record DatabaseAlreadyExists(Ulid DatabaseId, string Message = "database already exists");
+
+public sealed record InvalidDatabaseRequest(string Message, string Code = "invalid_request");
+
+public sealed record StagedWriteMissing(StagedWriteToken Token, string Message = "staged write not found");
+
+public sealed record SegmentNotFound(Ulid DatabaseId, string OriginRegion, long FirstSequence, long LastSequence, string Message = "commit log segment not found");
+
+public sealed record InvalidSegment(string Message, string Code = "invalid_segment");
+
+public sealed record StorageTimeout(string Message, string Code = "request_timeout");
+
+public readonly union TransactionExecuteResult(SqlResultSet, SqlError, StorageBusy, StorageTimeout);
+
+public readonly union TransactionCommitLocalResult(CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, StorageTimeout);
+
+public readonly union TransactionStageResult(StagedWrite, SchemaMismatch, StorageBusy, StorageTimeout);
+
+public readonly union SqlReadOutcome(SqlReadResult, SqlError, StorageBusy, StorageTimeout);
+
+public readonly union SqlWriteOutcome(SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, StorageTimeout);
+
+public readonly union StageWriteOutcome(StagedWrite, SqlError, SchemaMismatch, StorageBusy, StorageTimeout);
+
+public readonly union BeginTransactionOutcome(ISqlTransaction, StorageBusy, StorageTimeout);
+
+public readonly union ValidateReadSetOutcome(ReadSetValid, ReadSetConflict, SchemaMismatch, StorageBusy);
+
+public readonly union CommitStagedOutcome(CommitMetadata, StagedWriteMissing, ReadSetConflict, SchemaMismatch, StorageBusy);
+
+public readonly union AbortStagedOutcome(StagedWriteAborted, StagedWriteMissing);
+
+public readonly union ApplyRemoteBatchOutcome(RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy);
+
+public readonly union ReadCommitLogOutcome(CommitLogPage, CommitLogGap, StorageBusy);
+
+public readonly union ListSegmentsOutcome(IReadOnlyList<CommitLogSegment>, StorageBusy);
+
+public readonly union OpenSegmentOutcome(Stream, SegmentNotFound, StorageBusy);
+
+public readonly union ImportSegmentOutcome(SegmentImported, InvalidSegment, StorageCorrupted, StorageBusy);
+
+public readonly union WaitForBookmarkOutcome(BookmarkReached, StorageTimeout);
+
+public readonly union OpenDatabaseOutcome(ISqlDatabaseSession, DatabaseNotFound, InvalidDatabaseRequest, StorageCorrupted, StorageBusy);
+
+public readonly union CreateDatabaseOutcome(ISqlDatabaseSession, DatabaseAlreadyExists, InvalidDatabaseRequest, StorageBusy);
+
+public readonly union BranchDatabaseOutcome(ISqlDatabaseSession, DatabaseNotFound, DatabaseAlreadyExists, InvalidDatabaseRequest, StorageBusy);
+
+public readonly union SnapshotDatabaseOutcome(DatabaseSnapshot, DatabaseNotFound, StorageBusy);
+
+public readonly union DeleteDatabaseOutcome(DatabaseDeleted, DatabaseNotFound, StorageBusy);
+
+public readonly union CryptoShredOutcome(DatabaseShredded, DatabaseNotFound, StorageBusy);
+
 public interface ISqlTransaction : IAsyncDisposable
 {
     Ulid TxId { get; }
 
     SqlTransactionOptions Options { get; }
 
-    ValueTask<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
+    ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
-    ValueTask<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> CommitLocalAsync(CancellationToken cancellationToken);
+    ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken);
 
-    ValueTask<Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout>> StageAsync(CancellationToken cancellationToken);
+    ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken);
 
-    ValueTask<Done> RollbackAsync(CancellationToken cancellationToken);
+    ValueTask RollbackAsync(CancellationToken cancellationToken);
 }
 
 public interface ISqlDatabaseSession : IAsyncDisposable
@@ -250,51 +320,51 @@ public interface ISqlDatabaseSession : IAsyncDisposable
 
     CausalBookmark CurrentBookmark { get; }
 
-    ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken);
+    ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> ExecuteWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken);
+    ValueTask<SqlWriteOutcome> ExecuteWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<StagedWrite, SqlError, SchemaMismatch, StorageBusy, RequestTimeout>> StageWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken);
+    ValueTask<StageWriteOutcome> StageWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken);
+    ValueTask<BeginTransactionOutcome> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, ReadSetConflict, SchemaMismatch, StorageBusy>> ValidateReadSetAsync(
+    ValueTask<ValidateReadSetOutcome> ValidateReadSetAsync(
         HlcTimestamp readSnapshot,
         IReadOnlyList<ReadKey> readSet,
         IReadOnlyList<string> scannedTables,
         ulong schemaEpoch,
         CancellationToken cancellationToken);
 
-    ValueTask<Result<CommitMetadata, NotFound, ReadSetConflict, SchemaMismatch, StorageBusy>> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, CancellationToken cancellationToken);
+    ValueTask<CommitStagedOutcome> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, NotFound>> AbortStagedAsync(StagedWriteToken token, CancellationToken cancellationToken);
+    ValueTask<AbortStagedOutcome> AbortStagedAsync(StagedWriteToken token, CancellationToken cancellationToken);
 
-    ValueTask<Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy>> ApplyRemoteBatchAsync(RemoteCommitBatch batch, CancellationToken cancellationToken);
+    ValueTask<ApplyRemoteBatchOutcome> ApplyRemoteBatchAsync(RemoteCommitBatch batch, CancellationToken cancellationToken);
 
-    ValueTask<Result<CommitLogPage, CommitLogGap, StorageBusy>> ReadCommitLogAsync(string originRegion, long fromSequence, int maxEntries, CancellationToken cancellationToken);
+    ValueTask<ReadCommitLogOutcome> ReadCommitLogAsync(string originRegion, long fromSequence, int maxEntries, CancellationToken cancellationToken);
 
-    ValueTask<Result<IReadOnlyList<CommitLogSegment>, StorageBusy>> ListSealedSegmentsAsync(string originRegion, long afterSequence, CancellationToken cancellationToken);
+    ValueTask<ListSegmentsOutcome> ListSealedSegmentsAsync(string originRegion, long afterSequence, CancellationToken cancellationToken);
 
-    ValueTask<Result<Stream, NotFound, StorageBusy>> OpenSegmentAsync(CommitLogSegment segment, CancellationToken cancellationToken);
+    ValueTask<OpenSegmentOutcome> OpenSegmentAsync(CommitLogSegment segment, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, Validation, StorageCorrupted, StorageBusy>> ImportSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken);
+    ValueTask<ImportSegmentOutcome> ImportSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, RequestTimeout>> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);
+    ValueTask<WaitForBookmarkOutcome> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);
 
     IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, CancellationToken cancellationToken);
 }
 
 public interface ISqlStorageEngine : IAsyncDisposable
 {
-    ValueTask<Result<ISqlDatabaseSession, NotFound, Validation, StorageCorrupted, StorageBusy>> OpenAsync(DatabaseOpenRequest request, CancellationToken cancellationToken);
+    ValueTask<OpenDatabaseOutcome> OpenAsync(DatabaseOpenRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<ISqlDatabaseSession, Conflict, Validation, StorageBusy>> CreateAsync(DatabaseCreateRequest request, CancellationToken cancellationToken);
+    ValueTask<CreateDatabaseOutcome> CreateAsync(DatabaseCreateRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<ISqlDatabaseSession, NotFound, Conflict, Validation, StorageBusy>> BranchAsync(DatabaseBranchRequest request, CancellationToken cancellationToken);
+    ValueTask<BranchDatabaseOutcome> BranchAsync(DatabaseBranchRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<DatabaseSnapshot, NotFound, StorageBusy>> SnapshotAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<SnapshotDatabaseOutcome> SnapshotAsync(Ulid databaseId, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, NotFound, StorageBusy>> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<DeleteDatabaseOutcome> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, NotFound, StorageBusy>> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<CryptoShredOutcome> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken);
 }

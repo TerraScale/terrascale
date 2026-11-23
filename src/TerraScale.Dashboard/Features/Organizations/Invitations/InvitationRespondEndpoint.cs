@@ -7,7 +7,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Organizations.Invitations
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed class InvitationRespondEndpoint(DashboardSessions sessions, InvitationService invitations) : EndpointWithoutRequest<IResult>
     {
@@ -36,9 +35,9 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
                 var answered = await invitations.RespondAsync(session, token, action, http.RequestAborted);
                 return answered switch
                 {
-                    Validation error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, 400),
-                    NotFound error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message!, 404),
-                    Forbidden error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, 403),
+                    DashboardValidation error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, 400),
+                    DashboardNotFound error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, 404),
+                    DashboardForbidden error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, 403),
                     PendingInvitation pending => Accepted(http, pending, action),
                 };
             }

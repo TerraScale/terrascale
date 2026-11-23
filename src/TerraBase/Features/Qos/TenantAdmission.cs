@@ -5,6 +5,8 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Qos;
 
+internal readonly union TenantAdmissionOutcome(TenantAdmission.TenantLease, TenantBusy);
+
 internal sealed class TenantAdmission(TimeProvider time, IMeterFactory meters)
 {
     private const int MaxTenants = 4096;
@@ -17,7 +19,7 @@ internal sealed class TenantAdmission(TimeProvider time, IMeterFactory meters)
 
     private readonly Histogram<double> _duration = meters.Create(Telemetry.MeterName).CreateHistogram<double>("terrabase.qos.request.duration", "s");
 
-    public Result<TenantLease, TenantBusy> TryEnter(Tenant tenant)
+    public TenantAdmissionOutcome TryEnter(Tenant tenant)
     {
         ArgumentNullException.ThrowIfNull(tenant);
         var policy = tenant.Policy;
@@ -136,7 +138,7 @@ internal static class TenantAdmissionExtensions
                 await (resolution switch
                 {
                     Tenant tenant => EnterAsync(context, next, tenant),
-                    NoTenant or Unavailable => next(context),
+                    NoTenant or BackendUnavailable => next(context),
                 });
             });
             return app;

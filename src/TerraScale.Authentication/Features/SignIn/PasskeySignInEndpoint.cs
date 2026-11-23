@@ -4,7 +4,6 @@ using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Hosting;
@@ -70,7 +69,7 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
         return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken);
     }
 
-    internal static Forbidden Denied() => new("The passkey sign-in failed; start again.", "passkey_denied");
+    internal static AuthForbidden Denied() => new("The passkey sign-in failed; start again.", "passkey_denied");
 
     private async Task<PasskeySignInRequest?> BodyAsync(CancellationToken cancellationToken)
     {

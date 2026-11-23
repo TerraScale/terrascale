@@ -6,7 +6,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed record ProjectGrantPage(ShellModel Shell, IReadOnlyList<TsAuthPlatformProjectMember> Grants,
         string? Next = null, string Error = "", bool HasPrevious = false, string DraftUserId = "", string DraftRole = "viewer", string Status = "", string Dialog = "")
@@ -35,13 +34,14 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             var after = http.Request.Query["after"].Count == 0 ? null : http.Request.Query["after"].ToString();
             try
             {
-                return await grants.ReadAsync(context, after, http.RequestAborted) switch
+                var outcome = await grants.ReadAsync(context, after, http.RequestAborted);
+                return outcome switch
                 {
                     TsAuthPlatformPage<TsAuthPlatformProjectMember> listed => Page(http, context, listed.Items, listed.Next, previous: after is not null,
                         notice: http.Request.Query["changed"] == "1" ? "Explicit project grant updated." : ""),
-                    NotFound error => Page(http, context, [], error: error.Message!, status: 404),
-                    Validation error => Page(http, context, [], error: error.Message, status: 400),
-                    Unavailable => Page(http, context, [], error: "Project grants could not be loaded. Reload this page to retry.", status: 503),
+                    DashboardNotFound error => Page(http, context, [], error: error.Message, status: 404),
+                    DashboardValidation error => Page(http, context, [], error: error.Message, status: 400),
+                    DashboardUnavailable => Page(http, context, [], error: "Project grants could not be loaded. Reload this page to retry.", status: 503),
                 };
             }
             catch (AccountAccessException error) { return Page(http, context, [], error: error.Message, status: error.StatusCode); }
@@ -71,9 +71,9 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                     var items = reloaded switch
                     {
                         TsAuthPlatformPage<TsAuthPlatformProjectMember> page => page.Items,
-                        NotFound failure => throw new AccountAccessException(failure.Message!, 404),
-                        Validation failure => throw new AccountAccessException(failure.Message, 400),
-                        Unavailable => throw new IOException("The project grant page is invalid."),
+                        DashboardNotFound failure => throw new AccountAccessException(failure.Message, 404),
+                        DashboardValidation failure => throw new AccountAccessException(failure.Message, 400),
+                        DashboardUnavailable => throw new IOException("The project grant page is invalid."),
                     };
                     await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(errorShell, items, null, message, false, userId, role, "",
                         form["dialog"] == "edit" ? "edit-grant-" + userId : form["dialog"] == "remove" ? "remove-grant-" + userId : "")));
@@ -93,33 +93,32 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 if (operation == "set")
                 {
                     var written = await grants.SetAsync(context, userId, role, http.RequestAborted);
-                    switch (written)
+                    IResult? setRefusal = written switch
                     {
-                        case Forbidden refused:
-                            return await Error(refused.Message, 403);
-                        case InvalidUser invalid:
-                            return await Error(invalid.Message, 422);
-                        case InvalidRole invalid:
-                            return await Error(invalid.Message, 422);
-                        case Unavailable:
-                            return await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503);
-                        case TsAuthPlatformProjectMember:
-                            break;
+                        DashboardForbidden refused => await Error(refused.Message, 403),
+                        InvalidUser invalid => await Error(invalid.Message, 422),
+                        InvalidRole invalid => await Error(invalid.Message, 422),
+                        DashboardUnavailable => await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503),
+                        TsAuthPlatformProjectMember => null,
+                    };
+                    if (setRefusal is not null)
+                    {
+                        return setRefusal;
                     }
                 }
                 else if (operation == "remove")
                 {
                     var removed = await grants.RemoveAsync(context, userId, http.RequestAborted);
-                    switch (removed)
+                    IResult? removeRefusal = removed switch
                     {
-                        case Forbidden refused:
-                            return await Error(refused.Message, 403);
-                        case InvalidUser invalid:
-                            return await Error(invalid.Message, 422);
-                        case Unavailable:
-                            return await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503);
-                        case Done:
-                            break;
+                        DashboardForbidden refused => await Error(refused.Message, 403),
+                        InvalidUser invalid => await Error(invalid.Message, 422),
+                        DashboardUnavailable => await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503),
+                        Done => null,
+                    };
+                    if (removeRefusal is not null)
+                    {
+                        return removeRefusal;
                     }
 
                     if (userId == context.UserId)
@@ -136,12 +135,13 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 if (http.Request.IsDatastarRequest)
                 {
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true, reload: true);
-                    return await grants.ReadAsync(context, null, http.RequestAborted) switch
+                    var outcome = await grants.ReadAsync(context, null, http.RequestAborted);
+                    return outcome switch
                     {
                         TsAuthPlatformPage<TsAuthPlatformProjectMember> page => await PatchedAsync(http, context, page.Items, "Explicit project grant updated."),
-                        NotFound => await Error("The project or target user is unavailable. New grants require an existing organization member; otherwise ask an organization admin about a project invitation. Invitations are not available here.", 404),
-                        Validation failure => await Error(failure.Message, 400),
-                        Unavailable => await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503),
+                        DashboardNotFound => await Error("The project or target user is unavailable. New grants require an existing organization member; otherwise ask an organization admin about a project invitation. Invitations are not available here.", 404),
+                        DashboardValidation failure => await Error(failure.Message, 400),
+                        DashboardUnavailable => await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503),
                     };
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project/members?changed=1", replace: true));

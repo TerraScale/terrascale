@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -40,7 +39,7 @@ public sealed class VerifyEnrollmentInboxEndpoint(Passcodes passcodes, TotpCrede
         return pending switch
         {
             ChallengedSignIn challenged => await InboxAsync(challenged),
-            Forbidden error => ErrorResults.ToResult(error),
+            AuthForbidden error => ErrorResults.ToResult(error),
         };
 
         async ValueTask<IResult> InboxAsync(ChallengedSignIn challenged)
@@ -72,7 +71,7 @@ public sealed class VerifyEnrollmentInboxEndpoint(Passcodes passcodes, TotpCrede
             || await mfa.ChallengedAsync(tenant, challenge, "enrollment-inbox", cancellationToken) is not { } pending
             || await mfa.HasAllowedFactorAsync(pending.User, false, cancellationToken))
         {
-            return new Forbidden("Start sign-in again.", "mfa_required");
+            return new AuthForbidden("Start sign-in again.", "mfa_required");
         }
 
         return pending with
@@ -89,7 +88,7 @@ public sealed class VerifyEnrollmentInboxEndpoint(Passcodes passcodes, TotpCrede
         var challenge = await context.RequestServices.GetRequiredService<TotpCredentials>().InboxChallengeAsync(user, cancellationToken);
         if (challenge is null)
         {
-            return ErrorResults.ToResult(new Forbidden("Start sign-in again.", "mfa_required"));
+            return ErrorResults.ToResult(new AuthForbidden("Start sign-in again.", "mfa_required"));
         }
 
         using var reservation = context.RequestServices.GetRequiredService<SignInMail>().Reserve();

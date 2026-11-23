@@ -39,7 +39,7 @@ internal sealed partial class PostgresSqlRewriter
         _context = context;
     }
 
-    public static Result<PgRewrite, PgError> Rewrite(PgTokenEditor tokens, PgRewriteContext context)
+    public static PgRewriteResult Rewrite(PgTokenEditor tokens, PgRewriteContext context)
     {
         if (!tokens.IsBalanced)
         {
@@ -50,7 +50,7 @@ internal sealed partial class PostgresSqlRewriter
         return rewriter.Run();
     }
 
-    private Result<PgRewrite, PgError> Run()
+    private PgRewriteResult Run()
     {
         CollectParameterColumns();
         var referenced = _parameterColumns.Count == 0 ? [] : ReferencedNames();

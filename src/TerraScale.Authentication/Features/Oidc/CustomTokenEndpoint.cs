@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
@@ -25,6 +24,8 @@ public sealed record CustomTokenBody(
 {
     public override string ToString() => nameof(CustomTokenBody);
 }
+
+public readonly union CustomTokenRead(CustomTokenRequest, AuthValidation);
 
 public sealed class CustomTokenEndpoint(CustomTokens tokens, ApiKeys keys, AttemptLimiter limiter) : EndpointWithoutRequest<IResult>
 {
@@ -83,9 +84,9 @@ public sealed class CustomTokenEndpoint(CustomTokens tokens, ApiKeys keys, Attem
                 CustomTokenRequest parsed => await tokens.IssueAsync(key, project, parsed, cancellationToken) switch
                 {
                     CustomTokenBody minted => TypedResults.Json(minted, CustomTokenJson.Default.CustomTokenBody),
-                    Validation invalid => ErrorResults.ToResult(invalid),
+                    AuthValidation invalid => ErrorResults.ToResult(invalid),
                 },
-                Validation invalid => ErrorResults.ToResult(invalid),
+                AuthValidation invalid => ErrorResults.ToResult(invalid),
             };
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
@@ -94,7 +95,7 @@ public sealed class CustomTokenEndpoint(CustomTokens tokens, ApiKeys keys, Attem
         }
     }
 
-    private async Task<Valid<CustomTokenRequest>> BodyAsync(CancellationToken cancellationToken)
+    private async Task<CustomTokenRead> BodyAsync(CancellationToken cancellationToken)
     {
         try
         {

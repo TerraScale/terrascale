@@ -22,9 +22,9 @@ public sealed class CommitLogArchiverService(
         using var timer = new PeriodicTimer(options.ArchiveInterval, timeProvider);
         do
         {
-            await PassAsync(stoppingToken).ConfigureAwait(false);
+            await PassAsync(stoppingToken);
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     private async Task PassAsync(CancellationToken stoppingToken)
@@ -32,7 +32,7 @@ public sealed class CommitLogArchiverService(
         IReadOnlyList<Ulid> databases;
         try
         {
-            databases = await catalog.ListActiveDatabasesAsync(stoppingToken).ConfigureAwait(false);
+            databases = await catalog.ListActiveDatabasesAsync(stoppingToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -43,18 +43,19 @@ public sealed class CommitLogArchiverService(
         await Parallel.ForEachAsync(
             databases,
             new ParallelOptions { MaxDegreeOfParallelism = options.ArchiveParallelism, CancellationToken = stoppingToken },
-            ArchiveAsync).ConfigureAwait(false);
+            ArchiveAsync);
     }
 
     private async ValueTask ArchiveAsync(Ulid databaseId, CancellationToken stoppingToken)
     {
         try
         {
-            var failure = await continuity.ArchiveAsync(databaseId, forceSnapshot: false, stoppingToken).ConfigureAwait(false) switch
+            var archived = await continuity.ArchiveAsync(databaseId, forceSnapshot: false, stoppingToken);
+            var failure = archived switch
             {
-                BackupStatus => null,
-                NotFound => null,
-                Unavailable unavailable => unavailable.Message,
+                BackupStatus => (string?)null,
+                ContinuityNotFound => null,
+                ContinuityUnavailable unavailable => unavailable.Message,
             };
             if (failure is not null)
             {

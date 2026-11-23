@@ -1,9 +1,17 @@
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union GetFunctionStatsReply(
+    FunctionStats,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class GetFunctionStatsEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<FunctionStatsRequest, Result<FunctionStats, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<FunctionStatsRequest, GetFunctionStatsReply>
 {
-    private static readonly Validation BadWindow = new("window must be 1h, 24h or 7d");
+    private static readonly PlatformInvalidRequest BadWindow = new("window must be 1h, 24h or 7d");
 
     public override void Configure()
     {
@@ -15,7 +23,7 @@ public sealed class GetFunctionStatsEndpoint(PlatformAccess access, FunctionServ
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FunctionStats, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<GetFunctionStatsReply> HandleAsync(
         FunctionStatsRequest request,
         CancellationToken cancellationToken)
     {
@@ -26,19 +34,26 @@ public sealed class GetFunctionStatsEndpoint(PlatformAccess access, FunctionServ
             return BadWindow;
         }
 
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.StatsAsync(target, request.Function, window, cancellationToken) switch
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<GetFunctionStatsReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.StatsAsync(target, request.Function, window, cancellationToken);
+            return operation switch
             {
                 FunctionStats stats => stats,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

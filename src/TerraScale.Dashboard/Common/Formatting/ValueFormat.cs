@@ -14,7 +14,6 @@ namespace TerraScale.Dashboard.Common.Formatting
             return value.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", CultureInfo.InvariantCulture);
         }
 
-        // Keep the measured ratio for chart geometry and structured tool responses.
         public static double? Percent(long? part, long? total)
         {
             return part is null || total is null ? null

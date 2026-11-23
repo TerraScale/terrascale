@@ -3,8 +3,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Rules;
+
+internal readonly union StoredRulesLookup(StoredRules, ResourceNotFound, BackendUnavailable);
+
+internal readonly union RulesVersionsOutcome(RulesVersionsBody, BackendUnavailable);
+
+internal readonly union RulesSaveOutcome(StoredRules, StaleRules, BackendUnavailable);
 
 internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
 {
@@ -12,7 +19,7 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
 
     private readonly ConcurrentDictionary<Ulid, (StoredRules? Rules, DateTimeOffset Until)> _cache = new();
 
-    public async ValueTask<Result<StoredRules, NotFound, Unavailable>> CurrentAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         if (_cache.TryGetValue(databaseId, out var cached) && cached.Until > time.GetUtcNow())
         {
@@ -26,30 +33,30 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows when Read(rows[0]) is { } rules => Cache(databaseId, rules),
             IReadOnlyList<IReadOnlyList<SqlValue>> => CacheMissing(databaseId),
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<StoredRules, NotFound, Unavailable>> VersionAsync(Ulid databaseId, string? version, CancellationToken cancellationToken) =>
+    public async ValueTask<StoredRulesLookup> VersionAsync(Ulid databaseId, string? version, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
             "SELECT version, body, updated_at, updated_by, digest FROM rules_versions WHERE database_id = ? AND version = ?", SqlBuild.Id(databaseId), SqlBuild.OptionalText(version)),
             cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows when Read(rows[0]) is { } rules => rules,
-            IReadOnlyList<IReadOnlyList<SqlValue>> => new NotFound("the database has no such rules version", "unknown_version"),
-            Unavailable unavailable => unavailable,
+            IReadOnlyList<IReadOnlyList<SqlValue>> => new ResourceNotFound("the database has no such rules version", "unknown_version"),
+            BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<Result<RulesVersionsBody, Unavailable>> VersionsAsync(Ulid databaseId, string? after, int limit, CancellationToken cancellationToken) =>
+    public async ValueTask<RulesVersionsOutcome> VersionsAsync(Ulid databaseId, string? after, int limit, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
             "SELECT version, updated_at, updated_by, digest FROM rules_versions WHERE database_id = ?1 AND (?2 IS NULL OR version < ?2) ORDER BY version DESC LIMIT ?3",
             SqlBuild.Id(databaseId), SqlBuild.OptionalText(after), SqlBuild.Integer(limit + 1)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Versions(rows, limit),
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<Result<StoredRules, StaleRules, Unavailable>> DeployAsync(
+    public async ValueTask<RulesSaveOutcome> DeployAsync(
         Ulid databaseId, RulesSet rules, string? ifMatch, string actor, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
@@ -74,31 +81,34 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
         return written switch
         {
             SqlWriteResult { ResultSets: [_, { RowsAffected: > 0 }] } => stored,
-            SqlWriteResult or Conflict => new StaleRules(await CurrentVersionAsync(databaseId, cancellationToken)),
-            Unavailable unavailable => unavailable,
+            SqlWriteResult or StateConflict => new StaleRules(await CurrentVersionAsync(databaseId, cancellationToken)),
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<string?> CurrentVersionAsync(Ulid databaseId, CancellationToken cancellationToken) =>
-        await CurrentAsync(databaseId, cancellationToken) switch
+    private async ValueTask<string?> CurrentVersionAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var outcome = await CurrentAsync(databaseId, cancellationToken);
+        return outcome switch
         {
             StoredRules rules => rules.Version,
-            NotFound or Unavailable => null,
+            ResourceNotFound or BackendUnavailable => null,
         };
+    }
 
-    private Result<StoredRules, NotFound, Unavailable> Cache(Ulid databaseId, StoredRules rules)
+    private StoredRulesLookup Cache(Ulid databaseId, StoredRules rules)
     {
         _cache[databaseId] = (rules, time.GetUtcNow() + CacheTtl);
         return rules;
     }
 
-    private Result<StoredRules, NotFound, Unavailable> CacheMissing(Ulid databaseId)
+    private StoredRulesLookup CacheMissing(Ulid databaseId)
     {
         _cache[databaseId] = (null, time.GetUtcNow() + CacheTtl);
         return NoRules();
     }
 
-    private static NotFound NoRules() => new("the database has no rules; end users are denied", "no_rules");
+    private static ResourceNotFound NoRules() => new("the database has no rules; end users are denied", "no_rules");
 
     private static StoredRules? Read(IReadOnlyList<SqlValue> row)
     {

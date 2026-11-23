@@ -5,6 +5,12 @@ namespace TerraBase.Engine;
 
 public sealed record DatabaseKey(string KeyId, byte[] RawKey);
 
+internal sealed record MasterKeyMissing(string KeyId);
+
+internal readonly union DatabaseKeyDerivation(DatabaseKey, MasterKeyMissing);
+
+internal readonly union DatabaseKeyringOutcome(DatabaseKeyring, ConfigurationError);
+
 internal sealed class DatabaseKeyring
 {
     private const string DevelopmentKeyFile = "development-master.key";
@@ -22,7 +28,7 @@ internal sealed class DatabaseKeyring
 
     public IEnumerable<string> KeyIds => _settings.Keys.Keys;
 
-    public static Result<DatabaseKeyring, ConfigurationError> Create(TerraBaseOptions options)
+    public static DatabaseKeyringOutcome Create(TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         if (options.DatabaseKeyring is { } configured)
@@ -40,11 +46,11 @@ internal sealed class DatabaseKeyring
             : new ConfigurationError("the Development master key under data-directory is unreadable");
     }
 
-    public Result<DatabaseKey, NotFound> Derive(Ulid databaseId, string keyId)
+    public DatabaseKeyDerivation Derive(Ulid databaseId, string keyId)
     {
         return _settings.Keys.TryGetValue(keyId, out var master)
             ? Derive(databaseId, keyId, master)
-            : new NotFound(string.Concat("master key '", keyId, "' is not configured"), "unknown_master_key");
+            : new MasterKeyMissing(keyId);
     }
 
     private static DatabaseKey Derive(Ulid databaseId, string keyId, byte[] master)

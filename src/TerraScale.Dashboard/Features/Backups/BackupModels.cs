@@ -23,7 +23,6 @@ namespace TerraScale.Dashboard.Features.Backups
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor,
         bool HasMore,
         int Limit);
-    // One bounded producer page: items as the dashboard renders them, plus the producer's own continuation.
     public sealed record BackupPageSlice(
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupPolicyView? Policy,
         IReadOnlyList<BackupView> Items,
@@ -78,7 +77,6 @@ namespace TerraScale.Dashboard.Features.Backups
             return label + ", " + time;
         }
     }
-    // The project's own bucket at TerraBase (credentials are write-only there) and a database's scheduled NDJSON export into it.
     public sealed record BackupDestinationView(string Endpoint, string Region, string Bucket, string Mode, DateTimeOffset? UpdatedAt);
     public sealed record BackupBucketView(BackupDestinationView? Destination);
     public sealed record RestorePointsModel(ShellModel Shell, DatabaseRecord Database, string Error, string RestoreId, string Name,

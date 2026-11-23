@@ -1,13 +1,12 @@
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
 
-internal readonly union PasskeyAttestation(AuthenticatorAttestationRawResponse, Validation, Forbidden);
+internal readonly union PasskeyAttestation(AuthenticatorAttestationRawResponse, AuthValidation, AuthForbidden);
 
 public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpProofs proofs, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
@@ -32,10 +31,10 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
             {
                 PasskeyCredentialEntry entry => TypedResults.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
                     WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created),
-                Forbidden error => ErrorResults.ToResult(error),
+                AuthForbidden error => ErrorResults.ToResult(error),
             },
-            Validation invalid => ErrorResults.ToResult(invalid),
-            Forbidden denied => ErrorResults.ToResult(denied),
+            AuthValidation invalid => ErrorResults.ToResult(invalid),
+            AuthForbidden denied => ErrorResults.ToResult(denied),
         };
     }
 
@@ -54,7 +53,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
         {
             if (!Enum.TryParse<AuthenticatorTransport>(transport, ignoreCase: true, out var parsed))
             {
-                return new Validation("Unknown passkey transport.");
+                return new AuthValidation("Unknown passkey transport.");
             }
 
             transports.Add(parsed);

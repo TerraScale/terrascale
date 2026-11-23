@@ -9,6 +9,8 @@ namespace TerraBase.Postgres.Sessions;
 
 internal sealed record PgSettingChange(string Name, string Value, bool Reported);
 
+internal readonly union PgSettingResult(PgSettingChange, PgError);
+
 internal sealed class PgSettings
 {
     public const string Bookmark = "terrascale.bookmark";
@@ -115,7 +117,7 @@ internal sealed class PgSettings
 
     public static string CanonicalName(string name) => CanonicalNames.TryGetValue(name, out var canonical) ? canonical : name;
 
-    public Result<PgSettingChange, PgError> Set(string name, string? value, bool local)
+    public PgSettingResult Set(string name, string? value, bool local)
     {
         var canonical = CanonicalName(name);
         if (ReadOnlyNames.Contains(canonical))

@@ -1,7 +1,16 @@
 namespace TerraScale.Platform.Features.Shapes.Endpoints;
 
+public readonly union GetShapeManifestReply(
+    ShapeMirrorManifest,
+    ShapeRefetch,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class GetShapeManifestEndpoint(ShapeReader reader)
-    : Endpoint<ShapeRouteRequest, Result<ShapeMirrorManifest, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<ShapeRouteRequest, GetShapeManifestReply>
 {
     public override void Configure()
     {
@@ -15,7 +24,7 @@ public sealed class GetShapeManifestEndpoint(ShapeReader reader)
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<ShapeMirrorManifest, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<GetShapeManifestReply> HandleAsync(
         ShapeRouteRequest request,
         CancellationToken cancellationToken)
     {
@@ -29,39 +38,51 @@ public sealed class GetShapeManifestEndpoint(ShapeReader reader)
         var handle = ShapeParameters.Parameter(query, "handle");
         if (handle is null || ShapeParameters.CheckHandle(handle) is not null)
         {
-            return new Validation("handle must be h1- and 16 lowercase hex characters");
+            return new PlatformInvalidRequest("handle must be h1- and 16 lowercase hex characters");
         }
 
         var offsetText = ShapeParameters.Parameter(query, "offset");
         var offset = offsetText is null ? null : ShapeOffset.Parse(offsetText);
         if (offset is null or BootstrapOffset)
         {
-            return new Validation("offset must be snap.<S>.<P> or a decimal commit boundary; -1 is refused");
+            return new PlatformInvalidRequest("offset must be snap.<S>.<P> or a decimal commit boundary; -1 is refused");
         }
 
         return ShapeQuery.From(request.Table, query) switch
         {
-            ShapeQuery shape => await reader.ResolveAsync(HttpContext, request, shape, cancellationToken) switch
+            ShapeQuery shape => await ResolveAsync(shape),
+            PlatformInvalidRequest invalid => invalid,
+        };
+
+        async ValueTask<GetShapeManifestReply> ReadManifestAsync(ResolvedShape resolved, long offset)
+        {
+            var outcome = await reader.ManifestAsync(resolved.Shape, offset, cancellationToken);
+            return outcome switch
+            {
+                ShapeMirrorManifest manifest => manifest,
+                ShapeRefetch refetch => refetch,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+
+        async ValueTask<GetShapeManifestReply> ResolveAsync(ShapeQuery shape)
+        {
+            var outcome = await reader.ResolveAsync(HttpContext, request, shape, cancellationToken);
+            return outcome switch
             {
                 ResolvedShape { Shape.Handle: var current } resolved when current != handle => ShapeReader.Refetch(resolved.Shape, "shape lineage changed"),
                 ResolvedShape resolved => offset switch
                 {
-                    DecimalOffset at => await reader.ManifestAsync(resolved.Shape, at.Value, cancellationToken) switch
-                    {
-                        ShapeMirrorManifest manifest => manifest,
-                        ShapeRefetch refetch => refetch,
-                        Unavailable unavailable => unavailable,
-                    },
+                    DecimalOffset at => await ReadManifestAsync(resolved, at.Value),
                     SnapshotOffset => new ShapeMirrorManifest(resolved.Shape.Handle, []),
-                    BootstrapOffset => new Validation("offset -1 is refused"),
+                    BootstrapOffset => new PlatformInvalidRequest("offset -1 is refused"),
                 },
-                Validation invalid => invalid,
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-        };
+                PlatformInvalidRequest invalid => invalid,
+                PlatformUnauthorized unauthorized => unauthorized,
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

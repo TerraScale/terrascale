@@ -6,8 +6,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union ListDatabasesResponse(DatabasesBody, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class ListDatabasesEndpoint(DatabaseAccess access, CatalogStore catalog, TerraBaseOptions options, TimeProvider time)
-    : Endpoint<PageInput, Result<DatabasesBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<PageInput, ListDatabasesResponse>
 {
     public override void Configure()
     {
@@ -20,7 +22,7 @@ internal sealed class ListDatabasesEndpoint(DatabaseAccess access, CatalogStore 
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<DatabasesBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<ListDatabasesResponse> HandleAsync(
         PageInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -31,15 +33,15 @@ internal sealed class ListDatabasesEndpoint(DatabaseAccess access, CatalogStore 
                 ResolvedProject project => await catalog.ListDatabasesAsync(project.Project.Id, request.After, limit, cancellationToken) switch
                 {
                     CatalogPage<DatabaseRecord> page => Body(page),
-                    Unavailable unavailable => unavailable,
+                    BackendUnavailable unavailable => unavailable,
                 },
-                Validation invalid => invalid,
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                InvalidInput invalid => invalid,
+                CredentialRejected unauthorized => unauthorized,
+                CallerForbidden forbidden => forbidden,
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
+            InvalidInput invalid => invalid,
         };
     }
 

@@ -22,6 +22,12 @@ try
     var services = builder.Services;
     services.AddSingleton(options);
     services.AddSingleton(TimeProvider.System);
+    if (ConfigureQuic(services, options, TimeProvider.System) is { } invalid)
+    {
+        await Console.Error.WriteLineAsync($"ts-platform: {invalid.Message}");
+        return 1;
+    }
+
     services.ConfigureHttpJsonOptions(json =>
     {
         json.SerializerOptions.TypeInfoResolverChain.Insert(0, PlatformJsonContext.Default);
@@ -51,7 +57,6 @@ try
         .AddSingleton<PlatformReadiness>()
         .AddSingleton<PlatformMetrics>()
         .AddSingleton<QuicMeshMetrics>()
-        .AddSingleton<TerraBaseQuic>()
         .AddSingleton<TerraBaseClient>()
         .AddSingleton<PlatformStore>()
         .AddSingleton<OidcTokens>()
@@ -106,4 +111,34 @@ catch (Exception error)
 {
     await Console.Error.WriteLineAsync($"ts-platform: {error.Message}");
     return 1;
+}
+
+static MeshPkiInvalid? ConfigureQuic(IServiceCollection services, PlatformOptions options, TimeProvider timeProvider)
+{
+    if (options.TerraBaseQuic is not { } endpoint)
+    {
+        services.AddSingleton(static _ => new TerraBaseQuic());
+        return null;
+    }
+
+    MeshPkiOutcome outcome = endpoint.Pem is { } pem
+        ? QuicMeshPki.LoadPem(pem.CertificatePath, pem.KeyPath, pem.AuthorityPath, options.Node, options.Region, timeProvider)
+        : QuicMeshPki.DeriveNode(QuicMeshPki.DecodeSecret(options.PeerSecret), options.Node, options.Region, timeProvider);
+    return outcome switch
+    {
+        QuicMeshCertificates certificates => Register(certificates),
+        MeshPkiInvalid invalid => invalid,
+    };
+
+    MeshPkiInvalid? Register(QuicMeshCertificates certificates)
+    {
+        services.AddSingleton(provider => new TerraBaseQuic(
+            endpoint,
+            certificates,
+            options,
+            provider.GetRequiredService<QuicMeshMetrics>(),
+            timeProvider,
+            provider.GetRequiredService<ILogger<QuicRpcClient>>()));
+        return null;
+    }
 }

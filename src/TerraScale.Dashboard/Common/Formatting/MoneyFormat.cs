@@ -6,7 +6,6 @@ namespace TerraScale.Dashboard.Common.Formatting
     {
         public static string Money(long minorUnits, string currency = "usd")
         {
-            // Stripe represents ISK and UGX charges with two decimal places.
             var zeroDecimal = currency.ToLowerInvariant() is "bif" or "clp" or "djf" or "gnf" or "jpy" or "kmf" or "krw" or
                 "mga" or "pyg" or "rwf" or "vnd" or "vuv" or "xaf" or "xof" or "xpf";
             var amount = Math.Abs((decimal)minorUnits / (zeroDecimal ? 1m : 100m))

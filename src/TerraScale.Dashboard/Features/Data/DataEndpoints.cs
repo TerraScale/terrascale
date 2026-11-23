@@ -8,7 +8,6 @@ using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Data
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     using NotFoundEndpoints = TerraScale.Dashboard.Features.NotFound.NotFoundEndpoints;
     public static class DataEndpoints
     {
@@ -64,34 +63,32 @@ namespace TerraScale.Dashboard.Features.Data
                         var result = await data.SqlAsync(context, id, form["sql"].ToString(), true, http.RequestAborted);
                         return TypedResults.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
                     }
-                    switch (await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted))
+                    var stored = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
+                    return stored switch
                     {
-                        case SavedQuery savedQuery:
-                            if (http.Request.IsDatastarRequest)
-                            {
-                                return await PageAsync(http, context, id, data, saved);
-                            }
-                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(savedQuery.Id)) : TypedResults.Json(PublicSavedQuery(savedQuery), statusCode: 201);
-                        case Forbidden failure:
-                            return await Refused(StatusCodes.Status403Forbidden, failure.Message);
-                        case Validation failure:
-                            return await Refused(StatusCodes.Status422UnprocessableEntity, failure.Message);
-                        case Conflict failure:
-                            return await Refused(StatusCodes.Status409Conflict, failure.Message);
-                    }
+                        SavedQuery when http.Request.IsDatastarRequest => await PageAsync(http, context, id, data, saved),
+                        SavedQuery savedQuery => DatabaseEndpoints.WantsHtml(http)
+                            ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(savedQuery.Id))
+                            : TypedResults.Json(PublicSavedQuery(savedQuery), statusCode: 201),
+                        DashboardForbidden failure => await Refused(StatusCodes.Status403Forbidden, failure.Message),
+                        DashboardValidation failure => await Refused(StatusCodes.Status422UnprocessableEntity, failure.Message),
+                        DashboardConflict failure => await Refused(StatusCodes.Status409Conflict, failure.Message),
+                    };
                 }
                 if (action == "saved-queries/delete")
                 {
-                    switch (await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted))
+                    var deleted = await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted);
+                    IResult? refusal = deleted switch
                     {
-                        case Done:
-                            break;
-                        case NotFound failure:
-                            return DatabaseResults.WantsHtml(http)
-                                ? NotFoundEndpoints.Page(http, context)
-                                : TypedResults.Problem(failure.Message ?? "Not found.", statusCode: StatusCodes.Status404NotFound);
-                        case Forbidden failure:
-                            return await Refused(StatusCodes.Status403Forbidden, failure.Message);
+                        Done => null,
+                        DashboardNotFound failure => DatabaseResults.WantsHtml(http)
+                            ? NotFoundEndpoints.Page(http, context)
+                            : TypedResults.Problem(failure.Message, statusCode: StatusCodes.Status404NotFound),
+                        DashboardForbidden failure => await Refused(StatusCodes.Status403Forbidden, failure.Message),
+                    };
+                    if (refusal is not null)
+                    {
+                        return refusal;
                     }
 
                     if (http.Request.IsDatastarRequest)

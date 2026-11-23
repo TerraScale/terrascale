@@ -4,11 +4,10 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
-    public readonly union ProjectInvitationPageResult(TsAuthPlatformPage<TsAuthPlatformInvitation>, Forbidden, Validation, Unavailable);
+    public readonly union ProjectInvitationPageResult(TsAuthPlatformPage<TsAuthPlatformInvitation>, DashboardForbidden, DashboardValidation, DashboardUnavailable);
 
-    public readonly union ProjectInvitationRevocation(Done, Forbidden, Validation, Unavailable, InvalidInvitation, NotFound, Conflict);
+    public readonly union ProjectInvitationRevocation(Done, DashboardForbidden, DashboardValidation, DashboardUnavailable, InvalidInvitation, DashboardNotFound, DashboardConflict);
 
     public sealed record InvalidInvitation(string Message);
 
@@ -20,12 +19,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (!context.CanWriteProjectData || context.Project!.Role != "admin")
             {
-                return new Forbidden("A project admin is required to manage project invitations.");
+                return new DashboardForbidden("A project admin is required to manage project invitations.");
             }
 
             if (after is not null && !ValidCursor(after))
             {
-                return new Validation("The page cursor is invalid. Open the first page.");
+                return new DashboardValidation("The page cursor is invalid. Open the first page.");
             }
 
             var page = await platform.ListProjectInvitationsAsync(context.Session, context.Organization!.Id, context.Project.Id, after, cancellationToken);
@@ -36,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 page.Items.Select(item => item.Id).Distinct().Count() != page.Items.Count ||
                 page.Next is not null && (!ValidCursor(page.Next) || page.Next == after))
             {
-                return new Unavailable("The project invitation page is invalid.");
+                return new DashboardUnavailable("The project invitation page is invalid.");
             }
 
             return page;
@@ -44,11 +43,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
         public async Task<ProjectInvitationRevocation> RevokeAsync(AccountContext context, string invitationId, string? after, CancellationToken cancellationToken)
         {
-            return await ReadAsync(context, after, cancellationToken) switch
+            var outcome = await ReadAsync(context, after, cancellationToken);
+            return outcome switch
             {
-                Forbidden error => error,
-                Validation error => error,
-                Unavailable error => error,
+                DashboardForbidden error => error,
+                DashboardValidation error => error,
+                DashboardUnavailable error => error,
                 TsAuthPlatformPage<TsAuthPlatformInvitation> listed => await RevokeAsync(context, listed, invitationId, cancellationToken),
             };
         }
@@ -60,17 +60,15 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             {
                 return new InvalidInvitation("Choose a valid invitation from this project page.");
             }
-            // The provider authorizes the invitation's immutable actual project. Bind it to this
-            // selected project first, including when the caller administers multiple projects.
             var invitation = page.Items.SingleOrDefault(item => item.Id == invitationId);
             if (invitation is null)
             {
-                return new NotFound("This invitation is unavailable on the selected project page. Reload before retrying.");
+                return new DashboardNotFound("This invitation is unavailable on the selected project page. Reload before retrying.");
             }
 
             if (invitation.Status is not ("pending" or "expired"))
             {
-                return new Conflict("This invitation is no longer pending. Reload its current status.");
+                return new DashboardConflict("This invitation is no longer pending. Reload its current status.");
             }
 
             await platform.RevokeInvitationAsync(context.Session, context.Organization!.Id, invitation.Id, cancellationToken);

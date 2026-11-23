@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
@@ -17,8 +16,8 @@ public sealed class RequestStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
         await proofs.RequestAsync(caller, await this.BodyAsync(StepUpJson.Default.StepUpRequest, cancellationToken), cancellationToken) switch
         {
             StepUpBody body => TypedResults.Json(body, StepUpJson.Default.StepUpBody, statusCode: StatusCodes.Status201Created),
-            Validation failure => ErrorResults.ToResult(failure),
-            QuotaExceeded failure => ErrorResults.ToResult(failure),
-            Forbidden failure => ErrorResults.ToResult(failure),
+            AuthValidation failure => ErrorResults.ToResult(failure),
+            AuthQuotaExceeded failure => ErrorResults.ToResult(failure),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
         };
 }

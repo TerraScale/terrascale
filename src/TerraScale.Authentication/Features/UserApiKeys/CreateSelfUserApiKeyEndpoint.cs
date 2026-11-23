@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.UserApiKeys;
@@ -20,7 +19,7 @@ public sealed class CreateSelfUserApiKeyEndpoint(PlatformAuthentication authenti
         var now = this.HttpContext.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
         if (request.ExpiresAt > now.AddDays(365))
         {
-            return ErrorResults.ToResult(new Validation("Self-service keys must expire within 365 days."));
+            return ErrorResults.ToResult(new AuthValidation("Self-service keys must expire within 365 days."));
         }
 
         request = request with { ExpiresAt = request.ExpiresAt ?? now.AddDays(90) };

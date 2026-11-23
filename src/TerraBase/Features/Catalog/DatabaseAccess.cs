@@ -2,8 +2,15 @@ using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Rules;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Catalog;
+
+internal readonly union DatabaseResolution(ResolvedDatabase, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
+internal readonly union ProjectResolution(ResolvedProject, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
+internal readonly union ProjectAuthorization(Completed, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
 public sealed record ResolvedProject(ProjectRecord Project, Caller Caller);
 
@@ -11,28 +18,28 @@ public sealed record ResolvedDatabase(ProjectRecord Project, DatabaseRecord Data
 
 internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases databases, TimeProvider time)
 {
-    public static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
+    public static readonly ResourceNotFound UnknownDatabase = new("the database does not exist", "unknown_database");
 
-    private static readonly NotFound UnknownProject = new("the project does not exist", "unknown_project");
+    private static readonly ResourceNotFound UnknownProject = new("the project does not exist", "unknown_project");
 
-    private static readonly Forbidden ServiceDenied = new("the caller holds no grant for this project", "forbidden_caller");
+    private static readonly CallerForbidden ServiceDenied = new("the caller holds no grant for this project", "forbidden_caller");
 
-    public async ValueTask<Result<ResolvedDatabase, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> DataAsync(
+    public async ValueTask<DatabaseResolution> DataAsync(
         Caller caller, string? projectReference, string? databaseReference, CancellationToken cancellationToken)
     {
         if (caller is AnonymousCaller)
         {
-            return new Unauthorized("SQL needs a bearer credential", "unauthorized");
+            return new CredentialRejected("SQL needs a bearer credential", "unauthorized");
         }
 
         if (ParseProject(projectReference) is not { } projectId)
         {
-            return new Validation("project must be a canonical uppercase ULID", "invalid_project");
+            return new InvalidInput("project must be a canonical uppercase ULID", "invalid_project");
         }
 
         if (databaseReference is null || (!DatabaseNames.IsValid(databaseReference) && !IsId(databaseReference)))
         {
-            return new Validation("database must be a canonical uppercase ULID or a lowercase name of at most 63 characters", "invalid_database");
+            return new InvalidInput("database must be a canonical uppercase ULID or a lowercase name of at most 63 characters", "invalid_database");
         }
 
         if (Foreign(caller, projectId) is { } refusal)
@@ -45,34 +52,38 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
             return ServiceDenied;
         }
 
-        return await catalog.GetProjectAsync(projectId, cancellationToken) switch
+        var outcome = await catalog.GetProjectAsync(projectId, cancellationToken);
+        return outcome switch
         {
             ProjectRecord project => await DataInProjectAsync(caller, project, databaseReference, cancellationToken),
-            NotFound => UnknownDatabase,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound => UnknownDatabase,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<ResolvedDatabase, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> DataByIdAsync(
-        Caller caller, Ulid databaseId, CancellationToken cancellationToken) =>
-        await catalog.GetDatabaseAsync(databaseId, cancellationToken) switch
+    public async ValueTask<DatabaseResolution> DataByIdAsync(
+        Caller caller, Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var outcome = await catalog.GetDatabaseAsync(databaseId, cancellationToken);
+        return outcome switch
         {
             DatabaseRecord database => await DataAsync(caller, database.ProjectId.ToString(), database.Id.ToString(), cancellationToken),
-            NotFound => UnknownDatabase,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound => UnknownDatabase,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 
-    public async ValueTask<Result<ResolvedProject, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ProjectAsync(
+    public async ValueTask<ProjectResolution> ProjectAsync(
         Caller caller, string? projectReference, string scope, CancellationToken cancellationToken)
     {
         if (caller is AnonymousCaller)
         {
-            return new Unauthorized("database management needs a bearer credential", "unauthorized");
+            return new CredentialRejected("database management needs a bearer credential", "unauthorized");
         }
 
         if (ParseProject(projectReference) is not { } projectId)
         {
-            return new Validation("project must be a canonical uppercase ULID", "invalid_project");
+            return new InvalidInput("project must be a canonical uppercase ULID", "invalid_project");
         }
 
         if (Foreign(caller, projectId) is { } refusal)
@@ -85,21 +96,22 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
             return ServiceDenied;
         }
 
-        return await catalog.GetProjectAsync(projectId, cancellationToken) switch
+        var outcome = await catalog.GetProjectAsync(projectId, cancellationToken);
+        return outcome switch
         {
             ProjectRecord project => await AuthorizeProjectAsync(caller, project, null, scope, cancellationToken) switch
             {
-                Done => new ResolvedProject(project, caller),
-                Forbidden forbidden => forbidden,
-                NotFound => UnknownProject,
-                Unavailable unavailable => unavailable,
+                Completed => new ResolvedProject(project, caller),
+                CallerForbidden forbidden => forbidden,
+                ResourceNotFound => UnknownProject,
+                BackendUnavailable unavailable => unavailable,
             },
-            NotFound => await EnrollProjectAsync(caller, projectId, scope, cancellationToken),
-            Unavailable unavailable => unavailable,
+            ResourceNotFound => await EnrollProjectAsync(caller, projectId, scope, cancellationToken),
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<ResolvedProject, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> EnrollProjectAsync(
+    private async ValueTask<ProjectResolution> EnrollProjectAsync(
         Caller caller, Ulid projectId, string scope, CancellationToken cancellationToken)
     {
         if (caller is not ProjectCaller { OrganizationId: { } organizationId } token || token.ProjectId != projectId
@@ -113,76 +125,83 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
             return MissingScope(scope);
         }
 
-        return await catalog.EnrollProjectAsync(projectId, organizationId, time.GetUtcNow(), cancellationToken) switch
+        var outcome = await catalog.EnrollProjectAsync(projectId, organizationId, time.GetUtcNow(), cancellationToken);
+        return outcome switch
         {
             ProjectRecord enrolled => new ResolvedProject(enrolled, caller),
-            NotFound => UnknownProject,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound => UnknownProject,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<ResolvedDatabase, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ManagedAsync(
-        Caller caller, string? projectReference, string? databaseReference, string scope, CancellationToken cancellationToken) =>
-        await ProjectAsync(caller, projectReference, scope, cancellationToken) switch
+    public async ValueTask<DatabaseResolution> ManagedAsync(
+        Caller caller, string? projectReference, string? databaseReference, string scope, CancellationToken cancellationToken)
+    {
+        var outcome = await ProjectAsync(caller, projectReference, scope, cancellationToken);
+        return outcome switch
         {
             ResolvedProject when databaseReference is null => UnknownDatabase,
             ResolvedProject project => await catalog.FindDatabaseAsync(project.Project.Id, databaseReference, cancellationToken) switch
             {
                 DatabaseRecord database when Reaches(caller, database) => new ResolvedDatabase(project.Project, database, caller, CanWrite(caller), EndUser(caller)),
-                DatabaseRecord or NotFound => UnknownDatabase,
-                Unavailable unavailable => unavailable,
+                DatabaseRecord or ResourceNotFound => UnknownDatabase,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 
-    public ValueTask<Result<ISqlDatabaseSession, Unavailable>> OpenAsync(DatabaseRecord database, CancellationToken cancellationToken)
+    public ValueTask<TenantReadyOutcome> OpenAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         return databases.OpenOrCreateAsync(database.Id, database.KeyId, database.Strict, cancellationToken);
     }
 
-    public async ValueTask<Result<Done, Forbidden, NotFound, Unavailable>> AuthorizeProjectAsync(
+    public async ValueTask<ProjectAuthorization> AuthorizeProjectAsync(
         Caller caller, ProjectRecord project, DatabaseRecord? database, string scope, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
         return caller switch
         {
             AnonymousCaller => UnknownProject,
-            PeerCaller => new Done(),
+            PeerCaller => new Completed(),
             ServiceCaller service => Service(service, project, scope),
             ApiKeyCaller key when !key.Key.Reaches(project, database) => UnknownProject,
-            ApiKeyCaller key => key.Key.Grants(scope) ? new Done() : MissingScope(scope),
+            ApiKeyCaller key => key.Key.Grants(scope) ? new Completed() : MissingScope(scope),
             UserCaller user => await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken) switch
             {
-                OrganizationRecord organization when string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) => new Done(),
-                OrganizationRecord or NotFound => UnknownProject,
-                Unavailable unavailable => unavailable,
+                OrganizationRecord organization when string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) => new Completed(),
+                OrganizationRecord or ResourceNotFound => UnknownProject,
+                BackendUnavailable unavailable => unavailable,
             },
             ProjectCaller token when token.ProjectId != project.Id || (token.OrganizationId is { } org && org != project.OrganizationId) => UnknownProject,
-            ProjectCaller token => token.Scopes.Contains(scope) ? new Done() : MissingScope(scope),
+            ProjectCaller token => token.Scopes.Contains(scope) ? new Completed() : MissingScope(scope),
             EndUserCaller endUser when endUser.ProjectId != project.Id => UnknownProject,
-            EndUserCaller => scope is Scopes.SqlRead or Scopes.SqlWrite ? new Done() : MissingScope(scope),
+            EndUserCaller => scope is Scopes.SqlRead or Scopes.SqlWrite ? new Completed() : MissingScope(scope),
         };
     }
 
-    private async ValueTask<Result<ResolvedDatabase, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> DataInProjectAsync(
-        Caller caller, ProjectRecord project, string databaseReference, CancellationToken cancellationToken) =>
-        await catalog.FindDatabaseAsync(project.Id, databaseReference, cancellationToken) switch
+    private async ValueTask<DatabaseResolution> DataInProjectAsync(
+        Caller caller, ProjectRecord project, string databaseReference, CancellationToken cancellationToken)
+    {
+        var outcome = await catalog.FindDatabaseAsync(project.Id, databaseReference, cancellationToken);
+        return outcome switch
         {
             DatabaseRecord database when Reaches(caller, database) => await AuthorizeProjectAsync(caller, project, database, Scopes.SqlRead, cancellationToken) switch
             {
-                Done => new ResolvedDatabase(project, database, caller, CanWrite(caller, project), EndUser(caller)),
-                Forbidden forbidden => forbidden,
-                NotFound => UnknownDatabase,
-                Unavailable unavailable => unavailable,
+                Completed => new ResolvedDatabase(project, database, caller, CanWrite(caller, project), EndUser(caller)),
+                CallerForbidden forbidden => forbidden,
+                ResourceNotFound => UnknownDatabase,
+                BackendUnavailable unavailable => unavailable,
             },
-            DatabaseRecord or NotFound => UnknownDatabase,
-            Unavailable unavailable => unavailable,
+            DatabaseRecord or ResourceNotFound => UnknownDatabase,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 
     private static bool Reaches(Caller caller, DatabaseRecord database) => caller switch
     {
@@ -211,8 +230,8 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
         AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller => null,
     };
 
-    private static Result<Done, Forbidden, NotFound, Unavailable> Service(ServiceCaller service, ProjectRecord project, string scope) =>
-        ServiceAllows(service, project.Id, scope) ? new Done() : ServiceDenied;
+    private static ProjectAuthorization Service(ServiceCaller service, ProjectRecord project, string scope) =>
+        ServiceAllows(service, project.Id, scope) ? new Completed() : ServiceDenied;
 
     private static bool ServiceAllows(ServiceCaller service, Ulid projectId, string scope)
     {
@@ -232,14 +251,14 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
         };
     }
 
-    private static Unauthorized? Foreign(Caller caller, Ulid projectId) => caller switch
+    private static CredentialRejected? Foreign(Caller caller, Ulid projectId) => caller switch
     {
         EndUserCaller endUser when endUser.ProjectId != projectId =>
-            new Unauthorized("a project tenant token only reaches its own project's routes", "invalid_token"),
+            new CredentialRejected("a project tenant token only reaches its own project's routes", "invalid_token"),
         AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => null,
     };
 
-    private static Forbidden MissingScope(string scope) =>
+    private static CallerForbidden MissingScope(string scope) =>
         new(string.Concat("the credential lacks the ", scope, " scope"), "forbidden_scope", new Dictionary<string, string> { ["scope"] = scope });
 
     private static bool IsId(string reference) => reference.Length == 26 && Ulid.TryParse(reference, out _);

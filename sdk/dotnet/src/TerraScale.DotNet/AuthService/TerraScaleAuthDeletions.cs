@@ -7,10 +7,6 @@ namespace TerraScale.DotNet;
 
 public sealed partial class TerraScaleAuthPlatformClient
 {
-    /// <summary>
-    /// GET /v1/{slug}/deletions with service client Basic credentials. Returns at most 20 completed,
-    /// unacknowledged deletion proofs. Validates every proof before returning the page; sent once.
-    /// </summary>
     public async Task<AuthResult<TerraScaleAuthDeletionPage>> ListDeletionsAsync(
         string clientId, string clientSecret, CancellationToken ct = default)
     {
@@ -27,11 +23,6 @@ public sealed partial class TerraScaleAuthPlatformClient
         };
     }
 
-    /// <summary>
-    /// POST /v1/{slug}/deletions/{id}/acknowledge with service client Basic credentials and the exact proof
-    /// scope, subject and organization. Requires 204. The server compares the exact proof idempotently;
-    /// acknowledge only after durable consumer cleanup. Each call is sent once, without automatic retries.
-    /// </summary>
     public Task<AuthOutcome> AcknowledgeDeletionAsync(string clientId, string clientSecret,
         TerraScaleAuthDeletionProof proof, CancellationToken ct = default)
     {
@@ -58,12 +49,10 @@ public sealed partial class TerraScaleAuthPlatformClient
         };
 }
 
-/// <summary>A bounded batch of completed deletion proofs awaiting consumer acknowledgement.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record TerraScaleAuthDeletionPage(
     [property: JsonPropertyName("items")] IReadOnlyList<TerraScaleAuthDeletionProof> Items);
 
-/// <summary>An exact deletion identity: account has no organization, organization binds itself, project binds its organization.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record TerraScaleAuthDeletionProof(
     [property: JsonPropertyName("id")] string Id,

@@ -6,6 +6,10 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Health;
 
+internal readonly union ReadinessResponse(StatusBody, UnavailableStatus<StatusBody>);
+
+internal readonly union BackupHealthResponse(BackupBody, UnavailableStatus<BackupBody>);
+
 public sealed record StatusBody(
     string Status,
     string Version,

@@ -4,7 +4,6 @@ namespace TerraScale.Dashboard.Platform.Persistence
 {
     public static class PlatformJson
     {
-        // Discovery, headless responses and token grants have small fixed envelopes.
         private const int MaxBytes = 65536;
 
         public static async Task<JsonDocument> ReadAsync(HttpContent content, CancellationToken cancellationToken, int maxBytes = MaxBytes)

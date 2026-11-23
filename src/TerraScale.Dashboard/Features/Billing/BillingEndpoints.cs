@@ -50,17 +50,13 @@ namespace TerraScale.Dashboard.Features.Billing
             var paymentMethodUnavailable = false;
             try
             {
-                switch (await paymentMethodRead)
+                var method = await paymentMethodRead;
+                (paymentMethod, paymentMethodUnavailable) = method switch
                 {
-                    case BillingCard card:
-                        paymentMethod = card;
-                        break;
-                    case Unavailable:
-                        paymentMethodUnavailable = true;
-                        break;
-                    case NoCard:
-                        break;
-                }
+                    BillingCard card => (card, false),
+                    DashboardUnavailable => ((BillingCard?)null, true),
+                    NoCard => (null, false),
+                };
             }
             catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)

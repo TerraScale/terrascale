@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union GetOrganizationResponse(OrganizationBody, CredentialRejected, ResourceNotFound, BackendUnavailable);
+
 internal sealed class GetOrganizationEndpoint(ManagementService management)
-    : Endpoint<RouteInput, Result<OrganizationBody, Unauthorized, NotFound, Unavailable>>
+    : Endpoint<RouteInput, GetOrganizationResponse>
 {
     public override void Configure()
     {
@@ -18,15 +20,16 @@ internal sealed class GetOrganizationEndpoint(ManagementService management)
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<OrganizationBody, Unauthorized, NotFound, Unavailable>> HandleAsync(RouteInput request, CancellationToken cancellationToken)
+    public override async ValueTask<GetOrganizationResponse> HandleAsync(RouteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken) switch
+        var outcome = await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken);
+        return outcome switch
         {
             OrganizationRecord organization => OrganizationBody.From(organization),
-            Unauthorized unauthorized => unauthorized,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            CredentialRejected unauthorized => unauthorized,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

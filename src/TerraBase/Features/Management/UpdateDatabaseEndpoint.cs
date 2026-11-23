@@ -31,39 +31,45 @@ internal static class DatabaseUpdates
 {
     public static async ValueTask<UpdateDatabaseResponse> UpdateAsync(
         Caller caller, DatabaseAccess access, ManagementService management, TerraBaseOptions options, TimeProvider time, DatabaseInput request,
-        CancellationToken cancellationToken) =>
-        await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => await management.UpdateDatabaseAsync(resolved.Database, request, cancellationToken) switch
             {
                 DatabaseRecord updated => DatabaseBody.From(updated, options.Region, time.GetUtcNow()),
-                Validation invalid => invalid,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
+                InvalidInput invalid => invalid,
+                StateConflict conflict => conflict,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 
     public static async ValueTask<UpdateDatabaseResponse> TtlAsync(
         Caller caller, DatabaseAccess access, ManagementService management, TerraBaseOptions options, TimeProvider time, DatabaseInput request, long? ttlSeconds,
-        CancellationToken cancellationToken) =>
-        await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => await management.SetTtlAsync(resolved.Database, ttlSeconds, cancellationToken) switch
             {
                 DatabaseRecord updated => DatabaseBody.From(updated, options.Region, time.GetUtcNow()),
-                Validation invalid => invalid,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
+                InvalidInput invalid => invalid,
+                StateConflict conflict => conflict,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 }

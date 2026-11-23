@@ -3,7 +3,6 @@ using Dapper;
 using System.Text.Json.Serialization;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
@@ -41,17 +40,17 @@ public sealed record AgentIdClientBody(string ClientId, string Name, IReadOnlyLi
 
 public sealed record AgentIdClientPageBody(IReadOnlyList<AgentIdClientBody> Items);
 
-public readonly union CreateAgentIdClientResult(AgentIdClientBody, NotFound, Conflict, Forbidden);
+public readonly union CreateAgentIdClientResult(AgentIdClientBody, AuthNotFound, AuthConflict, AuthForbidden);
 
-public readonly union RotateAgentIdClientResult(AgentIdClientSecretBody, NotFound, Conflict, Forbidden);
+public readonly union RotateAgentIdClientResult(AgentIdClientSecretBody, AuthNotFound, AuthConflict, AuthForbidden);
 
-public readonly union DeleteAgentIdClientResult(Done, NotFound, Conflict, Forbidden);
+public readonly union DeleteAgentIdClientResult(AuthCompleted, AuthNotFound, AuthConflict, AuthForbidden);
 
 public sealed record AgentIdClientSecretBody(string ClientId, string ClientSecret, DateTimeOffset? PreviousSecretExpiresAt);
 
-public readonly union OwnerCheck(UserRecord, Forbidden);
+public readonly union OwnerCheck(UserRecord, AuthForbidden);
 
-public readonly union StepUpSave(Done, Forbidden, Conflict);
+public readonly union StepUpSave(AuthCompleted, AuthForbidden, AuthConflict);
 
 public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<AgentIdClients> logger)
 {
@@ -70,7 +69,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         var user = await this.UserAsync(owner.InstanceId, owner.Id, cancellationToken);
         if (user is null)
         {
-            return new NotFound("No such resource.");
+            return new AuthNotFound("No such resource.");
         }
 
         var ownerId = owner.Id;
@@ -78,16 +77,16 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             "SELECT COUNT(*) FROM agentid_clients WHERE owner_user_id = @ownerId", new { ownerId }), cancellationToken);
         if (count >= MaxPerAccount)
         {
-            return new Conflict($"An account can have at most {MaxPerAccount} Sign in as agent clients; delete one first.", "client_limit");
+            return new AuthConflict($"An account can have at most {MaxPerAccount} Sign in as agent clients; delete one first.", "client_limit");
         }
 
         var secret = Tokens.RandomToken(48);
         var client = new AgentIdClientRecord(AuthIds.New(), owner.Id, name, redirectUris, Tokens.Sha256Hex(secret), clock.GetUtcNow());
         return (await this.TrySaveAsync(proof, [Change.Insert(client), Change.Update(user, user.Value)], cancellationToken)) switch
         {
-            Done => this.Created(client, secret, owner.Id),
-            Conflict conflict => conflict,
-            Forbidden forbidden => forbidden,
+            AuthCompleted => this.Created(client, secret, owner.Id),
+            AuthConflict conflict => conflict,
+            AuthForbidden forbidden => forbidden,
         };
     }
 
@@ -109,7 +108,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken);
         if (owned is null)
         {
-            return new NotFound("No such resource.");
+            return new AuthNotFound("No such resource.");
         }
 
         var client = owned;
@@ -123,9 +122,9 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         };
         return (await this.TrySaveAsync(proof, [Change.Update(client, rotated)], cancellationToken)) switch
         {
-            Done => Rotated(clientId, secret, expires, proof.Caller.Id),
-            Conflict conflict => conflict,
-            Forbidden forbidden => forbidden,
+            AuthCompleted => Rotated(clientId, secret, expires, proof.Caller.Id),
+            AuthConflict conflict => conflict,
+            AuthForbidden forbidden => forbidden,
         };
     }
 
@@ -141,21 +140,21 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken);
         if (owned is null)
         {
-            return new NotFound("No such resource.");
+            return new AuthNotFound("No such resource.");
         }
 
         return (await this.TrySaveAsync(proof, [Change.Delete(owned)], cancellationToken)) switch
         {
-            Done => Deleted(clientId, proof.Caller.Id),
-            Conflict conflict => conflict,
-            Forbidden forbidden => forbidden,
+            AuthCompleted => Deleted(clientId, proof.Caller.Id),
+            AuthConflict conflict => conflict,
+            AuthForbidden forbidden => forbidden,
         };
     }
 
     private DeleteAgentIdClientResult Deleted(string clientId, string actor)
     {
         logger.ZLogInformation($"Sign in as agent client {clientId} deleted by {actor}");
-        return new Done();
+        return new AuthCompleted();
     }
 
     public async Task<AgentIdRegistration?> FindAsync(string clientId, CancellationToken cancellationToken)
@@ -183,7 +182,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         ArgumentNullException.ThrowIfNull(caller);
         return caller.ActingAgentId is null && caller.InstanceId == PlatformTenant.Id
             ? caller
-            : new Forbidden("Only the account itself, not an agent acting for it, can do this.", "owner_required");
+            : new AuthForbidden("Only the account itself, not an agent acting for it, can do this.", "owner_required");
     }
     public static string? RedirectUri(string? value) =>
         value is { Length: > 0 and <= AgentIdClientRecord.MaxRedirectUriLength } && Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
@@ -227,12 +226,12 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
     {
         if (proof.Record.ExpiresAt <= clock.GetUtcNow())
         {
-            return new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
+            return new AuthForbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
         }
 
         return await data.SaveAsync([.. proof.Operations, .. changes], cancellationToken)
-            ? new Done()
-            : new Conflict("The client, the account or its step-up proof changed; try again.", "version_conflict");
+            ? new AuthCompleted()
+            : new AuthConflict("The client, the account or its step-up proof changed; try again.", "version_conflict");
     }
 
     private static AgentIdClientBody Body(AgentIdClientRecord client) =>

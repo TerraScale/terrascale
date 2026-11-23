@@ -5,11 +5,17 @@ using Microsoft.Extensions.Logging;
 
 namespace TerraScale.QuicRpc;
 
-internal delegate ValueTask<Result<FrameBuilder, QuicRemoteError>> UnaryDispatch(QuicCallContext context, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken);
+internal readonly union UnaryDispatchOutcome(FrameBuilder, QuicRemoteError);
 
-internal delegate IAsyncEnumerable<Result<FrameBuilder, QuicRemoteError>> StreamDispatch(QuicCallContext context, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken);
+internal readonly union StreamDispatchOutcome(FrameBuilder, QuicRemoteError);
 
-internal delegate ValueTask<Result<Done, QuicRemoteError>> PushDispatch(QuicCallContext context, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken);
+internal readonly union PushDispatchOutcome(QuicSent, QuicRemoteError);
+
+internal delegate ValueTask<UnaryDispatchOutcome> UnaryDispatch(QuicCallContext context, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken);
+
+internal delegate IAsyncEnumerable<StreamDispatchOutcome> StreamDispatch(QuicCallContext context, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken);
+
+internal delegate ValueTask<PushDispatchOutcome> PushDispatch(QuicCallContext context, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken);
 
 internal readonly union BidiRoute(UnaryDispatch, StreamDispatch);
 
@@ -55,7 +61,7 @@ public sealed class QuicRpcHost : IAsyncDisposable
         }
     }
 
-    public QuicRpcHost MapUnary<TReq, TRes>(ushort messageTypeId, Func<QuicCallContext, TReq, CancellationToken, ValueTask<Result<TRes, QuicRemoteError>>> handler)
+    public QuicRpcHost MapUnary<TReq, TRes>(ushort messageTypeId, Func<QuicCallContext, TReq, CancellationToken, ValueTask<QuicHandlerOutcome<TRes>>> handler)
         where TReq : IBinaryMessage<TReq>
         where TRes : IBinaryMessage<TRes>
     {
@@ -67,7 +73,8 @@ public sealed class QuicRpcHost : IAsyncDisposable
                 return Malformed(context);
             }
 
-            return await handler(context, request, cancellationToken).ConfigureAwait(false) switch
+            var outcome = await handler(context, request, cancellationToken);
+            return outcome switch
             {
                 TRes response => FrameBuilder.Encode(response),
                 QuicRemoteError error => error,
@@ -77,7 +84,7 @@ public sealed class QuicRpcHost : IAsyncDisposable
         return this;
     }
 
-    public QuicRpcHost MapServerStream<TReq, TRes>(ushort messageTypeId, Func<QuicCallContext, TReq, CancellationToken, IAsyncEnumerable<Result<TRes, QuicRemoteError>>> handler)
+    public QuicRpcHost MapServerStream<TReq, TRes>(ushort messageTypeId, Func<QuicCallContext, TReq, CancellationToken, IAsyncEnumerable<QuicHandlerOutcome<TRes>>> handler)
         where TReq : IBinaryMessage<TReq>
         where TRes : IBinaryMessage<TRes>
     {
@@ -97,8 +104,8 @@ public sealed class QuicRpcHost : IAsyncDisposable
                 return Malformed(context);
             }
 
-            await handler(context, message, cancellationToken).ConfigureAwait(false);
-            return new Done();
+            await handler(context, message, cancellationToken);
+            return new QuicSent();
         };
         lock (_gate)
         {
@@ -112,11 +119,11 @@ public sealed class QuicRpcHost : IAsyncDisposable
         return this;
     }
 
-    public async ValueTask<Result<IPEndPoint, Unavailable>> StartAsync(CancellationToken cancellationToken)
+    public async ValueTask<QuicHostStartOutcome> StartAsync(CancellationToken cancellationToken)
     {
         if (!QuicPlatform.IsSupported)
         {
-            return new Unavailable("System.Net.Quic is unavailable: libmsquic.so.2 (MsQuic 2.x) could not be loaded.", "quic_unsupported");
+            return new QuicUnavailable("System.Net.Quic is unavailable: libmsquic.so.2 (MsQuic 2.x) could not be loaded.", "quic_unsupported");
         }
 
         QuicRoutes routes;
@@ -128,10 +135,11 @@ public sealed class QuicRpcHost : IAsyncDisposable
         }
 
         var core = new QuicRpcServerCore(_options, routes, _metrics, _timeProvider, _logger);
-        return await core.StartAsync(cancellationToken).ConfigureAwait(false) switch
+        var outcome = await core.StartAsync(cancellationToken);
+        return outcome switch
         {
-            IPEndPoint bound => await AttachAsync(core, bound).ConfigureAwait(false),
-            Unavailable unavailable => unavailable,
+            IPEndPoint bound => await AttachAsync(core, bound),
+            QuicUnavailable unavailable => unavailable,
         };
     }
 
@@ -152,15 +160,15 @@ public sealed class QuicRpcHost : IAsyncDisposable
 
         if (core is not null && QuicPlatform.IsSupported)
         {
-            await core.DisposeAsync().ConfigureAwait(false);
+            await core.DisposeAsync();
         }
     }
 
     private static QuicRemoteError Malformed(QuicCallContext context) =>
         new(QuicRemoteError.MalformedRequest, $"The payload for message type {context.MessageTypeId} is malformed.");
 
-    private static async IAsyncEnumerable<Result<FrameBuilder, QuicRemoteError>> AdaptStream<TReq, TRes>(
-        Func<QuicCallContext, TReq, CancellationToken, IAsyncEnumerable<Result<TRes, QuicRemoteError>>> handler,
+    private static async IAsyncEnumerable<StreamDispatchOutcome> AdaptStream<TReq, TRes>(
+        Func<QuicCallContext, TReq, CancellationToken, IAsyncEnumerable<QuicHandlerOutcome<TRes>>> handler,
         QuicCallContext context,
         ReadOnlyMemory<byte> payload,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -173,7 +181,7 @@ public sealed class QuicRpcHost : IAsyncDisposable
             yield break;
         }
 
-        await foreach (var item in handler(context, request, cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+        await foreach (var item in handler(context, request, cancellationToken).WithCancellation(cancellationToken))
         {
             yield return item switch
             {
@@ -183,7 +191,7 @@ public sealed class QuicRpcHost : IAsyncDisposable
         }
     }
 
-    private async ValueTask<Result<IPEndPoint, Unavailable>> AttachAsync(QuicRpcServerCore core, IPEndPoint bound)
+    private async ValueTask<QuicHostStartOutcome> AttachAsync(QuicRpcServerCore core, IPEndPoint bound)
     {
         lock (_gate)
         {
@@ -197,10 +205,10 @@ public sealed class QuicRpcHost : IAsyncDisposable
 
         if (QuicPlatform.IsSupported)
         {
-            await core.DisposeAsync().ConfigureAwait(false);
+            await core.DisposeAsync();
         }
 
-        return new Unavailable("The QUIC host was disposed while starting.", "host_disposed");
+        return new QuicUnavailable("The QUIC host was disposed while starting.", "host_disposed");
     }
 
     private void Register(ushort messageTypeId, BidiRoute route)

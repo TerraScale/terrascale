@@ -5,8 +5,10 @@ using BoundSqlRequest = TerraScale.Endpoints.Binding.Bound<TerraBase.Features.Sq
 
 namespace TerraBase.Features.Sql;
 
+internal readonly union LegacyExecuteSqlResponse(LegacyExecuteBody, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class SqlExecuteEndpoint(SqlFlow flow)
-    : Endpoint<SqlExecuteInput, Result<LegacyExecuteBody, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<SqlExecuteInput, LegacyExecuteSqlResponse>
 {
     public override void Configure()
     {
@@ -25,7 +27,7 @@ internal sealed class SqlExecuteEndpoint(SqlFlow flow)
     protected override ValueTask<BoundSqlRequest> BindAsync(CancellationToken cancellationToken) =>
         SqlFlow.BindAsync(HttpContext.Request, base.BindAsync, cancellationToken);
 
-    public override async ValueTask<Result<LegacyExecuteBody, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<LegacyExecuteSqlResponse> HandleAsync(
         SqlExecuteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -36,18 +38,19 @@ internal sealed class SqlExecuteEndpoint(SqlFlow flow)
 
         if (request.Durability is not (null or "local" or "all"))
         {
-            return new Validation("durability is local or all", "invalid_request");
+            return new InvalidInput("durability is local or all", "invalid_request");
         }
 
-        return await flow.ExecuteAsync(HttpContext, request.Project, request.Database, request.Statements, cancellationToken) switch
+        var outcome = await flow.ExecuteAsync(HttpContext, request.Project, request.Database, request.Statements, cancellationToken);
+        return outcome switch
         {
             SqlRun run => SqlWire.Legacy(run.Results),
             SqlRefusal refusal => refusal,
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

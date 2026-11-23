@@ -4,18 +4,18 @@ namespace TerraBase.Cluster;
 
 public sealed class CommitFinalizer(InRegionRaftRouter raft, DeltaReplicator replicator, ClusterDatabases databases, ChangefeedPublisher changefeed, StrongLockTable locks, ILogger<CommitFinalizer> logger)
 {
-    public async ValueTask<Result<Done, Unavailable, RequestTimeout>> FinalizeFastAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
+    public async ValueTask<InRegionReplicationOutcome> FinalizeFastAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commit);
         if (commit.Sequence == 0)
         {
-            return new Done();
+            return new InRegionReplicated();
         }
 
         databases.Observe(databaseId, commit.Bookmark);
-        var durable = await raft.ReplicateAsync(databaseId, commit, cancellationToken).ConfigureAwait(false);
+        var durable = await raft.ReplicateAsync(databaseId, commit, cancellationToken);
         replicator.PublishFast(databaseId, commit, ackRequested: false);
-        await changefeed.PublishAsync(databaseId, commit, cancellationToken).ConfigureAwait(false);
+        await changefeed.PublishAsync(databaseId, commit, cancellationToken);
         return durable;
     }
 
@@ -30,19 +30,19 @@ public sealed class CommitFinalizer(InRegionRaftRouter raft, DeltaReplicator rep
 
         databases.Observe(databaseId, commit.Bookmark);
         replicator.BroadcastStrongCommit(databaseId, commit);
-        var durable = await raft.ReplicateAsync(databaseId, commit, CancellationToken.None).ConfigureAwait(false);
+        var durable = await raft.ReplicateAsync(databaseId, commit, CancellationToken.None);
         var failure = durable switch
         {
-            Done => null,
-            Unavailable unavailable => unavailable.Message,
-            RequestTimeout timeout => timeout.Message,
+            InRegionReplicated => null,
+            ClusterUnavailable unavailable => unavailable.Message,
+            ClusterTimeout timeout => timeout.Message,
         };
         if (failure is not null)
         {
             ClusterLog.InRegionQuorumUnconfirmed(logger, databaseId, commit.TxId, failure);
         }
 
-        await changefeed.PublishAsync(databaseId, commit, cancellationToken).ConfigureAwait(false);
+        await changefeed.PublishAsync(databaseId, commit, cancellationToken);
     }
 
     public void Abort(Ulid databaseId, Ulid txId, HlcTimestamp priority, IReadOnlyList<string> remoteParticipants)

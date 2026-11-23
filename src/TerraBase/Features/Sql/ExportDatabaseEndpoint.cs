@@ -9,10 +9,12 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Sql;
 
+internal readonly union ExportDatabaseResponse(SqlDump, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 public sealed record ExportInput(string? Project, string? Database);
 
 internal sealed class ExportDatabaseEndpoint(DatabaseAccess access)
-    : Endpoint<ExportInput, Result<SqlDump, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<ExportInput, ExportDatabaseResponse>
 {
     public override void Configure()
     {
@@ -25,23 +27,24 @@ internal sealed class ExportDatabaseEndpoint(DatabaseAccess access)
         Metadata(ListenerMetadata.Client);
     }
 
-    public override async ValueTask<Result<SqlDump, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<ExportDatabaseResponse> HandleAsync(
         ExportInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await access.DataAsync(HttpContext.Caller, request.Project, request.Database, cancellationToken) switch
+        var outcome = await access.DataAsync(HttpContext.Caller, request.Project, request.Database, cancellationToken);
+        return outcome switch
         {
-            ResolvedDatabase { EndUser: not null } => new Forbidden("end users cannot export a database", "forbidden_scope"),
+            ResolvedDatabase { EndUser: not null } => new CallerForbidden("end users cannot export a database", "forbidden_scope"),
             ResolvedDatabase target => await access.OpenAsync(target.Database, cancellationToken) switch
             {
                 ISqlDatabaseSession session => new SqlDump(session, target.Database.Name),
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }
@@ -105,11 +108,12 @@ public sealed class SqlDump(ISqlDatabaseSession session, string name) : IResult
     private async Task<IReadOnlyList<IReadOnlyList<SqlValue>>?> ReadAsync(string sql, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(session.DatabaseId, [SqlBuild.Statement(sql)], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
-        return await session.ExecuteReadAsync(request, cancellationToken) switch
+        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+        return outcome switch
         {
             SqlReadResult { ResultSets: [.., var last] } => last.Rows,
             SqlReadResult => [],
-            SqlError or StorageBusy or RequestTimeout => null,
+            SqlError or StorageBusy or StorageTimeout => null,
         };
     }
 

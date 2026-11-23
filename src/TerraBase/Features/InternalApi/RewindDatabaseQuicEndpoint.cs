@@ -1,5 +1,7 @@
 using System.Buffers;
 using TerraBase.Continuity;
+using TerraBase.Hosting;
+using TerraScale.Contracts.Continuity;
 using TerraScale.Contracts.Quic;
 using TerraScale.QuicRpc;
 
@@ -36,7 +38,7 @@ internal sealed class RewindDatabaseQuicEndpoint(BackupContinuityService continu
         _ = host.MapUnary<RewindDatabaseRequest, RewindDatabaseReply>(QuicMessageType.RewindDatabase, HandleAsync);
     }
 
-    private async ValueTask<Result<RewindDatabaseReply, QuicRemoteError>> HandleAsync(QuicCallContext context, RewindDatabaseRequest request, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<RewindDatabaseReply>> HandleAsync(QuicCallContext context, RewindDatabaseRequest request, CancellationToken cancellationToken)
     {
         if (!CausalBookmark.TryDecode(request.Bookmark, out var bookmark))
         {
@@ -47,7 +49,7 @@ internal sealed class RewindDatabaseQuicEndpoint(BackupContinuityService continu
         return outcome switch
         {
             CausalBookmark => new RewindDatabaseReply(true),
-            Unavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
+            ContinuityUnavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
         };
     }
 }

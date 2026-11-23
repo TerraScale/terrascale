@@ -3,9 +3,8 @@ using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Analytics
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
-    public readonly union AnalyticsSelectionResult(AnalyticsSelection, NotFound, Forbidden, Validation);
+    public readonly union AnalyticsSelectionResult(AnalyticsSelection, DashboardNotFound, DashboardForbidden, DashboardValidation);
 
     public enum AnalyticsSourceState { Available, NotMetered, Unavailable }
     public sealed record AnalyticsSelection(AccountContext Context, string Range, string DatabaseId, string Region)
@@ -16,9 +15,9 @@ namespace TerraScale.Dashboard.Features.Analytics
             return TryFor(context, projectId, databaseId, region, range) switch
             {
                 AnalyticsSelection selection => selection,
-                NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
-                Forbidden failure => throw new AccountAccessException(failure.Message ?? "Forbidden."),
-                Validation failure => throw new AccountAccessException(failure.Message ?? "Invalid request.", 400),
+                DashboardNotFound failure => throw new AccountAccessException(failure.Message, 404),
+                DashboardForbidden failure => throw new AccountAccessException(failure.Message),
+                DashboardValidation failure => throw new AccountAccessException(failure.Message, 400),
             };
         }
 
@@ -26,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Analytics
         {
             if (context.Session.UserId != context.UserId)
             {
-                return new Forbidden("Organization membership is required.");
+                return new DashboardForbidden("Organization membership is required.");
             }
 
             OrganizationRecord org;
@@ -34,7 +33,7 @@ namespace TerraScale.Dashboard.Features.Analytics
             {
                 if (context.Organizations.FirstOrDefault(item => item.Projects.ContainsKey(projectId)) is not { } byProject)
                 {
-                    return new NotFound("Project is unavailable.");
+                    return new DashboardNotFound("Project is unavailable.");
                 }
 
                 org = byProject;
@@ -45,36 +44,35 @@ namespace TerraScale.Dashboard.Features.Analytics
             }
             else
             {
-                return new NotFound("Select an organization.");
+                return new DashboardNotFound("Select an organization.");
             }
 
             var member = org.ContainsMember(context.UserId);
             var id = projectId.Length == 0 ? context.Project?.Id ?? "" : projectId;
             if (org.Projects.GetValueOrDefault(id) is not { } project)
             {
-                return new NotFound("Project is unavailable.");
+                return new DashboardNotFound("Project is unavailable.");
             }
 
             if (project.OrganizationId != org.Id)
             {
-                return new NotFound("Project is unavailable.");
+                return new DashboardNotFound("Project is unavailable.");
             }
 
             if (!member && !ProjectCollaborator.Allows(org, project))
             {
-                return new Forbidden("Organization membership is required.");
+                return new DashboardForbidden("Organization membership is required.");
             }
 
             if (databaseId.Length > 0 && (!project.Databases.TryGetValue(databaseId, out var database) || database.ProjectId != id))
             {
-                return new NotFound("Database is unavailable.");
+                return new DashboardNotFound("Database is unavailable.");
             }
-            // Placement is not reporting scope: historical and automatically admitted regions remain queryable.
             if (region.Length > 0)
             {
                 if (DatabaseRegion.FromId(region.ToLowerInvariant())?.Code is not { } valid)
                 {
-                    return new Validation("Select a valid region.");
+                    return new DashboardValidation("Select a valid region.");
                 }
 
                 region = valid;

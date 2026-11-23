@@ -1,6 +1,5 @@
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
-using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Impersonation;
 
@@ -24,9 +23,9 @@ public sealed class StartImpersonationEndpoint(TenantDirectory tenants, Platform
         return await impersonations.StartAsync(person, project, this.RouteId("user"), request, cancellationToken) switch
         {
             ImpersonationTicket issued => TypedResults.Json(issued, ImpersonationJson.Default.ImpersonationTicket, statusCode: 201),
-            Validation error => ErrorResults.ToResult(error),
-            NotFound error => ErrorResults.ToResult(error),
-            Forbidden error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthNotFound error => ErrorResults.ToResult(error),
+            AuthForbidden error => ErrorResults.ToResult(error),
         };
     }
 }

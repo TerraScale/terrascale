@@ -10,10 +10,12 @@ using BoundSnapshot = TerraScale.Endpoints.Binding.Bound<TerraBase.Features.Cont
 
 namespace TerraBase.Features.ControlPlane;
 
+internal readonly union ControlSnapshotResponse(ControlSnapshotAck, InvalidInput, CredentialRejected, StateConflict, BackendUnavailable);
+
 public sealed record SignedSnapshot(ControlSnapshot Snapshot, ReadOnlyMemory<byte> Body);
 
 internal sealed class ControlSnapshotEndpoint(ControlSnapshots snapshots, ControlSnapshotSync sync, TerraBaseOptions options, TimeProvider time)
-    : Endpoint<SignedSnapshot, Result<ControlSnapshotAck, Validation, Unauthorized, Conflict, Unavailable>>
+    : Endpoint<SignedSnapshot, ControlSnapshotResponse>
 {
     private const int MaxBodyBytes = 8 * 1024 * 1024;
 
@@ -47,7 +49,7 @@ internal sealed class ControlSnapshotEndpoint(ControlSnapshots snapshots, Contro
         return Parse(body) is { } snapshot ? new SignedSnapshot(snapshot, body) : new BindingValidation("the body is not a control snapshot");
     }
 
-    public override async ValueTask<Result<ControlSnapshotAck, Validation, Unauthorized, Conflict, Unavailable>> HandleAsync(
+    public override async ValueTask<ControlSnapshotResponse> HandleAsync(
         SignedSnapshot request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -56,13 +58,13 @@ internal sealed class ControlSnapshotEndpoint(ControlSnapshots snapshots, Contro
             AcceptedSnapshot { Changed: false } accepted => Ack(accepted.Snapshot),
             AcceptedSnapshot accepted => await sync.ApplyAsync(accepted.Snapshot, cancellationToken) switch
             {
-                Done => Ack(accepted.Snapshot),
-                Unavailable unavailable => unavailable,
+                Completed => Ack(accepted.Snapshot),
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 

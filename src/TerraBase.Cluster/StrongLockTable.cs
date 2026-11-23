@@ -134,8 +134,8 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
         }
 
         using var delay = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var winner = await Task.WhenAny(released, Task.Delay(timeout, timeProvider, delay.Token)).ConfigureAwait(false);
-        await delay.CancelAsync().ConfigureAwait(false);
+        var winner = await Task.WhenAny(released, Task.Delay(timeout, timeProvider, delay.Token));
+        await delay.CancelAsync();
         cancellationToken.ThrowIfCancellationRequested();
         return winner == released;
     }

@@ -53,19 +53,37 @@ public sealed record PointInTimeRestoreRequest(Ulid SourceDatabaseId, Ulid Targe
 
 public sealed record BranchRequest(Ulid SourceDatabaseId, Ulid BranchDatabaseId, RestoreTarget Target);
 
+public sealed record ArchiveShredded;
+
+public sealed record ContinuityNotFound(string Message, string Code = "not_found");
+
+public sealed record ContinuityInvalidTarget(string Message, string Code = "invalid_request");
+
+public sealed record ContinuityConflict(string Message, string Code = "conflict");
+
+public sealed record ContinuityUnavailable(string Message, string Code = "unavailable");
+
+public readonly union BackupStatusOutcome(BackupStatus, ContinuityNotFound, ContinuityUnavailable);
+
+public readonly union RestoreStartOutcome(RestoreOperation, ContinuityNotFound, ContinuityInvalidTarget, ContinuityConflict, ContinuityUnavailable);
+
+public readonly union RestoreOperationOutcome(RestoreOperation, ContinuityNotFound);
+
+public readonly union CryptoShredBackupOutcome(ArchiveShredded, ContinuityNotFound, ContinuityUnavailable);
+
 public interface IBackupContinuity
 {
-    ValueTask<Result<BackupStatus, NotFound, Unavailable>> GetStatusAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<BackupStatusOutcome> GetStatusAsync(Ulid databaseId, CancellationToken cancellationToken);
 
-    ValueTask<Result<BackupStatus, NotFound, Unavailable>> ArchiveNowAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<BackupStatusOutcome> ArchiveNowAsync(Ulid databaseId, CancellationToken cancellationToken);
 
-    ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> RestoreAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken);
+    ValueTask<RestoreStartOutcome> RestoreAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> RewindAsync(Ulid databaseId, RestoreTarget target, CancellationToken cancellationToken);
+    ValueTask<RestoreStartOutcome> RewindAsync(Ulid databaseId, RestoreTarget target, CancellationToken cancellationToken);
 
-    ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> BranchAsync(BranchRequest request, CancellationToken cancellationToken);
+    ValueTask<RestoreStartOutcome> BranchAsync(BranchRequest request, CancellationToken cancellationToken);
 
-    ValueTask<Result<RestoreOperation, NotFound>> GetOperationAsync(Ulid operationId, CancellationToken cancellationToken);
+    ValueTask<RestoreOperationOutcome> GetOperationAsync(Ulid operationId, CancellationToken cancellationToken);
 
-    ValueTask<Result<Done, NotFound, Unavailable>> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask<CryptoShredBackupOutcome> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken);
 }

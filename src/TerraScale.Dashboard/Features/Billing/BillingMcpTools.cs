@@ -125,7 +125,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return InvoiceHistory.Page(invoices, status, issued, page, time.GetUtcNow()) switch
             {
                 BillingInvoiceList listed => Reply(listed, BillingMcpJson.Default.BillingInvoiceList),
-                Validation invalid => Failure(invalid.Message)
+                DashboardValidation invalid => Failure(invalid.Message)
             };
         }
 
@@ -148,10 +148,11 @@ namespace TerraScale.Dashboard.Features.Billing
         [McpServerTool(Name = "get_billing_portal_url", Title = "Open billing portal", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Create a billing portal session where the owner updates payment methods and downloads invoices. Returns the URL to open in a browser. Owner only.")]
         public async Task<BillingMcpPortal> Portal(string? organizationId = null, string? projectId = null)
         {
-            return await billing.PortalAsync(Scope(organizationId, projectId), Cancellation) switch
+            var outcome = await billing.PortalAsync(Scope(organizationId, projectId), Cancellation);
+            return outcome switch
             {
                 PortalSessionUrl session => new(session.Url),
-                Validation error => throw new AccountAccessException(error.Message, 422)
+                DashboardValidation error => throw new AccountAccessException(error.Message, 422)
             };
         }
 

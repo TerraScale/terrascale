@@ -1,7 +1,15 @@
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union DeleteFunctionReply(
+    FunctionDeleted,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class DeleteFunctionEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<FunctionRequest, Result<Done, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<FunctionRequest, DeleteFunctionReply>
 {
     public override void Configure()
     {
@@ -13,24 +21,31 @@ public sealed class DeleteFunctionEndpoint(PlatformAccess access, FunctionServic
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<Done, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<DeleteFunctionReply> HandleAsync(
         FunctionRequest request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.DeleteAsync(target, request.Function, cancellationToken) switch
-            {
-                Done done => done,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<DeleteFunctionReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.DeleteAsync(target, request.Function, cancellationToken);
+            return operation switch
+            {
+                FunctionDeleted deleted => deleted,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

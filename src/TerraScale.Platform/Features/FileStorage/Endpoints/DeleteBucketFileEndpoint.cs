@@ -1,7 +1,15 @@
 namespace TerraScale.Platform.Features.FileStorage.Endpoints;
 
+public readonly union DeleteBucketFileReply(
+    FileDeleted,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class DeleteBucketFileEndpoint(PlatformAccess access, FileStorageService files)
-    : Endpoint<BucketFileRequest, Result<Done, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<BucketFileRequest, DeleteBucketFileReply>
 {
     public override void Configure()
     {
@@ -13,23 +21,30 @@ public sealed class DeleteBucketFileEndpoint(PlatformAccess access, FileStorageS
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<Done, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(BucketFileRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<DeleteBucketFileReply> HandleAsync(BucketFileRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Write, cancellationToken) switch
+        var outcome = await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Write, cancellationToken);
+        return outcome switch
         {
-            FileScope scope => await files.DeleteFileAsync(scope, request.Bucket, request.File, cancellationToken) switch
-            {
-                Done done => done,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            FileScope scope => await HandleAuthorizedAsync(scope),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<DeleteBucketFileReply> HandleAuthorizedAsync(FileScope scope)
+        {
+            var operation = await files.DeleteFileAsync(scope, request.Bucket, request.File, cancellationToken);
+            return operation switch
+            {
+                FileDeleted deleted => deleted,
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

@@ -30,23 +30,19 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest)
                         ? await DatabaseSettingsEndpoints.PageAsync(http, context, id, status: StatusCodes.Status422UnprocessableEntity, ttlHours: form["ttlHours"].ToString(), expiryError: "Enter a TTL in hours.")
-                        : DatabaseResults.ToResult(new Validation("Enter a TTL in hours."));
+                        : DatabaseResults.ToResult(new DatabaseInvalid("Enter a TTL in hours."));
                 }
                 var saved = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted);
-                if (saved is DatabaseRecord database)
+                return saved switch
                 {
-                    if (http.Request.IsDatastarRequest)
-                    {
-                        return await DatabaseSettingsEndpoints.PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true);
-                    }
-                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : TypedResults.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
-                }
-
-                var failure = DatabaseMutations.RefusedMutation(saved);
-                var status = DatabaseMutations.StatusOf(failure);
-                return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) && status != 404
-                    ? await DatabaseSettingsEndpoints.PageAsync(http, context, id, status: status, ttlHours: form["ttlHours"].ToString(), expiryError: status >= 500 ? "The expiry could not be confirmed. Reload Settings before retrying." : DatabaseMutations.MessageOf(failure))
-                    : DatabaseResults.PageFailureOf(http, context, failure);
+                    DatabaseRecord when http.Request.IsDatastarRequest =>
+                        await DatabaseSettingsEndpoints.PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true),
+                    DatabaseRecord database =>
+                        DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : TypedResults.Json(database, DatabaseTtlJson.Default.DatabaseRecord),
+                    DatabaseRefusal failure => (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) && failure.Status != 404
+                        ? await DatabaseSettingsEndpoints.PageAsync(http, context, id, status: failure.Status, ttlHours: form["ttlHours"].ToString(), expiryError: failure.Status >= 500 ? "The expiry could not be confirmed. Reload Settings before retrying." : failure.Message)
+                        : DatabaseResults.PageFailureOf(http, context, failure),
+                };
             }
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
             {

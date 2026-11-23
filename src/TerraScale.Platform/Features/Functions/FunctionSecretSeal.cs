@@ -3,6 +3,8 @@ using System.Text;
 
 namespace TerraScale.Platform.Features.Functions;
 
+public readonly union OpenFunctionSecretOutcome(string, PlatformUnavailable);
+
 public sealed class FunctionSecretSeal(PlatformOptions options)
 {
     private const int SaltBytes = 16;
@@ -35,12 +37,12 @@ public sealed class FunctionSecretSeal(PlatformOptions options)
         }
     }
 
-    public Result<string, Unavailable> Open(Ulid database, string function, string name, string sealedValue)
+    public OpenFunctionSecretOutcome Open(Ulid database, string function, string name, string sealedValue)
     {
         var bytes = new byte[sealedValue.Length * 3 / 4 + 3];
         if (!Convert.TryFromBase64String(sealedValue, bytes, out var written) || written < SaltBytes + NonceBytes + TagBytes)
         {
-            return new Unavailable($"the sealed secret {name} is malformed", "secret_unreadable");
+            return new PlatformUnavailable($"the sealed secret {name} is malformed", "secret_unreadable");
         }
 
         var cipherLength = written - SaltBytes - NonceBytes - TagBytes;
@@ -56,7 +58,7 @@ public sealed class FunctionSecretSeal(PlatformOptions options)
         }
         catch (AuthenticationTagMismatchException)
         {
-            return new Unavailable($"the sealed secret {name} is not authentic under the master key", "secret_unreadable");
+            return new PlatformUnavailable($"the sealed secret {name} is not authentic under the master key", "secret_unreadable");
         }
         finally
         {

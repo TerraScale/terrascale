@@ -61,14 +61,14 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 var grant = await client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/step-up/consume",
                     request, TsAuthIntegrationJsonContext.Default.TsAuthStepUpConsume,
                     TsAuthIntegrationJsonContext.Default.TsAuthStepUpGrant,
-                    TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 16 * 1024, cancellationToken).ConfigureAwait(false);
+                    TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 16 * 1024, cancellationToken);
                 if (!IsCapability(grant.OperationGrant))
                     throw new TsAuthException(HttpStatusCode.OK, "ts-auth returned an invalid deletion grant.", "invalid_response", null);
                 return grant.OperationGrant;
             }
             await client.SendAuthenticatedForStatusAsync(HttpMethod.Post, "/v1/terrascale/step-up/consume",
                 request, TsAuthIntegrationJsonContext.Default.TsAuthStepUpConsume,
-                TsAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, 16 * 1024, cancellationToken).ConfigureAwait(false);
+                TsAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, 16 * 1024, cancellationToken);
             return null;
         }
 

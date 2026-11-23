@@ -2,11 +2,8 @@ using System.Net;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
-    // One warm connection per HTTP upstream. A new TLS connection to the edge costs
-    // about 40 ms and a reused one under 5 ms (measured from gru), and one page makes several concurrent ts-auth calls.
     public static class PlatformTransport
     {
-        // Follow DNS changes every two minutes and retain idle connections for the same interval.
         public static SocketsHttpHandler CreateHandler()
         {
             return new SocketsHttpHandler
@@ -19,8 +16,6 @@ namespace TerraScale.Dashboard.Platform.Http
             };
         }
 
-        // HttpRequestMessage defaults to HTTP/1.1 and so needs a connection per concurrent
-        // call. HTTPS requests offer HTTP/2 to multiplex them on one connection, and fall back where it is not served.
         public sealed class PreferHttp2 : DelegatingHandler
         {
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

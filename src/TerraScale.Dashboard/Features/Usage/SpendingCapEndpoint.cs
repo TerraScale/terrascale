@@ -6,7 +6,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed class SpendingCapEndpoint(DashboardSessions sessions, AccountService accounts, SpendingService spending, UsageService usage) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Post("/api/v1/dashboard/usage/spending-cap");
@@ -53,8 +52,8 @@ namespace TerraScale.Dashboard.Features.Usage
             return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
             {
                 UsageSelection selection => await PatchAsync(http, usage, selection, tab, saved),
-                NotFound failure => ErrorResults.ToResult(http, failure),
-                Forbidden failure => ErrorResults.ToResult(http, failure),
+                DashboardNotFound failure => ErrorResults.ToResult(http, failure),
+                DashboardForbidden failure => ErrorResults.ToResult(http, failure),
             };
         }
 

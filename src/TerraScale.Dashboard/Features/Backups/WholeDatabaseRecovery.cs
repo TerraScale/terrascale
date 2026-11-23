@@ -1,4 +1,3 @@
-using TerraScale.Results;
 using TerraScale.Endpoints;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Clients;
@@ -208,19 +207,19 @@ namespace TerraScale.Dashboard.Features.Backups
 
         private sealed class RecoveryClient(TerraBaseHttpClient terraBase, ServiceCaller caller, CancellationToken cancellationToken)
         {
-            public Task<TerraBaseRestoreWindow> GetRestoreWindowAsync(string projectId, string database, string? destination) =>
+            public async Task<TerraBaseRestoreWindow> GetRestoreWindowAsync(string projectId, string database, string? destination) =>
                 destination is null or "platform"
-                    ? TerraBaseResults.RequireAsync(terraBase.GetRestoreWindowAsync(caller, projectId, database, cancellationToken))
-                    : TerraBaseResults.RequireAsync(Task.FromResult<Result<TerraBaseRestoreWindow, TerraBaseRefusal>>(Unsupported));
+                    ? (await terraBase.GetRestoreWindowAsync(caller, projectId, database, cancellationToken)).Require()
+                    : TerraBaseRestoreWindowOutcome.Refused(Unsupported).Require();
 
-            public Task<TerraBasePointInTimePlan> PlanPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
-                TerraBaseResults.RequireAsync(terraBase.PlanPointInTimeAsync(caller, projectId, database, request, cancellationToken));
+            public async Task<TerraBasePointInTimePlan> PlanPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
+                (await terraBase.PlanPointInTimeAsync(caller, projectId, database, request, cancellationToken)).Require();
 
-            public Task<JsonElement> StartRestorePointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
-                TerraBaseResults.RequireAsync(terraBase.RestorePointInTimeAsync(caller, projectId, database, request, cancellationToken));
+            public async Task<JsonElement> StartRestorePointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
+                (await terraBase.RestorePointInTimeAsync(caller, projectId, database, request, cancellationToken)).Require();
 
-            public Task<JsonElement> RewindPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
-                TerraBaseResults.RequireAsync(terraBase.RewindPointInTimeAsync(caller, projectId, database, request, cancellationToken));
+            public async Task<JsonElement> RewindPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
+                (await terraBase.RewindPointInTimeAsync(caller, projectId, database, request, cancellationToken)).Require();
 
             private static TerraBaseRefusal Unsupported { get; } = new(StatusCodes.Status404NotFound, "not_found", "Customer backup destinations are not available on this TerraBase.");
         }

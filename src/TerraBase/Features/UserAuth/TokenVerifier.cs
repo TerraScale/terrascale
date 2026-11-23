@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Rules;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -44,26 +45,26 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private readonly MemoryCache _projects = new(new MemoryCacheOptions { SizeLimit = MaxProjectIssuers });
 
-    public async ValueTask<Result<Caller, Unauthorized, Unavailable>> VerifyAsync(string token, CancellationToken cancellationToken)
+    public async ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
     {
         if (_platform is null || options.AuthIssuer is not { } platformIssuer)
         {
-            return new Unauthorized("bearer tokens need TERRABASE_AUTH_ISSUER", "invalid_token");
+            return new CredentialRejected("bearer tokens need TERRABASE_AUTH_ISSUER", "invalid_token");
         }
 
         if (!Tokens.CanReadToken(token) || Read(token) is not { } unverified)
         {
-            return new Unauthorized("the bearer token is malformed", "invalid_token");
+            return new CredentialRejected("the bearer token is malformed", "invalid_token");
         }
 
         if (Trust(unverified, platformIssuer) is not { } trusted)
         {
-            return new Unauthorized("the bearer token's issuer is not trusted", "invalid_token");
+            return new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token");
         }
 
         if (await ConfigurationAsync(trusted.Entry.Manager, cancellationToken) is not { } configuration)
         {
-            return new Unavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
+            return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
         }
 
         var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, configuration.SigningKeys));
@@ -72,7 +73,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             trusted.Entry.Manager.RequestRefresh();
             if (await FetchFreshAsync(trusted.Entry, cancellationToken) is not { } refreshed)
             {
-                return new Unavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
+                return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
             }
 
             validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, refreshed.SigningKeys));
@@ -80,7 +81,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
         if (!validated.IsValid || validated.SecurityToken is not JsonWebToken jwt)
         {
-            return new Unauthorized("the bearer token is invalid or expired", "invalid_token");
+            return new CredentialRejected("the bearer token is invalid or expired", "invalid_token");
         }
 
         return trusted.Tenant is { } tenant ? ClassifyTenant(jwt, tenant) : Classify(jwt);
@@ -150,9 +151,9 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
-    private static Result<Caller, Unauthorized, Unavailable> ClassifyTenant(JsonWebToken jwt, Ulid project)
+    private static CallerAuthenticationOutcome ClassifyTenant(JsonWebToken jwt, Ulid project)
     {
-        var invalid = new Unauthorized("the project tenant token's claims are invalid", "invalid_token");
+        var invalid = new CredentialRejected("the project tenant token's claims are invalid", "invalid_token");
         if (!jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !IsCanonicalUlid(subject)
             || !jwt.TryGetPayloadValue<string>("token_use", out var use) || use is not (TenantUserUse or TenantCustomUse)
             || TenantRefusedClaims.Any(name => jwt.TryGetPayloadValue<object>(name, out _)))
@@ -181,9 +182,9 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
-    private static Result<Caller, Unauthorized, Unavailable> Classify(JsonWebToken jwt)
+    private static CallerAuthenticationOutcome Classify(JsonWebToken jwt)
     {
-        var invalid = new Unauthorized("the bearer token's claims are invalid", "invalid_token");
+        var invalid = new CredentialRejected("the bearer token's claims are invalid", "invalid_token");
         if (!jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || string.IsNullOrWhiteSpace(subject) || subject.Length > 128)
         {
             return invalid;

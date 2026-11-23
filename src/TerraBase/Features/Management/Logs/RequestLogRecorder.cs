@@ -2,10 +2,13 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
 using ZLogger;
 
 namespace TerraBase.Features.Management.Logs;
+
+internal readonly union RequestLogsOutcome(IReadOnlyList<RequestLogEntry>, BackendUnavailable);
 
 public sealed record RequestLogEntry(string Id, Ulid DatabaseId, DateTimeOffset At, string Method, string Path, int Status, long DurationMs, string Region)
 {
@@ -52,7 +55,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     public bool HasGap(string? after) =>
         after is { Length: 26 } && Ulid.TryParse(after, out var cursor) && cursor.Time < time.GetUtcNow() - Retention;
 
-    public async ValueTask<Result<IReadOnlyList<RequestLogEntry>, Unavailable>> ListAsync(
+    public async ValueTask<RequestLogsOutcome> ListAsync(
         Ulid databaseId, string? after, int limit, int? minStatus, int? maxStatus, CancellationToken cancellationToken)
     {
         var statement = after is null
@@ -70,7 +73,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         return outcome switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Entries(rows),
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -98,8 +101,8 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
             if (await system.WriteAsync(statements, ConsistencyMode.Fast, stoppingToken) switch
             {
                 SqlWriteResult => null,
-                Conflict conflict => conflict.Message,
-                Unavailable unavailable => unavailable.Message,
+                StateConflict conflict => conflict.Message,
+                BackendUnavailable unavailable => unavailable.Message,
             } is { } failure)
             {
                 logger.ZLogWarning($"Request logs were dropped: {failure:@Reason}");
@@ -113,7 +116,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         _ => "OTHER",
     };
 
-    private static Result<IReadOnlyList<RequestLogEntry>, Unavailable> Entries(IReadOnlyList<IReadOnlyList<SqlValue>> rows) =>
+    private static RequestLogsOutcome Entries(IReadOnlyList<IReadOnlyList<SqlValue>> rows) =>
         new([.. rows.Select(static row => new RequestLogEntry(row.TextAt(0), row.IdAt(1), row.TimeAt(2), row.TextAt(3), row.TextAt(4), (int)row.IntegerAt(5),
             row.IntegerAt(6), row.TextAt(7)))]);
 }

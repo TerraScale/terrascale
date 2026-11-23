@@ -5,7 +5,7 @@ import { EventEmitter, once } from 'node:events';
 import { connect, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { expect, type APIRequestContext } from '@playwright/test';
-import { rawSqlSocket, frame, scheduleStatement } from '../support/sql-socket';
+import { rawSqlSocket, frame } from '../support/sql-socket';
 import { postgres, message } from '../support/postgres-wire';
 import { localPort, production, stateDir } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
@@ -87,32 +87,34 @@ for (const region of peers) {
     }
   });
 
-  test(`a SQL WebSocket in ${region} rolls back a transaction open for more than 5 seconds and keeps serving`, async ({ cells, request }) => {
+  test(`a SQL WebSocket in ${region} closes and rolls back a transaction open for more than 5 seconds`, async ({ cells, request }) => {
     const created = await placed(cells, 'session-expiry');
     let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
-    let cancel = () => {};
+    let replacement: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
     try {
       await sql(cells, gru, created.id, 'CREATE TABLE placement_rows (value INTEGER)');
       await sql(cells, gru, created.id, 'INSERT INTO placement_rows VALUES (1)');
       await replicated(cells, node(region).origin, created.id, 1);
-      ws = await rawSqlSocket(socketUrl(region, created.id), await credential(request));
+      const token = await credential(request);
+      ws = await rawSqlSocket(socketUrl(region, created.id), token);
       const began = performance.now();
       expect((await execute(ws, 'BEGIN')).transaction).toBe(true);
       expect(await execute(ws, 'INSERT INTO placement_rows VALUES (2)')).toMatchObject({ type: 'result', transaction: true });
       const expired = once(ws.events, 'message');
-      cancel = scheduleStatement(ws.socket, frame(1, Buffer.from(JSON.stringify({
-        id: 3, type: 'execute', statements: [{ sql: 'SELECT value FROM placement_rows' }],
-      }))), began, 5500);
-      expect((await expired)[0]).toMatchObject({ id: 3, type: 'error', transaction: false, error: {
+      const [wsError, close] = await Promise.all([expired, ws.closing]);
+      expect(wsError[0]).toMatchObject({ type: 'error', transaction: false, error: {
         code: 'query_canceled', sqlstate: '57014', message: 'the transaction expired: it was open for more than 5 seconds and was rolled back',
       } });
+      expect(close).toEqual({ code: 1008, reason: 'the transaction expired: it was open for more than 5 seconds and was rolled back' });
       expect(performance.now() - began).toBeGreaterThan(5000);
-      expect(await execute(ws, 'SELECT value FROM placement_rows')).toMatchObject({ type: 'result', transaction: false, results: [{ rows: [[1]] }] });
+      replacement = await rawSqlSocket(socketUrl(region, created.id), token);
+      expect(await execute(replacement, 'SELECT value FROM placement_rows')).toMatchObject({ type: 'result', transaction: false, results: [{ rows: [[1]] }] });
       expect((await sql(cells, gru, created.id, 'SELECT value FROM placement_rows')).results[0].rows).toEqual([[1]]);
     } finally {
-      cancel();
       ws?.socket.destroy();
+      replacement?.socket.destroy();
       if (ws) await ws.closed;
+      if (replacement) await replacement.closed;
       await removeDatabase(cells, created.id);
     }
   });

@@ -23,7 +23,7 @@ internal sealed class ReceiveDeadline : IDisposable
         _expire = expire;
         _armedAt = time.GetTimestamp();
         _budget = idle < TimeSpan.Zero ? TimeSpan.Zero : idle;
-        _timer = time.CreateTimer(static state => ((ReceiveDeadline)state!).Fire(), this, _budget, Timeout.InfiniteTimeSpan);
+        _timer = time.CreateTimer(_ => Fire(), null, _budget, Timeout.InfiniteTimeSpan);
     }
 
     public CancellationToken Token => _stop.Token;

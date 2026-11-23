@@ -1,7 +1,16 @@
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union DeployFunctionReply(
+    FunctionBody,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
 public sealed class DeployFunctionEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<DeployFunctionRequest, Result<FunctionBody, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>>
+    : Endpoint<DeployFunctionRequest, DeployFunctionReply>
 {
     public override void Configure()
     {
@@ -13,25 +22,32 @@ public sealed class DeployFunctionEndpoint(PlatformAccess access, FunctionServic
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FunctionBody, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>> HandleAsync(
+    public override async ValueTask<DeployFunctionReply> HandleAsync(
         DeployFunctionRequest request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.DeployAsync(target, request.Function, request.Source, request.Cron, cancellationToken) switch
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<DeployFunctionReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.DeployAsync(target, request.Function, request.Source, request.Cron, cancellationToken);
+            return operation switch
             {
                 FunctionBody body => body,
-                Validation invalid => invalid,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformInvalidRequest invalid => invalid,
+                PlatformConflict conflict => conflict,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

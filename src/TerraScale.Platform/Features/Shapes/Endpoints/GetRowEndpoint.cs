@@ -1,6 +1,6 @@
 namespace TerraScale.Platform.Features.Shapes.Endpoints;
 
-public sealed class GetRowEndpoint(ShapeReader reader) : Endpoint<GetRowRequest, Result<RowResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+public sealed class GetRowEndpoint(ShapeReader reader) : Endpoint<GetRowRequest, ReadShapeRowOutcome>
 {
     public override void Configure()
     {
@@ -13,7 +13,7 @@ public sealed class GetRowEndpoint(ShapeReader reader) : Endpoint<GetRowRequest,
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<RowResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<ReadShapeRowOutcome> HandleAsync(
         GetRowRequest request,
         CancellationToken cancellationToken)
     {

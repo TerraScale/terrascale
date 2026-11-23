@@ -313,7 +313,12 @@ public sealed partial class StripeBilling
             }
 
             var refund = await CancelDraftPaymentAsync(draft, cancellationToken);
-            if (refund is OrganizationRefundPending pendingRefund)
+            var pendingRefund = refund switch
+            {
+                bool => null,
+                OrganizationRefundPending pending => pending,
+            };
+            if (pendingRefund is not null)
             {
                 var unsettledNotice = await RecordUnsettledRefundAsync(draftId, pendingRefund.Status, cancellationToken);
                 if (unsettledNotice)

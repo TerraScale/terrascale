@@ -5,11 +5,13 @@ namespace TerraBase.Postgres.Sessions;
 
 internal sealed record PgDescription(IReadOnlyList<PgColumn>? Columns);
 
+internal readonly union PgDescribeResult(PgDescription, PgError);
+
 internal sealed partial class PostgresConnection
 {
     private static readonly PgDescription NoData = new(null);
 
-    private async ValueTask<Result<PgDescription, PgError>> DescribeColumnsAsync(PgCommand command, IReadOnlyList<SqlValue> parameters) => command switch
+    private async ValueTask<PgDescribeResult> DescribeColumnsAsync(PgCommand command, IReadOnlyList<SqlValue> parameters) => command switch
     {
         PgSqlCommand { Explain: true } => new PgDescription([new PgColumn("QUERY PLAN", PgOid.Text)]),
         PgSqlCommand { Access: SqlAccess.Read } read => await ProbeAsync(read, parameters),
@@ -27,28 +29,30 @@ internal sealed partial class PostgresConnection
             or PgUnlistenCommand or PgNoOpCommand or PgCopyFromCommand or PgCopyToCommand => NoData,
     };
 
-    private async ValueTask<Result<PgDescription, PgError>> ProbeAsync(PgSqlCommand command, IReadOnlyList<SqlValue> parameters)
+    private async ValueTask<PgDescribeResult> ProbeAsync(PgSqlCommand command, IReadOnlyList<SqlValue> parameters)
     {
         if (session.Transaction is { Failed: true })
         {
             return PgError.InFailedTransaction;
         }
 
-        return await ReadMetadataAsync(command.Rewrite.ProbeSql, command.Rewrite.Bind(parameters)) switch
+        var probed = await ReadMetadataAsync(command.Rewrite.ProbeSql, command.Rewrite.Bind(parameters));
+        return probed switch
         {
             SqlResultSet set => new PgDescription(set.Columns.Count == 0 ? null : InferColumns(set.Columns, set.Rows, command.Rewrite.UsesCatalog)),
             PgError error => error,
         };
     }
 
-    private async ValueTask<Result<PgDescription, PgError>> ReturningAsync(string table, IReadOnlyList<PgReturningItem> items)
+    private async ValueTask<PgDescribeResult> ReturningAsync(string table, IReadOnlyList<PgReturningItem> items)
     {
         if (session.Transaction is { Failed: true })
         {
             return PgError.InFailedTransaction;
         }
 
-        return await ReadMetadataAsync("SELECT name, type FROM pragma_table_info(?1)", [SqlValue.FromText(table)]) switch
+        var schema = await ReadMetadataAsync("SELECT name, type FROM pragma_table_info(?1)", [SqlValue.FromText(table)]);
+        return schema switch
         {
             SqlResultSet set => new PgDescription(ReturningColumns(set, items)),
             PgError error => error,

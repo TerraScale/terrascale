@@ -6,8 +6,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union AdminListProjectDatabasesResponse(DatabasesBody, InvalidInput, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class AdminListProjectDatabasesEndpoint(CatalogStore catalog, TerraBaseOptions options, TimeProvider time)
-    : Endpoint<AdminInput, Result<DatabasesBody, Validation, Forbidden, NotFound, Unavailable>>
+    : Endpoint<AdminInput, AdminListProjectDatabasesResponse>
 {
     public override void Configure()
     {
@@ -19,17 +21,17 @@ internal sealed class AdminListProjectDatabasesEndpoint(CatalogStore catalog, Te
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<DatabasesBody, Validation, Forbidden, NotFound, Unavailable>> HandleAsync(AdminInput request, CancellationToken cancellationToken)
+    public override async ValueTask<AdminListProjectDatabasesResponse> HandleAsync(AdminInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!PlanFlow.IsOperator(HttpContext.Caller, "catalog.read"))
         {
-            return new Forbidden("listing databases needs the catalog.read grant", "forbidden_caller");
+            return new CallerForbidden("listing databases needs the catalog.read grant", "forbidden_caller");
         }
 
         if (ManagementService.Id(request.Project) is not { } projectId)
         {
-            return new NotFound("the project does not exist", "unknown_project");
+            return new ResourceNotFound("the project does not exist", "unknown_project");
         }
 
         return ManagementService.Limit(request.Limit) switch
@@ -37,9 +39,9 @@ internal sealed class AdminListProjectDatabasesEndpoint(CatalogStore catalog, Te
             int limit => await catalog.ListDatabasesAsync(projectId, request.After, limit, cancellationToken) switch
             {
                 CatalogPage<DatabaseRecord> page => Body(page),
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
+            InvalidInput invalid => invalid,
         };
     }
 

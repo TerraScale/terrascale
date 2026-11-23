@@ -4,7 +4,6 @@ namespace TerraScale.Dashboard.Common.Formatting
 {
     public static class MetricFormat
     {
-        // Three significant figures below 1,000 ms; larger values use grouped whole milliseconds.
         public static string Latency(double? value)
         {
             return value is null ? "Not reported" :
@@ -12,8 +11,6 @@ namespace TerraScale.Dashboard.Common.Formatting
                 : value.Value.ToString(Math.Abs(value.Value) >= 100 ? "F0" : Math.Abs(value.Value) >= 10 ? "F1" : "F2", CultureInfo.InvariantCulture)) + " ms";
         }
 
-        // Decimal units, as the published catalog prices storage and egress in GB.
-        // Promotion uses the rounded value, so 999,999,999 bytes reads "1.0 GB".
         public static string Bytes(long value)
         {
             if (value < 1000)

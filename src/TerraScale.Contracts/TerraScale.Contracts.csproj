@@ -5,10 +5,6 @@
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
     <PackageReference Include="Ulid" />
-  </ItemGroup>
-  <ItemGroup>
-    <Using Include="TerraScale.Results" />
   </ItemGroup>
 </Project>

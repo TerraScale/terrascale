@@ -11,7 +11,6 @@ using TerraScale.Dashboard.Common.Formatting;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed record UsageToolAllowance(string Name, string Allowance, long Limit,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Used, bool Measured,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? Percent);
@@ -63,8 +62,8 @@ namespace TerraScale.Dashboard.Features.Usage
             return UsageSelection.TryFor(context, context.Project?.Id ?? "", databaseId, range) switch
             {
                 UsageSelection selection => await ReportAsync(selection, databaseId, range),
-                NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
-                Forbidden failure => throw new AccountAccessException(failure.Message),
+                DashboardNotFound failure => throw new AccountAccessException(failure.Message, 404),
+                DashboardForbidden failure => throw new AccountAccessException(failure.Message),
             };
         }
 

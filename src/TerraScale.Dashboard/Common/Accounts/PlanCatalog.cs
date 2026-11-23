@@ -8,7 +8,6 @@ namespace TerraScale.Dashboard.Common.Accounts
     public sealed record BillingPlan(string Id, string Key, string Name, long PriceCents, long AnnualPriceCents, int TrialDays,
         PlanAllowances Allowances, PlanResourceLimits Resources, IReadOnlyList<string> BillingIntervals)
     {
-        // Catalog month/year map to the checkout names monthly/annual; monthly is the default whenever it is sold.
         public IReadOnlyList<string> CheckoutIntervals => [.. BillingIntervals.Select(interval => interval == "year" ? "annual" : "monthly")];
         public string CheckoutInterval => CheckoutIntervals.Contains("monthly") ? "monthly" : (CheckoutIntervals is [var firstInterval, ..] ? firstInterval ?? "" : "");
         public bool SupportsInterval(string interval)
@@ -34,7 +33,6 @@ namespace TerraScale.Dashboard.Common.Accounts
         public string OperationsAllowance => Allowances.MonthlyOperations.ToString("N0", CultureInfo.InvariantCulture) + " " + PlanCatalog.OperationUnitName.ToLowerInvariant() + "s/month (" + (PlanCatalog.OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)";
     }
 
-    // MCP field descriptions shared by every tool that lists plan prices.
     public static class PlanPriceText
     {
         public const string PriceCents = "US cents charged each month on the month interval.";
@@ -61,7 +59,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             .Where(plan => plan.GetProperty("available").GetBoolean()).Select(plan =>
             {
                 var key = plan.GetProperty("id").GetString()!;
-                // Free retains its existing internal key and persisted plan identity.
                 var id = key switch
                 {
                     "free" => OrganizationRecord.FreePlanId,
@@ -80,7 +77,6 @@ namespace TerraScale.Dashboard.Common.Accounts
                     new(limits.GetProperty("databases").GetInt32(), limits.GetProperty("members").GetInt32(), limits.GetProperty("projects").GetInt32()), Array.AsReadOnly(plan.GetProperty("billingIntervals").EnumerateArray().Select(interval => interval.GetString()!).ToArray()));
             }).ToArray());
 
-        // Display-only catalog entries never make contact-only plans selectable.
         public static IReadOnlyList<PlanComparison> ComparisonPlans { get; } = Array.AsReadOnly(catalog.GetProperty("plans").EnumerateArray().Select(plan =>
         {
             var key = plan.GetProperty("id").GetString()!;

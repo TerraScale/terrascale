@@ -1,8 +1,16 @@
 namespace TerraScale.Platform.Features.Functions;
 
+public readonly union ResolveFunctionTargetOutcome(
+    FunctionTarget,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public static class FunctionTargets
 {
-    public static async ValueTask<Result<FunctionTarget, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ResolveAsync(
+    public static async ValueTask<ResolveFunctionTargetOutcome> ResolveAsync(
         PlatformAccess access,
         HttpContext context,
         string project,
@@ -16,13 +24,14 @@ public static class FunctionTargets
             return invalid;
         }
 
-        return await access.DatabaseAsync(context, project, database, scopes, cancellationToken) switch
+        var outcome = await access.DatabaseAsync(context, project, database, scopes, cancellationToken);
+        return outcome switch
         {
             DatabaseAccess granted => new FunctionTarget(granted.Access.Organization, granted.Access.Project, granted.Database, granted.DatabaseName),
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 }

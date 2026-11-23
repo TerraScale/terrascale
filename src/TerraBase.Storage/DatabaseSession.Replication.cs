@@ -8,21 +8,21 @@ internal readonly union SnapshotOutcome(SnapshotCapture, StorageBusy);
 
 internal sealed partial class DatabaseSession
 {
-    public ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken) =>
+    public ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken) =>
         ExecuteReadAsync(request, limitResults: true, cancellationToken);
 
-    internal async ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteReadAsync(
+    internal async ValueTask<SqlReadOutcome> ExecuteReadAsync(
         SqlStatementRequest request, bool limitResults, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken).ConfigureAwait(false);
-        if (waited switch { Done => false, RequestTimeout => true })
+        var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken);
+        if (waited switch { BookmarkReached => false, StorageTimeout => true })
         {
-            return new RequestTimeout("causal bookmark was not reached before the read");
+            return new StorageTimeout("causal bookmark was not reached before the read");
         }
 
         var observed = _versions.Snapshot();
-        if (await RentReaderAsync(cancellationToken).ConfigureAwait(false) is not { } reader)
+        if (await RentReaderAsync(cancellationToken) is not { } reader)
         {
             return Closing();
         }
@@ -39,7 +39,8 @@ internal sealed partial class DatabaseSession
             List<SqlResultSet> results = [];
             for (var index = 0; index < request.Statements.Count; index++)
             {
-                SqlError? failure = ExecuteOnReader(reader, request.Statements[index], index, info, null, limitResults, cancellationToken) switch
+                var executed = ExecuteOnReader(reader, request.Statements[index], index, info, null, limitResults, cancellationToken);
+                SqlError? failure = executed switch
                 {
                     SqlResultSet result => Collect(results, result),
                     SqlError error => error,
@@ -60,7 +61,7 @@ internal sealed partial class DatabaseSession
         }
     }
 
-    public async ValueTask<Result<Done, ReadSetConflict, SchemaMismatch, StorageBusy>> ValidateReadSetAsync(
+    public async ValueTask<ValidateReadSetOutcome> ValidateReadSetAsync(
         HlcTimestamp readSnapshot,
         IReadOnlyList<ReadKey> readSet,
         IReadOnlyList<string> scannedTables,
@@ -74,7 +75,7 @@ internal sealed partial class DatabaseSession
             return new SchemaMismatch(DatabaseId, schemaEpoch, SchemaEpoch);
         }
 
-        if (await RentReaderAsync(cancellationToken).ConfigureAwait(false) is not { } reader)
+        if (await RentReaderAsync(cancellationToken) is not { } reader)
         {
             return Closing();
         }
@@ -104,7 +105,7 @@ internal sealed partial class DatabaseSession
             }
 
             return staleKeys.Count == 0 && staleTables.Count == 0
-                ? new Done()
+                ? new ReadSetValid()
                 : new ReadSetConflict(DatabaseId, staleKeys, staleTables);
         }
         finally
@@ -115,7 +116,7 @@ internal sealed partial class DatabaseSession
 
     internal async ValueTask<SnapshotOutcome> BackupToAsync(SqliteConnection destination, CancellationToken cancellationToken)
     {
-        if (await RentReaderAsync(cancellationToken).ConfigureAwait(false) is not { } reader)
+        if (await RentReaderAsync(cancellationToken) is not { } reader)
         {
             return Closing();
         }
@@ -235,7 +236,8 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        return ApplyPending([], persist: false) switch
+        var pending = ApplyPending([], persist: false);
+        return pending switch
         {
             RemoteApplyOutcome => null,
             SchemaMismatch mismatch => new StorageCorrupted(DatabaseId, string.Concat("schema epoch mismatch during recovery: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture))),
@@ -270,7 +272,7 @@ internal sealed partial class DatabaseSession
         return null;
     }
 
-    private Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy> ApplyRemote(IReadOnlyList<CommitMetadata> commits, bool allowLocalOrigin)
+    private ApplyRemoteBatchOutcome ApplyRemote(IReadOnlyList<CommitMetadata> commits, bool allowLocalOrigin)
     {
         var duplicates = 0;
         var queued = 0;
@@ -323,7 +325,7 @@ internal sealed partial class DatabaseSession
         };
     }
 
-    private Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy> ApplyPending(IReadOnlyList<CommitMetadata> requested, bool persist)
+    private ApplyRemoteBatchOutcome ApplyPending(IReadOnlyList<CommitMetadata> requested, bool persist)
     {
         var tentative = _versions.Copy();
         var epoch = SchemaEpoch;
@@ -518,7 +520,7 @@ internal sealed partial class DatabaseSession
         return SqliteStatus.Success;
     }
 
-    private Result<CommitMetadata, NotFound, ReadSetConflict, SchemaMismatch, StorageBusy> CommitStaged(StagedDescriptor descriptor, HlcTimestamp commitHlc)
+    private CommitStagedOutcome CommitStaged(StagedDescriptor descriptor, HlcTimestamp commitHlc)
     {
         var staged = descriptor.Staged;
         if (staged.SchemaEpoch != SchemaEpoch)

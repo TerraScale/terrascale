@@ -46,8 +46,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             };
         }
 
-        // These presentation classifiers preserve the original Go rules over the
-        // event's reported fields; they do not grant permissions or create events.
         public static string AuditActorType(AuditRecord item)
         {
             var actor = item.Actor.ToLowerInvariant();
@@ -118,7 +116,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                 var now = Filter.Now ?? DateTimeOffset.UtcNow;
                 var rows = (Access?.Invitations ?? []).Select(invite => new InvitationRow(invite.Id, invite.Email, invite.Role,
                     invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status,
-                    // An expired invitation stays manageable: an owner or admin can replace or cancel it.
                     invite.CreatedAt, invite.ExpiresAt, invite.Status is "pending" or "expired")).ToDictionary(invite => invite.Id);
                 return [.. rows.Values.OrderBy(invite => !invite.Open).ThenBy(invite => invite.Email, StringComparer.Ordinal)];
             }

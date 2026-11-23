@@ -14,13 +14,15 @@ public sealed class AuthSchema(TerraBaseDbUpRunner runner)
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
-        if (await runner.UpgradeAsync(cancellationToken) switch
+        var upgraded = await runner.UpgradeAsync(cancellationToken);
+        var failure = upgraded switch
         {
-            Done => null,
-            Unavailable unavailable => unavailable,
-        } is { } failure)
+            AuthCompleted => (AuthUnavailable?)null,
+            AuthUnavailable blocked => blocked,
+        };
+        if (failure is { } unavailable)
         {
-            throw ApiException.Unavailable(new InvalidOperationException(failure.Message));
+            throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message));
         }
     }
 

@@ -44,7 +44,6 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var client = await ClientAsync(cancellationToken);
-            // The customer and its subscription are separate Stripe reads; they run together.
             var customerRead = client.V1.Customers.GetAsync(binding.CustomerId,
                 new() { Expand = ["invoice_settings.default_payment_method"] }, cancellationToken: cancellationToken);
             var subscriptionRead = binding.SubscriptionId is { Length: > 0 } ? client.V1.Subscriptions.GetAsync(binding.SubscriptionId,
@@ -52,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var customer = await customerRead;
             if (customer.Id != binding.CustomerId || customer.Deleted == true || customer.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
             {
-                return new Unavailable("Payment method customer ownership does not match.");
+                return new DashboardUnavailable("Payment method customer ownership does not match.");
             }
 
             var method = customer.InvoiceSettings?.DefaultPaymentMethod;
@@ -62,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId ||
                     subscription.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
                 {
-                    return new Unavailable("Payment method subscription ownership does not match.");
+                    return new DashboardUnavailable("Payment method subscription ownership does not match.");
                 }
 
                 method = subscription.DefaultPaymentMethod ?? method;
@@ -74,7 +73,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
             if (method.CustomerId != binding.CustomerId)
             {
-                return new Unavailable("Payment method belongs to a different customer.");
+                return new DashboardUnavailable("Payment method belongs to a different customer.");
             }
 
             if (method.Type != "card" || method.Card is not { } card)
@@ -85,7 +84,7 @@ namespace TerraScale.Dashboard.Features.Billing
             if (card.Last4 is not { Length: 4 } || card.Last4.Any(character => !char.IsAsciiDigit(character)) ||
                 card.ExpMonth is < 1 or > 12 || card.ExpYear is < 2000 or > 9999)
             {
-                return new Unavailable("Payment method card facts are invalid.");
+                return new DashboardUnavailable("Payment method card facts are invalid.");
             }
 
             return new BillingCard(card.Brand, card.Last4, card.ExpMonth, card.ExpYear);

@@ -7,7 +7,6 @@ using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed record DatabaseLogPage(ShellModel Shell, DatabaseRecord Database, string Status, DatabaseLogBatch? Logs, string Error, LogDrain? Drain = null, string DrainError = "")
     {
@@ -54,28 +53,30 @@ namespace TerraScale.Dashboard.Features.Logs
             if (delete)
             {
                 var deleted = await drains.DeleteAsync(context, http.RequestAborted);
-                if (deleted is not Done)
+                IResult? refusal = deleted switch
                 {
-                    return deleted switch
-                    {
-                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message!, 404),
-                        Forbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
-                        Done => throw new UnreachableException(),
-                    };
+                    Done => null,
+                    DashboardNotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 404),
+                    DashboardForbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
+                };
+                if (refusal is not null)
+                {
+                    return refusal;
                 }
             }
             else
             {
                 var saved = await drains.SaveAsync(context, form["url"], form["headerName"], form["headerValue"], http.RequestAborted);
-                if (saved is not Done)
+                IResult? refusal = saved switch
                 {
-                    return saved switch
-                    {
-                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message!, 404),
-                        Forbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
-                        Validation error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 422),
-                        Done => throw new UnreachableException(),
-                    };
+                    Done => null,
+                    DashboardNotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 404),
+                    DashboardForbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
+                    DashboardValidation error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 422),
+                };
+                if (refusal is not null)
+                {
+                    return refusal;
                 }
             }
 

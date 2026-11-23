@@ -113,7 +113,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         private async Task<IReadOnlyList<DatabaseRegion>> ReadCatalogAsync(CancellationToken cancellationToken)
         {
-            var catalog = TerraBaseResults.Require(await terraBase.ListRegionsAsync(cancellationToken));
+            var catalog = (await terraBase.ListRegionsAsync(cancellationToken)).Require();
             var regions = catalog.Regions.Select(DatabaseRegion.FromId).ToArray();
             if (regions.Length == 0 || regions.Any(region => region is null) || regions.DistinctBy(region => region!.Id).Count() != regions.Length)
             {
@@ -125,7 +125,8 @@ namespace TerraScale.Dashboard.Common.Databases
 
         private async Task<IReadOnlyList<DatabaseRegion>> AnsweringRegionAsync(CancellationToken cancellationToken)
         {
-            var health = await terraBase.HealthAsync(cancellationToken) switch
+            var outcome = await terraBase.HealthAsync(cancellationToken);
+            var health = outcome switch
             {
                 TerraBaseHealth answered => answered,
                 TerraBaseRefusal refusal => throw new HttpRequestException("TerraBase did not name a verified serving region.", refusal.Exception()),
@@ -154,7 +155,8 @@ namespace TerraScale.Dashboard.Common.Databases
             do
             {
                 TerraBaseDatabasePage page;
-                page = await terraBase.ListDatabasesAsync(caller, scope.ProjectId, next, 100, cancellationToken) switch
+                var outcome = await terraBase.ListDatabasesAsync(caller, scope.ProjectId, next, 100, cancellationToken);
+                page = outcome switch
                 {
                     TerraBaseDatabasePage listed => listed,
                     TerraBaseRefusal { Code: "invalid_response" } => throw new DatabaseListingException("Database listing returned an invalid response."),
@@ -182,28 +184,28 @@ namespace TerraScale.Dashboard.Common.Databases
         public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
             var caller = await ClientAsync(scope, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => TerraBaseResults.RequireAsync(terraBase.CreateDatabaseAsync(caller, scope.ProjectId, new(Name: name, HomeRegion: home.Id,
-                ReplicaRegions: allRegions || replicaRegions.Count == 0 ? null : replicaRegions, AllRegions: allRegions ? true : null, TtlSeconds: ttlSeconds), cancellationToken))));
+            return Map(await RunAsync(async () => (await terraBase.CreateDatabaseAsync(caller, scope.ProjectId, new(Name: name, HomeRegion: home.Id,
+                ReplicaRegions: allRegions || replicaRegions.Count == 0 ? null : replicaRegions, AllRegions: allRegions ? true : null, TtlSeconds: ttlSeconds), cancellationToken)).Require()));
         }
 
         public async Task<ManagedDatabase> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
             var caller = await ClientAsync(scope, "databases:read", cancellationToken);
-            return Map(await RunAsync(() => TerraBaseResults.RequireAsync(terraBase.GetDatabaseAsync(caller, scope.ProjectId, databaseId, cancellationToken))));
+            return Map(await RunAsync(async () => (await terraBase.GetDatabaseAsync(caller, scope.ProjectId, databaseId, cancellationToken)).Require()));
         }
 
         public async Task<ManagedDatabase> PlaceRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> regions, bool allRegions, CancellationToken cancellationToken)
         {
             var caller = await ClientAsync(scope, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => TerraBaseResults.RequireAsync(terraBase.SetDatabaseAsync(caller, scope.ProjectId, databaseId,
-                allRegions ? new(AllRegions: true) : new(Regions: regions), cancellationToken))));
+            return Map(await RunAsync(async () => (await terraBase.SetDatabaseAsync(caller, scope.ProjectId, databaseId,
+                allRegions ? new(AllRegions: true) : new(Regions: regions), cancellationToken)).Require()));
         }
 
         public async Task<ManagedDatabase> PlaceAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken)
         {
             var caller = await ClientAsync(scope, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => TerraBaseResults.RequireAsync(terraBase.SetDatabaseAsync(caller, scope.ProjectId, databaseId,
-                allRegions ? new(AllRegions: true) : new(HomeRegion: home.Id, ReplicaRegions: replicaRegions), cancellationToken))));
+            return Map(await RunAsync(async () => (await terraBase.SetDatabaseAsync(caller, scope.ProjectId, databaseId,
+                allRegions ? new(AllRegions: true) : new(HomeRegion: home.Id, ReplicaRegions: replicaRegions), cancellationToken)).Require()));
         }
 
         public async Task<ManagedDatabase> MoveHomeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string homeRegion, CancellationToken cancellationToken)
@@ -221,16 +223,16 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             var source = await NameAsync(scope, home, databaseId, cancellationToken);
             var caller = await ClientAsync(scope, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => TerraBaseResults.RequireAsync(terraBase.BranchAsync(caller, scope.ProjectId, source, name, ttlSeconds, cancellationToken))));
+            return Map(await RunAsync(async () => (await terraBase.BranchAsync(caller, scope.ProjectId, source, name, ttlSeconds, cancellationToken)).Require()));
         }
 
         public async Task<ManagedDatabase> SetTtlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, long? ttlSeconds, CancellationToken cancellationToken)
         {
             var name = await NameAsync(scope, home, databaseId, cancellationToken);
             var caller = await ClientAsync(scope, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => TerraBaseResults.RequireAsync(ttlSeconds is { } seconds
+            return Map(await RunAsync(async () => (await (ttlSeconds is { } seconds
                 ? terraBase.SetDatabaseTtlAsync(caller, scope.ProjectId, name, seconds, cancellationToken)
-                : terraBase.ClearDatabaseTtlAsync(caller, scope.ProjectId, name, cancellationToken))));
+                : terraBase.ClearDatabaseTtlAsync(caller, scope.ProjectId, name, cancellationToken))).Require()));
         }
 
         public async Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -241,7 +243,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
 
             var caller = await ClientAsync(scope, "databases:write", cancellationToken);
-            await CommittedStepAsync(() => TerraBaseResults.RequireAsync(terraBase.DeleteDatabaseAsync(caller, scope.ProjectId, database.Name, cancellationToken)), cancellationToken);
+            await CommittedStepAsync(async () => (await terraBase.DeleteDatabaseAsync(caller, scope.ProjectId, database.Name, cancellationToken)).Require(), cancellationToken);
         }
 
         private static async Task CommittedStepAsync(Func<Task> step, CancellationToken cancellationToken)
@@ -258,7 +260,7 @@ namespace TerraScale.Dashboard.Common.Databases
         public async Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
         {
             var caller = await ClientAsync(scope, "databases:write", cancellationToken);
-            return Map(await RunAsync(() => TerraBaseResults.RequireAsync(terraBase.SetDatabaseAsync(caller, scope.ProjectId, databaseId, new(Name: name), cancellationToken))));
+            return Map(await RunAsync(async () => (await terraBase.SetDatabaseAsync(caller, scope.ProjectId, databaseId, new(Name: name), cancellationToken)).Require()));
         }
 
         public async Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken)
@@ -299,7 +301,8 @@ namespace TerraScale.Dashboard.Common.Databases
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             var request = JsonSerializer.SerializeToElement(new SqlExecuteRequest(statements), DatabaseSqlJson.Default.SqlExecuteRequest);
-            var body = await terraBase.ExecuteSqlAsync(ServiceCaller.User(token), projectId, name, request, timeout.Token) switch
+            var outcome = await terraBase.ExecuteSqlAsync(ServiceCaller.User(token), projectId, name, request, timeout.Token);
+            var body = outcome switch
             {
                 JsonElement answer => answer.Deserialize(DatabaseSqlJson.Default.SqlExecuteResponse),
                 TerraBaseRefusal { Status: 400 or 403 or 409 or 413 } refusal => throw new DatabaseSqlException((HttpStatusCode)refusal.Status,

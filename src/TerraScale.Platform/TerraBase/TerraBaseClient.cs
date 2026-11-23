@@ -8,6 +8,27 @@ using TerraScale.Contracts;
 
 namespace TerraScale.Platform.TerraBase;
 
+public sealed record TerraBaseHealthy;
+
+public readonly union TerraBaseHealthOutcome(TerraBaseHealthy, PlatformUnavailable);
+
+public readonly union CallerSqlOutcome(
+    CallerSqlResponse,
+    SqlFailure,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
+public readonly union AuthorizeCallerOutcome(
+    CallerGrant,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
+public readonly union ChangefeedReadOutcome(ChangefeedHttpItem, PlatformUnavailable);
+
 public static class TerraBaseRoutes
 {
     public const string Health = "healthz";
@@ -44,18 +65,19 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
 
     public string PeerSecret => options.PeerSecret;
 
-    public async ValueTask<Result<Done, Unavailable>> PingAsync(CancellationToken cancellationToken)
+    public async ValueTask<TerraBaseHealthOutcome> PingAsync(CancellationToken cancellationToken)
     {
         using var request = NewRequest(HttpMethod.Get, TerraBaseRoutes.Health);
-        return await SendAsync(request, cancellationToken) switch
+        var outcome = await SendAsync(request, cancellationToken);
+        return outcome switch
         {
-            HttpAnswer { Status: StatusCodes.Status200OK } => new Done(),
-            HttpAnswer answer => new Unavailable($"TerraBase health answered HTTP {answer.Status}", "terrabase_unhealthy"),
-            Unavailable unavailable => unavailable,
+            HttpAnswer { Status: StatusCodes.Status200OK } => new TerraBaseHealthy(),
+            HttpAnswer answer => new PlatformUnavailable($"TerraBase health answered HTTP {answer.Status}", "terrabase_unhealthy"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<SqlExecuteResponse, SqlFailure, NotFound, Unavailable>> ExecuteAsync(
+    public async ValueTask<InternalSqlOutcome> ExecuteAsync(
         Ulid database,
         SqlExecuteRequest statements,
         SqlContext context,
@@ -65,21 +87,22 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         request.Content = JsonContent.Create(statements, TerraScaleContractsJsonContext.Default.SqlExecuteRequest);
         request.Headers.TryAddWithoutValidation(PlatformOptions.PeerCredentialHeader, options.PeerSecret);
         Consistency(request, context);
-        return await SendAsync(request, cancellationToken) switch
+        var outcome = await SendAsync(request, cancellationToken);
+        return outcome switch
         {
             HttpAnswer answer => TerraBaseAnswers.Sql(answer.Status, answer.Body),
-            Unavailable unavailable => unavailable,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public ValueTask<Result<SqlExecuteResponse, SqlFailure, NotFound, Unavailable>> ExecuteLowLatencyAsync(
+    public ValueTask<InternalSqlOutcome> ExecuteLowLatencyAsync(
         Ulid database,
         SqlExecuteRequest statements,
         SqlContext context,
         CancellationToken cancellationToken) =>
         quic.IsEnabled ? quic.ExecuteAsync(database, statements, context, cancellationToken) : ExecuteAsync(database, statements, context, cancellationToken);
 
-    public async ValueTask<Result<CallerSqlResponse, SqlFailure, Unauthorized, Forbidden, NotFound, Unavailable>> ExecuteAsCallerAsync(
+    public async ValueTask<CallerSqlOutcome> ExecuteAsCallerAsync(
         string project,
         string database,
         CallerCredential credential,
@@ -91,7 +114,8 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         request.Content = JsonContent.Create(statements, TerraScaleContractsJsonContext.Default.SqlExecuteRequest);
         credential.Apply(request, options.PeerSecret);
         Consistency(request, SqlContext.After(bookmark));
-        return await SendAsync(request, cancellationToken) switch
+        var outcome = await SendAsync(request, cancellationToken);
+        return outcome switch
         {
             HttpAnswer { Status: StatusCodes.Status401Unauthorized } answer => AsUnauthorized(answer),
             HttpAnswer { Status: StatusCodes.Status403Forbidden } answer => AsForbidden(answer),
@@ -99,14 +123,14 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
             {
                 SqlExecuteResponse response => new CallerSqlResponse(response, answer.RulesVersion),
                 SqlFailure failure => failure,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
             },
-            Unavailable unavailable => unavailable,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<CallerGrant, Unauthorized, Forbidden, NotFound, Unavailable>> AuthorizeAsync(
+    public async ValueTask<AuthorizeCallerOutcome> AuthorizeAsync(
         CallerCredential credential,
         AuthorizeRequest authorize,
         CancellationToken cancellationToken)
@@ -115,16 +139,17 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         request.Content = JsonContent.Create(authorize, TerraScaleContractsJsonContext.Default.AuthorizeRequest);
         request.Headers.TryAddWithoutValidation(PlatformOptions.PeerCredentialHeader, options.PeerSecret);
         credential.Forward(request);
-        return await SendAsync(request, cancellationToken) switch
+        var outcome = await SendAsync(request, cancellationToken);
+        return outcome switch
         {
             HttpAnswer { Status: StatusCodes.Status200OK } answer => TerraBaseAnswers.Parse(answer.Body, TerraScaleContractsJsonContext.Default.CallerGrant) is { } grant
                 ? grant
-                : new Unavailable("TerraBase answered an unreadable grant", "terrabase_protocol"),
+                : new PlatformUnavailable("TerraBase answered an unreadable grant", "terrabase_protocol"),
             HttpAnswer { Status: StatusCodes.Status401Unauthorized } answer => AsUnauthorized(answer),
             HttpAnswer { Status: StatusCodes.Status403Forbidden } answer => AsForbidden(answer),
             HttpAnswer { Status: StatusCodes.Status404NotFound } answer => AsNotFound(answer),
             HttpAnswer answer => AsUnavailable(answer),
-            Unavailable unavailable => unavailable,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
@@ -138,11 +163,11 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         _ = outcome switch
         {
             HttpAnswer => true,
-            Unavailable => false,
+            PlatformUnavailable => false,
         };
     }
 
-    public async IAsyncEnumerable<Result<ChangefeedHttpItem, Unavailable>> ChangefeedAsync(
+    public async IAsyncEnumerable<ChangefeedReadOutcome> ChangefeedAsync(
         Ulid database,
         string after,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -154,7 +179,7 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         var items = opened switch
         {
             ChangefeedReader reader => ReadAllAsync(reader, cancellationToken),
-            Unavailable unavailable => Once(unavailable),
+            PlatformUnavailable unavailable => Once(unavailable),
         };
         await foreach (var item in items.WithCancellation(cancellationToken))
         {
@@ -162,7 +187,7 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         }
     }
 
-    private async IAsyncEnumerable<Result<ChangefeedHttpItem, Unavailable>> ReadAllAsync(
+    private async IAsyncEnumerable<ChangefeedReadOutcome> ReadAllAsync(
         ChangefeedReader reader,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -175,14 +200,14 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
                 ended = line switch
                 {
                     ChangefeedHttpItem => Received(),
-                    Unavailable => true,
+                    PlatformUnavailable => true,
                 };
                 yield return line;
             }
         }
     }
 
-    private static async IAsyncEnumerable<Result<ChangefeedHttpItem, Unavailable>> Once(Unavailable unavailable)
+    private static async IAsyncEnumerable<ChangefeedReadOutcome> Once(PlatformUnavailable unavailable)
     {
         await Task.CompletedTask;
         yield return unavailable;
@@ -194,7 +219,9 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         return false;
     }
 
-    private async ValueTask<Result<ChangefeedReader, Unavailable>> OpenStreamAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    private readonly union OpenChangefeedOutcome(ChangefeedReader, PlatformUnavailable);
+
+    private async ValueTask<OpenChangefeedOutcome> OpenStreamAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var client = Client();
         client.Timeout = Timeout.InfiniteTimeSpan;
@@ -205,14 +232,14 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         }
         catch (HttpRequestException error)
         {
-            return new Unavailable($"TerraBase changefeed is unreachable: {Describe(error)}", "terrabase_unreachable");
+            return new PlatformUnavailable($"TerraBase changefeed is unreachable: {Describe(error)}", "terrabase_unreachable");
         }
 
         if (response.StatusCode != HttpStatusCode.OK)
         {
             var status = (int)response.StatusCode;
             response.Dispose();
-            return new Unavailable($"TerraBase changefeed answered HTTP {status}", "changefeed_refused");
+            return new PlatformUnavailable($"TerraBase changefeed answered HTTP {status}", "changefeed_refused");
         }
 
         try
@@ -222,11 +249,13 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         catch (HttpRequestException error)
         {
             response.Dispose();
-            return new Unavailable($"TerraBase changefeed broke: {error.Message}", "terrabase_unreachable");
+            return new PlatformUnavailable($"TerraBase changefeed broke: {error.Message}", "terrabase_unreachable");
         }
     }
 
-    private async ValueTask<Result<HttpAnswer, Unavailable>> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    private readonly union SendTerraBaseRequestOutcome(HttpAnswer, PlatformUnavailable);
+
+    private async ValueTask<SendTerraBaseRequestOutcome> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         try
         {
@@ -238,11 +267,11 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         }
         catch (HttpRequestException error)
         {
-            return new Unavailable($"TerraBase is unreachable: {Describe(error)}", "terrabase_unreachable");
+            return new PlatformUnavailable($"TerraBase is unreachable: {Describe(error)}", "terrabase_unreachable");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new Unavailable("TerraBase did not answer in time", "terrabase_timeout");
+            return new PlatformUnavailable("TerraBase did not answer in time", "terrabase_timeout");
         }
     }
 
@@ -280,35 +309,35 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         }
     }
 
-    private static Unauthorized AsUnauthorized(HttpAnswer answer)
+    private static PlatformUnauthorized AsUnauthorized(HttpAnswer answer)
     {
         var error = TerraBaseAnswers.Error(answer.Status, answer.Body);
-        return new Unauthorized(error.Message, error.Code);
+        return new PlatformUnauthorized(error.Message, error.Code);
     }
 
-    private static Forbidden AsForbidden(HttpAnswer answer)
+    private static PlatformForbidden AsForbidden(HttpAnswer answer)
     {
         var error = TerraBaseAnswers.Error(answer.Status, answer.Body);
-        return new Forbidden(error.Message, error.Code, error.Details);
+        return new PlatformForbidden(error.Message, error.Code, error.Details);
     }
 
-    private static NotFound AsNotFound(HttpAnswer answer)
+    private static PlatformNotFound AsNotFound(HttpAnswer answer)
     {
         var error = TerraBaseAnswers.Error(answer.Status, answer.Body);
-        return new NotFound(error.Message, error.Code);
+        return new PlatformNotFound(error.Message, error.Code);
     }
 
-    private static Unavailable AsUnavailable(HttpAnswer answer)
+    private static PlatformUnavailable AsUnavailable(HttpAnswer answer)
     {
         var error = TerraBaseAnswers.Error(answer.Status, answer.Body);
-        return new Unavailable(error.Message, error.Code, error.Details);
+        return new PlatformUnavailable(error.Message, error.Code, error.Details);
     }
 
     private sealed class ChangefeedReader(HttpResponseMessage response, Stream stream) : IDisposable
     {
         private readonly StreamReader _reader = new(stream);
 
-        public async ValueTask<Result<ChangefeedHttpItem, Unavailable>> NextAsync(CancellationToken cancellationToken)
+        public async ValueTask<ChangefeedReadOutcome> NextAsync(CancellationToken cancellationToken)
         {
             while (true)
             {
@@ -319,16 +348,16 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
                 }
                 catch (IOException error)
                 {
-                    return new Unavailable($"TerraBase changefeed broke: {error.Message}", "changefeed_broken");
+                    return new PlatformUnavailable($"TerraBase changefeed broke: {error.Message}", "changefeed_broken");
                 }
                 catch (HttpRequestException error)
                 {
-                    return new Unavailable($"TerraBase changefeed broke: {error.Message}", "changefeed_broken");
+                    return new PlatformUnavailable($"TerraBase changefeed broke: {error.Message}", "changefeed_broken");
                 }
 
                 if (line is null)
                 {
-                    return new Unavailable("TerraBase closed the changefeed", "changefeed_closed");
+                    return new PlatformUnavailable("TerraBase closed the changefeed", "changefeed_closed");
                 }
 
                 if (line.Length == 0)
@@ -338,7 +367,7 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
 
                 return TerraBaseAnswers.Parse(Encoding.UTF8.GetBytes(line), TerraScaleContractsJsonContext.Default.ChangefeedHttpItem) is { } item
                     ? item
-                    : new Unavailable("TerraBase sent an unreadable changefeed item", "terrabase_protocol");
+                    : new PlatformUnavailable("TerraBase sent an unreadable changefeed item", "terrabase_protocol");
             }
         }
 

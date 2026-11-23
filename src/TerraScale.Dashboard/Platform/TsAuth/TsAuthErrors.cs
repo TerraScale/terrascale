@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             string? message = null;
             try
             {
-                (code, message) = await ReadErrorAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                (code, message) = await ReadErrorAsync(response.Content, cancellationToken);
             }
             catch (Exception exception) when (exception is IOException or HttpRequestException)
             {
@@ -51,12 +51,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         private static async Task<(string? Code, string? Message)> ReadErrorAsync(HttpContent? content, CancellationToken cancellationToken)
         {
             if (content is null || content.Headers.ContentLength > MaximumErrorBytes) return (null, null);
-            await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            await using var source = await content.ReadAsStreamAsync(cancellationToken);
             var bytes = new byte[MaximumErrorBytes + 1];
             var length = 0;
             while (length < bytes.Length)
             {
-                var count = await source.ReadAsync(bytes.AsMemory(length), cancellationToken).ConfigureAwait(false);
+                var count = await source.ReadAsync(bytes.AsMemory(length), cancellationToken);
                 if (count == 0)
                 {
                     break;

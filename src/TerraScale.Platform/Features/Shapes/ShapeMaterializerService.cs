@@ -70,16 +70,18 @@ public sealed class ShapeMaterializerService(
 
     private async Task ReconcileAsync(CancellationToken cancellationToken)
     {
-        var owned = await registry.ClaimAsync(_owner, Lease, ClaimLimit, cancellationToken) switch
+        var ownedOutcome = await registry.ClaimAsync(_owner, Lease, ClaimLimit, cancellationToken);
+        var owned = ownedOutcome switch
         {
-            IReadOnlyList<ShapeRecord> claimed => claimed,
-            Unavailable unavailable => Deferred<ShapeRecord>(unavailable.Message),
+            ClaimedShapes { Items: var claimed } => claimed,
+            PlatformUnavailable unavailable => Deferred<ShapeRecord>(unavailable.Message),
         };
         Volatile.Write(ref _owned, owned);
-        var active = await registry.ActiveDatabasesAsync(cancellationToken) switch
+        var activeOutcome = await registry.ActiveDatabasesAsync(cancellationToken);
+        var active = activeOutcome switch
         {
-            IReadOnlyList<Ulid> databases => databases,
-            Unavailable unavailable => Deferred<Ulid>(unavailable.Message),
+            ActiveShapeDatabases { Items: var databases } => databases,
+            PlatformUnavailable unavailable => Deferred<Ulid>(unavailable.Message),
         };
         var wanted = active.ToHashSet();
         foreach (var database in _feeds.Keys.Where(database => !wanted.Contains(database)).ToArray())
@@ -121,7 +123,7 @@ public sealed class ShapeMaterializerService(
             var bookmark = item switch
             {
                 ChangefeedHttpItem entry => Seen("quic", entry.Bookmark),
-                Unavailable unavailable => Broken(database, unavailable),
+                PlatformUnavailable unavailable => Broken(database, unavailable),
             };
             if (bookmark is null)
             {
@@ -144,7 +146,7 @@ public sealed class ShapeMaterializerService(
             var bookmark = item switch
             {
                 ChangefeedHttpItem entry => entry.Bookmark,
-                Unavailable unavailable => Broken(database, unavailable),
+                PlatformUnavailable unavailable => Broken(database, unavailable),
             };
             if (bookmark is null)
             {
@@ -190,20 +192,21 @@ public sealed class ShapeMaterializerService(
     private async Task RefreshAsync(ShapeRecord shape, string bookmark, CancellationToken cancellationToken)
     {
         var query = new ShapeQuery(shape.Table, shape.Where, shape.Columns);
-        var outcome = await terraBase.ExecuteLowLatencyAsync(shape.Database, SqlValues.Batch(query.Select()), SqlContext.After(bookmark), cancellationToken) switch
+        var outcomeOutcome = await terraBase.ExecuteLowLatencyAsync(shape.Database, SqlValues.Batch(query.Select()), SqlContext.After(bookmark), cancellationToken);
+        var outcome = outcomeOutcome switch
         {
             SqlExecuteResponse response => ShapeQuery.Snapshot(response.Results[0]) switch
             {
                 ShapeSnapshot snapshot => await SealAsync(shape, snapshot, cancellationToken),
-                Unavailable unavailable => unavailable.Message,
+                PlatformUnavailable unavailable => unavailable.Message,
             },
             SqlFailure { Error.SqlState: "42P01" or "42703" } failure =>
                 await RetireAsync(shape, failure.Error.Message, await registry.RetireShapeAsync(shape.Handle, cancellationToken), cancellationToken),
             SqlFailure failure => failure.Error.Message,
-            NotFound { Code: "unknown_database" } missing =>
+            PlatformNotFound { Code: "unknown_database" } missing =>
                 await RetireAsync(shape, missing.Message ?? "the database no longer exists", await registry.RetireDatabaseAsync(shape.Database, cancellationToken), cancellationToken),
-            NotFound missing => missing.Message ?? "the database no longer exists",
-            Unavailable unavailable => unavailable.Message,
+            PlatformNotFound missing => missing.Message ?? "the database no longer exists",
+            PlatformUnavailable unavailable => unavailable.Message,
         };
         if (outcome is not null)
         {
@@ -211,11 +214,11 @@ public sealed class ShapeMaterializerService(
         }
     }
 
-    private async Task<string?> RetireAsync(ShapeRecord shape, string reason, Result<ShapeRetirement, Unavailable> outcome, CancellationToken cancellationToken) =>
+    private async Task<string?> RetireAsync(ShapeRecord shape, string reason, RetireShapeOutcome outcome, CancellationToken cancellationToken) =>
         outcome switch
         {
             ShapeRetirement retired => await RetiredAsync(shape, reason, retired, cancellationToken),
-            Unavailable unavailable => $"{reason}; retiring the shape failed: {unavailable.Message}",
+            PlatformUnavailable unavailable => $"{reason}; retiring the shape failed: {unavailable.Message}",
         };
 
     private async Task<string?> RetiredAsync(ShapeRecord shape, string reason, ShapeRetirement retired, CancellationToken cancellationToken)
@@ -232,17 +235,26 @@ public sealed class ShapeMaterializerService(
         return kept == 0 ? null : $"{reason}; {kept} retired shape objects could not be deleted";
     }
 
-    private async Task<string?> SealAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken) =>
-        await registry.ReadAsync(shape.Handle, cancellationToken) switch
+    private async Task<string?> SealAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var outcome = await registry.ReadAsync(shape.Handle, cancellationToken);
+        return outcome switch
         {
-            ShapeRecord current => await sealer.SyncAsync(current, snapshot, cancellationToken) switch
+            ShapeRecord current => await SyncAsync(current),
+            PlatformNotFound missing => missing.Message,
+            PlatformUnavailable unavailable => unavailable.Message,
+        };
+
+        async ValueTask<string?> SyncAsync(ShapeRecord current)
+        {
+            var outcome = await sealer.SyncAsync(current, snapshot, cancellationToken);
+            return outcome switch
             {
                 ShapeRecord => null,
-                Unavailable unavailable => unavailable.Message,
-            },
-            NotFound missing => missing.Message,
-            Unavailable unavailable => unavailable.Message,
-        };
+                PlatformUnavailable unavailable => unavailable.Message,
+            };
+        }
+    }
 
     private async ValueTask EnqueueAsync(Ulid database, string bookmark, CancellationToken cancellationToken)
     {
@@ -267,7 +279,7 @@ public sealed class ShapeMaterializerService(
         return bookmark;
     }
 
-    private string? Broken(Ulid database, Unavailable unavailable)
+    private string? Broken(Ulid database, PlatformUnavailable unavailable)
     {
         logger.ZLogWarning($"Changefeed for {database} broke: {unavailable.Message}");
         return null;

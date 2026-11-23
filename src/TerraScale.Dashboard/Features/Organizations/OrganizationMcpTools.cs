@@ -6,7 +6,6 @@ using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     [McpServerToolType]
     public sealed partial class OrganizationMcpTools(IHttpContextAccessor http, AccountService accounts, OrganizationOperations operations,
@@ -75,15 +74,12 @@ namespace TerraScale.Dashboard.Features.Organizations
         {
             return Invoke(async () =>
         {
-            switch (await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation))
+            var left = await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation);
+            return left switch
             {
-                case Conflict error:
-                    throw new AccountAccessException(error.Message, 409);
-                case Done:
-                    break;
-            }
-
-            return new OrganizationDone(true);
+                Done => new OrganizationDone(true),
+                DashboardConflict error => throw new AccountAccessException(error.Message, 409),
+            };
         });
         }
 
@@ -248,12 +244,13 @@ namespace TerraScale.Dashboard.Features.Organizations
             return Invoke(async () =>
         {
             var context = await PrincipalAsync();
-            var organization = (await invitations.RespondAsync(context.Session, Token(token), action, Cancellation)) switch
+            var response = await invitations.RespondAsync(context.Session, Token(token), action, Cancellation);
+            var organization = response switch
             {
                 PendingInvitation pending => pending.Organization,
-                Validation error => throw new AccountAccessException(error.Message, 400),
-                NotFound error => throw new AccountAccessException(error.Message!, 404),
-                Forbidden error => throw new AccountAccessException(error.Message),
+                DashboardValidation error => throw new AccountAccessException(error.Message, 400),
+                DashboardNotFound error => throw new AccountAccessException(error.Message, 404),
+                DashboardForbidden error => throw new AccountAccessException(error.Message),
             };
             return new OrganizationInvitationResponse(organization.Id, organization.Name, action.Trim().ToLowerInvariant());
         });
@@ -364,7 +361,6 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         private async Task<T> Invoke<T>(Func<Task<T>> action)
         {
-            // ts-auth refusals arrive as AccountAccessException with its status and message.
             try { return await action(); }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !Cancellation.IsCancellationRequested)
             { throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502); }

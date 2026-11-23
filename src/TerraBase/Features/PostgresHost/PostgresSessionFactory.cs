@@ -4,6 +4,7 @@ using TerraBase.Features.Catalog;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Rules;
 using TerraBase.Features.Sql;
+using TerraBase.Hosting;
 using TerraBase.Postgres.Hosting;
 using TerraScale.Contracts.Cluster;
 
@@ -24,32 +25,38 @@ internal sealed class PostgresSessionFactory(
 
     private readonly ConcurrentDictionary<Ulid, int> _sessions = new();
 
-    public async ValueTask<Result<PostgresGrant, Unauthorized, Forbidden, QuotaExceeded, Unavailable>> AuthenticateAsync(
-        PostgresStartup startup, CancellationToken cancellationToken)
+    public async ValueTask<PostgresAuthenticateOutcome> AuthenticateAsync(PostgresStartup startup, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(startup);
         if (startup.Password is not { Length: > 0 } secret)
         {
-            return new Unauthorized("send an API key or access token as the password", "unauthorized");
+            return new PostgresPasswordRejected("send an API key or access token as the password");
         }
 
-        return await authentication.AuthenticatePasswordAsync(secret, startup.ProjectReference, cancellationToken) switch
+        var authenticated = await authentication.AuthenticatePasswordAsync(secret, startup.ProjectReference, cancellationToken);
+        return authenticated switch
         {
-            Caller caller => await access.DataAsync(caller, startup.ProjectReference, startup.DatabaseReference, cancellationToken) switch
-            {
-                ResolvedDatabase target => await GrantAsync(target, cancellationToken),
-                Validation invalid => new Forbidden(invalid.Message, invalid.Code),
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => new Forbidden(missing.Message ?? "the database does not exist", missing.Code),
-                Unavailable unavailable => unavailable,
-            },
-            Unauthorized unauthorized => unauthorized,
-            Unavailable unavailable => unavailable,
+            Caller caller => await ResolveAsync(caller, startup, cancellationToken),
+            CredentialRejected rejected => new PostgresPasswordRejected(rejected.Message),
+            BackendUnavailable unavailable => new PostgresBackendUnavailable(unavailable.Message),
         };
     }
 
-    private async ValueTask<Result<PostgresGrant, Unauthorized, Forbidden, QuotaExceeded, Unavailable>> GrantAsync(ResolvedDatabase target, CancellationToken cancellationToken)
+    private async ValueTask<PostgresAuthenticateOutcome> ResolveAsync(Caller caller, PostgresStartup startup, CancellationToken cancellationToken)
+    {
+        var resolved = await access.DataAsync(caller, startup.ProjectReference, startup.DatabaseReference, cancellationToken);
+        return resolved switch
+        {
+            ResolvedDatabase target => await GrantAsync(target, cancellationToken),
+            InvalidInput invalid => new PostgresAccessDenied(invalid.Message),
+            CredentialRejected rejected => new PostgresPasswordRejected(rejected.Message),
+            CallerForbidden forbidden => new PostgresAccessDenied(forbidden.Message),
+            ResourceNotFound missing => new PostgresAccessDenied(missing.Message),
+            BackendUnavailable unavailable => new PostgresBackendUnavailable(unavailable.Message),
+        };
+    }
+
+    private async ValueTask<PostgresAuthenticateOutcome> GrantAsync(ResolvedDatabase target, CancellationToken cancellationToken)
     {
         var tenant = await tenancy.Tenants.ForAsync(target.Project, cancellationToken);
         return tenant switch
@@ -57,36 +64,36 @@ internal sealed class PostgresSessionFactory(
             Tenant known => tenancy.Sessions.TryOpen(known) switch
             {
                 TenantSessions.TenantSession session => await OpenAsync(target, session, cancellationToken),
-                TenantBusy => new QuotaExceeded(TenantSessions.LimitMessage, "tenant_busy"),
+                TenantBusy => new PostgresSessionLimitReached(TenantSessions.LimitMessage),
             },
             NoTenant => await OpenAsync(target, null, cancellationToken),
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => new PostgresBackendUnavailable(unavailable.Message),
         };
     }
 
-    private async ValueTask<Result<PostgresGrant, Unauthorized, Forbidden, QuotaExceeded, Unavailable>> OpenAsync(
-        ResolvedDatabase target, IDisposable? tenantSession, CancellationToken cancellationToken)
+    private async ValueTask<PostgresAuthenticateOutcome> OpenAsync(ResolvedDatabase target, IDisposable? tenantSession, CancellationToken cancellationToken)
     {
         var count = _sessions.AddOrUpdate(target.Database.Id, 1, static (_, current) => current + 1);
         var lease = new SessionLease(this, target.Database.Id, tenantSession);
         if (count > MaxSessionsPerDatabase)
         {
             await lease.DisposeAsync();
-            return new QuotaExceeded("the database has too many Postgres sessions", "too_many_sessions");
+            return new PostgresSessionLimitReached("the database has too many Postgres sessions");
         }
 
-        return await access.OpenAsync(target.Database, cancellationToken) switch
+        var opened = await access.OpenAsync(target.Database, cancellationToken);
+        return opened switch
         {
             ISqlDatabaseSession session => new PostgresGrant(new TerraBaseDatabaseExecutor(target, session, coordinator, rules, runner), target.Database.Name,
                 target.CanWrite ? SqlAccess.Write : SqlAccess.Read, lease, lifetime.ApplicationStopping),
-            Unavailable unavailable => await ReleaseAsync(lease, unavailable),
+            BackendUnavailable unavailable => await ReleaseAsync(lease, unavailable),
         };
     }
 
-    private static async ValueTask<Result<PostgresGrant, Unauthorized, Forbidden, QuotaExceeded, Unavailable>> ReleaseAsync(SessionLease lease, Unavailable unavailable)
+    private static async ValueTask<PostgresAuthenticateOutcome> ReleaseAsync(SessionLease lease, BackendUnavailable unavailable)
     {
         await lease.DisposeAsync();
-        return unavailable;
+        return new PostgresBackendUnavailable(unavailable.Message);
     }
 
     private void Release(Ulid databaseId)

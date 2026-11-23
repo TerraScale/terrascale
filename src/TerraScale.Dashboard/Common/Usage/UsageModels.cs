@@ -3,7 +3,7 @@ using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Common.Usage
 {
-    public readonly union UsageSelectionResult(UsageSelection, NotFound, Forbidden);
+    public readonly union UsageSelectionResult(UsageSelection, DashboardNotFound, DashboardForbidden);
 
     public sealed record UsageSelection(AccountContext Context, string Range, string DatabaseId, bool ExplicitProjectFilter)
     {
@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.Common.Usage
         {
             if (context.Session.UserId != context.UserId)
             {
-                return new Forbidden("Organization membership is required.");
+                return new DashboardForbidden("Organization membership is required.");
             }
 
             OrganizationRecord org;
@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.Common.Usage
             {
                 if (context.Organizations.FirstOrDefault(item => item.Projects.ContainsKey(projectId)) is not { } byProject)
                 {
-                    return new NotFound("Project is unavailable.");
+                    return new DashboardNotFound("Project is unavailable.");
                 }
 
                 org = byProject;
@@ -31,24 +31,24 @@ namespace TerraScale.Dashboard.Common.Usage
             }
             else
             {
-                return new Forbidden("Selected organization is unavailable.");
+                return new DashboardForbidden("Selected organization is unavailable.");
             }
 
             var member = org.ContainsMember(context.UserId);
             var project = projectId.Length == 0 ? context.Project : org.Projects[projectId];
             if (project is not null && (project.OrganizationId != org.Id || !org.Projects.ContainsKey(project.Id)))
             {
-                return new NotFound("Project is unavailable.");
+                return new DashboardNotFound("Project is unavailable.");
             }
 
             if (!member && (projectId.Length == 0 || !ProjectCollaborator.Allows(org, project)))
             {
-                return new Forbidden("Organization membership is required.");
+                return new DashboardForbidden("Organization membership is required.");
             }
 
             if (databaseId.Length > 0 && (project is null || !project.Databases.TryGetValue(databaseId, out var database) || database.ProjectId != project.Id))
             {
-                return new NotFound("Database is unavailable.");
+                return new DashboardNotFound("Database is unavailable.");
             }
 
             var selection = new UsageSelection(context with { Organization = org, Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId)
@@ -75,7 +75,6 @@ namespace TerraScale.Dashboard.Common.Usage
     public sealed record UsageMeasurements(UsageObservation Scope, IReadOnlyDictionary<string, UsageObservation> Monthly)
     {
         public DateTimeOffset? MonthStart { get; init; }
-        // The organization ledger retains deleted projects; never reconstruct it from current project totals.
         public long? OperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
             return Units(projectIds, now, month => (month.OrganizationUnits, month.Units));

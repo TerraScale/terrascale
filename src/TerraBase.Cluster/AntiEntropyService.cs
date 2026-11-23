@@ -25,11 +25,11 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
         using var timer = new PeriodicTimer(options.AntiEntropyInterval, timeProvider);
         try
         {
-            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 foreach (var databaseId in databases.Tracked)
                 {
-                    _ = await SyncAsync(databaseId, cancellationToken).ConfigureAwait(false);
+                    _ = await SyncAsync(databaseId, cancellationToken);
                 }
             }
         }
@@ -43,7 +43,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
     {
         try
         {
-            await foreach (var databaseId in databases.CatchUpRequests.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            await foreach (var databaseId in databases.CatchUpRequests.ReadAllAsync(cancellationToken))
             {
                 HashSet<Ulid> batch = [databaseId];
                 while (databases.CatchUpRequests.TryRead(out var next))
@@ -53,7 +53,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
 
                 foreach (var pending in batch)
                 {
-                    _ = await SyncAsync(pending, cancellationToken).ConfigureAwait(false);
+                    _ = await SyncAsync(pending, cancellationToken);
                 }
             }
         }
@@ -68,12 +68,12 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
 
     public async ValueTask<CatchUpReport> SyncAsync(Ulid databaseId, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
     {
-        var resolved = await databases.ResolveAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        var resolved = await databases.ResolveAsync(databaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => await SyncLeasedAsync(session, perPeerTimeout, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => new CatchUpReport(databaseId, 0, 0, 0, [notFound.Message ?? "database not found"]),
-            Unavailable unavailable => new CatchUpReport(databaseId, 0, 0, 0, [unavailable.Message]),
+            ISqlDatabaseSession session => await SyncLeasedAsync(session, perPeerTimeout, cancellationToken),
+            DatabaseNotFound notFound => new CatchUpReport(databaseId, 0, 0, 0, [notFound.Message]),
+            ClusterUnavailable unavailable => new CatchUpReport(databaseId, 0, 0, 0, [unavailable.Message]),
         };
     }
 
@@ -92,7 +92,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
                 break;
             }
 
-            var (_, applied, more, failure, transportReset) = await PullAsync(session, nodeId, remaining, cancellationToken).ConfigureAwait(false);
+            var (_, applied, more, failure, transportReset) = await PullAsync(session, nodeId, remaining, cancellationToken);
             if (session.CurrentBookmark.Dominates(target))
             {
                 return true;
@@ -115,7 +115,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
 
     private async ValueTask<CatchUpReport> SyncLeasedAsync(ISqlDatabaseSession session, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
     {
-        await using (session.ConfigureAwait(false))
+        await using (session)
         {
             PeerNodeInfo[] reachable = [.. options.Peers.Where(peer => health.IsReachable(peer.NodeId))];
             if (reachable.Length == 0)
@@ -127,7 +127,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
             await Parallel.ForEachAsync(
                 Enumerable.Range(0, reachable.Length),
                 new ParallelOptions { MaxDegreeOfParallelism = options.MaxReplicationParallelism, CancellationToken = cancellationToken },
-                async (index, token) => results[index] = await SyncPeerAsync(session, reachable[index].NodeId, perPeerTimeout, token).ConfigureAwait(false)).ConfigureAwait(false);
+                async (index, token) => results[index] = await SyncPeerAsync(session, reachable[index].NodeId, perPeerTimeout, token));
 
             var fetched = 0;
             var applied = 0;
@@ -155,7 +155,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
         List<string> failures = [];
         for (var page = 0; page < MaxPagesPerPeer; page++)
         {
-            var (fetched, applied, more, failure, _) = await PullAsync(session, nodeId, perPeerTimeout, cancellationToken).ConfigureAwait(false);
+            var (fetched, applied, more, failure, _) = await PullAsync(session, nodeId, perPeerTimeout, cancellationToken);
             totalFetched += fetched;
             totalApplied += applied;
             if (failure is not null)
@@ -175,17 +175,17 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
     private async ValueTask<(int Fetched, int Applied, bool More, string? Failure, bool TransportReset)> PullAsync(ISqlDatabaseSession session, string nodeId, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var request = new CatchUpRequestMessage(session.DatabaseId, options.NodeId, session.CurrentBookmark, options.CatchUpPageSize);
-        var response = await client.CallAsync<CatchUpRequestMessage, CatchUpResponseMessage>(nodeId, QuicMessageType.CatchUpRequest, request, timeout, cancellationToken).ConfigureAwait(false);
+        var response = await client.CallAsync<CatchUpRequestMessage, CatchUpResponseMessage>(nodeId, QuicMessageType.CatchUpRequest, request, timeout, cancellationToken);
         return response switch
         {
-            CatchUpResponseMessage page => await ApplyPageAsync(session, page, cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => (0, 0, false, string.Concat(nodeId, ": ", unavailable.Message), true),
-            RequestTimeout timeoutError => TimedOutPull(nodeId, timeoutError),
+            CatchUpResponseMessage page => await ApplyPageAsync(session, page, cancellationToken),
+            QuicUnavailable unavailable => (0, 0, false, string.Concat(nodeId, ": ", unavailable.Message), true),
+            QuicTimeout timeoutError => TimedOutPull(nodeId, timeoutError),
             QuicRemoteError error => (0, 0, false, string.Concat(nodeId, ": ", error.Message), false),
         };
     }
 
-    private (int Fetched, int Applied, bool More, string? Failure, bool TransportReset) TimedOutPull(string nodeId, RequestTimeout timeoutError)
+    private (int Fetched, int Applied, bool More, string? Failure, bool TransportReset) TimedOutPull(string nodeId, QuicTimeout timeoutError)
     {
         client.ResetPeer(nodeId);
         return (0, 0, false, string.Concat(nodeId, ": ", timeoutError.Message), false);
@@ -198,34 +198,34 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
             return (0, 0, false, null, false);
         }
 
-        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, cancellationToken).ConfigureAwait(false);
+        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, cancellationToken);
         return applied switch
         {
             RemoteApplyOutcome outcome => (page.Entries.Count, outcome.Applied, page.HasMore, null, false),
-            NotFound notFound => (page.Entries.Count, 0, false, notFound.Message ?? "database not found", false),
+            DatabaseNotFound notFound => (page.Entries.Count, 0, false, notFound.Message, false),
             SchemaMismatch mismatch => (page.Entries.Count, 0, false, string.Concat("schema epoch mismatch: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture)), false),
             StorageCorrupted corrupted => (page.Entries.Count, 0, false, corrupted.Message, false),
             StorageBusy busy => (page.Entries.Count, 0, false, busy.Message, false),
-            Unavailable unavailable => (page.Entries.Count, 0, false, unavailable.Message, false),
+            ClusterUnavailable unavailable => (page.Entries.Count, 0, false, unavailable.Message, false),
         };
     }
 
     private sealed record PeerSyncResult(int Fetched, int Applied, IReadOnlyList<string> Failures);
 
-    private async ValueTask<Result<CatchUpResponseMessage, QuicRemoteError>> HandleCatchUpAsync(QuicCallContext context, CatchUpRequestMessage message, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<CatchUpResponseMessage>> HandleCatchUpAsync(QuicCallContext context, CatchUpRequestMessage message, CancellationToken cancellationToken)
     {
-        var resolved = await databases.ResolveAsync(message.DatabaseId, cancellationToken).ConfigureAwait(false);
+        var resolved = await databases.ResolveAsync(message.DatabaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => await ServeLeasedAsync(session, message, context.RemoteNodeId, cancellationToken).ConfigureAwait(false),
-            NotFound => new CatchUpResponseMessage(message.DatabaseId, false, CausalBookmark.Empty, [], false),
-            Unavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
+            ISqlDatabaseSession session => await ServeLeasedAsync(session, message, context.RemoteNodeId, cancellationToken),
+            DatabaseNotFound => new CatchUpResponseMessage(message.DatabaseId, false, CausalBookmark.Empty, [], false),
+            ClusterUnavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
         };
     }
 
-    private async ValueTask<Result<CatchUpResponseMessage, QuicRemoteError>> ServeLeasedAsync(ISqlDatabaseSession session, CatchUpRequestMessage message, string requester, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<CatchUpResponseMessage>> ServeLeasedAsync(ISqlDatabaseSession session, CatchUpRequestMessage message, string requester, CancellationToken cancellationToken)
     {
-        await using (session.ConfigureAwait(false))
+        await using (session)
         {
             var bookmark = session.CurrentBookmark;
             if (!bookmark.Dominates(message.Have))
@@ -252,7 +252,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
 
                 var remainingOrigins = lagging.Length - index;
                 var share = Math.Max(1, remainingBudget / remainingOrigins);
-                var read = await session.ReadCommitLogAsync(origin, from, share, cancellationToken).ConfigureAwait(false);
+                var read = await session.ReadCommitLogAsync(origin, from, share, cancellationToken);
                 var page = read switch
                 {
                     CommitLogPage served => served.Entries,

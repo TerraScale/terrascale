@@ -6,13 +6,19 @@ using TerraScale.Contracts.Quic;
 
 namespace TerraScale.QuicRpc;
 
+internal sealed record PushEnqueued;
+
+internal readonly union PushEnqueueOutcome(PushEnqueued, QuicFault);
+
+internal readonly union PushDeliveryOutcome(QuicSent, QuicFault);
+
 internal sealed class PendingPush(byte[] buffer, int length)
 {
     private const int Queued = 0;
     private const int Claimed = 1;
     private const int Abandoned = 2;
 
-    private readonly TaskCompletionSource<Result<Done, QuicFault>> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<PushDeliveryOutcome> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _state;
     private byte[] _buffer = buffer;
 
@@ -20,11 +26,11 @@ internal sealed class PendingPush(byte[] buffer, int length)
 
     public int Length => length;
 
-    public Task<Result<Done, QuicFault>> Completion => _completion.Task;
+    public Task<PushDeliveryOutcome> Completion => _completion.Task;
 
     public bool TryClaim() => Interlocked.CompareExchange(ref _state, Claimed, Queued) == Queued;
 
-    public void Complete(Result<Done, QuicFault> result) => _completion.TrySetResult(result);
+    public void Complete(PushDeliveryOutcome result) => _completion.TrySetResult(result);
 
     public void Abandon(CallScope scope)
     {
@@ -76,20 +82,20 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
     public Task Completion { get; }
 
-    public async ValueTask<Result<Done, QuicFault>> EnqueueAsync(PendingPush push, CallScope scope)
+    public async ValueTask<PushEnqueueOutcome> EnqueueAsync(PendingPush push, CallScope scope)
     {
         if (_queue.Writer.TryWrite(push))
         {
-            return new Done();
+            return new PushEnqueued();
         }
 
         try
         {
-            while (await _queue.Writer.WaitToWriteAsync(scope.Token).ConfigureAwait(false))
+            while (await _queue.Writer.WaitToWriteAsync(scope.Token))
             {
                 if (_queue.Writer.TryWrite(push))
                 {
-                    return new Done();
+                    return new PushEnqueued();
                 }
             }
 
@@ -111,14 +117,14 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         }
 
         _queue.Writer.TryComplete();
-        await _stop.CancelAsync().ConfigureAwait(false);
-        await Completion.ConfigureAwait(false);
+        await _stop.CancelAsync();
+        await Completion;
         _stop.Dispose();
     }
 
     private async Task PumpAsync()
     {
-        while (await _queue.Reader.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
+        while (await _queue.Reader.WaitToReadAsync(CancellationToken.None))
         {
             while (_queue.Reader.TryRead(out var push))
             {
@@ -128,17 +134,17 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                     continue;
                 }
 
-                var result = await DeliverAsync(push).ConfigureAwait(false);
+                var result = await DeliverAsync(push);
                 push.Complete(result);
                 push.Release();
-                if (result switch { Done => null, QuicFault fault => fault } is { } failure)
+                if (result switch { QuicSent => null, QuicFault fault => fault } is { } failure)
                 {
                     FailQueued(failure);
                 }
             }
         }
 
-        await CloseStreamAsync().ConfigureAwait(false);
+        await CloseStreamAsync();
     }
 
     private void FailQueued(QuicFault failure)
@@ -154,28 +160,31 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         }
     }
 
-    private async ValueTask<Result<Done, QuicFault>> DeliverAsync(PendingPush push)
+    private async ValueTask<PushDeliveryOutcome> DeliverAsync(PendingPush push)
     {
         using var scope = new CallScope(QuicMeshLimits.CallTimeout, _pool.TimeProvider, _stop.Token, CancellationToken.None);
         if (_lease is { } lease)
         {
             if (ReferenceEquals(_slot.Current(), lease.Connection))
             {
-                return await WriteAsync(lease, push, true, scope).ConfigureAwait(false);
+                return await WriteAsync(lease, push, true, scope);
             }
 
             Retire(lease);
         }
 
-        return await OpenAndWriteAsync(push, scope).ConfigureAwait(false);
+        return await OpenAndWriteAsync(push, scope);
     }
 
-    private async ValueTask<Result<Done, QuicFault>> OpenAndWriteAsync(PendingPush push, CallScope scope) =>
-        await _pool.OpenStreamAsync(_slot, QuicStreamType.Unidirectional, scope).ConfigureAwait(false) switch
+    private async ValueTask<PushDeliveryOutcome> OpenAndWriteAsync(PendingPush push, CallScope scope)
+    {
+        var outcome = await _pool.OpenStreamAsync(_slot, QuicStreamType.Unidirectional, scope);
+        return outcome switch
         {
-            StreamLease opened => await WriteAsync(Track(opened), push, false, scope).ConfigureAwait(false),
+            StreamLease opened => await WriteAsync(Track(opened), push, false, scope),
             QuicFault fault => fault,
         };
+    }
 
     private StreamLease Track(StreamLease opened)
     {
@@ -184,21 +193,24 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         return opened;
     }
 
-    private async ValueTask<Result<Done, QuicFault>> WriteAsync(StreamLease lease, PendingPush push, bool reused, CallScope scope) =>
-        await QuicIo.WriteAsync(lease.Stream, push.Frame, false, scope).ConfigureAwait(false) switch
+    private async ValueTask<PushDeliveryOutcome> WriteAsync(StreamLease lease, PendingPush push, bool reused, CallScope scope)
+    {
+        var outcome = await QuicIo.WriteAsync(lease.Stream, push.Frame, false, scope);
+        return outcome switch
         {
-            Done done => Sent(done, push.Length),
-            QuicFault fault when reused && QuicFaults.IsStreamGone(fault) => await ReopenAsync(lease, fault, push, scope).ConfigureAwait(false),
+            QuicSent done => Sent(done, push.Length),
+            QuicFault fault when reused && QuicFaults.IsStreamGone(fault) => await ReopenAsync(lease, fault, push, scope),
             QuicFault fault => Reset(lease, fault),
         };
-
-    private async ValueTask<Result<Done, QuicFault>> ReopenAsync(StreamLease lease, QuicFault fault, PendingPush push, CallScope scope)
-    {
-        _ = Reset(lease, fault);
-        return await OpenAndWriteAsync(push, scope).ConfigureAwait(false);
     }
 
-    private Done Sent(Done done, int length)
+    private async ValueTask<PushDeliveryOutcome> ReopenAsync(StreamLease lease, QuicFault fault, PendingPush push, CallScope scope)
+    {
+        _ = Reset(lease, fault);
+        return await OpenAndWriteAsync(push, scope);
+    }
+
+    private QuicSent Sent(QuicSent done, int length)
     {
         _pool.Metrics.Sent(QuicSide.Client, length);
         return done;
@@ -229,8 +241,8 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
         _lease = null;
         using var scope = new CallScope(QuicMeshLimits.DrainTimeout, _pool.TimeProvider, _stop.Token, CancellationToken.None);
-        var completed = await QuicIo.WriteAsync(lease.Stream, ReadOnlyMemory<byte>.Empty, true, scope).ConfigureAwait(false);
-        if (completed switch { Done => null, QuicFault fault => fault } is { } failure)
+        var completed = await QuicIo.WriteAsync(lease.Stream, ReadOnlyMemory<byte>.Empty, true, scope);
+        if (completed switch { QuicSent => null, QuicFault fault => fault } is { } failure)
         {
             lease.Stream.Abort(QuicAbortDirection.Write, QuicProtocol.StreamErrorCode);
             _pool.Metrics.Error(QuicSide.Client, failure);
@@ -238,7 +250,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         }
         else
         {
-            await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
+            await QuicIo.DisposeStreamAsync(lease.Stream);
         }
 
         _pool.Metrics.StreamClosed(QuicSide.Client);

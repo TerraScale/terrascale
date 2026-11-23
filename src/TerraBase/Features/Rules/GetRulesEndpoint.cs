@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rules;
 
+internal readonly union RulesReadResponse(RulesResponse, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class GetRulesEndpoint(RulesService rules, RulesStore store, DatabaseAccess access)
-    : Endpoint<RulesRouteInput, Result<RulesResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<RulesRouteInput, RulesReadResponse>
 {
     public override void Configure()
     {
@@ -19,11 +21,12 @@ internal sealed class GetRulesEndpoint(RulesService rules, RulesStore store, Dat
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<RulesResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<RulesReadResponse> HandleAsync(
         RulesRouteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken) switch
+        var outcome = await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => await store.CurrentAsync(resolved.Database.Id, cancellationToken) switch
             {
@@ -31,16 +34,16 @@ internal sealed class GetRulesEndpoint(RulesService rules, RulesStore store, Dat
                 {
                     ISqlDatabaseSession session => new RulesResponse(current, await RulesService.ProblemsAsync(session, current.Rules, cancellationToken),
                         RulesService.Warnings(current.Rules)),
-                    Unavailable unavailable => unavailable,
+                    BackendUnavailable unavailable => unavailable,
                 },
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.Features.Databases
     {
         public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
 
-        // Public protocol contracts: docs.terrascale.tech/guides/{postgres-clients,sql-http}; the API key is the password.
         public static IReadOnlyList<DatabaseConnection> For(string projectId, string database)
         {
             var path = $"/v1/projects/{Uri.EscapeDataString(projectId)}/databases/{Uri.EscapeDataString(database)}";
@@ -24,7 +23,6 @@ namespace TerraScale.Dashboard.Features.Databases
             ];
         }
 
-        // The shared SQL SDK shape (sdk/SQL-API.md) in each SDK's own syntax.
         public static IReadOnlyList<DatabaseSdkSnippet> Sdks(string projectId, string database)
         {
             return

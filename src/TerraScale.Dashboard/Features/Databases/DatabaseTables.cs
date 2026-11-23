@@ -4,7 +4,6 @@ namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed record DatabaseTableSummary(string Name, IReadOnlyList<DatabaseSqlColumn> Columns, long Rows);
 
-    // The database's SQL tables with their columns and row counts, read through the same SQL path as the editor.
     public sealed record DatabaseTables(IReadOnlyList<DatabaseTableSummary> Tables, bool Truncated)
     {
         public const int PreviewRows = 100;
@@ -15,7 +14,6 @@ namespace TerraScale.Dashboard.Features.Databases
         {
             var catalog = await backend.SqlTablesAsync(scope, home, databaseId, cancellationToken);
             var counts = new Dictionary<string, long>(StringComparer.Ordinal);
-            // One read statement counts up to 20 tables; the catalog already stops at 100.
             foreach (var chunk in catalog.Tables.Chunk(20))
             {
                 var sql = string.Join(" UNION ALL ", chunk.Select(table => "SELECT " + Literal(table.Name) + ", count(*) FROM " + Identifier(table.Name)));

@@ -12,11 +12,8 @@ namespace TerraScale.Dashboard.Common.Accounts
         public string Locale { get; set; } = "en";
         public bool OnboardingCompleted { get; set; }
         public string OnboardingStep { get; set; } = "account-information";
-        // Organizations the dashboard has shown this account. ts-auth decides membership; this list never authorizes.
         public List<string> OrganizationIds { get; set; } = [];
-        // The ts-auth organization the dashboard created as this account's Personal workspace.
         public string PersonalOrganizationId { get; set; } = "";
-        // Lease held while one replica creates that organization, so concurrent first sign-ins create one.
         public DateTimeOffset? PersonalClaimUntil { get; set; }
         public string ActiveOrganizationId { get; set; } = "";
         public string ActiveProjectId { get; set; } = "";
@@ -24,9 +21,6 @@ namespace TerraScale.Dashboard.Common.Accounts
         public DateTimeOffset CreatedAt { get; set; }
     }
 
-    // Dashboard-owned state of a ts-auth organization, keyed by its ts-auth ID. The
-    // [JsonIgnore] members are ts-auth's: AccountService fills them from ts-auth on
-    // every read and before every write, and they are never stored.
     public sealed class OrganizationRecord
     {
         public const string FreePlanId = "3BN8V1JQWTB3R3NSZ26SERTHWT";
@@ -50,20 +44,14 @@ namespace TerraScale.Dashboard.Common.Accounts
         [JsonIgnore] public string PendingOwnerUserId { get; set; } = "";
         [JsonIgnore] public DateTimeOffset? PendingOwnerExpiresAt { get; set; }
         [JsonIgnore] public Dictionary<string, MemberRecord> Members { get; set; } = [];
-        // Dashboard settings per ts-auth project id; only ts-auth's current projects are kept.
         public Dictionary<string, ProjectRecord> Projects { get; set; } = [];
         public List<AuditRecord> AuditEvents { get; set; } = [];
-        // The owner's audit retention (1 to 90 days); the plan's window caps it, and none means the plan's window.
         public int? AuditRetentionDays { get; set; }
         [JsonIgnore] public Dictionary<string, InvitationRecord> Invitations { get; set; } = [];
-        // Plan member allowance: invitations this dashboard is creating at ts-auth, by operation id,
-        // until ts-auth lists them. Every change goes through the row's compare-and-set.
         public Dictionary<string, InvitationReservation> InvitationReservations { get; set; } = [];
         public Dictionary<string, string> PendingProjectDeletions { get; set; } = [];
-        // Terminal project IDs contain no names or settings and must survive stale auth snapshots.
         public HashSet<string> DeletedProjectIds { get; set; } = [];
         [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
-        // ts-auth refused this view: the organization requires two-factor and the caller has not enrolled.
         [JsonIgnore] public bool MfaRequired { get; set; }
         public bool ContainsMember(string userId)
         {
@@ -71,7 +59,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             Members.TryGetValue(userId, out var member) && member.Status == "active";
         }
 
-        // The platform organization is read-only in the dashboard whatever ts-auth grants: every write gate reads this.
         public string RoleFor(string userId)
         {
             return !ContainsMember(userId) ? "" : PlatformDatabases.IsPlatform(Id) ? "viewer" : Members[userId].Role;
@@ -82,7 +69,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             return RoleFor(userId) is "owner" or "admin";
         }
 
-        // ts-auth's viewer role reads only.
         public bool CanWrite(string userId)
         {
             return RoleFor(userId) is "owner" or "admin" or "member";
@@ -105,11 +91,9 @@ namespace TerraScale.Dashboard.Common.Accounts
         public DateOnly? JoinedOn { get; set; }
     }
 
-    // Dashboard settings of a ts-auth project; the [JsonIgnore] members come from ts-auth.
     public sealed class ProjectRecord
     {
         public string Id { get; set; } = "";
-        // The caller's effective project role, replaced from ts-auth on each request; never stored authority.
         [JsonIgnore] public string? Role { get; set; }
         [JsonIgnore] public string OrganizationId { get; set; } = "";
         [JsonIgnore] public string Name { get; set; } = "";
@@ -135,9 +119,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public string? ConflictOf { get; set; }
         public string Region { get; set; } = "";
         public List<string> Regions { get; set; } = [];
-        // Every serving region holds a copy, including regions that join later; Regions then lists only the home.
         public bool AllRegions { get; set; }
-        // Every persisted placement change advances this, including saves that repeat the existing values.
         public long PlacementRevision { get; set; }
         public string Endpoint { get; set; } = "";
         public string Status { get; set; } = "active";
@@ -171,7 +153,6 @@ namespace TerraScale.Dashboard.Common.Accounts
         public bool Unread => Status.Equals("unread", StringComparison.OrdinalIgnoreCase);
         public bool VisibleTo(AccountContext context)
         {
-            // Allowance alerts belong to one organization's plan; only its owner sees them.
             if (Type.StartsWith("allowance-", StringComparison.Ordinal) &&
                 (OrganizationId == "" || context.Organization?.RoleFor(context.UserId) != "owner"))
             {
@@ -202,17 +183,11 @@ namespace TerraScale.Dashboard.Common.Accounts
         }
     }
 
-    // Ip is the client address of the request that recorded a dashboard event; events stored before it was recorded,
-    // and other producers' events, have none.
     public sealed record AuditRecord(string Id, string Actor, string Action, string Target, string TargetType, DateTimeOffset OccurredAt, string Source = "dashboard", string? Risk = null, string? Ip = null)
     {
-        // The dashboard knows what it records: its own events carry their catalog severity. Other
-        // producers' events keep what they reported, and a missing value stays "Not reported".
         public string? Risk { get; init; } = Risk ?? (Source == "dashboard" ? DashboardAuditSeverity.ByAction.GetValueOrDefault(Action) : null);
     }
 
-    // The one severity map for audit events the dashboard records. A journey checks that
-    // every action the dashboard source records appears here.
     public static class DashboardAuditSeverity
     {
         public static IReadOnlyDictionary<string, string> ByAction { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -245,14 +220,12 @@ namespace TerraScale.Dashboard.Common.Accounts
         };
     }
 
-    // A ts-auth invitation as the dashboard shows it; ts-auth stores it and its token.
     public sealed class InvitationRecord
     {
         public string Id { get; set; } = "";
         public string OrganizationId { get; set; } = "";
         public string Email { get; set; } = "";
         public string Role { get; set; } = "member";
-        // The project a project invitation grants; none for an organization invitation.
         public string? ProjectId { get; set; }
         public string Status { get; set; } = "pending";
         public DateTimeOffset CreatedAt { get; set; }
@@ -276,22 +249,14 @@ namespace TerraScale.Dashboard.Common.Accounts
         public bool CanWriteProjectData => HasProjectAuthority && Organization is { } organization && !PlatformDatabases.IsPlatform(organization.Id);
         public bool CanSetOrganizationPicker => Project?.Role == "admin" && HasProjectAuthority && Project.Id == PlatformDatabases.AuthProjectId;
         public bool CanManageProject => Project?.Role == "admin" && CanWriteProjectData;
-        // ts-auth's key rule (ApiKeys.AuthorizeAsync): an organization owner/admin reaches every project; otherwise the
-        // live project's member role carries list/create/rotate/revoke and each key's own allowlist, this project only.
         public bool CanManageKeys => CanManage || CanWriteProjectData;
-        // ts-auth gates a project's CIDR allowlist on the project admin role (PlatformEndpoints.SetProjectAllowedCidrs).
         public bool CanManageProjectCidrs => CanManage || CanManageProject;
-        // When this request loaded the context from ts-auth; AccountScope reuses it while nothing has changed since.
         [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
     }
 
-    // One in-flight invitation: its email, when the slot was taken and, once ts-auth answered, its id.
     public sealed record InvitationReservation(string Email, DateTimeOffset ReservedAt, string InvitationId = "")
     {
-        // The project of a project invitation; none for an organization invitation.
         public string? ProjectId { get; init; }
-        // ts-auth invitation ids for the email that cannot be this reservation's: listed when it was taken, or since
-        // accounted for by another reservation.
         public IReadOnlyList<string> Known { get; init; } = [];
     }
 
@@ -308,7 +273,6 @@ namespace TerraScale.Dashboard.Common.Accounts
     public sealed class AccountAccessException(string message, int statusCode = StatusCodes.Status403Forbidden, string code = "") : Exception(message)
     {
         public int StatusCode { get; } = statusCode;
-        // ts-auth's error code when ts-auth refused the change, for example name_taken.
         public string Code { get; } = code;
     }
 }

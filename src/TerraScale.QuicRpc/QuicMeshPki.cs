@@ -4,9 +4,16 @@ using System.Numerics;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+
 namespace TerraScale.QuicRpc;
 
 public sealed record QuicMeshCertificates(X509Certificate2 Certificate, IReadOnlyList<X509Certificate2> TrustedAuthorities, IReadOnlyList<X509Certificate2> Intermediates);
+
+public sealed record MeshPkiInvalid(string Message, string Code = "invalid_mesh_pki");
+
+public readonly union MeshPkiOutcome(QuicMeshCertificates, MeshPkiInvalid);
+
+internal readonly union PemTextReadOutcome(string, MeshPkiInvalid);
 
 public static class QuicMeshPki
 {
@@ -72,25 +79,25 @@ public static class QuicMeshPki
         return new QuicMeshCertificates(certificate, [authority], []);
     }
 
-    public static Result<QuicMeshCertificates, Validation> LoadPem(string certificatePath, string keyPath, string authorityPath, string nodeId, string region, TimeProvider timeProvider)
+    public static MeshPkiOutcome LoadPem(string certificatePath, string keyPath, string authorityPath, string nodeId, string region, TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         return (ReadText(certificatePath), ReadText(keyPath), ReadText(authorityPath)) switch
         {
             (string certificate, string key, string authority) => FromPem(certificate, key, authority, nodeId, region),
-            (Validation invalid, _, _) => invalid,
-            (_, Validation invalid, _) => invalid,
-            (_, _, Validation invalid) => invalid,
+            (MeshPkiInvalid invalid, _, _) => invalid,
+            (_, MeshPkiInvalid invalid, _) => invalid,
+            (_, _, MeshPkiInvalid invalid) => invalid,
         };
     }
 
-    private static Result<QuicMeshCertificates, Validation> FromPem(string certificatePem, string keyPem, string authorityPem, string nodeId, string region)
+    private static MeshPkiOutcome FromPem(string certificatePem, string keyPem, string authorityPem, string nodeId, string region)
     {
         var loaded = LoadPemPair(certificatePem, keyPem);
         var authorities = LoadPemCollection(authorityPem);
         if (loaded is null || authorities is null || authorities.Count == 0)
         {
-            return new Validation("mesh certificate, key or authority PEM is malformed", "cluster_mesh_pem");
+            return new MeshPkiInvalid("mesh certificate, key or authority PEM is malformed", "cluster_mesh_pem");
         }
 
         var chain = LoadPemCollection(certificatePem) ?? [];
@@ -99,13 +106,13 @@ public static class QuicMeshPki
             || !string.Equals(identity.NodeId, nodeId, StringComparison.Ordinal)
             || !string.Equals(identity.Region, region, StringComparison.Ordinal))
         {
-            return new Validation("mesh certificate identity does not match the local node and region", "cluster_mesh_identity");
+            return new MeshPkiInvalid("mesh certificate identity does not match the local node and region", "cluster_mesh_identity");
         }
 
         return new QuicMeshCertificates(loaded, authorities, intermediates);
     }
 
-    private static Result<string, Validation> ReadText(string path)
+    private static PemTextReadOutcome ReadText(string path)
     {
         try
         {
@@ -121,7 +128,7 @@ public static class QuicMeshPki
         }
     }
 
-    private static Validation Unreadable(string path) =>
+    private static MeshPkiInvalid Unreadable(string path) =>
         new(string.Concat("mesh file '", Path.GetFileName(path), "' could not be read"), "cluster_file_unreadable");
 
     private static X509Certificate2? LoadPemPair(string certificatePem, string keyPem)

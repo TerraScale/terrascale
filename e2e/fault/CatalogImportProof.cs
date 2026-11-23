@@ -2,7 +2,9 @@ using System.Globalization;
 using TerraBase.Cluster;
 using TerraBase.Engine;
 using TerraBase.Features.Catalog;
+using TerraBase.Hosting;
 using TerraBase.Storage;
+using TerraScale.Contracts.Cluster;
 using TerraScale.Contracts.ControlPlane;
 
 internal static class CatalogImportProof
@@ -32,39 +34,44 @@ internal static class CatalogImportProof
         var session = system.Session;
 
         var organization = new OrganizationRecord(Ulid.NewUlid(now), "catalog-import", Ulid.NewUlid(now).ToString(), now, Plans.Hobby, false);
-        Require(await catalog.CreateOrganizationAsync(organization, cancellationToken) switch
+        var organizationCreated = await catalog.CreateOrganizationAsync(organization, cancellationToken);
+        Require(organizationCreated switch
         {
             OrganizationRecord => null,
-            Conflict conflict => conflict.Code,
-            Unavailable unavailable => unavailable.Code,
+            StateConflict conflict => conflict.Code,
+            BackendUnavailable unavailable => unavailable.Code,
         } is null, "the organization was not recorded");
         var project = new ProjectRecord(Ulid.NewUlid(now), organization.Id, "catalog-import", now, null);
-        Require(await catalog.CreateProjectAsync(project, cancellationToken) switch
+        var projectCreated = await catalog.CreateProjectAsync(project, cancellationToken);
+        Require(projectCreated switch
         {
             ProjectRecord => null,
-            Conflict conflict => conflict.Code,
-            Unavailable unavailable => unavailable.Code,
+            StateConflict conflict => conflict.Code,
+            BackendUnavailable unavailable => unavailable.Code,
         } is null, "the project was not recorded");
         var database = new DatabaseRecord(Ulid.NewUlid(now), project.Id, "catalog-import", [origin], false, ConsistencyMode.Fast, false,
             ControlDatabaseState.Active, system.KeyId, null, null, now, null, 1, 0);
 
         var beforeCreate = Sequence(session.CurrentBookmark, origin);
-        Require(await catalog.InsertDatabaseAsync(database, cancellationToken) switch
+        var databaseInserted = await catalog.InsertDatabaseAsync(database, cancellationToken);
+        Require(databaseInserted switch
         {
             DatabaseRecord => null,
-            Conflict conflict => conflict.Code,
-            Unavailable unavailable => unavailable.Code,
+            StateConflict conflict => conflict.Code,
+            BackendUnavailable unavailable => unavailable.Code,
         } is null, "the database was not recorded");
         var beforeDelete = Sequence(session.CurrentBookmark, origin);
-        Require(await catalog.DeleteDatabaseAsync(database, cancellationToken) switch
+        var databaseDeleted = await catalog.DeleteDatabaseAsync(database, cancellationToken);
+        Require(databaseDeleted switch
         {
-            Done => null,
-            Unavailable unavailable => unavailable.Code,
+            Completed => null,
+            BackendUnavailable unavailable => unavailable.Code,
         } is null, "the database deletion was not recorded");
-        Require(await catalog.PurgeDatabaseAsync(database.Id, cancellationToken) switch
+        var databasePurged = await catalog.PurgeDatabaseAsync(database.Id, cancellationToken);
+        Require(databasePurged switch
         {
-            Done => null,
-            Unavailable unavailable => unavailable.Code,
+            Completed => null,
+            BackendUnavailable unavailable => unavailable.Code,
         } is null, "the database purge was not recorded");
         var afterDelete = Sequence(session.CurrentBookmark, origin);
 
@@ -147,7 +154,8 @@ internal static class CatalogImportProof
         var next = from;
         while (next <= to)
         {
-            var page = await session.ReadCommitLogAsync(origin, next, 256, cancellationToken) switch
+            var logRead = await session.ReadCommitLogAsync(origin, next, 256, cancellationToken);
+            var page = logRead switch
             {
                 CommitLogPage found => found,
                 CommitLogGap => null,
@@ -167,12 +175,13 @@ internal static class CatalogImportProof
 
     private static async Task<string> SnapshotAsync(SystemDatabase system, Ulid projectId, CancellationToken cancellationToken)
     {
-        var rows = await system.QueryAsync(SqlBuild.Statement(
+        var queried = await system.QueryAsync(SqlBuild.Statement(
             "SELECT 'databases', id, name, state, version FROM databases WHERE project_id = ?1 UNION ALL SELECT 'database_names', database_id, name, '', 0 FROM database_names WHERE project_id = ?1 ORDER BY 1, 2",
-            SqlBuild.Id(projectId)), cancellationToken) switch
+            SqlBuild.Id(projectId)), cancellationToken);
+        var rows = queried switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> found => found,
-            Unavailable => null,
+            BackendUnavailable => null,
         };
         if (rows is null)
         {
@@ -182,34 +191,39 @@ internal static class CatalogImportProof
         return string.Join(';', rows.Select(static row => string.Join('|', row.Select(SqlBuild.Format))));
     }
 
-    private static async Task<bool> AbsentAsync(CatalogStore catalog, Ulid projectId, DatabaseRecord database, CancellationToken cancellationToken) =>
-        await catalog.GetDatabaseAsync(database.Id, cancellationToken) switch
+    private static async Task<bool> AbsentAsync(CatalogStore catalog, Ulid projectId, DatabaseRecord database, CancellationToken cancellationToken)
+    {
+        var byId = await catalog.GetDatabaseAsync(database.Id, cancellationToken);
+        if (!Absent(byId))
         {
-            DatabaseRecord => false,
-            NotFound => true,
-            Unavailable => false,
+            return false;
         }
-        && await catalog.FindDatabaseAsync(projectId, database.Name, cancellationToken) switch
-        {
-            DatabaseRecord => false,
-            NotFound => true,
-            Unavailable => false,
-        };
+
+        var byName = await catalog.FindDatabaseAsync(projectId, database.Name, cancellationToken);
+        return Absent(byName);
+    }
+
+    private static bool Absent(DatabaseLookup lookup) => lookup switch
+    {
+        DatabaseRecord => false,
+        ResourceNotFound => true,
+        BackendUnavailable => false,
+    };
 
     private static long Sequence(CausalBookmark bookmark, string origin) =>
         bookmark.Entries.Where(entry => entry.Key == origin).Select(static entry => entry.Value).FirstOrDefault();
 
-    private static string Describe(Result<RemoteApplyOutcome, NotFound, SchemaMismatch, StorageCorrupted, StorageBusy, Unavailable> outcome) => outcome switch
+    private static string Describe(RemoteReplicationOutcome outcome) => outcome switch
     {
         RemoteApplyOutcome applied => Counts(applied),
-        NotFound => "not_found",
+        DatabaseNotFound => "not_found",
         SchemaMismatch => "schema_mismatch",
         StorageCorrupted => "storage_corrupted",
         StorageBusy => "storage_busy",
-        Unavailable => "unavailable",
+        ClusterUnavailable => "unavailable",
     };
 
-    private static string Describe(Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy> outcome) => outcome switch
+    private static string Describe(ApplyRemoteBatchOutcome outcome) => outcome switch
     {
         RemoteApplyOutcome applied => Counts(applied),
         SchemaMismatch => "schema_mismatch",

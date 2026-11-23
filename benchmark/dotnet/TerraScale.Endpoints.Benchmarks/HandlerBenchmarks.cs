@@ -3,11 +3,6 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraScale.Endpoints.Benchmarks;
 
-/// <summary>
-/// Invokes each endpoint's final RequestDelegate with a fresh HttpContext and request scope.
-/// Routing, Kestrel and sockets are identical for every variant, so this isolates the handler
-/// plumbing: activation, binding, invocation and response writing.
-/// </summary>
 [MemoryDiagnoser]
 public class HandlerBenchmarks
 {
@@ -35,7 +30,6 @@ public class HandlerBenchmarks
         this.rdf = endpoints[$"/rdf/{this.Scenario}"];
         this.terraScale = endpoints[$"/ts/{this.Scenario}"];
 
-        // Same status, content type and bytes from every variant, or the comparison is meaningless.
         var expected = Capture(this.rdg);
         foreach (var (name, handler) in new[] { ("rdf", this.rdf), ("ts", this.terraScale) })
         {
@@ -85,7 +79,6 @@ public class HandlerBenchmarks
         return context;
     }
 
-    // Kestrel supplies this; minimal APIs treat a request without it as having no body.
     private sealed class HasBody : IHttpRequestBodyDetectionFeature
     {
         public static readonly HasBody Instance = new();

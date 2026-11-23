@@ -31,7 +31,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
     public SnowflakeGenerator Snowflake { get; }
 
-    public static ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteServiceReadAsync(
+    public static ValueTask<SqlReadOutcome> ExecuteServiceReadAsync(
         ISqlDatabaseSession session, SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -58,7 +58,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             : null;
     }
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Validation, StorageCorrupted, StorageBusy>> OpenAsync(DatabaseOpenRequest request, CancellationToken cancellationToken)
+    public async ValueTask<OpenDatabaseOutcome> OpenAsync(DatabaseOpenRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RawKey.Length != DatabaseOpenRequest.RawKeyLength)
@@ -67,14 +67,14 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
 
         var gate = Gate(request.DatabaseId);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken);
         try
         {
             if (Tracked(request.DatabaseId) is { } existing)
             {
                 if (!CryptographicOperations.FixedTimeEquals(existing.RawKey, request.RawKey.Span))
                 {
-                    return new Validation("raw key does not match the open database", "invalid_key");
+                    return new InvalidDatabaseRequest("raw key does not match the open database", "invalid_key");
                 }
 
                 existing.AddReference();
@@ -83,10 +83,11 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
             if (!File.Exists(DatabasePath(request.DatabaseId)))
             {
-                return new NotFound("database not found");
+                return new DatabaseNotFound(request.DatabaseId);
             }
 
-            return DatabaseSession.Open(Context(request.DatabaseId, request.RawKey), create: false, strict: false, ReleaseAsync) switch
+            var opened = DatabaseSession.Open(Context(request.DatabaseId, request.RawKey), create: false, strict: false, ReleaseAsync);
+            return opened switch
             {
                 DatabaseSession session => Session(Track(session)),
                 StorageCorrupted corrupted => corrupted,
@@ -98,10 +99,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             gate.Release();
         }
 
-        static Result<ISqlDatabaseSession, NotFound, Validation, StorageCorrupted, StorageBusy> Session(ISqlDatabaseSession session) => session;
+        static OpenDatabaseOutcome Session(ISqlDatabaseSession session) => session;
     }
 
-    public async ValueTask<Result<ISqlDatabaseSession, Conflict, Validation, StorageBusy>> CreateAsync(DatabaseCreateRequest request, CancellationToken cancellationToken)
+    public async ValueTask<CreateDatabaseOutcome> CreateAsync(DatabaseCreateRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RawKey.Length != DatabaseOpenRequest.RawKeyLength)
@@ -110,12 +111,12 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
 
         var gate = Gate(request.DatabaseId);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken);
         try
         {
             if (Tracked(request.DatabaseId) is not null || File.Exists(DatabasePath(request.DatabaseId)))
             {
-                return new Conflict("database already exists");
+                return new DatabaseAlreadyExists(request.DatabaseId);
             }
 
             if (FileIo.CreateDirectory(DatabaseDirectory(request.DatabaseId)) is { } error)
@@ -123,7 +124,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return new StorageBusy(error, TimeSpan.FromSeconds(1));
             }
 
-            return DatabaseSession.Open(Context(request.DatabaseId, request.RawKey), create: true, request.Strict, ReleaseAsync) switch
+            var opened = DatabaseSession.Open(Context(request.DatabaseId, request.RawKey), create: true, request.Strict, ReleaseAsync);
+            return opened switch
             {
                 DatabaseSession session => Session(Track(session)),
                 StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.FromSeconds(1)),
@@ -135,10 +137,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             gate.Release();
         }
 
-        static Result<ISqlDatabaseSession, Conflict, Validation, StorageBusy> Session(ISqlDatabaseSession session) => session;
+        static CreateDatabaseOutcome Session(ISqlDatabaseSession session) => session;
     }
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Conflict, Validation, StorageBusy>> BranchAsync(DatabaseBranchRequest request, CancellationToken cancellationToken)
+    public async ValueTask<BranchDatabaseOutcome> BranchAsync(DatabaseBranchRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.BranchRawKey.Length != DatabaseOpenRequest.RawKeyLength)
@@ -148,26 +150,26 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
         if (Referenced(request.SourceDatabaseId) is not { } source)
         {
-            return new NotFound("source database must be open to branch");
+            return new DatabaseNotFound(request.SourceDatabaseId, "source database must be open to branch");
         }
 
         var gate = Gate(request.BranchDatabaseId);
-        await using var sourceLease = source.ConfigureAwait(false);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await using var sourceLease = source;
+        await gate.WaitAsync(cancellationToken);
         DatabaseSession? branch = null;
         List<CommitMetadata> replay = [];
         try
         {
             if (Tracked(request.BranchDatabaseId) is not null || File.Exists(DatabasePath(request.BranchDatabaseId)))
             {
-                return new Conflict("branch database already exists");
+                return new DatabaseAlreadyExists(request.BranchDatabaseId, "branch database already exists");
             }
 
             var current = source.CurrentBookmark;
             var target = request.At.IsEmpty ? current : request.At;
             if (!current.Dominates(target))
             {
-                return new Validation("branch bookmark is ahead of the source database");
+                return new InvalidDatabaseRequest("branch bookmark is ahead of the source database");
             }
 
             if (FileIo.CreateDirectory(DatabaseDirectory(request.BranchDatabaseId)) is { } error)
@@ -183,7 +185,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
 
             var copied = target.Dominates(current)
-                ? await CopyLiveAsync(source, destination, cancellationToken).ConfigureAwait(false)
+                ? await CopyLiveAsync(source, destination, cancellationToken)
                 : CopySnapshot(source, destination, target);
             destination.Dispose();
             var createEmpty = false;
@@ -206,7 +208,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             else
             {
                 _ = FileIo.DeleteDirectory(branchContext.Directory);
-                return new Validation("no snapshot precedes the requested bookmark");
+                return new InvalidDatabaseRequest("no snapshot precedes the requested bookmark");
             }
 
             if (!createEmpty && source.CopyHistoryTo(branchContext, baseline) is { } history)
@@ -216,7 +218,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
 
             replay = CollectReplay(source, baseline, target);
-            branch = DatabaseSession.Open(branchContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync) switch
+            var opened = DatabaseSession.Open(branchContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync);
+            branch = opened switch
             {
                 DatabaseSession session => Track(session),
                 StorageCorrupted or StorageBusy => null,
@@ -234,7 +237,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
         if (replay.Count > 0)
         {
-            var replayed = await branch.ReplayAsync(replay, cancellationToken).ConfigureAwait(false);
+            var replayed = await branch.ReplayAsync(replay, cancellationToken);
             var failure = replayed switch
             {
                 RemoteApplyOutcome => null,
@@ -244,21 +247,21 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             };
             if (failure is not null)
             {
-                await branch.DisposeAsync().ConfigureAwait(false);
+                await branch.DisposeAsync();
                 return failure;
             }
         }
 
         return Branch(branch);
 
-        static Result<ISqlDatabaseSession, NotFound, Conflict, Validation, StorageBusy> Branch(ISqlDatabaseSession session) => session;
+        static BranchDatabaseOutcome Branch(ISqlDatabaseSession session) => session;
     }
 
-    public async ValueTask<Result<DatabaseSnapshot, NotFound, StorageBusy>> SnapshotAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<SnapshotDatabaseOutcome> SnapshotAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         if (Referenced(databaseId) is not { } session)
         {
-            return new NotFound("database must be open to snapshot");
+            return new DatabaseNotFound(databaseId, "database must be open to snapshot");
         }
 
         try
@@ -277,7 +280,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return new StorageBusy("snapshot file could not be created", TimeSpan.FromSeconds(1));
             }
 
-            var outcome = await session.BackupToAsync(destination, cancellationToken).ConfigureAwait(false);
+            var outcome = await session.BackupToAsync(destination, cancellationToken);
             destination.Dispose();
             return outcome switch
             {
@@ -287,24 +290,24 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
         finally
         {
-            await session.DisposeAsync().ConfigureAwait(false);
+            await session.DisposeAsync();
         }
     }
 
-    public async ValueTask<Result<Done, NotFound, StorageBusy>> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<DeleteDatabaseOutcome> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         var gate = Gate(databaseId);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken);
         try
         {
-            await CloseLockedAsync(databaseId).ConfigureAwait(false);
+            await CloseLockedAsync(databaseId);
             var directory = DatabaseDirectory(databaseId);
             if (!Directory.Exists(directory))
             {
-                return new NotFound("database not found");
+                return new DatabaseNotFound(databaseId);
             }
 
-            return FileIo.DeleteDirectory(directory) is { } error ? new StorageBusy(error, TimeSpan.FromSeconds(1)) : new Done();
+            return FileIo.DeleteDirectory(directory) is { } error ? new StorageBusy(error, TimeSpan.FromSeconds(1)) : new DatabaseDeleted();
         }
         finally
         {
@@ -312,17 +315,17 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
     }
 
-    public async ValueTask<Result<Done, NotFound, StorageBusy>> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<CryptoShredOutcome> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         var gate = Gate(databaseId);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken);
         try
         {
-            await CloseLockedAsync(databaseId).ConfigureAwait(false);
+            await CloseLockedAsync(databaseId);
             var directory = DatabaseDirectory(databaseId);
             if (!Directory.Exists(directory))
             {
-                return new NotFound("database not found");
+                return new DatabaseNotFound(databaseId);
             }
 
             foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).ToArray())
@@ -333,7 +336,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 }
             }
 
-            return FileIo.DeleteDirectory(directory) is { } failure ? new StorageBusy(failure, TimeSpan.FromSeconds(1)) : new Done();
+            return FileIo.DeleteDirectory(directory) is { } failure ? new StorageBusy(failure, TimeSpan.FromSeconds(1)) : new DatabaseShredded();
         }
         finally
         {
@@ -353,10 +356,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         foreach (var session in sessions)
         {
             var gate = Gate(session.DatabaseId);
-            await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            await gate.WaitAsync(CancellationToken.None);
             try
             {
-                await session.CloseAsync().ConfigureAwait(false);
+                await session.CloseAsync();
             }
             finally
             {
@@ -365,8 +368,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
     }
 
-    private static Validation InvalidKey() =>
-        new("raw encryption key must be exactly 32 bytes", "invalid_key", [new ValidationDetail("rawKey", "length")]);
+    private static InvalidDatabaseRequest InvalidKey() =>
+        new("raw encryption key must be exactly 32 bytes", "invalid_key");
 
     private string DatabaseDirectory(Ulid databaseId) => Path.Combine(_options.RootDirectory, databaseId.ToString());
 
@@ -411,7 +414,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
     private async Task ReleaseAsync(DatabaseSession session)
     {
         var gate = Gate(session.DatabaseId);
-        await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        await gate.WaitAsync(CancellationToken.None);
         try
         {
             if (session.References > 0)
@@ -427,7 +430,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 }
             }
 
-            await session.CloseAsync().ConfigureAwait(false);
+            await session.CloseAsync();
         }
         finally
         {
@@ -445,16 +448,19 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
         if (session is not null)
         {
-            await session.CloseAsync().ConfigureAwait(false);
+            await session.CloseAsync();
         }
     }
 
-    private static async Task<CausalBookmark?> CopyLiveAsync(DatabaseSession source, SqliteConnection destination, CancellationToken cancellationToken) =>
-        await source.BackupToAsync(destination, cancellationToken).ConfigureAwait(false) switch
+    private static async Task<CausalBookmark?> CopyLiveAsync(DatabaseSession source, SqliteConnection destination, CancellationToken cancellationToken)
+    {
+        var outcome = await source.BackupToAsync(destination, cancellationToken);
+        return outcome switch
         {
             SnapshotCapture capture => capture.Bookmark,
             StorageBusy => null,
         };
+    }
 
     private CausalBookmark? CopySnapshot(DatabaseSession source, SqliteConnection destination, CausalBookmark target)
     {
@@ -516,7 +522,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 continue;
             }
 
-            var entries = log.Read(from, (int)Math.Min(until - from + 1, int.MaxValue)) switch
+            var read = log.Read(from, (int)Math.Min(until - from + 1, int.MaxValue));
+            var entries = read switch
             {
                 IReadOnlyList<CommitMetadata> page => page,
                 CommitLogGap or StorageCorrupted => [],

@@ -4,15 +4,14 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
-    public readonly union ProjectGrantPageResult(TsAuthPlatformPage<TsAuthPlatformProjectMember>, NotFound, Validation, Unavailable);
+    public readonly union ProjectGrantPageResult(TsAuthPlatformPage<TsAuthPlatformProjectMember>, DashboardNotFound, DashboardValidation, DashboardUnavailable);
 
-    public readonly union ProjectGrantSet(TsAuthPlatformProjectMember, Forbidden, InvalidUser, InvalidRole, Unavailable);
+    public readonly union ProjectGrantSet(TsAuthPlatformProjectMember, DashboardForbidden, InvalidUser, InvalidRole, DashboardUnavailable);
 
-    public readonly union ProjectGrantRemoval(Done, Forbidden, InvalidUser, Unavailable);
+    public readonly union ProjectGrantRemoval(Done, DashboardForbidden, InvalidUser, DashboardUnavailable);
 
-    public readonly union ProjectGrantAdmin(AccountContext, Forbidden, InvalidUser);
+    public readonly union ProjectGrantAdmin(AccountContext, DashboardForbidden, InvalidUser);
 
     public sealed record InvalidUser(string Message);
 
@@ -26,12 +25,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (context.Project!.Role is not ("viewer" or "member" or "admin"))
             {
-                return new NotFound("Project is unavailable.");
+                return new DashboardNotFound("Project is unavailable.");
             }
 
             if (after is not null && !ValidCursor(after))
             {
-                return new Validation("The page cursor is invalid. Open the first page.");
+                return new DashboardValidation("The page cursor is invalid. Open the first page.");
             }
 
             var page = await platform.ListProjectMembersAsync(context.Session, context.Organization!.Id, context.Project.Id, after, cancellationToken);
@@ -39,7 +38,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 item.Role is not ("viewer" or "member" or "admin")) || page.Items.Select(item => item.UserId).Distinct().Count() != page.Items.Count ||
                 page.Next is not null && (!ValidCursor(page.Next) || page.Next == after))
             {
-                return new Unavailable("The project grant page is invalid.");
+                return new DashboardUnavailable("The project grant page is invalid.");
             }
 
             return page;
@@ -52,9 +51,10 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
         public async Task<ProjectGrantSet> SetAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken)
         {
-            return await AdminAsync(context, userId, cancellationToken) switch
+            var outcome = await AdminAsync(context, userId, cancellationToken);
+            return outcome switch
             {
-                Forbidden error => error,
+                DashboardForbidden error => error,
                 InvalidUser error => error,
                 AccountContext granted => await WriteAsync(granted, userId, role, cancellationToken),
             };
@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             var grant = await platform.SetProjectMemberRoleAsync(context.Session, context.Organization!.Id, context.Project!.Id, userId, role, cancellationToken);
             if (grant is null || grant.UserId != userId || grant.Role != role)
             {
-                return new Unavailable("The project grant response does not match.");
+                return new DashboardUnavailable("The project grant response does not match.");
             }
 
             return grant;
@@ -78,9 +78,10 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
         public async Task<ProjectGrantRemoval> RemoveAsync(AccountContext context, string userId, CancellationToken cancellationToken)
         {
-            return await AdminAsync(context, userId, cancellationToken) switch
+            var outcome = await AdminAsync(context, userId, cancellationToken);
+            return outcome switch
             {
-                Forbidden error => error,
+                DashboardForbidden error => error,
                 InvalidUser error => error,
                 AccountContext granted => await EraseAsync(granted, userId, cancellationToken),
             };
@@ -97,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (context.Project!.Role != "admin" || !context.CanWriteProjectData)
             {
-                return new Forbidden("Current project admin access is required to manage explicit grants.");
+                return new DashboardForbidden("Current project admin access is required to manage explicit grants.");
             }
 
             if (!TerraScaleIds.IsValid(userId))

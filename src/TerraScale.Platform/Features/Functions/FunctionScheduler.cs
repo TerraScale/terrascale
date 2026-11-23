@@ -37,17 +37,18 @@ public sealed class FunctionScheduler(
     private async Task TickAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
-        var due = await store.ReadAsync(
+        var dueOutcome = await store.ReadAsync(
             SqlValues.Statement(
                 "SELECT database_id, name, organization_id, project_id, database_name, cron, cron_next FROM platform_functions "
                 + "WHERE cron IS NOT NULL AND cron_next IS NOT NULL AND cron_next <= ? ORDER BY cron_next LIMIT ?",
                 SqlValues.Number(now.UnixMs()),
                 SqlValues.Number(BatchSize)),
-            cancellationToken) switch
+            cancellationToken);
+        var due = dueOutcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => results[0].RowsOf().Select(Schedule).ToArray(),
-            Conflict conflict => Skip(conflict.Message),
-            Unavailable unavailable => Skip(unavailable.Message),
+            SqlExecuteResponse { Results: var results } => results[0].RowsOf().Select(Schedule).ToArray(),
+            PlatformConflict conflict => Skip(conflict.Message),
+            PlatformUnavailable unavailable => Skip(unavailable.Message),
         };
         await Parallel.ForEachAsync(
             due,
@@ -64,11 +65,12 @@ public sealed class FunctionScheduler(
             SqlValues.Text(schedule.Target.Database.ToString()),
             SqlValues.Text(schedule.Name),
             SqlValues.Number(schedule.Due));
-        var claimed = await store.ExecuteAsync([claim], SqlContext.Strong, cancellationToken) switch
+        var claimedOutcome = await store.ExecuteAsync([claim], SqlContext.Strong, cancellationToken);
+        var claimed = claimedOutcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => results[0].RowsAffected == 1,
-            Conflict => false,
-            Unavailable => false,
+            SqlExecuteResponse { Results: var results } => results[0].RowsAffected == 1,
+            PlatformConflict => false,
+            PlatformUnavailable => false,
         };
         if (!claimed)
         {
@@ -77,11 +79,12 @@ public sealed class FunctionScheduler(
 
         var scheduledAt = schedule.Due.FromUnixMs().UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         var eventJson = $$"""{"trigger":"cron","scheduledAt":"{{scheduledAt}}"}""";
-        var outcome = await invoker.InvokeAsync(schedule.Target, schedule.Name, "cron", eventJson, "", null, cancellationToken) switch
+        var outcomeOutcome = await invoker.InvokeAsync(schedule.Target, schedule.Name, "cron", eventJson, "", null, cancellationToken);
+        var outcome = outcomeOutcome switch
         {
             FunctionAnswer answer => $"HTTP {answer.Status}",
-            NotFound missing => missing.Message ?? "the function no longer exists",
-            Unavailable unavailable => unavailable.Message,
+            PlatformNotFound missing => missing.Message ?? "the function no longer exists",
+            PlatformUnavailable unavailable => unavailable.Message,
         };
         logger.ZLogInformation($"Scheduled function {schedule.Name} on {schedule.Target.Database} ran: {outcome}");
     }

@@ -4,6 +4,28 @@ using System.Security.Cryptography;
 
 namespace TerraScale.Platform.Features.Shapes;
 
+public readonly union ResolveShapeOutcome(
+    ResolvedShape,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
+public readonly union ReadShapePageOutcome(ShapeAnswer, ShapeRefetch, PlatformUnavailable);
+
+public readonly union ShapeManifestOutcome(ShapeMirrorManifest, ShapeRefetch, PlatformUnavailable);
+
+public readonly union ShapeKeyOutcome(ShapeKeyResponse, ShapeRefetch, PlatformInvalidRequest);
+
+public readonly union ReadShapeRowOutcome(
+    RowResponse,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class ShapeReader(
     PlatformAccess access,
     TerraBaseClient terraBase,
@@ -21,7 +43,7 @@ public sealed class ShapeReader(
     private static readonly TimeSpan LivePoll = TimeSpan.FromSeconds(2);
     private const int MaxLivePasses = 64;
 
-    public async ValueTask<Result<ResolvedShape, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ResolveAsync(
+    public async ValueTask<ResolveShapeOutcome> ResolveAsync(
         HttpContext context,
         ShapeRouteRequest route,
         ShapeQuery query,
@@ -29,36 +51,38 @@ public sealed class ShapeReader(
     {
         if (!objects.IsConfigured)
         {
-            return new Unavailable("shape object storage is not configured", "shapes_unconfigured");
+            return new PlatformUnavailable("shape object storage is not configured", "shapes_unconfigured");
         }
 
-        return await access.DatabaseAsync(context, route.Project, route.Database, Scopes.Read, cancellationToken) switch
+        var outcome = await access.DatabaseAsync(context, route.Project, route.Database, Scopes.Read, cancellationToken);
+        return outcome switch
         {
             DatabaseAccess database => await SnapshotAsync(context, route, query, database, cancellationToken),
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<ShapeAnswer, ShapeRefetch, Unavailable>> PageAsync(
+    public async ValueTask<ReadShapePageOutcome> PageAsync(
         ResolvedShape resolved,
         SnapshotOffset offset,
         string offsetText,
         CancellationToken cancellationToken)
     {
         var shape = resolved.Shape;
-        return await sealer.LoadAsync(shape.Handle, offset.Snapshot, cancellationToken) switch
+        var outcome = await sealer.LoadAsync(shape.Handle, offset.Snapshot, cancellationToken);
+        return outcome switch
         {
             ShapeChunk chunk when offset.Page > 0 && (long)offset.Page * PageRows >= chunk.Rows.Count => Refetch(shape, "the snapshot page is not retained"),
             ShapeChunk chunk => Page(shape, chunk, offset, offsetText),
-            NotFound => Refetch(shape, "the snapshot is no longer retained"),
-            Unavailable unavailable => unavailable,
+            PlatformNotFound => Refetch(shape, "the snapshot is no longer retained"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<ShapeAnswer, ShapeRefetch, Unavailable>> ChangesAsync(
+    public async ValueTask<ReadShapePageOutcome> ChangesAsync(
         ResolvedShape resolved,
         long after,
         string offsetText,
@@ -77,11 +101,12 @@ public sealed class ShapeReader(
             return UpToDate(shape, after, offsetText, bucket);
         }
 
-        return await registry.ChunksAfterAsync(shape.Handle, after, MaxChanges, cancellationToken) switch
+        var outcome = await registry.ChunksAfterAsync(shape.Handle, after, MaxChanges, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<ShapeChunkInfo> chunks when chunks.Count == 0 || chunks[0].Offset != after + 1 => Refetch(shape, "the offset is below retention"),
-            IReadOnlyList<ShapeChunkInfo> chunks => await CollectAsync(shape, chunks, 0, [], offsetText, bucket, cancellationToken),
-            Unavailable unavailable => unavailable,
+            ShapeChunks { Items: var chunks } when chunks.Count == 0 || chunks[0].Offset != after + 1 => Refetch(shape, "the offset is below retention"),
+            ShapeChunks { Items: var chunks } => await CollectAsync(shape, chunks, 0, [], offsetText, bucket, cancellationToken),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
@@ -95,31 +120,32 @@ public sealed class ShapeReader(
         CancellationToken cancellationToken) =>
         await WaitAsync(context, route, resolved, after, offsetText, cursor, timeProvider.GetUtcNow() + LiveWait, 0, cancellationToken);
 
-    public async ValueTask<Result<ShapeMirrorManifest, ShapeRefetch, Unavailable>> ManifestAsync(ShapeRecord shape, long after, CancellationToken cancellationToken)
+    public async ValueTask<ShapeManifestOutcome> ManifestAsync(ShapeRecord shape, long after, CancellationToken cancellationToken)
     {
         if (after > shape.Head)
         {
             return Refetch(shape, "the offset is not published");
         }
 
-        return await registry.ChunksAfterAsync(shape.Handle, after, ManifestObjects, cancellationToken) switch
+        var outcome = await registry.ChunksAfterAsync(shape.Handle, after, ManifestObjects, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<ShapeChunkInfo> chunks when chunks.Count > 0 && chunks[0].Offset != after + 1 => Refetch(shape, "the offset is below retention"),
-            IReadOnlyList<ShapeChunkInfo> chunks => Manifest(shape, after, chunks),
-            Unavailable unavailable => unavailable,
+            ShapeChunks { Items: var chunks } when chunks.Count > 0 && chunks[0].Offset != after + 1 => Refetch(shape, "the offset is below retention"),
+            ShapeChunks { Items: var chunks } => Manifest(shape, after, chunks),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public Result<ShapeKeyResponse, ShapeRefetch, Validation> Key(ShapeRecord shape, string epochText, string keyIdText)
+    public ShapeKeyOutcome Key(ShapeRecord shape, string epochText, string keyIdText)
     {
         if (ShapeOffset.ParseDecimal(epochText) is not { } epoch)
         {
-            return new Validation("epoch must be a canonical unsigned decimal");
+            return new PlatformInvalidRequest("epoch must be a canonical unsigned decimal");
         }
 
         if (epoch > crypto.CurrentEpoch)
         {
-            return new Validation("future epochs are refused");
+            return new PlatformInvalidRequest("future epochs are refused");
         }
 
         if (epoch < crypto.CurrentEpoch - ShapeCrypto.RetainedEpochs || !Ulid.TryParse(keyIdText, out var keyId) || keyId != shape.Database)
@@ -138,7 +164,7 @@ public sealed class ShapeReader(
         }
     }
 
-    public async ValueTask<Result<RowResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> RowAsync(
+    public async ValueTask<ReadShapeRowOutcome> RowAsync(
         HttpContext context,
         GetRowRequest request,
         CancellationToken cancellationToken)
@@ -150,36 +176,45 @@ public sealed class ShapeReader(
 
         if (ShapeOffset.ParseDecimal(request.Key) is not { } key)
         {
-            return new Validation("key must be the row id as a decimal string");
+            return new PlatformInvalidRequest("key must be the row id as a decimal string");
         }
 
         var columns = request.Columns is { } list ? ShapeQuery.ColumnList(list) : null;
         if (request.Columns is not null && columns is null)
         {
-            return new Validation("columns must be a comma-separated list of column names");
+            return new PlatformInvalidRequest("columns must be a comma-separated list of column names");
         }
 
         var projection = columns is { } names ? string.Join(", ", names.Select(ShapeQuery.Quote)) : "*";
         var includeRowid = columns?.Any(static name => string.Equals(name, "rowid", StringComparison.OrdinalIgnoreCase)) == true;
         var statement = SqlValues.Statement($"SELECT {projection} FROM {ShapeQuery.Quote(request.Table)} WHERE rowid = ?", SqlValues.Number(key));
-        return await access.DatabaseAsync(context, request.Project, request.Database, Scopes.Read, cancellationToken) switch
+        var outcome = await access.DatabaseAsync(context, request.Project, request.Database, Scopes.Read, cancellationToken);
+        return outcome switch
         {
-            DatabaseAccess database => await terraBase.ExecuteAsCallerAsync(
-                request.Project, request.Database, database.Access.Credential, SqlValues.Batch(statement), Bookmark(context), cancellationToken) switch
-            {
-                CallerSqlResponse sql => Row(sql.Response.Results[0], includeRowid),
-                SqlFailure { Status: StatusCodes.Status400BadRequest } failure => new Validation(failure.Error.Message, failure.Error.Code),
-                SqlFailure failure => new Unavailable(failure.Error.Message, failure.Error.Code),
-                Unauthorized unauthorized => unauthorized,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            DatabaseAccess database => await ReadRowAsync(database),
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<ReadShapeRowOutcome> ReadRowAsync(DatabaseAccess database)
+        {
+            var outcome = await terraBase.ExecuteAsCallerAsync(
+                request.Project, request.Database, database.Access.Credential, SqlValues.Batch(statement), Bookmark(context), cancellationToken);
+            return outcome switch
+            {
+                CallerSqlResponse sql => Row(sql.Response.Results[0], includeRowid) is { } row
+                    ? row
+                    : new PlatformNotFound("the row does not exist or is not readable", "row_not_found"),
+                SqlFailure { Status: StatusCodes.Status400BadRequest } failure => new PlatformInvalidRequest(failure.Error.Message, failure.Error.Code),
+                SqlFailure failure => new PlatformUnavailable(failure.Error.Message, failure.Error.Code),
+                PlatformUnauthorized unauthorized => unauthorized,
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
     public string Location(ResolvedShape resolved, string offset) =>
@@ -201,11 +236,12 @@ public sealed class ShapeReader(
     {
         if (current.Shape.Head > after)
         {
-            return await ChangesAsync(current, after, offsetText, cursor, cancellationToken) switch
+            var changes = await ChangesAsync(current, after, offsetText, cursor, cancellationToken);
+            return changes switch
             {
                 ShapeAnswer answer => answer,
                 ShapeRefetch refetch => refetch,
-                Unavailable unavailable => unavailable,
+                PlatformUnavailable unavailable => unavailable,
             };
         }
 
@@ -216,40 +252,56 @@ public sealed class ShapeReader(
         }
 
         await notifier.WaitAsync(current.Shape.Database, remaining < LivePoll ? remaining : LivePoll, cancellationToken);
-        return await ResolveAsync(context, route, current.Query, cancellationToken) switch
+        var outcome = await ResolveAsync(context, route, current.Query, cancellationToken);
+        return outcome switch
         {
             ResolvedShape next when next.Shape.Handle != current.Shape.Handle => Refetch(next.Shape, "shape lineage changed"),
             ResolvedShape next => await WaitAsync(context, route, next, after, offsetText, cursor, deadline, pass + 1, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<ResolvedShape, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> SnapshotAsync(
+    private async ValueTask<ResolveShapeOutcome> SnapshotAsync(
         HttpContext context,
         ShapeRouteRequest route,
         ShapeQuery query,
         DatabaseAccess database,
-        CancellationToken cancellationToken) =>
-        await terraBase.ExecuteAsCallerAsync(route.Project, route.Database, database.Access.Credential, SqlValues.Batch(query.Select()), Bookmark(context), cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await terraBase.ExecuteAsCallerAsync(route.Project, route.Database, database.Access.Credential, SqlValues.Batch(query.Select()), Bookmark(context), cancellationToken);
+        return outcome switch
         {
             CallerSqlResponse sql => ShapeQuery.Snapshot(sql.Response.Results[0], query.IncludesRowid) switch
             {
-                ShapeSnapshot snapshot => await RegisterAsync(route, query, database, snapshot, sql.RulesVersion, cancellationToken),
-                Unavailable unavailable => unavailable,
+                ShapeSnapshot snapshot => await RegisterSnapshotAsync(snapshot, sql.RulesVersion),
+                PlatformUnavailable unavailable => unavailable,
             },
-            SqlFailure { Status: StatusCodes.Status400BadRequest } failure => new Validation(failure.Error.Message, failure.Error.Code),
-            SqlFailure failure => new Unavailable(failure.Error.Message, failure.Error.Code),
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            SqlFailure { Status: StatusCodes.Status400BadRequest } failure => new PlatformInvalidRequest(failure.Error.Message, failure.Error.Code),
+            SqlFailure failure => new PlatformUnavailable(failure.Error.Message, failure.Error.Code),
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
 
-    private async ValueTask<Result<ResolvedShape, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> RegisterAsync(
+        async ValueTask<ResolveShapeOutcome> RegisterSnapshotAsync(ShapeSnapshot snapshot, string? rulesVersion)
+        {
+            var outcome = await RegisterAsync(route, query, database, snapshot, rulesVersion, cancellationToken);
+            return outcome switch
+            {
+                ResolvedShape resolved => resolved,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+    }
+
+    private readonly union RegisterResolvedShapeOutcome(ResolvedShape, PlatformUnavailable);
+
+    private async ValueTask<RegisterResolvedShapeOutcome> RegisterAsync(
         ShapeRouteRequest route,
         ShapeQuery query,
         DatabaseAccess database,
@@ -261,18 +313,25 @@ public sealed class ShapeReader(
         var (handle, shapeId) = query.Lineage(database.Access.Organization, database.Access.Project, database.Database, viewer, snapshot.Columns);
         var shape = new ShapeRecord(handle, shapeId, database.Access.Organization, database.Access.Project, database.Database, route.Project, route.Database,
             query.Table, query.Where, query.Columns, viewer, 0, "");
-        return await registry.EnsureAsync(shape, cancellationToken) switch
+        var outcome = await registry.EnsureAsync(shape, cancellationToken);
+        return outcome switch
         {
-            ShapeRecord saved => await sealer.SyncAsync(saved, snapshot, cancellationToken) switch
+            ShapeRecord saved => await SyncAsync(saved),
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<RegisterResolvedShapeOutcome> SyncAsync(ShapeRecord saved)
+        {
+            var outcome = await sealer.SyncAsync(saved, snapshot, cancellationToken);
+            return outcome switch
             {
                 ShapeRecord synced => new ResolvedShape(synced, database, query),
-                Unavailable unavailable => unavailable,
-            },
-            Unavailable unavailable => unavailable,
-        };
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
-    private async ValueTask<Result<ShapeAnswer, ShapeRefetch, Unavailable>> CollectAsync(
+    private async ValueTask<ReadShapePageOutcome> CollectAsync(
         ShapeRecord shape,
         IReadOnlyList<ShapeChunkInfo> chunks,
         int index,
@@ -289,7 +348,8 @@ public sealed class ShapeReader(
                 cursor);
         }
 
-        return await sealer.LoadAsync(shape.Handle, chunks[index].Offset, cancellationToken) switch
+        var outcome = await sealer.LoadAsync(shape.Handle, chunks[index].Offset, cancellationToken);
+        return outcome switch
         {
             ShapeChunk chunk => await CollectAsync(
                 shape,
@@ -299,8 +359,8 @@ public sealed class ShapeReader(
                 offsetText,
                 cursor,
                 cancellationToken),
-            NotFound => Refetch(shape, "a shape chunk is no longer retained"),
-            Unavailable unavailable => unavailable,
+            PlatformNotFound => Refetch(shape, "a shape chunk is no longer retained"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
@@ -352,11 +412,11 @@ public sealed class ShapeReader(
         return new ShapeMirrorManifest(shape.Handle, objectsList);
     }
 
-    private static Result<RowResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable> Row(SqlHttpStatementResult result, bool includeRowid)
+    private static RowResponse? Row(SqlHttpStatementResult result, bool includeRowid)
     {
         if (result.FirstRow() is not { } row)
         {
-            return new NotFound("the row does not exist or is not readable", "row_not_found");
+            return null;
         }
 
         var skip = !includeRowid && result.Columns.Count > 1 && string.Equals(result.Columns[0].Name, "rowid", StringComparison.OrdinalIgnoreCase) ? 1 : 0;

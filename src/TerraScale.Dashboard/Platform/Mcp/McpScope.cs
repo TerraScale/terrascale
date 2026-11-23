@@ -1,6 +1,5 @@
 namespace TerraScale.Dashboard.Platform.Mcp
 {
-    // Helpers shared by the MCP tool classes that each feature owns.
     public static class McpScope
     {
         public static AccountContext Account(HttpContext? http)

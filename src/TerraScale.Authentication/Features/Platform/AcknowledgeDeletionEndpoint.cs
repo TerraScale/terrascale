@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
 using TerraScale.Endpoints;
@@ -38,7 +37,7 @@ public sealed class AcknowledgeDeletionEndpoint(AuthData data, AuthOptions optio
 
         if (!this.HttpContext.Request.HasJsonContentType())
         {
-            return ErrorResults.ToResult(new UnsupportedMediaType("Send the body as application/json."));
+            return ErrorResults.ToResult(new AuthUnsupportedMediaType("Send the body as application/json."));
         }
 
         if (this.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
@@ -54,14 +53,14 @@ public sealed class AcknowledgeDeletionEndpoint(AuthData data, AuthOptions optio
         }
         catch (JsonException)
         {
-            return ErrorResults.ToResult(new Validation("Send an exact deletion acknowledgement JSON object."));
+            return ErrorResults.ToResult(new AuthValidation("Send an exact deletion acknowledgement JSON object."));
         }
 
         return await DashboardDeletionProofs.AcknowledgeAsync(data, clock, this.HttpContext.GetRouteValue("id") as string, request, cancellationToken) switch
         {
-            Done => TypedResults.NoContent(),
-            NotFound failure => ErrorResults.ToResult(failure),
-            Conflict failure => ErrorResults.ToResult(failure),
+            AuthCompleted => TypedResults.NoContent(),
+            AuthNotFound failure => ErrorResults.ToResult(failure),
+            AuthConflict failure => ErrorResults.ToResult(failure),
         };
     }
 }

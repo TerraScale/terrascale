@@ -5,9 +5,19 @@ using Amazon.S3.Model;
 
 namespace TerraScale.Platform.Features.Shapes;
 
+public sealed record ShapeObjectStored;
+
+public sealed record ShapeObjectDeleted;
+
+public readonly union PutShapeObjectOutcome(ShapeObjectStored, PlatformUnavailable);
+
+public readonly union GetShapeObjectOutcome(byte[], PlatformNotFound, PlatformUnavailable);
+
+public readonly union DeleteShapeObjectOutcome(ShapeObjectDeleted, PlatformUnavailable);
+
 public sealed class ShapeObjectStore : IDisposable
 {
-    private static readonly Unavailable Unconfigured = new("shape object storage is not configured", "shapes_unconfigured");
+    private static readonly PlatformUnavailable Unconfigured = new("shape object storage is not configured", "shapes_unconfigured");
     private readonly AmazonS3Client? _client;
     private readonly ShapeStorageOptions? _options;
 
@@ -39,7 +49,7 @@ public sealed class ShapeObjectStore : IDisposable
     public string Url(string handle, string objectName) =>
         _options is { } options ? new Uri(options.CdnBase, Key(handle, objectName)).AbsoluteUri : Key(handle, objectName);
 
-    public async ValueTask<Result<Done, Unavailable>> PutAsync(string key, byte[] body, string contentType, string cacheControl, CancellationToken cancellationToken)
+    public async ValueTask<PutShapeObjectOutcome> PutAsync(string key, byte[] body, string contentType, string cacheControl, CancellationToken cancellationToken)
     {
         if (_client is not { } client || _options is not { } options)
         {
@@ -60,7 +70,7 @@ public sealed class ShapeObjectStore : IDisposable
         try
         {
             _ = await client.PutObjectAsync(request, cancellationToken);
-            return new Done();
+            return new ShapeObjectStored();
         }
         catch (AmazonServiceException error)
         {
@@ -76,11 +86,11 @@ public sealed class ShapeObjectStore : IDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new Unavailable("shape object storage did not answer in time", "shapes_timeout");
+            return new PlatformUnavailable("shape object storage did not answer in time", "shapes_timeout");
         }
     }
 
-    public async ValueTask<Result<byte[], NotFound, Unavailable>> GetAsync(string key, CancellationToken cancellationToken)
+    public async ValueTask<GetShapeObjectOutcome> GetAsync(string key, CancellationToken cancellationToken)
     {
         if (_client is not { } client || _options is not { } options)
         {
@@ -96,7 +106,7 @@ public sealed class ShapeObjectStore : IDisposable
         }
         catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
         {
-            return new NotFound("the shape chunk is no longer retained", "shape_chunk_missing");
+            return new PlatformNotFound("the shape chunk is no longer retained", "shape_chunk_missing");
         }
         catch (AmazonServiceException error)
         {
@@ -116,11 +126,11 @@ public sealed class ShapeObjectStore : IDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new Unavailable("shape object storage did not answer in time", "shapes_timeout");
+            return new PlatformUnavailable("shape object storage did not answer in time", "shapes_timeout");
         }
     }
 
-    public async ValueTask<Result<Done, Unavailable>> DeleteAsync(string key, CancellationToken cancellationToken)
+    public async ValueTask<DeleteShapeObjectOutcome> DeleteAsync(string key, CancellationToken cancellationToken)
     {
         if (_client is not { } client || _options is not { } options)
         {
@@ -130,7 +140,7 @@ public sealed class ShapeObjectStore : IDisposable
         try
         {
             _ = await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = options.Bucket, Key = key }, cancellationToken);
-            return new Done();
+            return new ShapeObjectDeleted();
         }
         catch (AmazonServiceException error)
         {
@@ -146,11 +156,11 @@ public sealed class ShapeObjectStore : IDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new Unavailable("shape object storage did not answer in time", "shapes_timeout");
+            return new PlatformUnavailable("shape object storage did not answer in time", "shapes_timeout");
         }
     }
 
     public void Dispose() => _client?.Dispose();
 
-    private static Unavailable Failed(Exception error) => new($"shape object storage is unavailable ({error.Message})", "shapes_unavailable");
+    private static PlatformUnavailable Failed(Exception error) => new($"shape object storage is unavailable ({error.Message})", "shapes_unavailable");
 }

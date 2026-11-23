@@ -3,7 +3,7 @@ using System.Globalization;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
-    public abstract record BackupScheduleChoice;
+    public closed record BackupScheduleChoice;
     public sealed record EveryHours(int Hours) : BackupScheduleChoice;
     public sealed record Daily(int Hour) : BackupScheduleChoice;
     public sealed record Weekly(int Hour, int Day) : BackupScheduleChoice;
@@ -52,7 +52,6 @@ namespace TerraScale.Dashboard.Features.Backups
                 Daily(var hour) => $"0 {hour.ToString(CultureInfo.InvariantCulture)} * * *",
                 Weekly(var hour, var day) => $"0 {hour.ToString(CultureInfo.InvariantCulture)} * * {day.ToString(CultureInfo.InvariantCulture)}",
                 CustomSchedule(var cron) => cron,
-                _ => throw new UnreachableException(),
             };
         }
 
@@ -74,7 +73,6 @@ namespace TerraScale.Dashboard.Features.Backups
                 Daily(var hour) => $"Daily at {HourLabel(hour)} UTC",
                 Weekly(var hour, var day) => $"Weekly on {Weekdays[day]} at {HourLabel(hour)} UTC",
                 CustomSchedule => cron,
-                _ => throw new UnreachableException(),
             };
         }
     }

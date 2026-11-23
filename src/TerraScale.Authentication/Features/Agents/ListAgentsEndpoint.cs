@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -19,7 +18,7 @@ public sealed class ListAgentsEndpoint(TenantDirectory tenants, PlatformAuthenti
         var owner = this.HttpContext.Request.Query["owner"].ToString();
         if (owner.Length != 0 && !PlatformDirectory.IsId(owner))
         {
-            return ErrorResults.ToResult(new Validation("owner must be a user id."));
+            return ErrorResults.ToResult(new AuthValidation("owner must be a user id."));
         }
 
         return TypedResults.Json(await agents.ListAsync(project, owner.Length == 0 ? null : owner, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);

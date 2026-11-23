@@ -4,8 +4,15 @@ using System.Text;
 using TerraBase.Engine;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.ControlPlane;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.ApiKeys;
+
+internal readonly union IssueApiKeyOutcome(IssuedApiKey, StateConflict, BackendUnavailable);
+
+internal readonly union ApiKeyRevokeOutcome(Completed, ResourceNotFound, BackendUnavailable);
+
+internal readonly union ApiKeyLookup(ApiKeyRecord, ResourceNotFound, BackendUnavailable);
 
 public sealed record ApiKeyRecord(
     string Id, string Name, IReadOnlyList<string> Scopes, Ulid OrganizationId, Ulid? ProjectId, Ulid? DatabaseId, DateTimeOffset? ExpiresAt)
@@ -24,7 +31,7 @@ internal sealed class ApiKeyStore(SystemDatabase system, ControlSnapshots snapsh
 {
     public const string SecretPrefix = "tb_";
 
-    public async ValueTask<Result<IssuedApiKey, Conflict, Unavailable>> CreateAsync(
+    public async ValueTask<IssueApiKeyOutcome> CreateAsync(
         string name, IReadOnlyList<string> scopes, Ulid organizationId, Ulid? projectId, Ulid? databaseId, DateTimeOffset? expiresAt, CancellationToken cancellationToken)
     {
         var secret = string.Concat(SecretPrefix, Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32)));
@@ -41,29 +48,29 @@ internal sealed class ApiKeyStore(SystemDatabase system, ControlSnapshots snapsh
         ], ConsistencyMode.Strong, cancellationToken) switch
         {
             SqlWriteResult => new IssuedApiKey(key, secret),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<Done, NotFound, Unavailable>> RevokeAsync(string? keyId, CancellationToken cancellationToken) =>
-        keyId is null ? new NotFound("the API key does not exist", "unknown_api_key") : await system.WriteAsync(
+    public async ValueTask<ApiKeyRevokeOutcome> RevokeAsync(string? keyId, CancellationToken cancellationToken) =>
+        keyId is null ? new ResourceNotFound("the API key does not exist", "unknown_api_key") : await system.WriteAsync(
         [
             SqlBuild.Statement("DELETE FROM api_key_hashes WHERE key_id = ?", SqlBuild.Text(keyId)),
             SqlBuild.Statement("DELETE FROM api_keys WHERE id = ?", SqlBuild.Text(keyId)),
         ], ConsistencyMode.Strong, cancellationToken) switch
         {
-            SqlWriteResult { ResultSets: [_, { RowsAffected: > 0 }] } => new Done(),
-            SqlWriteResult => new NotFound("the API key does not exist", "unknown_api_key"),
-            Conflict conflict => new Unavailable(conflict.Message, conflict.Code),
-            Unavailable unavailable => unavailable,
+            SqlWriteResult { ResultSets: [_, { RowsAffected: > 0 }] } => new Completed(),
+            SqlWriteResult => new ResourceNotFound("the API key does not exist", "unknown_api_key"),
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+            BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<Result<ApiKeyRecord, NotFound, Unavailable>> FindAsync(string secret, CancellationToken cancellationToken)
+    public async ValueTask<ApiKeyLookup> FindAsync(string secret, CancellationToken cancellationToken)
     {
         if (!secret.StartsWith(SecretPrefix, StringComparison.Ordinal) || secret.Length > 256)
         {
-            return new NotFound("unknown API key", "invalid_key");
+            return new ResourceNotFound("unknown API key", "invalid_key");
         }
 
         var hash = Hash(secret);
@@ -78,13 +85,13 @@ internal sealed class ApiKeyStore(SystemDatabase system, ControlSnapshots snapsh
             SqlBuild.Text(hash)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows => Usable(Read(rows[0])),
-            IReadOnlyList<IReadOnlyList<SqlValue>> => new NotFound("unknown API key", "invalid_key"),
-            Unavailable unavailable => unavailable,
+            IReadOnlyList<IReadOnlyList<SqlValue>> => new ResourceNotFound("unknown API key", "invalid_key"),
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private Result<ApiKeyRecord, NotFound, Unavailable> Usable(ApiKeyRecord key) =>
-        key.ExpiresAt is { } expires && expires <= time.GetUtcNow() ? new NotFound("the API key expired", "invalid_key") : key;
+    private ApiKeyLookup Usable(ApiKeyRecord key) =>
+        key.ExpiresAt is { } expires && expires <= time.GetUtcNow() ? new ResourceNotFound("the API key expired", "invalid_key") : key;
 
     private static ApiKeyRecord Read(IReadOnlyList<SqlValue> row) => new(
         row.TextAt(0), row.TextAt(1), row.TextAt(2).Split(' ', StringSplitOptions.RemoveEmptyEntries), row.IdAt(3),

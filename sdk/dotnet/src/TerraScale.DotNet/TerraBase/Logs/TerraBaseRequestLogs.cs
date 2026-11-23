@@ -4,50 +4,20 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>
-/// A completed authorized request observation: an HTTP request, or a PostgreSQL wire exchange (route <c>postgres</c>).
-/// Route is a template, never a URL or query text.
-/// </summary>
-/// <param name="Id">Canonical observation ULID.</param>
-/// <param name="Time">Request observation time.</param>
-/// <param name="Region">Region that recorded the request.</param>
-/// <param name="Method">HTTP method, or OTHER.</param>
-/// <param name="Route">Redacted route template, without keys or credentials.</param>
-/// <param name="Status">HTTP response status.</param>
-/// <param name="LatencyMs">Elapsed milliseconds.</param>
-/// <param name="Operations">Committed operations.</param>
-/// <param name="IsQuery">Whether the route is a query or SQL request.</param>
-/// <param name="RequestId">Correlation identifier, or null when unavailable.</param>
-/// <param name="Statements">SQL statements the request carried.</param>
-/// <param name="StatementErrors">Failed statements among them, also inside a successful response.</param>
 public sealed record TerraBaseRequestLog(string Id, DateTimeOffset Time, string Region, string Method, string Route,
     int Status, double LatencyMs, long Operations, bool IsQuery, string? RequestId = null, long Statements = 0, long StatementErrors = 0)
 {
-    /// <summary>Canonical observation ULID.</summary>
     public string Id { get; init; } = TerraScaleIds.IsValid(Id) ? Id : throw new JsonException("Invalid request-log ULID.");
 }
 
-/// <summary>The newest 100 observations within 24 hours; recording is best effort, without a continuation cursor.</summary>
-/// <param name="DatabaseId">Canonical database ULID.</param>
-/// <param name="Items">Newest-first retained observations.</param>
-/// <param name="Truncated">Whether the recent window was full, including before a status filter.</param>
-/// <param name="RecordingLimited">Whether this server has omitted observations at capacity since startup.</param>
 public sealed record TerraBaseRequestLogs(string DatabaseId, IReadOnlyList<TerraBaseRequestLog> Items,
     bool Truncated, bool RecordingLimited)
 {
-    /// <summary>Canonical database ULID.</summary>
     public string DatabaseId { get; init; } = TerraScaleIds.IsValid(DatabaseId) ? DatabaseId : throw new JsonException("Invalid request-log database ULID.");
 }
 
 public sealed partial class TerraBaseDatabase
 {
-    /// <summary>
-    /// Reads recent best-effort request observations using databases:read project authority.
-    /// The newest 100 requests within 24 hours are retained; filtering does not widen that window.
-    /// Sent once with existing response bounds and deadline; no polling, cursor or durable-export guarantee.
-    /// </summary>
-    /// <param name="status">Optional HTTP status class: 2xx, 3xx, 4xx or 5xx; null or empty reads all classes.</param>
-    /// <param name="cancellationToken">Cancels acquisition and response reading.</param>
     public Task<TerraBaseRequestLogs> ListRequestLogsAsync(string? status = null, CancellationToken cancellationToken = default)
     {
         if (status is not (null or "" or "2xx" or "3xx" or "4xx" or "5xx"))

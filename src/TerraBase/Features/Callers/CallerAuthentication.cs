@@ -5,11 +5,13 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Callers;
 
+internal readonly union CallerAuthenticationOutcome(Caller, CredentialRejected, BackendUnavailable);
+
 internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier tokens, ApiKeyExchange exchange)
 {
     public const string UserHeader = "X-TerraBase-User-Id";
 
-    public async ValueTask<Result<Caller, Unauthorized, Unavailable>> AuthenticateAsync(HttpContext context, CancellationToken cancellationToken)
+    public async ValueTask<CallerAuthenticationOutcome> AuthenticateAsync(HttpContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         var admitted = context.Features.Get<AdmittedCaller>();
@@ -17,11 +19,11 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         {
             if (acting is not [{ Length: 26 } user] || !Ulid.TryParse(user, out _))
             {
-                return new Unauthorized(UserHeader + " must be one canonical uppercase ULID", "invalid_user");
+                return new CredentialRejected(UserHeader + " must be one canonical uppercase ULID", "invalid_user");
             }
 
             return admitted.Identity is { } identity && !identity.Grants.Contains("act-as")
-                ? new Unauthorized("acting as a user needs the act-as grant", "forbidden_caller")
+                ? new CredentialRejected("acting as a user needs the act-as grant", "forbidden_caller")
                 : new UserCaller(user, ViaOperator: true);
         }
 
@@ -38,22 +40,23 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         };
     }
 
-    public async ValueTask<Result<Caller, Unauthorized, Unavailable>> AuthenticateBearerAsync(string token, CancellationToken cancellationToken)
+    public async ValueTask<CallerAuthenticationOutcome> AuthenticateBearerAsync(string token, CancellationToken cancellationToken)
     {
         if (!token.StartsWith(ApiKeyStore.SecretPrefix, StringComparison.Ordinal))
         {
             return await tokens.VerifyAsync(token, cancellationToken);
         }
 
-        return await keys.FindAsync(token, cancellationToken) switch
+        var outcome = await keys.FindAsync(token, cancellationToken);
+        return outcome switch
         {
             ApiKeyRecord key => new ApiKeyCaller(key),
-            NotFound missing => new Unauthorized(missing.Message, "invalid_key"),
-            Unavailable unavailable => unavailable,
+            ResourceNotFound missing => new CredentialRejected(missing.Message, "invalid_key"),
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<Caller, Unauthorized, Unavailable>> AuthenticatePasswordAsync(string secret, string project, CancellationToken cancellationToken)
+    public async ValueTask<CallerAuthenticationOutcome> AuthenticatePasswordAsync(string secret, string project, CancellationToken cancellationToken)
     {
         if (!ApiKeyExchange.IsKey(secret))
         {
@@ -64,8 +67,8 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         return exchanged switch
         {
             string token => await tokens.VerifyAsync(token, cancellationToken),
-            Unauthorized unauthorized => unauthorized,
-            Unavailable unavailable => unavailable,
+            CredentialRejected unauthorized => unauthorized,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -96,8 +99,8 @@ internal static class CallerAuthenticationExtensions
                 var refusal = outcome switch
                 {
                     Caller caller => Accept(context, caller),
-                    Unauthorized error => ErrorResults.Json(StatusCodes.Status401Unauthorized, error.Code, error.Message),
-                    Unavailable error => ErrorResults.Json(StatusCodes.Status503ServiceUnavailable, error.Code, error.Message, retryAfter: TimeSpan.FromSeconds(1)),
+                    CredentialRejected error => ErrorResults.Json(StatusCodes.Status401Unauthorized, error.Code, error.Message),
+                    BackendUnavailable error => ErrorResults.Json(StatusCodes.Status503ServiceUnavailable, error.Code, error.Message, retryAfter: TimeSpan.FromSeconds(1)),
                 };
                 if (refusal is not null)
                 {

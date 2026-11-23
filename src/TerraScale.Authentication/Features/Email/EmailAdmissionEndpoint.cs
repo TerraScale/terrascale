@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Http.Metadata;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
@@ -46,9 +45,9 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
         return (await EmailApi.ReadAsync<EmailAdmissionRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailAdmissionRequest request => await AdmitAsync(request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
+            AuthPayloadTooLarge error => ErrorResults.ToResult(error),
+            AuthUnsupportedMediaType error => ErrorResults.ToResult(error),
         });
     }
 

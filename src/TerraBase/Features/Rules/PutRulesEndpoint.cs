@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rules;
 
-public readonly union RulesWriteResponse(RulesResponse, InvalidRulesResponse, StaleRulesResponse, RulesPreconditionRequiredResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union RulesWriteResponse(RulesResponse, InvalidRulesResponse, StaleRulesResponse, RulesPreconditionRequiredResponse, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
 internal sealed class PutRulesEndpoint(RulesService rules) : Endpoint<RulesInput, RulesWriteResponse>
 {
@@ -25,7 +25,7 @@ internal sealed class PutRulesEndpoint(RulesService rules) : Endpoint<RulesInput
         ArgumentNullException.ThrowIfNull(request);
         if (request.Tables is null || request.Tables.Values.Any(static table => table is null))
         {
-            return new Validation("the body is {\"tables\": {\"<table>\": {...}}}", "invalid_rules");
+            return new InvalidInput("the body is {\"tables\": {\"<table>\": {...}}}", "invalid_rules");
         }
 
         return RulesWrites.Map(await rules.DeployAsync(HttpContext.Caller, request.Project, request.Database, new RulesSet(request.Tables),
@@ -41,10 +41,10 @@ internal static class RulesWrites
         InvalidRules invalid => new InvalidRulesResponse(invalid),
         StaleRules stale => new StaleRulesResponse(stale),
         RulesPreconditionRequired required => new RulesPreconditionRequiredResponse(required),
-        Validation invalid => invalid,
-        Unauthorized unauthorized => unauthorized,
-        Forbidden forbidden => forbidden,
-        NotFound missing => missing,
-        Unavailable unavailable => unavailable,
+        InvalidInput invalid => invalid,
+        CredentialRejected unauthorized => unauthorized,
+        CallerForbidden forbidden => forbidden,
+        ResourceNotFound missing => missing,
+        BackendUnavailable unavailable => unavailable,
     };
 }

@@ -41,9 +41,10 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             return "/organization" + QueryString.Create(values.OrderBy(value => value.Key, StringComparer.Ordinal));
         }
     }
-    // Catalog base subscription fee at renewal; usage and invoice adjustments are not included.
     public sealed record InvoiceRenewal(DateTimeOffset At, long AmountCents, string Currency, string Interval, bool Ends = false, DateTimeOffset? PeriodStart = null);
     public sealed record InvoiceSummary(string NextInvoice, string Period, string PeriodProgress, string Outstanding, bool HasPeriod = false, int PeriodPercent = 0);
+
+    public readonly union InvoicePageResult(BillingInvoiceList, DashboardValidation);
 
     public static class InvoiceHistory
     {
@@ -56,34 +57,19 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
              ((now.Year - 1).ToString(CultureInfo.InvariantCulture), (now.Year - 1).ToString(CultureInfo.InvariantCulture))];
         }
 
-        public static Valid<BillingInvoiceList> Page(IReadOnlyList<BillingInvoice> invoices, string status, string issued, int page, DateTimeOffset now)
+        public static InvoicePageResult Page(IReadOnlyList<BillingInvoice> invoices, string status, string issued, int page, DateTimeOffset now)
         {
             if (status.Length > 0 && !StatusOptions.Any(option => option.Value == status))
             {
-                return new Validation("status must be paid, open, or void");
+                return new DashboardValidation("status must be paid, open, or void");
             }
 
-            DateTimeOffset? cutoff = null;
-            var year = 0;
-            if (issued is "3m" or "6m" or "12m")
+            if (Window(issued, now) is not { } window)
             {
-                var months = int.Parse(issued[..^1], CultureInfo.InvariantCulture);
-                // Match Go AddDate: a day beyond the target month rolls into the next month.
-                var first = new DateTimeOffset(now.Year, now.Month, 1, now.Hour, now.Minute, now.Second, now.Offset);
-                cutoff = first.AddMonths(-months).AddDays(now.Day - 1).AddTicks(now.Ticks % TimeSpan.TicksPerSecond);
-            }
-            else if (issued.Length > 0 && (issued.Length != 4 || !issued.All(char.IsAsciiDigit) ||
-                !int.TryParse(issued, NumberStyles.None, CultureInfo.InvariantCulture, out year) || year < 1))
-            {
-                return new Validation("issued must be 3m, 6m, 12m, or a four-digit year");
+                return new DashboardValidation("issued must be 3m, 6m, 12m, or a four-digit year");
             }
 
-            var rows = invoices.Where(invoice => (status.Length == 0 || invoice.Status == status) &&
-                (year == 0 || invoice.CreatedAt.UtcDateTime.Year == year) && (cutoff is null || invoice.CreatedAt >= cutoff))
-                .OrderByDescending(invoice => invoice.CreatedAt).ToArray();
-            var pages = Math.Max(1, (rows.Length + PageSize - 1) / PageSize);
-            page = Math.Clamp(page, 1, pages);
-            return new BillingInvoiceList([.. rows.Skip((page - 1) * PageSize).Take(PageSize)], page, pages, rows.Length);
+            return Listing(invoices, status, window, page);
         }
 
         public static InvoiceHistoryPage ForBrowser(IReadOnlyList<BillingInvoice> invoices, IQueryCollection query, DateTimeOffset now)
@@ -95,17 +81,48 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             }
 
             var issued = query["issued"].ToString();
-            if (!IssuedOptions(now).Any(option => option.Value == issued))
+            if (!IssuedOptions(now).Any(option => option.Value == issued) || Window(issued, now) is not { } window)
             {
                 issued = "";
+                window = IssuedWindow.AllTime;
             }
 
             var page = int.TryParse(query["page"], NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : 1;
-            return Page(invoices, status, issued, page, now) switch
+            return new(Listing(invoices, status, window, page), status, issued);
+        }
+
+        private sealed record IssuedWindow(DateTimeOffset? Cutoff, int Year)
+        {
+            public static IssuedWindow AllTime { get; } = new(null, 0);
+        }
+
+        private static IssuedWindow? Window(string issued, DateTimeOffset now)
+        {
+            if (issued is "3m" or "6m" or "12m")
             {
-                BillingInvoiceList listed => new(listed, status, issued),
-                Validation => throw new UnreachableException()
-            };
+                var months = int.Parse(issued[..^1], CultureInfo.InvariantCulture);
+                var first = new DateTimeOffset(now.Year, now.Month, 1, now.Hour, now.Minute, now.Second, now.Offset);
+                return new(first.AddMonths(-months).AddDays(now.Day - 1).AddTicks(now.Ticks % TimeSpan.TicksPerSecond), 0);
+            }
+
+            if (issued.Length == 0)
+            {
+                return IssuedWindow.AllTime;
+            }
+
+            return issued.Length == 4 && issued.All(char.IsAsciiDigit) && int.TryParse(issued, NumberStyles.None, CultureInfo.InvariantCulture, out var year) && year >= 1
+                ? new(null, year)
+                : null;
+        }
+
+        private static BillingInvoiceList Listing(IReadOnlyList<BillingInvoice> invoices, string status, IssuedWindow window, int page)
+        {
+            var rows = invoices.Where(invoice => (status.Length == 0 || invoice.Status == status) &&
+                (window.Year == 0 || invoice.CreatedAt.UtcDateTime.Year == window.Year) && (window.Cutoff is null || invoice.CreatedAt >= window.Cutoff))
+                .OrderByDescending(invoice => invoice.CreatedAt).ToArray();
+            var pages = Math.Max(1, (rows.Length + PageSize - 1) / PageSize);
+            page = Math.Clamp(page, 1, pages);
+            return new BillingInvoiceList([.. rows.Skip((page - 1) * PageSize).Take(PageSize)], page, pages, rows.Length);
         }
 
         public static string SafeUrl(string? raw)

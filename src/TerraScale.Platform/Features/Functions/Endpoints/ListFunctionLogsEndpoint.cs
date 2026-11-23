@@ -2,10 +2,18 @@ using System.Globalization;
 
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union ListFunctionLogsReply(
+    FunctionLogList,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class ListFunctionLogsEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<FunctionLogsRequest, Result<FunctionLogList, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<FunctionLogsRequest, ListFunctionLogsReply>
 {
-    private static readonly Validation BadLimit = new("limit must be an integer from 1 to 100");
+    private static readonly PlatformInvalidRequest BadLimit = new("limit must be an integer from 1 to 100");
 
     public override void Configure()
     {
@@ -17,7 +25,7 @@ public sealed class ListFunctionLogsEndpoint(PlatformAccess access, FunctionServ
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FunctionLogList, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<ListFunctionLogsReply> HandleAsync(
         FunctionLogsRequest request,
         CancellationToken cancellationToken)
     {
@@ -29,19 +37,26 @@ public sealed class ListFunctionLogsEndpoint(PlatformAccess access, FunctionServ
             return BadLimit;
         }
 
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.LogsAsync(target, request.Function, limit, cancellationToken) switch
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<ListFunctionLogsReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.LogsAsync(target, request.Function, limit, cancellationToken);
+            return operation switch
             {
                 FunctionLogList logs => logs,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

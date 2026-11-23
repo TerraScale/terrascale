@@ -3,17 +3,13 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>The serving-region catalog, ordered ordinally; placement metadata, not a routing policy.</summary>
-/// <param name="Regions">Nonempty, distinct lowercase region ids from live membership, including future regions.</param>
 public sealed record TerraBaseRegions([property: JsonPropertyName("regions")] IReadOnlyList<string> Regions);
 
-/// <summary>Anonymous region catalog over a caller-owned HttpClient; no credentials, caching or background work.</summary>
 public sealed class TerraBaseRegionsClient
 {
     private readonly TerraBaseConnection connection;
     private readonly HttpClient http;
 
-    /// <summary>Creates a catalog client. Use TerraBaseHttp.CreateHandler to disable automatic redirects and cookies.</summary>
     public TerraBaseRegionsClient(HttpClient httpClient)
     {
         http = httpClient;
@@ -21,7 +17,6 @@ public sealed class TerraBaseRegionsClient
             TerraBaseConnection.DefaultMaxResponseBytes, publicAnonymous: true);
     }
 
-    /// <summary>listRegions: GET /v1/regions, anonymous. Server permits caching for five seconds; each call sends once.</summary>
     public Task<TerraBaseRegions> ListRegionsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

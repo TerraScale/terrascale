@@ -42,6 +42,18 @@ public sealed record StrongWoundPayload(Ulid DatabaseId, Ulid TxId, Ulid Wounded
 
 public sealed record SerializationConflict(Ulid DatabaseId, Ulid TxId, string Reason);
 
+public sealed record ClusterUnavailable(string Message, string Code = "unavailable");
+
+public sealed record ClusterTimeout(string Message, string Code = "request_timeout");
+
+public readonly union ClusterWaitBookmarkOutcome(BookmarkReached, DatabaseNotFound, ClusterTimeout);
+
+public readonly union ClusterWriteOutcome(SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, ClusterUnavailable, ClusterTimeout, StorageBusy);
+
+public readonly union ClusterBeginTransactionOutcome(ISqlTransaction, StorageBusy, ClusterTimeout);
+
+public readonly union ClusterCommitTransactionOutcome(CommitMetadata, SerializationConflict, SchemaMismatch, ClusterUnavailable, ClusterTimeout, StorageBusy);
+
 public interface IClusterCoordinator
 {
     string LocalRegion { get; }
@@ -54,16 +66,16 @@ public interface IClusterCoordinator
 
     CausalBookmark CurrentBookmark(Ulid databaseId);
 
-    ValueTask<Result<Done, NotFound, RequestTimeout>> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);
+    ValueTask<ClusterWaitBookmarkOutcome> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);
 
-    ValueTask<Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> ExecuteWriteAsync(
+    ValueTask<ClusterWriteOutcome> ExecuteWriteAsync(
         ISqlDatabaseSession session,
         SqlStatementRequest request,
         CancellationToken cancellationToken);
 
-    ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(ISqlDatabaseSession session, SqlTransactionOptions options, CancellationToken cancellationToken);
+    ValueTask<ClusterBeginTransactionOutcome> BeginTransactionAsync(ISqlDatabaseSession session, SqlTransactionOptions options, CancellationToken cancellationToken);
 
-    ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitTransactionAsync(
+    ValueTask<ClusterCommitTransactionOutcome> CommitTransactionAsync(
         ISqlDatabaseSession session,
         ISqlTransaction transaction,
         CancellationToken cancellationToken);

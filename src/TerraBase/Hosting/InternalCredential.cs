@@ -5,6 +5,8 @@ using TerraBase.Configuration;
 
 namespace TerraBase.Hosting;
 
+internal readonly union InternalCredentialOutcome(InternalCredential, ConfigurationError);
+
 internal sealed class InternalCredential
 {
     public const string EnvironmentVariable = "TERRABASE_PEER_SECRET";
@@ -21,7 +23,7 @@ internal sealed class InternalCredential
 
     public string? CorrelationKey { get; }
 
-    public static Result<InternalCredential, ConfigurationError> FromProcess(TerraBaseOptions options)
+    public static InternalCredentialOutcome FromProcess(TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         var value = Environment.GetEnvironmentVariable(EnvironmentVariable);

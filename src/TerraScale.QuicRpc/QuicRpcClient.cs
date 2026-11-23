@@ -6,6 +6,8 @@ using TerraScale.Contracts.Quic;
 
 namespace TerraScale.QuicRpc;
 
+internal readonly union PeerSlotLookup(PeerSlot, QuicFault);
+
 public sealed class QuicRpcClient : IAsyncDisposable
 {
     private readonly QuicRpcClientCore _core;
@@ -54,7 +56,7 @@ public sealed class QuicRpcClient : IAsyncDisposable
         }
     }
 
-    public ValueTask<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> CallAsync<TReq, TRes>(
+    public ValueTask<QuicCallOutcome<TRes>> CallAsync<TReq, TRes>(
         string peerId,
         ushort messageTypeId,
         TReq request,
@@ -63,9 +65,9 @@ public sealed class QuicRpcClient : IAsyncDisposable
         where TRes : IBinaryMessage<TRes> =>
         QuicPlatform.IsSupported
             ? _core.CallAsync<TReq, TRes>(peerId, messageTypeId, request, null, cancellationToken)
-            : ValueTask.FromResult<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>>(Unsupported);
+            : new(Unsupported);
 
-    public ValueTask<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> CallAsync<TReq, TRes>(
+    public ValueTask<QuicCallOutcome<TRes>> CallAsync<TReq, TRes>(
         string peerId,
         ushort messageTypeId,
         TReq request,
@@ -75,9 +77,9 @@ public sealed class QuicRpcClient : IAsyncDisposable
         where TRes : IBinaryMessage<TRes> =>
         QuicPlatform.IsSupported
             ? _core.CallAsync<TReq, TRes>(peerId, messageTypeId, request, timeout, cancellationToken)
-            : ValueTask.FromResult<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>>(Unsupported);
+            : new(Unsupported);
 
-    public ValueTask<Result<Done, Unavailable, RequestTimeout>> PushAsync<TMsg>(
+    public ValueTask<QuicPushOutcome> PushAsync<TMsg>(
         string peerId,
         ushort messageTypeId,
         TMsg message,
@@ -86,9 +88,9 @@ public sealed class QuicRpcClient : IAsyncDisposable
         where TMsg : IBinaryMessage<TMsg> =>
         QuicPlatform.IsSupported
             ? _core.PushAsync(peerId, messageTypeId, message, orderedChannelKey, cancellationToken)
-            : ValueTask.FromResult<Result<Done, Unavailable, RequestTimeout>>(Unsupported);
+            : new(Unsupported);
 
-    public IAsyncEnumerable<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> ServerStreamAsync<TReq, TRes>(
+    public IAsyncEnumerable<QuicCallOutcome<TRes>> ServerStreamAsync<TReq, TRes>(
         string peerId,
         ushort messageTypeId,
         TReq request,
@@ -101,11 +103,11 @@ public sealed class QuicRpcClient : IAsyncDisposable
 
     public ValueTask DisposeAsync() => QuicPlatform.IsSupported ? _core.DisposeAsync() : ValueTask.CompletedTask;
 
-    private static Unavailable Unsupported { get; } = new("System.Net.Quic is not supported on this platform.", "quic_unsupported");
+    private static QuicUnavailable Unsupported { get; } = new("System.Net.Quic is not supported on this platform.", "quic_unsupported");
 
-    private static async IAsyncEnumerable<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> UnsupportedStream<TRes>()
+    private static async IAsyncEnumerable<QuicCallOutcome<TRes>> UnsupportedStream<TRes>()
     {
-        await Task.CompletedTask.ConfigureAwait(false);
+        await Task.CompletedTask;
         yield return Unsupported;
     }
 }
@@ -144,7 +146,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
 
     public void ResetPeer(string nodeId) => _pool.Reset(nodeId);
 
-    public async ValueTask<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> CallAsync<TReq, TRes>(
+    public async ValueTask<QuicCallOutcome<TRes>> CallAsync<TReq, TRes>(
         string peerId,
         ushort messageTypeId,
         TReq request,
@@ -163,9 +165,10 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             using var builder = FrameBuilder.Encode(request);
             var requestId = NextRequestId();
             var encoded = builder.Seal(messageTypeId, QuicProtocol.ControlEndOfStream, requestId);
-            var result = await OpenAsync(peerId, QuicStreamType.Bidirectional, scope).ConfigureAwait(false) switch
+            var outcome = await OpenAsync(peerId, QuicStreamType.Bidirectional, scope);
+            var result = outcome switch
             {
-                StreamLease lease => await ExchangeAsync<TRes>(lease, encoded, messageTypeId, requestId, scope).ConfigureAwait(false),
+                StreamLease lease => await ExchangeAsync<TRes>(lease, encoded, messageTypeId, requestId, scope),
                 QuicFault fault => Failed<TRes>(fault),
             };
             _metrics.Completed(QuicSide.Client, QuicPattern.Unary, messageTypeId, Outcome(result), _timeProvider.GetElapsedTime(started));
@@ -177,7 +180,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         }
     }
 
-    public async ValueTask<Result<Done, Unavailable, RequestTimeout>> PushAsync<TMsg>(
+    public async ValueTask<QuicPushOutcome> PushAsync<TMsg>(
         string peerId,
         ushort messageTypeId,
         TMsg message,
@@ -200,11 +203,11 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             using var builder = FrameBuilder.Encode(message);
             var encoded = builder.Seal(messageTypeId, QuicProtocol.ControlNone, NextRequestId());
             var delivered = orderedChannelKey is null
-                ? await PushUnorderedAsync(peerId, encoded, scope).ConfigureAwait(false)
-                : await PushOrderedAsync(peerId, orderedChannelKey, builder, scope).ConfigureAwait(false);
+                ? await PushUnorderedAsync(peerId, encoded, scope)
+                : await PushOrderedAsync(peerId, orderedChannelKey, builder, scope);
             var result = delivered switch
             {
-                Done done => done,
+                QuicSent done => done,
                 QuicFault fault => FailedPush(fault),
             };
             var pattern = orderedChannelKey is null ? QuicPattern.Push : QuicPattern.OrderedPush;
@@ -217,7 +220,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         }
     }
 
-    public async IAsyncEnumerable<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> ServerStreamAsync<TReq, TRes>(
+    public async IAsyncEnumerable<QuicCallOutcome<TRes>> ServerStreamAsync<TReq, TRes>(
         string peerId,
         ushort messageTypeId,
         TReq request,
@@ -227,31 +230,37 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(peerId);
         ArgumentNullException.ThrowIfNull(request);
-        var call = new ServerStreamCall<TRes>(this, _metrics, _timeProvider, messageTypeId, NextRequestId(), cancellationToken);
-        await using var owned = call.ConfigureAwait(false);
+        await using var call = new ServerStreamCall<TRes>(this, _metrics, _timeProvider, messageTypeId, NextRequestId(), cancellationToken);
         using (var builder = FrameBuilder.Encode(request))
         {
-            var opened = await call.OpenAsync(peerId, builder).ConfigureAwait(false);
-            if (opened.Item is { } refusal)
+            var opened = await call.OpenAsync(peerId, builder);
+            var failure = opened switch
             {
-                yield return refusal;
-            }
-
-            if (!opened.Continue)
+                StreamOpened => null,
+                QuicFault fault => fault,
+            };
+            if (failure is not null)
             {
+                yield return QuicFaults.ToCallFailure<TRes>(failure);
                 yield break;
             }
         }
 
         while (true)
         {
-            var step = await call.NextAsync().ConfigureAwait(false);
-            if (step.Item is { } item)
+            var step = await call.NextAsync();
+            var item = step switch
             {
-                yield return item;
+                ServerStreamItem<TRes> received => received,
+                StreamEnded => null,
+            };
+            if (item is null)
+            {
+                yield break;
             }
 
-            if (!step.Continue)
+            yield return item.Outcome;
+            if (!item.Continue)
             {
                 yield break;
             }
@@ -266,38 +275,38 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         }
 
         var drained = Task.WhenAll(_inFlight.DrainAsync(), _pool.CompleteChannelsAsync());
-        if (!await InFlightTracker.WaitAsync(drained, QuicMeshLimits.DrainTimeout, _timeProvider).ConfigureAwait(false))
+        if (!await InFlightTracker.WaitAsync(drained, QuicMeshLimits.DrainTimeout, _timeProvider))
         {
             QuicRpcLog.DrainTimedOut(_logger, QuicMeshLimits.DrainTimeout);
         }
 
-        await _shutdown.CancelAsync().ConfigureAwait(false);
-        await _pool.ShutdownAsync().ConfigureAwait(false);
+        await _shutdown.CancelAsync();
+        await _pool.ShutdownAsync();
         _shutdown.Dispose();
     }
 
-    public Result<PeerSlot, QuicFault> Resolve(string peerId) =>
+    public PeerSlotLookup Resolve(string peerId) =>
         Volatile.Read(ref _disposed) != 0 ? new TransportShutdown("The QUIC client is disposed.")
         : _pool.TryGet(peerId, out var slot) ? slot
         : new PeerUnknown($"Peer '{peerId}' is not registered with the QUIC client.");
 
-    public async ValueTask<Result<StreamLease, QuicFault>> OpenAsync(string peerId, QuicStreamType type, CallScope scope) =>
+    public async ValueTask<StreamLeaseOutcome> OpenAsync(string peerId, QuicStreamType type, CallScope scope) =>
         Resolve(peerId) switch
         {
-            PeerSlot slot => await _pool.OpenStreamAsync(slot, type, scope).ConfigureAwait(false),
+            PeerSlot slot => await _pool.OpenStreamAsync(slot, type, scope),
             QuicFault fault => fault,
         };
 
-    public static QuicOutcome Outcome<T>(Result<T, Unavailable, RequestTimeout, QuicRemoteError> result)
+    public static QuicOutcome Outcome<T>(QuicCallOutcome<T> result)
         where T : IBinaryMessage<T> => result switch
         {
             T => QuicOutcome.Ok,
-            Unavailable => QuicOutcome.Unavailable,
-            RequestTimeout => QuicOutcome.Timeout,
+            QuicUnavailable => QuicOutcome.Unavailable,
+            QuicTimeout => QuicOutcome.Timeout,
             QuicRemoteError => QuicOutcome.RemoteError,
         };
 
-    public static Result<T, Unavailable, RequestTimeout, QuicRemoteError> Decode<T>(PooledFrame frame, ushort messageTypeId, ulong requestId)
+    public static QuicCallOutcome<T> Decode<T>(PooledFrame frame, ushort messageTypeId, ulong requestId)
         where T : IBinaryMessage<T>
     {
         using (frame)
@@ -329,14 +338,14 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             : new QuicRemoteError(QuicRemoteError.ProtocolViolation, "The peer sent a malformed error frame.");
     }
 
-    private static QuicOutcome Outcome(Result<Done, Unavailable, RequestTimeout> result) => result switch
+    private static QuicOutcome Outcome(QuicPushOutcome result) => result switch
     {
-        Done => QuicOutcome.Ok,
-        Unavailable => QuicOutcome.Unavailable,
-        RequestTimeout => QuicOutcome.Timeout,
+        QuicSent => QuicOutcome.Ok,
+        QuicUnavailable => QuicOutcome.Unavailable,
+        QuicTimeout => QuicOutcome.Timeout,
     };
 
-    private async ValueTask<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> ExchangeAsync<TRes>(
+    private async ValueTask<QuicCallOutcome<TRes>> ExchangeAsync<TRes>(
         StreamLease lease,
         ReadOnlyMemory<byte> encoded,
         ushort messageTypeId,
@@ -348,7 +357,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         var aborted = false;
         try
         {
-            var read = await SendAndReceiveAsync(lease.Stream, encoded, scope).ConfigureAwait(false);
+            var read = await SendAndReceiveAsync(lease.Stream, encoded, scope);
             var result = read switch
             {
                 PooledFrame frame => Decode<TRes>(Received(frame), messageTypeId, requestId),
@@ -365,7 +374,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             }
             else
             {
-                await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
+                await QuicIo.DisposeStreamAsync(lease.Stream);
             }
 
             _metrics.StreamClosed(QuicSide.Client);
@@ -380,10 +389,10 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
 
     private async ValueTask<FrameRead> SendAndReceiveAsync(QuicStream stream, ReadOnlyMemory<byte> encoded, CallScope scope)
     {
-        var written = await QuicIo.WriteAsync(stream, encoded, true, scope).ConfigureAwait(false);
+        var written = await QuicIo.WriteAsync(stream, encoded, true, scope);
         return written switch
         {
-            Done => await SentThenReadAsync(stream, encoded.Length, scope).ConfigureAwait(false),
+            QuicSent => await SentThenReadAsync(stream, encoded.Length, scope),
             QuicFault fault => fault,
         };
     }
@@ -391,10 +400,10 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
     private async ValueTask<FrameRead> SentThenReadAsync(QuicStream stream, int sent, CallScope scope)
     {
         _metrics.Sent(QuicSide.Client, sent);
-        return await QuicIo.ReadFrameAsync(stream, scope).ConfigureAwait(false);
+        return await QuicIo.ReadFrameAsync(stream, scope);
     }
 
-    private Result<TRes, Unavailable, RequestTimeout, QuicRemoteError> FailedExchange<TRes>(StreamLease lease, QuicFault fault, out bool aborted)
+    private QuicCallOutcome<TRes> FailedExchange<TRes>(StreamLease lease, QuicFault fault, out bool aborted)
     {
         aborted = true;
         lease.Stream.Abort(QuicAbortDirection.Both, QuicProtocol.StreamErrorCode);
@@ -402,35 +411,38 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         return Failed<TRes>(fault);
     }
 
-    private Result<TRes, Unavailable, RequestTimeout, QuicRemoteError> Failed<TRes>(QuicFault fault)
+    private QuicCallOutcome<TRes> Failed<TRes>(QuicFault fault)
     {
         _metrics.Error(QuicSide.Client, fault);
         return QuicFaults.ToCallFailure<TRes>(fault);
     }
 
-    private Result<Done, Unavailable, RequestTimeout> FailedPush(QuicFault fault)
+    private QuicPushOutcome FailedPush(QuicFault fault)
     {
         _metrics.Error(QuicSide.Client, fault);
         return QuicFaults.ToPushFailure(fault);
     }
 
-    private async ValueTask<Result<Done, QuicFault>> PushUnorderedAsync(string peerId, ReadOnlyMemory<byte> encoded, CallScope scope) =>
-        await OpenAsync(peerId, QuicStreamType.Unidirectional, scope).ConfigureAwait(false) switch
+    private async ValueTask<PushDeliveryOutcome> PushUnorderedAsync(string peerId, ReadOnlyMemory<byte> encoded, CallScope scope)
+    {
+        var outcome = await OpenAsync(peerId, QuicStreamType.Unidirectional, scope);
+        return outcome switch
         {
-            StreamLease lease => await SendOneShotAsync(lease, encoded, scope).ConfigureAwait(false),
+            StreamLease lease => await SendOneShotAsync(lease, encoded, scope),
             QuicFault fault => fault,
         };
+    }
 
-    private async ValueTask<Result<Done, QuicFault>> SendOneShotAsync(StreamLease lease, ReadOnlyMemory<byte> encoded, CallScope scope)
+    private async ValueTask<PushDeliveryOutcome> SendOneShotAsync(StreamLease lease, ReadOnlyMemory<byte> encoded, CallScope scope)
     {
         _metrics.StreamOpened(QuicSide.Client);
         var aborted = false;
         try
         {
-            var written = await QuicIo.WriteAsync(lease.Stream, encoded, true, scope).ConfigureAwait(false);
+            var written = await QuicIo.WriteAsync(lease.Stream, encoded, true, scope);
             return written switch
             {
-                Done done => SentPush(done, encoded.Length),
+                QuicSent done => SentPush(done, encoded.Length),
                 QuicFault fault => AbortPush(lease, fault, out aborted),
             };
         }
@@ -442,14 +454,14 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             }
             else
             {
-                await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
+                await QuicIo.DisposeStreamAsync(lease.Stream);
             }
 
             _metrics.StreamClosed(QuicSide.Client);
         }
     }
 
-    private Result<Done, QuicFault> SentPush(Done done, int length)
+    private PushDeliveryOutcome SentPush(QuicSent done, int length)
     {
         _metrics.Sent(QuicSide.Client, length);
         return done;
@@ -463,14 +475,14 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         return fault;
     }
 
-    private async ValueTask<Result<Done, QuicFault>> PushOrderedAsync(string peerId, string channelKey, FrameBuilder builder, CallScope scope) =>
+    private async ValueTask<PushDeliveryOutcome> PushOrderedAsync(string peerId, string channelKey, FrameBuilder builder, CallScope scope) =>
         Resolve(peerId) switch
         {
-            PeerSlot slot => await EnqueueOrderedAsync(_pool.GetOrderedChannel(slot, channelKey), builder, scope).ConfigureAwait(false),
+            PeerSlot slot => await EnqueueOrderedAsync(_pool.GetOrderedChannel(slot, channelKey), builder, scope),
             QuicFault fault => fault,
         };
 
-    private static async ValueTask<Result<Done, QuicFault>> EnqueueOrderedAsync(OrderedPushChannel? channel, FrameBuilder builder, CallScope scope)
+    private static async ValueTask<PushDeliveryOutcome> EnqueueOrderedAsync(OrderedPushChannel? channel, FrameBuilder builder, CallScope scope)
     {
         if (channel is null)
         {
@@ -481,9 +493,10 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         QuicFault? rejected = new TransportShutdown("The ordered push was not enqueued.");
         try
         {
-            rejected = await channel.EnqueueAsync(push, scope).ConfigureAwait(false) switch
+            var outcome = await channel.EnqueueAsync(push, scope);
+            rejected = outcome switch
             {
-                Done => null,
+                PushEnqueued => null,
                 QuicFault fault => fault,
             };
         }
@@ -495,13 +508,13 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             }
         }
 
-        return rejected is { } refusal ? refusal : await AwaitDeliveryAsync(push, scope).ConfigureAwait(false);
+        return rejected is { } refusal ? refusal : await AwaitDeliveryAsync(push, scope);
     }
 
-    private static async ValueTask<Result<Done, QuicFault>> AwaitDeliveryAsync(PendingPush push, CallScope scope)
+    private static async ValueTask<PushDeliveryOutcome> AwaitDeliveryAsync(PendingPush push, CallScope scope)
     {
         using var registration = scope.Token.Register(() => push.Abandon(scope));
-        return await push.Completion.ConfigureAwait(false);
+        return await push.Completion;
     }
 
     private ulong NextRequestId() => (ulong)Interlocked.Increment(ref _nextRequestId);

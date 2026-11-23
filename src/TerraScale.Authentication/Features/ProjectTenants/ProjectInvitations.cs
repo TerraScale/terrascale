@@ -68,7 +68,7 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
         {
             string refused => refused,
             null => null,
-            Conflict => "The project settings or waitlist entry changed.",
+            AuthConflict => "The project settings or waitlist entry changed.",
         };
         if (refusal is not null)
         {

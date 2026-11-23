@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         public static string PreserveRequest(HttpContext http, string path)
         {
-            // Invitations carry their own verified scope; caller workspace queries do not choose their landing.
             if (http.Request.Path.StartsWithSegments("/invitations"))
             {
                 return path;

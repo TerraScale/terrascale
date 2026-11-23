@@ -3,11 +3,20 @@ using System.Text;
 
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union InvokeFunctionReply(
+    FunctionAnswer,
+    PlatformInvalidRequest,
+    PlatformPayloadTooLarge,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoker invoker)
-    : EndpointWithoutRequest<Result<FunctionAnswer, Validation, PayloadTooLarge, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : EndpointWithoutRequest<InvokeFunctionReply>
 {
     private const int MaxBodyBytes = 1024 * 1024;
-    private static readonly PayloadTooLarge TooLarge = new("the request body is at most 1 MiB");
+    private static readonly PlatformPayloadTooLarge TooLarge = new("the request body is at most 1 MiB");
 
     public override void Configure()
     {
@@ -20,7 +29,7 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FunctionAnswer, Validation, PayloadTooLarge, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<InvokeFunctionReply> HandleAsync(
         CancellationToken cancellationToken)
     {
         var request = HttpContext.Request;
@@ -48,24 +57,31 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
         var bookmark = request.Headers[ConsistencyHeaders.Bookmark].ToString();
         if (!CausalBookmark.TryDecode(bookmark, out _))
         {
-            return new Validation("TerraScale-Bookmark is not a valid bookmark", "invalid_bookmark");
+            return new PlatformInvalidRequest("TerraScale-Bookmark is not a valid bookmark", "invalid_bookmark");
         }
 
         var eventJson = Event(body.WrittenMemory, request.Query);
-        return await FunctionTargets.ResolveAsync(access, HttpContext, project, database, function, Scopes.Read, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, project, database, function, Scopes.Read, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await invoker.InvokeAsync(target, function, "http", eventJson, bookmark, HttpContext.TraceIdentifier, cancellationToken) switch
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<InvokeFunctionReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await invoker.InvokeAsync(target, function, "http", eventJson, bookmark, HttpContext.TraceIdentifier, cancellationToken);
+            return operation switch
             {
                 FunctionAnswer answer => answer,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
     private string RouteValue(string name) =>

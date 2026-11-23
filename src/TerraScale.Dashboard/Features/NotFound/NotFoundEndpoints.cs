@@ -6,7 +6,6 @@ namespace TerraScale.Dashboard.Features.NotFound
 {
     public static class NotFoundEndpoints
     {
-        // Signed-in visitors keep the app shell. Anyone else, or an unusable account context, gets the public page.
         public static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
             var context = await ContextAsync(http, sessions, accounts);

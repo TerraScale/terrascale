@@ -15,7 +15,7 @@ internal sealed partial class PostgresConnection
         }
 
         var schema = await ExecuteStatementAsync(new SqlStatement("SELECT name, type FROM pragma_table_info(?1)", [SqlValue.FromText(command.Table)], NoNamed),
-            SqlAccess.Read, cancellationToken).ConfigureAwait(false);
+            SqlAccess.Read, cancellationToken);
         var (columns, schemaError) = schema switch
         {
             SqlResultSet set => CopyColumns(command, set),
@@ -29,7 +29,7 @@ internal sealed partial class PostgresConnection
         var placeholders = string.Join(", ", columns.Select(static (_, index) => "?" + (index + 1).ToString(CultureInfo.InvariantCulture)));
         var insert = $"INSERT INTO {Quote(command.Table)} ({string.Join(", ", columns.Select(static column => Quote(column.Name)))}) VALUES ({placeholders})";
         Writer.CopyResponse('G', command.Options.Format == PgCopyFormat.Binary, columns.Count);
-        if (!await Writer.FlushAsync(closed).ConfigureAwait(false))
+        if (!await Writer.FlushAsync(closed))
         {
             return new PgError("08006", "the client stopped reading", Fatal: true);
         }
@@ -41,12 +41,12 @@ internal sealed partial class PostgresConnection
         }
 
         using var reader = new PgCopyReader(command.Options, [.. columns.Select(static column => column.Oid)]);
-        var (rows, failure) = await ReceiveAsync(reader, insert, cancellationToken).ConfigureAwait(false);
+        var (rows, failure) = await ReceiveAsync(reader, insert, cancellationToken);
         if (ownBlock)
         {
             failure = failure is null
-                ? await EndImplicitAsync(commit: true).ConfigureAwait(false)
-                : await EndImplicitAsync(commit: false).ConfigureAwait(false) ?? failure;
+                ? await EndImplicitAsync(commit: true)
+                : await EndImplicitAsync(commit: false) ?? failure;
         }
 
         return failure is null ? PgResult.Command("COPY " + rows.ToString(CultureInfo.InvariantCulture)) : failure;
@@ -93,7 +93,7 @@ internal sealed partial class PostgresConnection
         long rows = 0;
         while (true)
         {
-            var read = await Reader.ReadMessageAsync(PostgresLimits.IdleInTransactionTimeout, closed).ConfigureAwait(false);
+            var read = await Reader.ReadMessageAsync(PostgresLimits.IdleInTransactionTimeout, closed);
             var (records, done, error) = read switch
             {
                 PgFrontendMessage message => message switch
@@ -118,7 +118,7 @@ internal sealed partial class PostgresConnection
 
             foreach (var record in records ?? [])
             {
-                var inserted = await ExecuteStatementAsync(new SqlStatement(insert, record, NoNamed), SqlAccess.Write, cancellationToken).ConfigureAwait(false);
+                var inserted = await ExecuteStatementAsync(new SqlStatement(insert, record, NoNamed), SqlAccess.Write, cancellationToken);
                 var failure = inserted switch
                 {
                     SqlResultSet => null,
@@ -139,7 +139,7 @@ internal sealed partial class PostgresConnection
         }
     }
 
-    private static (List<SqlValue[]>? Records, bool Done, PgError? Error) Unpack(Result<List<SqlValue[]>, PgError> parsed, bool done) => parsed switch
+    private static (List<SqlValue[]>? Records, bool Done, PgError? Error) Unpack(PgCopyRowsResult parsed, bool done) => parsed switch
     {
         List<SqlValue[]> records => (records, done, null),
         PgError error => (null, true, error),
@@ -147,10 +147,10 @@ internal sealed partial class PostgresConnection
 
     private async ValueTask<PgOutcome> CopyToAsync(PgCopyToCommand command, IReadOnlyList<SqlValue> parameters, CancellationToken cancellationToken)
     {
-        var outcome = await ExecuteSqlAsync(command.Query, parameters, null, cancellationToken).ConfigureAwait(false);
+        var outcome = await ExecuteSqlAsync(command.Query, parameters, null, cancellationToken);
         return outcome switch
         {
-            PgResult result => await StreamCopyAsync(command.Options, result).ConfigureAwait(false),
+            PgResult result => await StreamCopyAsync(command.Options, result),
             PgError error => error,
         };
     }
@@ -167,7 +167,7 @@ internal sealed partial class PostgresConnection
                 return error;
             }
 
-            if (Writer.ShouldFlush && !await Writer.FlushAsync(closed).ConfigureAwait(false))
+            if (Writer.ShouldFlush && !await Writer.FlushAsync(closed))
             {
                 return new PgError("08006", "the client stopped reading COPY data", Fatal: true);
             }

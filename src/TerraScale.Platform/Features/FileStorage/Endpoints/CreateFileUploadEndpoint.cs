@@ -1,7 +1,15 @@
 namespace TerraScale.Platform.Features.FileStorage.Endpoints;
 
+public readonly union CreateFileUploadReply(
+    UploadCreated,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class CreateFileUploadEndpoint(PlatformAccess access, FileStorageService files)
-    : Endpoint<CreateFileUploadRequest, Result<UploadCreated, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<CreateFileUploadRequest, CreateFileUploadReply>
 {
     public override void Configure()
     {
@@ -13,24 +21,31 @@ public sealed class CreateFileUploadEndpoint(PlatformAccess access, FileStorageS
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<UploadCreated, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(CreateFileUploadRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<CreateFileUploadReply> HandleAsync(CreateFileUploadRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Write, cancellationToken) switch
+        var outcome = await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Write, cancellationToken);
+        return outcome switch
         {
-            FileScope scope => await files.CreateUploadAsync(scope, request, cancellationToken) switch
+            FileScope scope => await HandleAuthorizedAsync(scope),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<CreateFileUploadReply> HandleAuthorizedAsync(FileScope scope)
+        {
+            var operation = await files.CreateUploadAsync(scope, request, cancellationToken);
+            return operation switch
             {
                 UploadCreated upload => upload,
-                Validation invalid => invalid,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformInvalidRequest invalid => invalid,
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

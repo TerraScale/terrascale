@@ -2,7 +2,6 @@ using System.Text.Json.Serialization;
 using Dapper;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Security;
@@ -63,11 +62,11 @@ internal sealed record PreparedStepUp(UserRecord Caller, StepUpRecord Record, IR
     public override string ToString() => nameof(PreparedStepUp);
 }
 
-public readonly union StepUpBodyResult(StepUpBody, Validation, QuotaExceeded, Forbidden);
+public readonly union StepUpBodyResult(StepUpBody, AuthValidation, AuthQuotaExceeded, AuthForbidden);
 
-public readonly union StepUpConsumptionResult(StepUpConsumption, Forbidden);
+public readonly union StepUpConsumptionResult(StepUpConsumption, AuthForbidden);
 
-public readonly union StepUpUserResult(UserRecord, Forbidden);
+public readonly union StepUpUserResult(UserRecord, AuthForbidden);
 
 public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOptions options, TimeProvider clock, AttemptLimiter limiter)
 {
@@ -90,7 +89,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         return await this.ConsumeAsync(caller, Proof(request), purpose, "ts-auth", null, cancellationToken, organizationId) switch
         {
             StepUpConsumption consumed => consumed.Caller,
-            Forbidden => throw Required(),
+            AuthForbidden => throw Required(),
         };
     }
 
@@ -111,7 +110,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             || callback.AbsolutePath != "/auth/step-up/callback" || callback.Query.Length != 0 || callback.Fragment.Length != 0 || callback.UserInfo.Length != 0
             || options.DashboardClient?.RedirectUris.Any(uri => uri.GetLeftPart(UriPartial.Authority) == callback.GetLeftPart(UriPartial.Authority)) != true)
         {
-            return new Validation("Use a supported purpose/audience and the registered dashboard origin's /auth/step-up/callback.");
+            return new AuthValidation("Use a supported purpose/audience and the registered dashboard origin's /auth/step-up/callback.");
         }
 
         return await this.IssueAsync(caller, request.Purpose, request.Audience, callback, request.OrganizationId, cancellationToken);
@@ -121,16 +120,16 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         await this.IssueAsync(caller, ApproveAgent, "ts-auth", new Uri(options.PublicOrigin, returnPath), enrollmentId, cancellationToken) switch
         {
             StepUpBody body => body,
-            Validation failure => throw new ApiException(StatusCodes.Status400BadRequest, failure.Code, failure.Message),
-            QuotaExceeded failure => throw new ApiException(StatusCodes.Status429TooManyRequests, failure.Code, failure.Message),
-            Forbidden => throw Required(),
+            AuthValidation failure => throw new ApiException(StatusCodes.Status400BadRequest, failure.Code, failure.Message),
+            AuthQuotaExceeded failure => throw new ApiException(StatusCodes.Status429TooManyRequests, failure.Code, failure.Message),
+            AuthForbidden => throw Required(),
         };
 
     private async Task<StepUpBodyResult> IssueAsync(UserRecord caller, string purpose, string audience, Uri returnUri, string? binding, CancellationToken cancellationToken)
     {
         if (!await limiter.TryAcquireAsync(caller.InstanceId, "step-up-issuance", caller.Id, MaxRequests, RequestWindow, cancellationToken))
         {
-            return new QuotaExceeded("Too many verification requests; retry after fifteen minutes.", "rate_limited");
+            return new AuthQuotaExceeded("Too many verification requests; retry after fifteen minutes.", "rate_limited");
         }
 
         var id = AuthIds.New();
@@ -316,7 +315,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     internal static ApiException Required() => new(403, "step_up_required", "A fresh, approved, purpose-bound single-use proof is required.");
 
-    internal static Forbidden StepUpRequired() => new("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
+    internal static AuthForbidden StepUpRequired() => new("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",

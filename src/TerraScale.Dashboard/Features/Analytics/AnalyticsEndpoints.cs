@@ -5,7 +5,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Analytics
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public static class AnalyticsEndpoints
     {
@@ -27,9 +26,9 @@ namespace TerraScale.Dashboard.Features.Analytics
                 http.Request.Query["region"].ToString(), http.Request.Query["range"].ToString()) switch
             {
                 AnalyticsSelection selection => await PageAsync(http, analytics, selection),
-                NotFound failure => Notice(http, context, failure.Message ?? "Not found.", 404),
-                Forbidden failure => Notice(http, context, failure.Message, 403),
-                Validation failure => Notice(http, context, failure.Message, 400),
+                DashboardNotFound failure => Notice(http, context, failure.Message, 404),
+                DashboardForbidden failure => Notice(http, context, failure.Message, 403),
+                DashboardValidation failure => Notice(http, context, failure.Message, 400),
             };
         }
 

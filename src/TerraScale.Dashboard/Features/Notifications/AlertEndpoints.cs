@@ -7,7 +7,6 @@ using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed record AlertsPage(ShellModel Shell, IReadOnlyList<AlertRule> Rules, string Error = "", AlertRule? Created = null, string? Secret = null)
     {
@@ -70,52 +69,44 @@ namespace TerraScale.Dashboard.Features.Notifications
                 if (action == "delete")
                 {
                     var deleted = await rules.DeleteAsync(context, id, http.RequestAborted);
-                    if (deleted is not Done)
+                    IResult? refusal = deleted switch
                     {
-                        return deleted switch
-                        {
-                            NotFound error => await PageAsync(http, context, rules, error.Message!, 404),
-                            Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
-                            Validation error => await PageAsync(http, context, rules, error.Message, 422),
-                            Done => throw new UnreachableException(),
-                        };
+                        Done => null,
+                        DashboardNotFound error => await PageAsync(http, context, rules, error.Message, 404),
+                        DashboardForbidden error => await PageAsync(http, context, rules, error.Message, 403),
+                        DashboardValidation error => await PageAsync(http, context, rules, error.Message, 422),
+                    };
+                    if (refusal is not null)
+                    {
+                        return refusal;
                     }
                 }
                 else if (action == "threshold")
                 {
                     var updated = await rules.UpdateThresholdAsync(context, id, form["threshold"], http.RequestAborted);
-                    if (updated is not Done)
+                    IResult? refusal = updated switch
                     {
-                        return updated switch
-                        {
-                            NotFound error => await PageAsync(http, context, rules, error.Message!, 404),
-                            Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
-                            Validation error => await PageAsync(http, context, rules, error.Message, 422),
-                            Done => throw new UnreachableException(),
-                        };
+                        Done => null,
+                        DashboardNotFound error => await PageAsync(http, context, rules, error.Message, 404),
+                        DashboardForbidden error => await PageAsync(http, context, rules, error.Message, 403),
+                        DashboardValidation error => await PageAsync(http, context, rules, error.Message, 422),
+                    };
+                    if (refusal is not null)
+                    {
+                        return refusal;
                     }
                 }
                 else
                 {
                     var created = await rules.CreateAsync(context, form, http.RequestAborted);
-                    if (created is not AlertRuleWithSecret rule)
+                    return created switch
                     {
-                        return created switch
-                        {
-                            Validation error => await PageAsync(http, context, rules, error.Message, 422),
-                            Conflict error => await PageAsync(http, context, rules, error.Message, 409),
-                            NotFound error => await PageAsync(http, context, rules, error.Message!, 404),
-                            Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
-                            AlertRuleWithSecret => throw new UnreachableException(),
-                        };
-                    }
-
-                    if (rule.Secret is not null)
-                    {
-                        await flows.HoldAlertSecretAsync(http, context, rule.Rule.Name, secret: rule.Secret);
-                    }
-
-                    return HttpRedirects.SeeOther("/notifications/alerts");
+                        AlertRuleWithSecret rule => await CreatedAsync(rule),
+                        DashboardValidation error => await PageAsync(http, context, rules, error.Message, 422),
+                        DashboardConflict error => await PageAsync(http, context, rules, error.Message, 409),
+                        DashboardNotFound error => await PageAsync(http, context, rules, error.Message, 404),
+                        DashboardForbidden error => await PageAsync(http, context, rules, error.Message, 403),
+                    };
                 }
             }
             catch (ArgumentException error) { return await PageAsync(http, context, rules, error.Message, 422); }
@@ -125,6 +116,16 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
 
             return HttpRedirects.SeeOther("/notifications/alerts");
+
+            async Task<IResult> CreatedAsync(AlertRuleWithSecret rule)
+            {
+                if (rule.Secret is not null)
+                {
+                    await flows.HoldAlertSecretAsync(http, context, rule.Rule.Name, secret: rule.Secret);
+                }
+
+                return HttpRedirects.SeeOther("/notifications/alerts");
+            }
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, AlertRules rules, string error = "", int status = 200, AlertRule? created = null, string? secret = null)

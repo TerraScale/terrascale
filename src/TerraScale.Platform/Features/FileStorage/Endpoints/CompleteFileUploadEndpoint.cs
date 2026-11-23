@@ -1,7 +1,16 @@
 namespace TerraScale.Platform.Features.FileStorage.Endpoints;
 
+public readonly union CompleteFileUploadReply(
+    FileObject,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
 public sealed class CompleteFileUploadEndpoint(PlatformAccess access, FileStorageService files)
-    : Endpoint<BucketFileRequest, Result<FileObject, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>>
+    : Endpoint<BucketFileRequest, CompleteFileUploadReply>
 {
     public override void Configure()
     {
@@ -13,24 +22,31 @@ public sealed class CompleteFileUploadEndpoint(PlatformAccess access, FileStorag
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FileObject, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>> HandleAsync(BucketFileRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<CompleteFileUploadReply> HandleAsync(BucketFileRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Write, cancellationToken) switch
+        var outcome = await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Write, cancellationToken);
+        return outcome switch
         {
-            FileScope scope => await files.CompleteUploadAsync(scope, request.Bucket, request.File, cancellationToken) switch
+            FileScope scope => await HandleAuthorizedAsync(scope),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<CompleteFileUploadReply> HandleAuthorizedAsync(FileScope scope)
+        {
+            var operation = await files.CompleteUploadAsync(scope, request.Bucket, request.File, cancellationToken);
+            return operation switch
             {
                 FileObject file => file,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformConflict conflict => conflict,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Health;
 
 internal sealed class BackupStatusEndpoint(TerraBaseOptions options, IBackupContinuity continuity)
-    : EndpointWithoutRequest<Result<BackupBody, UnavailableStatus<BackupBody>>>
+    : EndpointWithoutRequest<BackupHealthResponse>
 {
     public override void Configure()
     {
@@ -19,6 +19,6 @@ internal sealed class BackupStatusEndpoint(TerraBaseOptions options, IBackupCont
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<BackupBody, UnavailableStatus<BackupBody>>> HandleAsync(CancellationToken cancellationToken) =>
+    public override async ValueTask<BackupHealthResponse> HandleAsync(CancellationToken cancellationToken) =>
         await BackupProbe.ProbeAsync(continuity, options, cancellationToken);
 }

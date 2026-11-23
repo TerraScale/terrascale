@@ -3,11 +3,6 @@ using System.Text.Json;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>
-/// A TerraBase request that the server answered with an error status. TerraBase error bodies are
-/// <c>{"error":{"code","message","op"}}</c> or, on some Management API failures, a plain JSON string; their messages
-/// describe the rule that failed and never echo request input. Subclasses name the statuses callers act on.
-/// </summary>
 public class TerraBaseException : HttpRequestException
 {
     private const int MaxErrorBytes = 64 * 1024;
@@ -20,35 +15,25 @@ public class TerraBaseException : HttpRequestException
         OperationIndex = operationIndex;
     }
 
-    /// <summary>TerraBase's machine-readable code, such as <c>not_found</c> or <c>precondition_failed</c>, when the body had one.</summary>
     public string? ErrorCode { get; }
 
-    /// <summary>Zero-based index of the transaction operation that failed, when the request was a transaction.</summary>
     public int? OperationIndex { get; }
 
-    /// <summary>The region that answered (<c>X-TerraBase-Region</c>), when it said; TerraBase names it on every response.</summary>
     public string? Region { get; internal set; }
 
-    /// <summary>The response's canonical ULID from X-Request-ID; null when absent, invalid or ambiguous.</summary>
     public string? RequestId { get; private set; }
 
-    /// <summary>Server Retry-After when present; the SDK already waited and resent the refusals TerraBase marks retry-safe.</summary>
     public TimeSpan? RetryAfter { get; private set; }
 
-    /// <summary>Original HTTP response headers, preserved after disposal for caller-owned routing or diagnostics.</summary>
     public IReadOnlyDictionary<string, IReadOnlyList<string>> ResponseHeaders { get; private set; } =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase).AsReadOnly();
 
-    /// <summary>Machine that accepted an ambiguous write, from error.machine; null for other errors.</summary>
     public string? Machine { get; private set; }
 
-    /// <summary>Region that accepted an ambiguous write, from error.region; independent of the answering-region header.</summary>
     public string? OutcomeRegion { get; private set; }
 
-    /// <summary>Bounded JSON Schema validation details, when supplied.</summary>
     public IReadOnlyList<TerraBaseValidationDetail> Details { get; private set; } = [];
 
-    /// <summary>Typed Rules compiler diagnostics returned by invalid_rules.</summary>
     public IReadOnlyList<TerraBaseRulesProblem> Problems { get; private set; } = [];
 
     internal static async Task<TerraBaseException> FromResponseAsync(HttpResponseMessage response, Exception? inner, CancellationToken cancellationToken)
@@ -122,12 +107,6 @@ public class TerraBaseException : HttpRequestException
             429 => new TerraBaseRateLimitedException(status, text, code, op, inner),
             428 => new TerraBasePreconditionRequiredException(status, text, code, op, inner),
             412 => new TerraBasePreconditionFailedException(status, text, code, op, inner),
-            421 => new TerraBaseWrongRegionException(status, text, code, op, inner)
-            {
-                HomeRegion = RegionHeader(response, "X-TerraBase-Database-Home"),
-                Regions = [.. (RegionHeader(response, "X-TerraBase-Database-Regions", list: true) ?? string.Empty)
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(TerraBaseRegion.IsValid)],
-            },
             503 => new TerraBaseUnavailableException(status, text, code, op, inner),
             _ => new TerraBaseException(status, text, code, op, inner),
         };
@@ -149,9 +128,9 @@ public class TerraBaseException : HttpRequestException
             ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);
     }
 
-    internal static string? RegionHeader(HttpResponseMessage response, string name, bool list = false) =>
+    private static string? RegionHeader(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) && values.ToArray() is [var value]
-            && (list ? value.Length <= 1024 : TerraBaseRegion.IsValid(value)) ? value : null;
+            && TerraBaseRegion.IsValid(value) ? value : null;
 
     private static string? Clean(string? value)
     {
@@ -165,27 +144,6 @@ public class TerraBaseException : HttpRequestException
     }
 }
 
-/// <summary>
-/// 421: this region does not serve the request (<c>wrong_region</c>: the database is served elsewhere, or
-/// <c>misdirected_request</c>: the region pin names another region). TerraBase never forwards it, so nothing was done:
-/// send the request to <see cref="HomeRegion"/> or one of <see cref="Regions"/>, for example with
-/// <see cref="TerraBaseDatabaseClientOptions.Region"/>. <see cref="TerraBaseException.Region"/> is the region that answered.
-/// </summary>
-public sealed class TerraBaseWrongRegionException : TerraBaseException
-{
-    internal TerraBaseWrongRegionException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
-        : base(statusCode, message, errorCode, operationIndex, inner)
-    {
-    }
-
-    /// <summary>The region that orders writes (<c>X-TerraBase-Database-Home</c>); null for a pin mismatch.</summary>
-    public string? HomeRegion { get; internal init; }
-
-    /// <summary>Every region that serves the database, in routing-hint order (<c>X-TerraBase-Database-Regions</c>); empty for a pin mismatch.</summary>
-    public IReadOnlyList<string> Regions { get; internal init; } = [];
-}
-
-/// <summary>400, 413 or 415: the request broke a validation rule (<c>invalid_request</c>, <c>invalid_query</c>, <c>invalid_patch</c>, …).</summary>
 public sealed class TerraBaseValidationException : TerraBaseException
 {
     internal TerraBaseValidationException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
@@ -194,7 +152,6 @@ public sealed class TerraBaseValidationException : TerraBaseException
     }
 }
 
-/// <summary>401: the API key or service credential is missing or unknown.</summary>
 public class TerraBaseAuthenticationException : TerraBaseException
 {
     internal TerraBaseAuthenticationException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
@@ -203,21 +160,18 @@ public class TerraBaseAuthenticationException : TerraBaseException
     }
 }
 
-/// <summary>401 key_revoked: replace the key; never retry or exchange it again.</summary>
 public sealed class TerraBaseKeyRevokedException : TerraBaseAuthenticationException
 {
     internal TerraBaseKeyRevokedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
         : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
-/// <summary>401 key_expired: replace the key; never retry or exchange it again.</summary>
 public sealed class TerraBaseKeyExpiredException : TerraBaseAuthenticationException
 {
     internal TerraBaseKeyExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
         : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
-/// <summary>403: the key lacks a scope, or the acting member's role does not allow the operation.</summary>
 public sealed class TerraBaseForbiddenException : TerraBaseException
 {
     internal TerraBaseForbiddenException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
@@ -226,11 +180,6 @@ public sealed class TerraBaseForbiddenException : TerraBaseException
     }
 }
 
-/// <summary>
-/// 404: the resource, or one of its parents, does not exist or is not reachable by the caller. Project and database
-/// routes send <c>not_found</c> or <c>unknown_database</c>. Every Management API 404 (an unknown id, or an organization the
-/// acting user is not a member of) reports <c>unknown_route</c>, the same code as a wrong path or listener.
-/// </summary>
 public sealed class TerraBaseNotFoundException : TerraBaseException
 {
     internal TerraBaseNotFoundException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
@@ -239,11 +188,6 @@ public sealed class TerraBaseNotFoundException : TerraBaseException
     }
 }
 
-/// <summary>
-/// 409: a deterministic conflict, such as a taken name, a non-empty delete or the last owner.
-/// Project and database route conflicts carry an <see cref="TerraBaseException.ErrorCode"/>; Management API 400, 403 and 409 bodies
-/// are a plain message, so their <see cref="TerraBaseException.ErrorCode"/> is <see langword="null"/>.
-/// </summary>
 public sealed class TerraBaseConflictException : TerraBaseException
 {
     internal TerraBaseConflictException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
@@ -252,7 +196,6 @@ public sealed class TerraBaseConflictException : TerraBaseException
     }
 }
 
-/// <summary>412 <c>precondition_failed</c>: an <c>If-Match</c> version or <c>If-None-Match: *</c> did not hold. Re-read before retrying.</summary>
 public sealed class TerraBasePreconditionFailedException : TerraBaseException
 {
     internal TerraBasePreconditionFailedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
@@ -261,7 +204,6 @@ public sealed class TerraBasePreconditionFailedException : TerraBaseException
     }
 }
 
-/// <summary>503: TerraBase cannot serve the request now (<c>capacity</c>, or a Management catalog that needs an operator).</summary>
 public sealed class TerraBaseUnavailableException : TerraBaseException
 {
     internal TerraBaseUnavailableException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
@@ -270,21 +212,16 @@ public sealed class TerraBaseUnavailableException : TerraBaseException
     }
 }
 
-/// <summary>410 cursor_expired: resume data is no longer retained. Re-read and restart with cursor=now explicitly.</summary>
 public sealed class TerraBaseCursorExpiredException : TerraBaseException
 {
     internal TerraBaseCursorExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
         : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
-/// <summary>429: stream slots or tenant capacity exhausted. RetryAfter is advisory; the SDK never retries automatically.</summary>
 public sealed class TerraBaseRateLimitedException : TerraBaseException
 {
     internal TerraBaseRateLimitedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
         : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
-/// <summary>One schema validation failure, without input values.</summary>
-/// <param name="Path">JSON instance path.</param>
-/// <param name="Keyword">Failed schema keyword.</param>
 public sealed record TerraBaseValidationDetail(string Path, string Keyword);

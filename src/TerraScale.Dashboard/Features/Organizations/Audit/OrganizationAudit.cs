@@ -3,7 +3,6 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Organizations.Audit
 {
-    // One audit event as the API, JSON and NDJSON exports and MCP list it. Ip is empty when the producer reported none (ts-auth events).
     public sealed record AuditEventRow(string Id, DateTimeOffset OccurredAt, string Actor, string ActorType, string Action, string Target, string TargetType,
         string Source, string Severity, string Outcome, string Ip)
     {
@@ -18,8 +17,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
     {
         internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-        // How far back audit events are shown and exported: the plan's window, narrowed by the owner's retention setting. The dashboard keeps its own events; ts-auth keeps its
-        // events at least 90 days, so a longer window lists the ts-auth events it still has.
         public static int RetentionDays(OrganizationRecord org)
         {
             return Math.Min(PlanRetentionDays(org), org.AuditRetentionDays ?? int.MaxValue);
@@ -38,8 +35,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
 
         public static string Csv(string value)
         {
-            // Spreadsheet applications interpret formula prefixes even in quoted
-            // CSV fields. Keep persisted user names and resource text as text.
             if (value.TrimStart().FirstOrDefault() is '=' or '+' or '-' or '@')
             {
                 value = "'" + value;

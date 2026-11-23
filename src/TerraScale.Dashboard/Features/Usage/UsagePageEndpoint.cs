@@ -6,7 +6,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed class UsagePageEndpoint(DashboardSessions sessions, AccountService accounts, UsageService usage) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Get("/usage");
@@ -31,8 +30,8 @@ namespace TerraScale.Dashboard.Features.Usage
                 return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
                 {
                     UsageSelection selection => await PageAsync(http, usage, selection, tab),
-                    NotFound failure => TypedResults.Text(failure.Message ?? "Not found.", statusCode: 404),
-                    Forbidden failure => TypedResults.Text(failure.Message, statusCode: 403),
+                    DashboardNotFound failure => TypedResults.Text(failure.Message, statusCode: 404),
+                    DashboardForbidden failure => TypedResults.Text(failure.Message, statusCode: 403),
                 };
             }
             catch (AccountAccessException error) { return TypedResults.Text(error.Message, statusCode: error.StatusCode); }

@@ -6,6 +6,10 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
+public sealed record ClusterConfigurationError(string Message, string Code);
+
+public readonly union ClusterOptionsOutcome(ClusterOptions, ClusterConfigurationError);
+
 public sealed record ClusterSettings(string NodeId, string Region, string DataDirectory, int QuicPort, int InternalPort, string? PeersFile, string? PeerSecret);
 
 public sealed record ClusterOptions
@@ -123,28 +127,31 @@ public sealed record ClusterOptions
         return builder.ToString();
     }
 
-    public static Result<ClusterOptions, Validation> Create(ClusterSettings settings, TimeProvider timeProvider)
+    public static ClusterOptionsOutcome Create(ClusterSettings settings, TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(timeProvider);
-        return PeerMeshDiscovery.Discover(settings.PeersFile, settings.QuicPort, settings.InternalPort) switch
+        var discovered = PeerMeshDiscovery.Discover(settings.PeersFile, settings.QuicPort, settings.InternalPort);
+        return discovered switch
         {
-            IReadOnlyList<PeerNodeInfo> all => MeshCertificates(settings, all.Count == 0, timeProvider) switch
-            {
-                QuicMeshCertificates certificates => new ClusterOptions
-                {
-                    NodeId = settings.NodeId,
-                    Region = settings.Region,
-                    DataDirectory = Path.Combine(settings.DataDirectory, "cluster"),
-                    ListenEndPoint = ListenFor(all.FirstOrDefault(peer => string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal)), all.Count == 0, settings.QuicPort),
-                    Peers = [.. all.Where(peer => !string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal))],
-                    Certificates = certificates,
-                },
-                Validation invalid => invalid,
-            },
-            Validation invalid => invalid,
+            IReadOnlyList<PeerNodeInfo> all => Assemble(settings, all, MeshCertificates(settings, all.Count == 0, timeProvider)),
+            ClusterConfigurationError invalid => invalid,
         };
     }
+
+    private static ClusterOptionsOutcome Assemble(ClusterSettings settings, IReadOnlyList<PeerNodeInfo> all, MeshPkiOutcome certificates) => certificates switch
+    {
+        QuicMeshCertificates loaded => new ClusterOptions
+        {
+            NodeId = settings.NodeId,
+            Region = settings.Region,
+            DataDirectory = Path.Combine(settings.DataDirectory, "cluster"),
+            ListenEndPoint = ListenFor(all.FirstOrDefault(peer => string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal)), all.Count == 0, settings.QuicPort),
+            Peers = [.. all.Where(peer => !string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal))],
+            Certificates = loaded,
+        },
+        MeshPkiInvalid invalid => new ClusterConfigurationError(invalid.Message, invalid.Code),
+    };
 
     private static IPEndPoint ListenFor(PeerNodeInfo? self, bool standalone, int quicPort)
     {
@@ -156,7 +163,7 @@ public sealed record ClusterOptions
         return new IPEndPoint(standalone ? IPAddress.Loopback : IPAddress.Any, self?.QuicPort ?? quicPort);
     }
 
-    private static Result<QuicMeshCertificates, Validation> MeshCertificates(ClusterSettings settings, bool standalone, TimeProvider timeProvider)
+    private static MeshPkiOutcome MeshCertificates(ClusterSettings settings, bool standalone, TimeProvider timeProvider)
     {
         var certificate = Environment.GetEnvironmentVariable(MeshCertificateVariable);
         var key = Environment.GetEnvironmentVariable(MeshKeyVariable);
@@ -164,7 +171,7 @@ public sealed record ClusterOptions
         if (!string.IsNullOrWhiteSpace(certificate) || !string.IsNullOrWhiteSpace(key) || !string.IsNullOrWhiteSpace(authority))
         {
             return string.IsNullOrWhiteSpace(certificate) || string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(authority)
-                ? new Validation(string.Concat(MeshCertificateVariable, ", ", MeshKeyVariable, " and ", MeshAuthorityVariable, " must be set together."), "cluster_mesh_pem")
+                ? new MeshPkiInvalid(string.Concat(MeshCertificateVariable, ", ", MeshKeyVariable, " and ", MeshAuthorityVariable, " must be set together."), "cluster_mesh_pem")
                 : QuicMeshPki.LoadPem(certificate, key, authority, settings.NodeId, settings.Region, timeProvider);
         }
 
@@ -175,6 +182,6 @@ public sealed record ClusterOptions
 
         return standalone
             ? QuicMeshPki.DeriveNode(RandomNumberGenerator.GetBytes(32), settings.NodeId, settings.Region, timeProvider)
-            : new Validation(string.Concat(PeerSecretVariable, " (or ", MeshCertificateVariable, ") is required for the QUIC mesh."), "cluster_peer_secret");
+            : new MeshPkiInvalid(string.Concat(PeerSecretVariable, " (or ", MeshCertificateVariable, ") is required for the QUIC mesh."), "cluster_peer_secret");
     }
 }

@@ -3,8 +3,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Home
 {
-    // Copy-ready connect snippets for the Connect tab: an access token exchanged from a dashboard API key
-    // (ts-docs docs/getting-started; sending the raw key as a bearer answers 401), one table, then SQL from each SDK.
     public static class HomeConnectSnippets
     {
         public const string Table = "posts";
@@ -24,7 +22,6 @@ namespace TerraScale.Dashboard.Features.Home
         export TERRASCALE_ACCESS_TOKEN="$(ts_token)"
         """;
 
-        // The Postgres wire protocol takes the dashboard API key as the password (ts-docs guides/postgres-clients).
         public static string Postgres(string projectId, string database)
         {
             return $"""
@@ -43,7 +40,6 @@ namespace TerraScale.Dashboard.Features.Home
         """;
         }
 
-        // Each SDK runs one query through the shared SQL shape (sdk/SQL-API.md).
         public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database)
         {
             return [.. TerraScale.Dashboard.Features.Databases.DatabaseConnections.Sdks(projectId, database).Select(sdk => (sdk.Id, sdk.Label, Install(sdk.Id), sdk.Code))];

@@ -1,6 +1,3 @@
-// Fail closed when restored NuGet packages have known vulnerabilities.
-// Port of the former scripts/check_nuget_vulnerabilities.py — same fail-closed
-// rules, same messages, same exit codes (0 clean, 1 findings/failure, 2 usage).
 
 using System.Diagnostics;
 using System.Text.Json;
@@ -13,7 +10,6 @@ public static class CheckNugetVulnerabilities
 {
     public delegate (int ExitCode, string StdOut, string StdErr) AuditRunner(string project);
 
-    /// <summary>Validate NuGet v1 audit output before interpreting absence of findings.</summary>
     public static List<JsonElement> ValidateReport(JsonDocument report, string project)
     {
         var root = report.RootElement;
@@ -72,7 +68,6 @@ public static class CheckNugetVulnerabilities
             throw new AuditReportException("audited project does not match requested project");
         }
         RequireEmptyLogs(entry);
-        // NuGet omits frameworks entirely when this project has no findings.
         if (!entry.TryGetProperty("frameworks", out var frameworks))
         {
             frameworks = default;
@@ -156,7 +151,6 @@ public static class CheckNugetVulnerabilities
         return findings;
     }
 
-    /// <summary>Missing logs default to empty; anything present must be an empty array.</summary>
     private static void RequireEmptyLogs(JsonElement element)
     {
         if (!element.TryGetProperty("logs", out var logs))
@@ -188,7 +182,6 @@ public static class CheckNugetVulnerabilities
             }
             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
             {
-                // Infrastructure failures fail the gate the same controlled way.
                 Console.Error.WriteLine($"NuGet audit could not run for {project}: {exception.Message}");
                 return 1;
             }
@@ -207,7 +200,6 @@ public static class CheckNugetVulnerabilities
                 Console.Error.WriteLine($"NuGet audit returned invalid JSON for {project}");
                 return 1;
             }
-            // The findings are elements of this report; dispose it only after printing them.
             using (report)
             {
                 List<JsonElement> findings;
@@ -239,8 +231,6 @@ public static class CheckNugetVulnerabilities
         return 0;
     }
 
-    // Kills the scanner's process group, which outlives an exited leader. If kill fails, falls
-    // back to the process tree .NET can still see and reports the failure to the caller.
     private static string KillGroup(Process process)
     {
         string failure;
@@ -282,8 +272,6 @@ public static class CheckNugetVulnerabilities
         return $" (process group cleanup failed, descendants may remain: {failure})";
     }
 
-    // Empty or NUL-bearing paths are valid JSON strings but not valid paths; treat them
-    // as a mismatched report rather than letting GetFullPath throw past the handler.
     private static bool SameProject(string reported, string requested)
     {
         if (string.IsNullOrWhiteSpace(reported) || reported.Contains('\0', StringComparison.Ordinal))
@@ -306,11 +294,8 @@ public static class CheckNugetVulnerabilities
             ["dotnet", "list", project, "package", "--no-restore", "--vulnerable", "--include-transitive", "--format", "json"],
             TimeSpan.FromMinutes(10));
 
-    /// <summary>Runs a scanner command; output that stalls past the timeout fails with exit code 1.</summary>
     public static (int ExitCode, string StdOut, string StdErr) RunScanner(IReadOnlyList<string> command, TimeSpan timeout)
     {
-        // setsid starts the scanner as the leader of a new process group, so a timeout can
-        // end every descendant (including one that outlives the scanner holding a pipe).
         var start = new ProcessStartInfo("setsid")
         {
             RedirectStandardOutput = true,
@@ -322,12 +307,8 @@ public static class CheckNugetVulnerabilities
         }
         var name = string.Join(' ', command.Take(2));
         using var process = Process.Start(start)!;
-        // Drain both pipes at once: reading them one after the other deadlocks when the
-        // child fills the unread pipe's buffer.
         var stdOut = process.StandardOutput.ReadToEndAsync();
         var stdErr = process.StandardError.ReadToEndAsync();
-        // One deadline covers the exit and both pipes: a grandchild that inherited a pipe
-        // can keep it open after the scanner exits. A stall fails the gate instead of the job timeout.
         var clock = Stopwatch.StartNew();
         var exited = process.WaitForExit(timeout);
         var remaining = timeout - clock.Elapsed;

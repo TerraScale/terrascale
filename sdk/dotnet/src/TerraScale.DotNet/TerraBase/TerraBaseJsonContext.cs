@@ -4,10 +4,6 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>
-/// Source-generated JSON metadata for the TerraBase clients (trimming and native AOT safe). Web defaults give
-/// camelCase names and read TerraBase's decimal-string numbers. Null members are omitted: TerraBase rejects explicit nulls in operations.
-/// </summary>
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = TerraBaseJsonContext.MaxResponseDepth,
     RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
 [JsonSerializable(typeof(TerraBaseFileBucketRequest))]
@@ -56,14 +52,8 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(RequestBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
 {
-    // The producer reads JSON values up to 1000 levels, plus eight levels for response envelopes.
     internal const int MaxResponseDepth = 1008;
 
-    /// <summary>
-    /// The context every client uses. Request bodies are JSON API payloads, never embedded in HTML, so they keep
-    /// <c>&lt;</c> and <c>&amp;</c>. The HTTP request writer also compacts optional Unicode escapes left by the
-    /// encoder's global blocklist, preserving payload semantics and producer byte limits.
-    /// </summary>
     public static TerraBaseJsonContext Wire { get; } = new(new JsonSerializerOptions(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -82,7 +72,6 @@ internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
     }
 }
 
-/// <summary>Every small request body; members left null are omitted.</summary>
 internal sealed record RequestBody
 {
     public string? Name { get; init; }

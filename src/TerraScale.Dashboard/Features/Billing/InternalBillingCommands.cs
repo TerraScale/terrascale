@@ -30,14 +30,22 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             var command = args[0];
             var parsed = Parse(args);
-            if (parsed is CommandRejection rejection)
+            return parsed switch
             {
-                error.WriteLine(command + ": " + rejection.Message);
-                return 1;
-            }
+                CommandRejection rejection => Rejected(error, command, rejection.Message),
+                Arguments options => await ExecuteAsync(command, options, buildApplication, output, error, cancellationToken),
+            };
+        }
 
-            var options = parsed switch { Arguments arguments => arguments, CommandRejection => throw new UnreachableException() };
+        private static int Rejected(TextWriter error, string command, string message)
+        {
+            error.WriteLine(command + ": " + message);
+            return 1;
+        }
 
+        private static async Task<int> ExecuteAsync(string command, Arguments options, Func<string[], WebApplication> buildApplication, TextWriter output,
+            TextWriter error, CancellationToken cancellationToken)
+        {
             SessionRecord? grant = null;
             string? failure = null;
             WebApplication? application = null;
@@ -96,8 +104,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             if (failure is not null)
             {
-                error.WriteLine(command + ": " + failure);
-                return 1;
+                return Rejected(error, command, failure);
             }
             return 0;
         }
@@ -115,18 +122,15 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var reported = await internalBilling.ReportAsync(context, options.OrganizationId, refreshAuthority, cancellationToken);
-            switch (reported)
+            var (printed, unavailableMessage) = reported switch
             {
-                case InternalBillUnavailable unavailable:
-                    output.WriteLine(JsonSerializer.Serialize(unavailable.Bill, Json));
-                    throw new AccountAccessException(unavailable.Message, 503);
-                case InternalBill bill:
-                    output.WriteLine(JsonSerializer.Serialize(bill, Json));
-                    if (bill is not { Available: true })
-                    {
-                        throw new AccountAccessException(bill.Error ?? "Internal bill is unavailable.", 503);
-                    }
-                    break;
+                InternalBillUnavailable unavailable => (unavailable.Bill, unavailable.Message),
+                InternalBill bill => (bill, bill is { Available: true } ? null : bill.Error ?? "Internal bill is unavailable."),
+            };
+            output.WriteLine(JsonSerializer.Serialize(printed, Json));
+            if (unavailableMessage is not null)
+            {
+                throw new AccountAccessException(unavailableMessage, 503);
             }
         }
 

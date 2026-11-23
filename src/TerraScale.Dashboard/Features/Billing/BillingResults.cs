@@ -11,9 +11,9 @@ internal sealed record OrganizationRefundPending(string Status);
 internal readonly record struct CommandRejection(string Message);
 internal sealed record Arguments(string Command, string OrganizationId, string AdminEmail, string BasePlanKey,
     long SpendCapCents, long WriteCentsPerMillion, long StorageCentsPerGBMonth);
-public readonly union PortalSession(PortalSessionUrl, Validation);
+public readonly union PortalSession(PortalSessionUrl, DashboardValidation);
 public sealed record PortalSessionUrl(string Url);
-public readonly union PaymentMethod(BillingCard, NoCard, Unavailable);
+public readonly union PaymentMethod(BillingCard, NoCard, DashboardUnavailable);
 public sealed record NoCard;
 public sealed record Rejected;
 public sealed record Deferred(string EventId, string EventType, Exception Cause);

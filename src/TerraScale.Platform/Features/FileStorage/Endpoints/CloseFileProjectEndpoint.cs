@@ -2,7 +2,7 @@ namespace TerraScale.Platform.Features.FileStorage.Endpoints;
 
 public sealed record CloseFileProjectRequest(string Project, string? OrganizationId);
 
-public readonly union CloseFileProjectReply(Done, Validation, Forbidden, Conflict, Unavailable);
+public readonly union CloseFileProjectReply(ProjectClosed, PlatformInvalidRequest, PlatformForbidden, PlatformConflict, PlatformUnavailable);
 
 public sealed class CloseFileProjectEndpoint(PlatformOptions options, ProjectFileErasure erasure) : Endpoint<CloseFileProjectRequest, CloseFileProjectReply>
 {
@@ -20,20 +20,20 @@ public sealed class CloseFileProjectEndpoint(PlatformOptions options, ProjectFil
         ArgumentNullException.ThrowIfNull(request);
         if (CallerCredential.From(HttpContext.Request, options.PeerSecret) is not { Peer: true })
         {
-            return new Forbidden("project file closure needs a peer credential", "forbidden_caller");
+            return new PlatformForbidden("project file closure needs a peer credential", "forbidden_caller");
         }
 
         if (!CanonicalId(request.Project, out var project) || !CanonicalId(request.OrganizationId, out var organization))
         {
-            return new Validation("project and organizationId must be canonical uppercase ULIDs", "invalid_project_binding");
+            return new PlatformInvalidRequest("project and organizationId must be canonical uppercase ULIDs", "invalid_project_binding");
         }
 
-        var closed = await erasure.CloseAsync(project, organization, cancellationToken);
-        return closed switch
+        var outcome = await erasure.CloseAsync(project, organization, cancellationToken);
+        return outcome switch
         {
-            Done done => done,
-            FileProjectOrganizationMismatch => new Conflict("the project belongs to another organization in file storage", "binding_conflict"),
-            Unavailable unavailable => unavailable,
+            ProjectClosed closed => closed,
+            FileProjectOrganizationMismatch => new PlatformConflict("the project belongs to another organization in file storage", "binding_conflict"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 

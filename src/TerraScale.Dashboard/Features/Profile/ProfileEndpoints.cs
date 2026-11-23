@@ -92,7 +92,6 @@ namespace TerraScale.Dashboard.Features.Profile
                 return RequestError.FormExpired(http, "/profile", TypedResults.BadRequest("Invalid form token."));
             }
 
-            ProfileSaveResult saved;
             try
             {
                 if (language)
@@ -104,18 +103,20 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
 
                     await accounts.UpdateAccountAsync(context.Session, account => account.Locale = locale, http.RequestAborted);
-                    saved = new Done();
                 }
                 else
                 {
-                    saved = await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
-                }
-                switch (saved)
-                {
-                    case Validation invalid:
-                        return await InvalidAsync(http, sessions, context, invalid.Message, invalid.Code, 422, language, form);
-                    case Done:
-                        break;
+                    var saved = await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
+                    var refusal = saved switch
+                    {
+                        Done => null,
+                        ProfileNameInvalid invalid => (invalid.Message, ProfileNameInvalid.Code),
+                        ProfilePhoneInvalid invalid => ((string Message, string Code)?)(invalid.Message, ProfilePhoneInvalid.Code),
+                    };
+                    if (refusal is { } rejected)
+                    {
+                        return await InvalidAsync(http, sessions, context, rejected.Message, rejected.Code, 422, language, form);
+                    }
                 }
                 if (http.Request.IsDatastarRequest)
                 {

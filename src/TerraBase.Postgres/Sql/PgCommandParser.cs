@@ -6,14 +6,14 @@ namespace TerraBase.Postgres.Sql;
 
 internal static class PgCommandParser
 {
-    public static Result<IReadOnlyList<PgCommand>, PgError> Parse(string sql, PgRewriteContext context) =>
+    public static PgParseResult Parse(string sql, PgRewriteContext context) =>
         PgLexer.Tokenize(sql) switch
         {
             PgToken[] tokens => ParseTokens(sql, tokens, context),
             PgError error => error,
         };
 
-    public static Result<PgSqlCommand, PgError> ParseQuery(string sql, PgRewriteContext context) =>
+    public static PgQueryParseResult ParseQuery(string sql, PgRewriteContext context) =>
         Parse(sql, context) switch
         {
             IReadOnlyList<PgCommand> and [PgSqlCommand query] => query,
@@ -21,7 +21,7 @@ internal static class PgCommandParser
             PgError error => error,
         };
 
-    private static Result<IReadOnlyList<PgCommand>, PgError> ParseTokens(string sql, PgToken[] tokens, PgRewriteContext context)
+    private static PgParseResult ParseTokens(string sql, PgToken[] tokens, PgRewriteContext context)
     {
         List<PgCommand> commands = [];
         foreach (var (start, length) in Split(sql, tokens))
@@ -119,7 +119,7 @@ internal static class PgCommandParser
         return statements;
     }
 
-    private static Result<PgCommand, PgError> ParseStatement(PgTokenEditor tokens, PgRewriteContext context)
+    private static PgStatementParseResult ParseStatement(PgTokenEditor tokens, PgRewriteContext context)
     {
         var first = tokens.Kind(0) == PgTokenKind.Word ? tokens.Text(0).ToLowerInvariant() : string.Empty;
         switch (first)
@@ -206,14 +206,14 @@ internal static class PgCommandParser
         }
     }
 
-    private static Result<PgCommand, PgError> BuildSql(PgTokenEditor tokens, PgRewriteContext context, string? tagOverride) =>
+    private static PgStatementParseResult BuildSql(PgTokenEditor tokens, PgRewriteContext context, string? tagOverride) =>
         BuildQuery(tokens, context, tagOverride) switch
         {
             PgSqlCommand command => command,
             PgError error => error,
         };
 
-    private static Result<PgSqlCommand, PgError> BuildQuery(PgTokenEditor tokens, PgRewriteContext context, string? tagOverride)
+    private static PgQueryParseResult BuildQuery(PgTokenEditor tokens, PgRewriteContext context, string? tagOverride)
     {
         var verb = Verb(tokens);
         var access = Access(tokens, verb);
@@ -465,7 +465,7 @@ internal static class PgCommandParser
         return names;
     }
 
-    private static Result<PgCommand, PgError> ParseTruncate(PgTokenEditor tokens, PgRewriteContext context)
+    private static PgStatementParseResult ParseTruncate(PgTokenEditor tokens, PgRewriteContext context)
     {
         var index = 1;
         while (tokens.IsAnyWord(index, "TABLE", "ONLY"))
@@ -497,7 +497,7 @@ internal static class PgCommandParser
         };
     }
 
-    private static Result<PgCommand, PgError> ParseSet(PgTokenEditor tokens)
+    private static PgStatementParseResult ParseSet(PgTokenEditor tokens)
     {
         var index = 1;
         var local = false;
@@ -559,7 +559,7 @@ internal static class PgCommandParser
         return new PgSetCommand(name, value.Equals("DEFAULT", StringComparison.OrdinalIgnoreCase) && tokens.IsWord(next + 1, "DEFAULT") ? null : value, local);
     }
 
-    private static Result<PgCommand, PgError> ParseShow(PgTokenEditor tokens)
+    private static PgStatementParseResult ParseShow(PgTokenEditor tokens)
     {
         if (tokens.IsWord(1, "TIME") && tokens.IsWord(2, "ZONE"))
         {
@@ -694,7 +694,7 @@ internal static class PgCommandParser
         return (mode, access);
     }
 
-    private static Result<PgCommand, PgError> ParseCopy(PgTokenEditor tokens, PgRewriteContext context)
+    private static PgStatementParseResult ParseCopy(PgTokenEditor tokens, PgRewriteContext context)
     {
         var index = 1;
         var binaryKeyword = false;
@@ -904,3 +904,9 @@ internal static class PgCommandParser
 
     private static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 }
+
+internal readonly union PgParseResult(IReadOnlyList<PgCommand>, PgError);
+
+internal readonly union PgQueryParseResult(PgSqlCommand, PgError);
+
+internal readonly union PgStatementParseResult(PgCommand, PgError);

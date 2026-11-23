@@ -3,8 +3,11 @@ using TerraBase.Continuity;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.InternalApi;
 using TerraBase.Features.Management;
+using TerraBase.Hosting;
+using TerraScale.Contracts.Cluster;
 using TerraScale.Contracts.Quic;
 using TerraScale.QuicRpc;
+using ZLogger;
 
 namespace TerraBase.Engine;
 
@@ -25,17 +28,18 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
 
     private QuicRpcClient Quic => services.GetRequiredService<QuicRpcClient>();
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken) =>
-        await PlacementAsync(databaseId, cancellationToken) switch
+    private ILogger<ClusterSessions> Logger => services.GetRequiredService<ILogger<ClusterSessions>>();
+
+    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var placed = await PlacementAsync(databaseId, cancellationToken);
+        return placed switch
         {
-            DatabasePlacement placement => await Databases.OpenOrCreateAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken) switch
-            {
-                ISqlDatabaseSession => await LeaseAsync(databaseId, placement.KeyId, cancellationToken),
-                Unavailable unavailable => unavailable,
-            },
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            DatabasePlacement placement => await OpenPlacedAsync(databaseId, placement, cancellationToken),
+            ResourceNotFound missing => new DatabaseNotFound(databaseId, missing.Message),
+            BackendUnavailable unavailable => new ClusterUnavailable(unavailable.Message, unavailable.Code),
         };
+    }
 
     public async ValueTask<IReadOnlyList<Ulid>> ListActiveDatabasesAsync(CancellationToken cancellationToken)
     {
@@ -44,7 +48,7 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
         while (await Catalog.AllDatabasesAsync(after, CatalogPage, cancellationToken) switch
         {
             IReadOnlyList<DatabaseRecord> records => records,
-            Unavailable => null,
+            BackendUnavailable => null,
         } is { Count: > 0 } page)
         {
             active.AddRange(page.Select(static record => record.Id));
@@ -54,17 +58,20 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
         return active;
     }
 
-    public async ValueTask<Result<ReadOnlyMemory<byte>, NotFound>> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken) =>
-        await PlacementAsync(databaseId, cancellationToken) switch
+    public async ValueTask<ContinuityRawKeyOutcome> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var placed = await PlacementAsync(databaseId, cancellationToken);
+        return placed switch
         {
             DatabasePlacement placement => keyring.Derive(databaseId, placement.KeyId) switch
             {
-                DatabaseKey key => new ReadOnlyMemory<byte>(key.RawKey),
-                NotFound missing => missing,
+                DatabaseKey key => new ContinuityRawKey(key.RawKey),
+                MasterKeyMissing missing => new ContinuityDatabaseKeyMissing(databaseId, string.Concat("master key '", missing.KeyId, "' is not configured"), "unknown_master_key"),
             },
-            NotFound missing => missing,
-            Unavailable unavailable => new NotFound(unavailable.Message, unavailable.Code),
+            ResourceNotFound missing => new ContinuityDatabaseKeyMissing(databaseId, missing.Message, missing.Code),
+            BackendUnavailable unavailable => new ContinuityDatabaseKeyMissing(databaseId, unavailable.Message, unavailable.Code),
         };
+    }
 
     public async ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken)
     {
@@ -80,42 +87,78 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
 
     private async Task RewindPeerAsync(string nodeId, RewindDatabaseRequest request, CancellationToken cancellationToken)
     {
-        _ = await Quic.CallAsync<RewindDatabaseRequest, RewindDatabaseReply>(nodeId, QuicMessageType.RewindDatabase, request, PeerRewindTimeout, cancellationToken);
+        var outcome = await Quic.CallAsync<RewindDatabaseRequest, RewindDatabaseReply>(nodeId, QuicMessageType.RewindDatabase, request, PeerRewindTimeout, cancellationToken);
+        if (outcome switch
+        {
+            RewindDatabaseReply => null,
+            QuicUnavailable unavailable => unavailable.Message,
+            QuicTimeout timeout => timeout.Message,
+            QuicRemoteError error => error.Message,
+        } is { } failure)
+        {
+            Logger.ZLogWarning($"Peer {nodeId} did not rewind database {request.DatabaseId}: {failure}");
+        }
     }
 
-    public async ValueTask<Result<Done, Unavailable>> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken) =>
-        await Management.DiscardCopyAsync(databaseId, cancellationToken);
+    public async ValueTask<DiscardCopyTargetOutcome> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var discarded = await Management.DiscardCopyAsync(databaseId, cancellationToken);
+        return discarded switch
+        {
+            Completed => new CopyTargetDiscarded(),
+            BackendUnavailable unavailable => new CopyTargetDiscardFailed(unavailable.Message, unavailable.Code),
+        };
+    }
 
-    private async ValueTask<Result<DatabasePlacement, NotFound, Unavailable>> PlacementAsync(Ulid databaseId, CancellationToken cancellationToken)
+    private async ValueTask<DatabasePlacementOutcome> PlacementAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         if (databaseId == SystemDatabase.Id)
         {
             return new DatabasePlacement(System.KeyId, Strict: false);
         }
 
-        return await Catalog.GetDatabaseAsync(databaseId, cancellationToken) switch
+        var found = await Catalog.GetDatabaseAsync(databaseId, cancellationToken);
+        return found switch
         {
             DatabaseRecord record => new DatabasePlacement(record.KeyId, record.Strict),
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> LeaseAsync(Ulid databaseId, string keyId, CancellationToken cancellationToken) =>
+    private async ValueTask<DatabaseResolveOutcome> OpenPlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
+    {
+        var ready = await Databases.OpenOrCreateAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken);
+        return ready switch
+        {
+            ISqlDatabaseSession => await LeaseAsync(databaseId, placement.KeyId, cancellationToken),
+            BackendUnavailable unavailable => new ClusterUnavailable(unavailable.Message, unavailable.Code),
+        };
+    }
+
+    private async ValueTask<DatabaseResolveOutcome> LeaseAsync(Ulid databaseId, string keyId, CancellationToken cancellationToken) =>
         keyring.Derive(databaseId, keyId) switch
         {
-            DatabaseKey key => await engine.OpenAsync(new DatabaseOpenRequest(databaseId, key.RawKey), cancellationToken) switch
-            {
-                ISqlDatabaseSession session => Leased(session),
-                NotFound missing => missing,
-                Validation invalid => new Unavailable(invalid.Message, "database_key_mismatch"),
-                StorageCorrupted corrupted => new Unavailable(corrupted.Message, "storage_corrupted"),
-                StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
-            },
-            NotFound => new Unavailable("the database's master key is not configured on this node", "master_key_missing"),
+            DatabaseKey key => await OpenLeasedAsync(databaseId, key, cancellationToken),
+            MasterKeyMissing => new ClusterUnavailable("the database's master key is not configured on this node", "master_key_missing"),
         };
 
-    private static Result<ISqlDatabaseSession, NotFound, Unavailable> Leased(ISqlDatabaseSession session) => new(session);
+    private async ValueTask<DatabaseResolveOutcome> OpenLeasedAsync(Ulid databaseId, DatabaseKey key, CancellationToken cancellationToken)
+    {
+        var opened = await engine.OpenAsync(new DatabaseOpenRequest(databaseId, key.RawKey), cancellationToken);
+        return opened switch
+        {
+            ISqlDatabaseSession session => Leased(session),
+            DatabaseNotFound missing => missing,
+            InvalidDatabaseRequest invalid => new ClusterUnavailable(invalid.Message, "database_key_mismatch"),
+            StorageCorrupted corrupted => new ClusterUnavailable(corrupted.Message, "storage_corrupted"),
+            StorageBusy busy => new ClusterUnavailable(busy.Message, "storage_busy"),
+        };
+    }
 
-    private sealed record DatabasePlacement(string KeyId, bool Strict);
+    private static DatabaseResolveOutcome Leased(ISqlDatabaseSession session) => new(session);
 }
+
+internal sealed record DatabasePlacement(string KeyId, bool Strict);
+
+internal readonly union DatabasePlacementOutcome(DatabasePlacement, ResourceNotFound, BackendUnavailable);

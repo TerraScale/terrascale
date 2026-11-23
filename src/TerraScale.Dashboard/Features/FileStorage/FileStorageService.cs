@@ -10,40 +10,40 @@ namespace TerraScale.Dashboard.Features.FileStorage
     {
         public string ProjectId => projectId;
 
-        public Task<TerraBaseFileBucketPage> ListFileBucketsAsync(string project, string? after) =>
-            TerraBaseResults.RequireAsync(platform.ListBucketsAsync(caller, project, after, cancellationToken));
+        public async Task<TerraBaseFileBucketPage> ListFileBucketsAsync(string project, string? after) =>
+            (await platform.ListBucketsAsync(caller, project, after, cancellationToken)).Require();
 
-        public Task<TerraBaseStoredFilePage> ListBucketFilesAsync(string project, string bucket, string? after) =>
-            TerraBaseResults.RequireAsync(platform.ListFilesAsync(caller, project, bucket, after, cancellationToken));
+        public async Task<TerraBaseStoredFilePage> ListBucketFilesAsync(string project, string bucket, string? after) =>
+            (await platform.ListFilesAsync(caller, project, bucket, after, cancellationToken)).Require();
 
-        public Task<TerraBaseFileBucket> CreateFileBucketAsync(string project, string name, TerraBaseFileRules rules) =>
-            TerraBaseResults.RequireAsync(platform.CreateBucketAsync(caller, project, name, rules, cancellationToken));
+        public async Task<TerraBaseFileBucket> CreateFileBucketAsync(string project, string name, TerraBaseFileRules rules) =>
+            (await platform.CreateBucketAsync(caller, project, name, rules, cancellationToken)).Require();
 
-        public Task<TerraBaseFileBucket> SetFileBucketRulesAsync(string project, string bucket, TerraBaseFileRules rules) =>
-            TerraBaseResults.RequireAsync(platform.SetBucketRulesAsync(caller, project, bucket, rules, cancellationToken));
+        public async Task<TerraBaseFileBucket> SetFileBucketRulesAsync(string project, string bucket, TerraBaseFileRules rules) =>
+            (await platform.SetBucketRulesAsync(caller, project, bucket, rules, cancellationToken)).Require();
 
-        public Task DeleteFileBucketAsync(string project, string bucket) =>
-            TerraBaseResults.RequireAsync(platform.DeleteBucketAsync(caller, project, bucket, cancellationToken));
+        public async Task DeleteFileBucketAsync(string project, string bucket) =>
+            (await platform.DeleteBucketAsync(caller, project, bucket, cancellationToken)).Require();
 
-        public Task<TerraBaseFileUrl> CreateFileUploadAsync(string project, string bucket, TerraBaseFileUpload upload) =>
-            TerraBaseResults.RequireAsync(platform.CreateUploadAsync(caller, project, bucket, upload, cancellationToken));
+        public async Task<TerraBaseFileUrl> CreateFileUploadAsync(string project, string bucket, TerraBaseFileUpload upload) =>
+            (await platform.CreateUploadAsync(caller, project, bucket, upload, cancellationToken)).Require();
 
-        public Task<TerraBaseStoredFile> CompleteFileUploadAsync(string project, string bucket, string file) =>
-            TerraBaseResults.RequireAsync(platform.CompleteUploadAsync(caller, project, bucket, file, cancellationToken));
+        public async Task<TerraBaseStoredFile> CompleteFileUploadAsync(string project, string bucket, string file) =>
+            (await platform.CompleteUploadAsync(caller, project, bucket, file, cancellationToken)).Require();
 
-        public Task DeleteBucketFileAsync(string project, string bucket, string file) =>
-            TerraBaseResults.RequireAsync(platform.DeleteFileAsync(caller, project, bucket, file, cancellationToken));
+        public async Task DeleteBucketFileAsync(string project, string bucket, string file) =>
+            (await platform.DeleteFileAsync(caller, project, bucket, file, cancellationToken)).Require();
 
-        public Task<TerraBaseFileUrl> CreateFileDownloadAsync(string project, string bucket, string file) =>
-            TerraBaseResults.RequireAsync(platform.CreateDownloadAsync(caller, project, bucket, file, cancellationToken));
+        public async Task<TerraBaseFileUrl> CreateFileDownloadAsync(string project, string bucket, string file) =>
+            (await platform.CreateDownloadAsync(caller, project, bucket, file, cancellationToken)).Require();
     }
-    public readonly union ListFilesResult(FileStorageListing, Validation);
-    public readonly union CreateBucketResult(TerraBaseFileBucket, Forbidden);
-    public readonly union SetRulesResult(Done, Forbidden);
-    public readonly union DeleteBucketResult(Done, Validation, Forbidden);
-    public readonly union UploadFileResult(TerraBaseFileUrl, Forbidden);
-    public readonly union CompleteUploadResult(Done, Forbidden);
-    public readonly union DeleteFileResult(Done, Forbidden);
+    public readonly union ListFilesResult(FileStorageListing, DashboardValidation);
+    public readonly union CreateBucketResult(TerraBaseFileBucket, DashboardForbidden);
+    public readonly union SetRulesResult(Done, DashboardForbidden);
+    public readonly union DeleteBucketResult(Done, DashboardValidation, DashboardForbidden);
+    public readonly union UploadFileResult(TerraBaseFileUrl, DashboardForbidden);
+    public readonly union CompleteUploadResult(Done, DashboardForbidden);
+    public readonly union DeleteFileResult(Done, DashboardForbidden);
 
     public sealed class FileStorageService(AccountService accounts, IProjectAccessTokens tokens, PlatformHttpClient platform)
     {
@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             var client = await ReadClientAsync(context, token);
             if (!string.IsNullOrEmpty(bucket) && !TerraScaleIds.IsValid(bucket))
             {
-                return new Validation("Bucket IDs are 26-character uppercase ULIDs.");
+                return new DashboardValidation("Bucket IDs are 26-character uppercase ULIDs.");
             }
 
             TerraBaseFileBucketPage buckets;
@@ -75,7 +75,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
         public async Task<CreateBucketResult> CreateBucketAsync(AccountContext context, string name, TerraBaseFileRules rules, CancellationToken token)
         {
             return await WriteClientAsync(context, token) is not { } write
-                ? new Forbidden("Write access is required.")
+                ? new DashboardForbidden("Write access is required.")
                 : await write.CreateFileBucketAsync(write.ProjectId, name.Trim(), rules);
         }
 
@@ -83,7 +83,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
         {
             if (await WriteClientAsync(context, token) is not { } write)
             {
-                return new Forbidden("Write access is required.");
+                return new DashboardForbidden("Write access is required.");
             }
 
             await write.SetFileBucketRulesAsync(write.ProjectId, bucket, rules);
@@ -94,12 +94,12 @@ namespace TerraScale.Dashboard.Features.FileStorage
         {
             if (await WriteClientAsync(context, token) is not { } write)
             {
-                return new Forbidden("Write access is required.");
+                return new DashboardForbidden("Write access is required.");
             }
 
             if (!TerraScaleIds.IsValid(bucket))
             {
-                return new Validation("Bucket IDs are 26-character uppercase ULIDs.");
+                return new DashboardValidation("Bucket IDs are 26-character uppercase ULIDs.");
             }
 
             await write.DeleteFileBucketAsync(write.ProjectId, bucket);
@@ -110,7 +110,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
         {
             if (await WriteClientAsync(context, token) is not { } write)
             {
-                return new Forbidden("Write access is required.");
+                return new DashboardForbidden("Write access is required.");
             }
 
             ArgumentNullException.ThrowIfNull(upload);
@@ -131,7 +131,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
         {
             if (await WriteClientAsync(context, token) is not { } write)
             {
-                return new Forbidden("Write access is required.");
+                return new DashboardForbidden("Write access is required.");
             }
 
             await write.CompleteFileUploadAsync(write.ProjectId, bucket, file);
@@ -142,7 +142,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
         {
             if (await WriteClientAsync(context, token) is not { } write)
             {
-                return new Forbidden("Write access is required.");
+                return new DashboardForbidden("Write access is required.");
             }
 
             await write.DeleteBucketFileAsync(write.ProjectId, bucket, file);

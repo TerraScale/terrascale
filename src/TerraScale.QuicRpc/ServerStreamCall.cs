@@ -4,7 +4,13 @@ using TerraScale.Contracts.Quic;
 
 namespace TerraScale.QuicRpc;
 
-internal readonly record struct StreamStep<T>(Result<T, Unavailable, RequestTimeout, QuicRemoteError>? Item, bool Continue);
+internal sealed record StreamOpened;
+
+internal readonly union ServerStreamOpenOutcome(StreamOpened, QuicFault);
+
+internal sealed record ServerStreamItem<T>(QuicCallOutcome<T> Outcome, bool Continue);
+
+internal readonly union ServerStreamReadOutcome<T>(ServerStreamItem<T>, StreamEnded);
 
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
@@ -26,30 +32,32 @@ internal sealed class ServerStreamCall<TRes>(
     private bool _completed;
     private QuicOutcome _outcome = QuicOutcome.Ok;
 
-    public async ValueTask<StreamStep<TRes>> OpenAsync(string peerId, FrameBuilder builder)
+    public async ValueTask<ServerStreamOpenOutcome> OpenAsync(string peerId, FrameBuilder builder)
     {
         client.InFlight.Enter();
         _entered = true;
         var encoded = builder.Seal(messageTypeId, QuicProtocol.ControlEndOfStream, requestId);
-        return await client.OpenAsync(peerId, QuicStreamType.Bidirectional, _scope).ConfigureAwait(false) switch
+        var outcome = await client.OpenAsync(peerId, QuicStreamType.Bidirectional, _scope);
+        return outcome switch
         {
-            StreamLease lease => await SendAsync(lease, encoded).ConfigureAwait(false),
-            QuicFault fault => Fail(fault),
+            StreamLease lease => await SendAsync(lease, encoded),
+            QuicFault fault => FailOpen(fault),
         };
     }
 
-    public async ValueTask<StreamStep<TRes>> NextAsync()
+    public async ValueTask<ServerStreamReadOutcome<TRes>> NextAsync()
     {
         if (_finished || _lease is not { } lease)
         {
-            return new StreamStep<TRes>(null, false);
+            return new StreamEnded();
         }
 
-        return await QuicIo.ReadFrameAsync(lease.Stream, _scope).ConfigureAwait(false) switch
+        var outcome = await QuicIo.ReadFrameAsync(lease.Stream, _scope);
+        return outcome switch
         {
             PooledFrame frame => Interpret(frame),
             StreamEnded => Finish(new QuicRemoteError(QuicRemoteError.ProtocolViolation, $"The peer ended server stream {requestId} without an end-of-stream frame."), QuicOutcome.RemoteError),
-            QuicFault fault => Fail(lease, fault),
+            QuicFault fault => FailRead(lease, fault),
         };
     }
 
@@ -65,7 +73,7 @@ internal sealed class ServerStreamCall<TRes>(
             }
             else
             {
-                await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
+                await QuicIo.DisposeStreamAsync(lease.Stream);
             }
 
             metrics.StreamClosed(QuicSide.Client);
@@ -81,25 +89,26 @@ internal sealed class ServerStreamCall<TRes>(
         }
     }
 
-    private async ValueTask<StreamStep<TRes>> SendAsync(StreamLease lease, ReadOnlyMemory<byte> encoded)
+    private async ValueTask<ServerStreamOpenOutcome> SendAsync(StreamLease lease, ReadOnlyMemory<byte> encoded)
     {
         _lease = lease;
         metrics.StreamOpened(QuicSide.Client);
-        return await QuicIo.WriteAsync(lease.Stream, encoded, true, _scope).ConfigureAwait(false) switch
+        var outcome = await QuicIo.WriteAsync(lease.Stream, encoded, true, _scope);
+        return outcome switch
         {
-            Done => Sent(encoded.Length),
-            QuicFault fault => Fail(lease, fault),
+            QuicSent => Sent(encoded.Length),
+            QuicFault fault => FailSend(lease, fault),
         };
     }
 
-    private StreamStep<TRes> Sent(int length)
+    private StreamOpened Sent(int length)
     {
         metrics.Sent(QuicSide.Client, length);
         _scope.DisarmDeadline();
-        return new StreamStep<TRes>(null, true);
+        return new StreamOpened();
     }
 
-    private StreamStep<TRes> Interpret(PooledFrame frame)
+    private ServerStreamReadOutcome<TRes> Interpret(PooledFrame frame)
     {
         metrics.Received(QuicSide.Client, frame.TotalLength);
         var header = frame.Header;
@@ -108,37 +117,46 @@ internal sealed class ServerStreamCall<TRes>(
             frame.Dispose();
             _completed = true;
             _finished = true;
-            return new StreamStep<TRes>(null, false);
+            return new StreamEnded();
         }
 
         var decoded = QuicRpcClientCore.Decode<TRes>(frame, messageTypeId, requestId);
         var outcome = QuicRpcClientCore.Outcome(decoded);
         if (outcome == QuicOutcome.Ok)
         {
-            return new StreamStep<TRes>(decoded, true);
+            return new ServerStreamItem<TRes>(decoded, true);
         }
 
         _completed = header.IsError && header.IsEndOfStream;
         return Finish(decoded, outcome);
     }
 
-    private StreamStep<TRes> Finish(Result<TRes, Unavailable, RequestTimeout, QuicRemoteError> item, QuicOutcome outcome)
+    private ServerStreamItem<TRes> Finish(QuicCallOutcome<TRes> item, QuicOutcome outcome)
     {
         _finished = true;
         _outcome = outcome;
-        return new StreamStep<TRes>(item, false);
+        return new ServerStreamItem<TRes>(item, false);
     }
 
-    private StreamStep<TRes> Fail(QuicFault fault)
+    private QuicFault FailOpen(QuicFault fault)
     {
+        metrics.Error(QuicSide.Client, fault);
+        _finished = true;
+        _outcome = QuicRpcClientCore.Outcome(QuicFaults.ToCallFailure<TRes>(fault));
+        return fault;
+    }
+
+    private QuicFault FailSend(StreamLease lease, QuicFault fault)
+    {
+        client.Pool.InvalidateIfDead(lease, fault);
+        return FailOpen(fault);
+    }
+
+    private ServerStreamItem<TRes> FailRead(StreamLease lease, QuicFault fault)
+    {
+        client.Pool.InvalidateIfDead(lease, fault);
         metrics.Error(QuicSide.Client, fault);
         var failure = QuicFaults.ToCallFailure<TRes>(fault);
         return Finish(failure, QuicRpcClientCore.Outcome(failure));
-    }
-
-    private StreamStep<TRes> Fail(StreamLease lease, QuicFault fault)
-    {
-        client.Pool.InvalidateIfDead(lease, fault);
-        return Fail(fault);
     }
 }

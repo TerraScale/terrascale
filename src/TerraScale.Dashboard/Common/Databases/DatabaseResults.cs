@@ -84,14 +84,14 @@ namespace TerraScale.Dashboard.Common.Databases
             return WantsHtml(http) && Status(error) == 404 ? Features.NotFound.NotFoundEndpoints.Page(http, context) : Failure(error);
         }
 
-        internal static IResult ToResult(Failure failure)
+        internal static IResult ToResult(DatabaseRefusal refusal)
         {
-            return TypedResults.Problem(DatabaseMutations.MessageOf(failure), statusCode: DatabaseMutations.StatusOf(failure));
+            return TypedResults.Problem(refusal.Message, statusCode: refusal.Status);
         }
 
-        internal static IResult PageFailureOf(HttpContext http, AccountContext context, Failure failure)
+        internal static IResult PageFailureOf(HttpContext http, AccountContext context, DatabaseRefusal refusal)
         {
-            return WantsHtml(http) && failure is NotFound ? Features.NotFound.NotFoundEndpoints.Page(http, context) : ToResult(failure);
+            return WantsHtml(http) && refusal is DatabaseNotFound ? Features.NotFound.NotFoundEndpoints.Page(http, context) : ToResult(refusal);
         }
     }
 }

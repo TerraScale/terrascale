@@ -3,13 +3,8 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet;
 
-/// <summary>Dependency injection helpers for the ts-auth client.</summary>
 public static class TerraScaleAuthServiceCollectionExtensions
 {
-    /// <summary>
-    /// Registers a typed <see cref="TerraScaleAuthClient"/> for ts-auth management
-    /// API operations using <see cref="IHttpClientFactory"/>.
-    /// </summary>
     public static IServiceCollection AddTerraScaleAuthClient(
         this IServiceCollection services,
         Action<TerraScaleAuthClientOptions> configure)
@@ -19,13 +14,13 @@ public static class TerraScaleAuthServiceCollectionExtensions
 
         var options = new TerraScaleAuthClientOptions();
         configure(options);
-        var optionSnapshot = options with { };
-        optionSnapshot.Validate();
+        var (address, slug) = options.Validate();
+        var optionSnapshot = new TerraScaleAuthClientOptions { BaseAddress = address, InstanceSlug = slug };
 
         services.AddSingleton(optionSnapshot);
         services.AddHttpClient<TerraScaleAuthClient>(httpClient =>
         {
-            httpClient.BaseAddress = optionSnapshot.BaseAddress;
+            httpClient.BaseAddress = address;
         }).ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, Proxy = new TerraBaseHttp.LoopbackDirect() });
 
         return services;

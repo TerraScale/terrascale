@@ -53,8 +53,8 @@ internal sealed class InFlightTracker
 
         using var timer = new CancellationTokenSource();
         var delay = Task.Delay(grace, timeProvider, timer.Token);
-        var first = await Task.WhenAny(work, delay).ConfigureAwait(false);
-        await timer.CancelAsync().ConfigureAwait(false);
+        var first = await Task.WhenAny(work, delay);
+        await timer.CancelAsync();
         return first == work;
     }
 }

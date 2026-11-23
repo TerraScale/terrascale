@@ -1,6 +1,5 @@
 using System.Net;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography.X509Certificates;
 using TerraScale.Contracts;
 using TerraScale.Contracts.Continuity;
 using TerraScale.Contracts.Quic;
@@ -12,17 +11,18 @@ public sealed class TerraBaseQuic : IAsyncDisposable
 {
     private readonly QuicLink? _link;
 
-    public TerraBaseQuic(PlatformOptions options, QuicMeshMetrics metrics, TimeProvider timeProvider, ILogger<QuicRpcClient> logger)
+    internal TerraBaseQuic()
     {
-        ArgumentNullException.ThrowIfNull(options);
-        if (options.TerraBaseQuic is not { } endpoint)
-        {
-            return;
-        }
+    }
 
-        var certificates = endpoint.Pem is { } pem
-            ? FromPem(pem)
-            : QuicMeshPki.DeriveNode(QuicMeshPki.DecodeSecret(options.PeerSecret), options.Node, options.Region, timeProvider);
+    internal TerraBaseQuic(
+        QuicEndpointOptions endpoint,
+        QuicMeshCertificates certificates,
+        PlatformOptions options,
+        QuicMeshMetrics metrics,
+        TimeProvider timeProvider,
+        ILogger<QuicRpcClient> logger)
+    {
         var client = new QuicRpcClient(
             new QuicMeshOptions
             {
@@ -42,7 +42,7 @@ public sealed class TerraBaseQuic : IAsyncDisposable
 
     public bool IsEnabled => _link is not null;
 
-    public async ValueTask<Result<SqlExecuteResponse, SqlFailure, NotFound, Unavailable>> ExecuteAsync(
+    public async ValueTask<InternalSqlOutcome> ExecuteAsync(
         Ulid database,
         SqlExecuteRequest request,
         SqlContext context,
@@ -50,7 +50,7 @@ public sealed class TerraBaseQuic : IAsyncDisposable
     {
         if (_link is not { Client: var client, Peer: var peer })
         {
-            return new Unavailable("the QUIC TerraBase transport is not configured", "quic_disabled");
+            return new PlatformUnavailable("the QUIC TerraBase transport is not configured", "quic_disabled");
         }
 
         var payload = JsonSerializer.SerializeToUtf8Bytes(request, TerraScaleContractsJsonContext.Default.SqlExecuteRequest);
@@ -59,26 +59,26 @@ public sealed class TerraBaseQuic : IAsyncDisposable
         return reply switch
         {
             InternalSqlReply answer => TerraBaseAnswers.Sql(answer.Status, answer.Body.Span),
-            Unavailable unavailable => unavailable,
-            RequestTimeout timeout => new Unavailable(timeout.Message, "terrabase_timeout"),
-            QuicRemoteError remote => new Unavailable(remote.Message, remote.Code),
+            QuicUnavailable unavailable => new PlatformUnavailable(unavailable.Message, unavailable.Code),
+            QuicTimeout timeout => new PlatformUnavailable(timeout.Message, "terrabase_timeout"),
+            QuicRemoteError remote => new PlatformUnavailable(remote.Message, remote.Code),
         };
     }
 
-    public async IAsyncEnumerable<Result<ChangefeedHttpItem, Unavailable>> SubscribeAsync(
+    public async IAsyncEnumerable<ChangefeedReadOutcome> SubscribeAsync(
         Ulid database,
         string after,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         if (_link is not { Client: var client, Peer: var peer })
         {
-            yield return new Unavailable("the QUIC TerraBase transport is not configured", "quic_disabled");
+            yield return new PlatformUnavailable("the QUIC TerraBase transport is not configured", "quic_disabled");
             yield break;
         }
 
         if (!CausalBookmark.TryDecode(after, out var position))
         {
-            yield return new Unavailable("the changefeed position is not a TerraScale bookmark", "invalid_bookmark");
+            yield return new PlatformUnavailable("the changefeed position is not a TerraScale bookmark", "invalid_bookmark");
             yield break;
         }
 
@@ -94,11 +94,11 @@ public sealed class TerraBaseQuic : IAsyncDisposable
                 ChangefeedEntryMessage message => message.ToEntry() switch
                 {
                     ChangefeedEntry entry => Advance(ref position, entry),
-                    QuicRemoteError invalid => new Unavailable(invalid.Message, invalid.Code),
+                    QuicRemoteError invalid => new PlatformUnavailable(invalid.Message, invalid.Code),
                 },
-                Unavailable unavailable => unavailable,
-                RequestTimeout timeout => new Unavailable(timeout.Message, "terrabase_timeout"),
-                QuicRemoteError remote => new Unavailable(remote.Message, remote.Code),
+                QuicUnavailable unavailable => new PlatformUnavailable(unavailable.Message, unavailable.Code),
+                QuicTimeout timeout => new PlatformUnavailable(timeout.Message, "terrabase_timeout"),
+                QuicRemoteError remote => new PlatformUnavailable(remote.Message, remote.Code),
             };
         }
     }
@@ -109,13 +109,6 @@ public sealed class TerraBaseQuic : IAsyncDisposable
     {
         position = position.Merge(CausalBookmark.ForRegion(entry.OriginRegion, entry.Sequence));
         return new ChangefeedHttpItem(entry.DatabaseId, entry.TxId, entry.OriginRegion, entry.Sequence, entry.SchemaEpoch, entry.Mode, entry.CommittedAtUtc, position.Encode());
-    }
-
-    private static QuicMeshCertificates FromPem(QuicPemFiles pem)
-    {
-        var authorities = new X509Certificate2Collection();
-        authorities.ImportFromPemFile(pem.AuthorityPath);
-        return new QuicMeshCertificates(X509Certificate2.CreateFromPemFile(pem.CertificatePath, pem.KeyPath), [.. authorities], []);
     }
 
     private sealed record QuicLink(QuicRpcClient Client, string Peer);

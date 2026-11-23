@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -39,7 +38,7 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
         return pending switch
         {
             ChallengedSignIn challenged => await ConfirmAsync(challenged),
-            Forbidden error => ErrorResults.ToResult(error),
+            AuthForbidden error => ErrorResults.ToResult(error),
         };
 
         async ValueTask<IResult> ConfirmAsync(ChallengedSignIn challenged)
@@ -58,7 +57,7 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
                 : await mfa.ConfirmAsync(challenged.User, code, authorization, cancellationToken);
             if (issued is null)
             {
-                return ErrorResults.ToResult(new Forbidden("The authenticator code is wrong or expired.", "invalid_code"));
+                return ErrorResults.ToResult(new AuthForbidden("The authenticator code is wrong or expired.", "invalid_code"));
             }
             var completed = false;
             try

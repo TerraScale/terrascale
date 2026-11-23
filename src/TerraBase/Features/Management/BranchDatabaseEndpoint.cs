@@ -32,22 +32,23 @@ internal sealed class BranchFlow(DatabaseAccess access, ManagementService manage
     public async ValueTask<BranchDatabaseResponse> BranchAsync(Caller caller, DatabaseInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken) switch
+        var outcome = await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved when request.ExpectedId is { } expected && !string.Equals(expected, resolved.Database.Id.ToString(), StringComparison.Ordinal) =>
-                new PreconditionFailed("the database's id is not the expected one", "database_id_mismatch"),
+                new DatabaseIdMismatch(),
             ResolvedDatabase resolved => Target(request.Target) switch
             {
                 NoTarget => await LocalAsync(resolved, request, CausalBookmark.Empty, cancellationToken),
                 CausalBookmark bookmark => await LocalAsync(resolved, request, bookmark, cancellationToken),
                 DateTimeOffset at => await ArchiveAsync(resolved, request, new RestoreTarget(at), cancellationToken),
-                Validation invalid => invalid,
+                InvalidInput invalid => invalid,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -65,28 +66,33 @@ internal sealed class BranchFlow(DatabaseAccess access, ManagementService manage
         return RestoreTargets.Parse(pointInTime, bookmark);
     }
 
-    private async ValueTask<BranchDatabaseResponse> LocalAsync(ResolvedDatabase source, DatabaseInput request, CausalBookmark at, CancellationToken cancellationToken) =>
-        await management.BranchAsync(source.Project, source.Database, request.Name, request.TtlSeconds, at, cancellationToken) switch
+    private async ValueTask<BranchDatabaseResponse> LocalAsync(ResolvedDatabase source, DatabaseInput request, CausalBookmark at, CancellationToken cancellationToken)
+    {
+        var outcome = await management.BranchAsync(source.Project, source.Database, request.Name, request.TtlSeconds, at, cancellationToken);
+        return outcome switch
         {
             DatabaseRecord created => new Created<DatabaseBody>(string.Concat("/v1/projects/", created.ProjectId.ToString(), "/databases/", created.Name),
                 DatabaseBody.From(created, options.Region, time.GetUtcNow())),
-            Validation invalid => invalid,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Conflict conflict => conflict,
-            QuotaExceeded quota => quota,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 
-    private async ValueTask<BranchDatabaseResponse> ArchiveAsync(ResolvedDatabase source, DatabaseInput request, RestoreTarget target, CancellationToken cancellationToken) =>
-        await management.CopyAsync(source.Project, source.Database, request.Name, request.TtlSeconds, target, branch: true, cancellationToken) switch
+    private async ValueTask<BranchDatabaseResponse> ArchiveAsync(ResolvedDatabase source, DatabaseInput request, RestoreTarget target, CancellationToken cancellationToken)
+    {
+        var outcome = await management.CopyAsync(source.Project, source.Database, request.Name, request.TtlSeconds, target, branch: true, cancellationToken);
+        return outcome switch
         {
             RestoreOperation operation => new Accepted<RestoreOperationBody>(
                 string.Concat("/v1/projects/", source.Project.Id.ToString(), "/databases/", source.Database.Id.ToString(), "/restores/", operation.OperationId.ToString()),
                 RestoreOperationBody.From(operation)),
-            NotFound missing => missing,
-            Validation invalid => invalid,
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound missing => missing,
+            InvalidInput invalid => invalid,
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 }

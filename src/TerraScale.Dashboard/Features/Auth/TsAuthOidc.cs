@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.Features.Auth
             }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_request" && credentialExpiresAt is not null)
-            { return new Validation("This token could not be created with that expiry. Choose a shorter expiry."); }
+            { return new DashboardValidation("This token could not be created with that expiry. Choose a shorter expiry."); }
             return new ExchangeResult(await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken));
         }
 
@@ -221,5 +221,5 @@ namespace TerraScale.Dashboard.Features.Auth
         }
     }
 
-    public readonly union ExchangeResult(SessionRecord, Validation);
+    public readonly union ExchangeResult(SessionRecord, DashboardValidation);
 }

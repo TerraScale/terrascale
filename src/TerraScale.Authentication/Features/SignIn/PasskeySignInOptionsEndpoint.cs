@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Endpoints;
 

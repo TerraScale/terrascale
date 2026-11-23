@@ -96,7 +96,14 @@ internal sealed class TerraBaseConnection
 
     public static string Query(params (string Name, string? Value)[] parameters)
     {
-        var set = parameters.Where(parameter => parameter.Value is not null).Select(parameter => $"{parameter.Name}={Uri.EscapeDataString(parameter.Value!)}");
+        var set = new List<string>(parameters.Length);
+        foreach (var (name, value) in parameters)
+        {
+            if (value is not null)
+            {
+                set.Add($"{name}={Uri.EscapeDataString(value)}");
+            }
+        }
         var query = string.Join('&', set);
         return query.Length == 0 ? string.Empty : "?" + query;
     }
@@ -110,41 +117,41 @@ internal sealed class TerraBaseConnection
         return content;
     }
 
-    public async Task<(T Value, HttpStatusCode Status)> SendAsync<T>(
+    public Task<(T Value, HttpStatusCode Status)> SendAsync<T>(
         HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> typeInfo, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken,
         TimeSpan? requestTimeout = null, Action<HttpResponseMessage>? observe = null)
     {
-        T? value = default;
-        var status = await SendAsync(method, path, content, headers, async (response, token) =>
+        return SendAsync(method, path, content, headers, async (response, token) =>
         {
             observe?.Invoke(response);
             using var body = new BoundedHttpBodyStream(
                 maxResponseBytes, () => new TerraBaseException(response.StatusCode, "TerraBase returned a response larger than the supported response bound.", "invalid_response", null), token);
             await response.Content.CopyToAsync(body, token).ConfigureAwait(false);
-            value = ReadResponse(body.Written.Span, typeInfo, response.StatusCode);
-        }, cancellationToken, requestTimeout).ConfigureAwait(false);
-        return (value!, status);
+            return ReadResponse(body.Written.Span, typeInfo, response.StatusCode);
+        }, cancellationToken, requestTimeout);
     }
 
     internal static T ReadResponse<T>(ReadOnlySpan<byte> body, JsonTypeInfo<T> typeInfo, HttpStatusCode status)
     {
+        T? value;
         try
         {
-            return JsonSerializer.Deserialize(body, typeInfo)
-                ?? throw new JsonException("The response cannot be null.");
+            value = JsonSerializer.Deserialize(body, typeInfo);
         }
         catch (JsonException)
         {
             throw new TerraBaseException(status, "TerraBase returned an invalid response body.", "invalid_response", null);
         }
+
+        return value ?? throw new TerraBaseException(status, "TerraBase returned an invalid response body.", "invalid_response", null);
     }
 
     public Task SendAsync(HttpMethod method, string path, HttpContent? content, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken) =>
-        SendAsync(method, path, content, headers, static (_, _) => Task.CompletedTask, cancellationToken);
+        SendAsync(method, path, content, headers, static (response, _) => Task.FromResult(response.StatusCode), cancellationToken);
 
-    private async Task<HttpStatusCode> SendAsync(
+    private async Task<(T Value, HttpStatusCode Status)> SendAsync<T>(
         HttpMethod method, string path, HttpContent? content, Action<HttpRequestHeaders>? headers,
-        Func<HttpResponseMessage, CancellationToken, Task> read, CancellationToken cancellationToken, TimeSpan? requestTimeout = null)
+        Func<HttpResponseMessage, CancellationToken, Task<T>> read, CancellationToken cancellationToken, TimeSpan? requestTimeout = null)
     {
         using var opened = await OpenAsync(method, path, content, headers, "application/json", streaming: false, cancellationToken,
             requestTimeout: requestTimeout).ConfigureAwait(false);
@@ -152,13 +159,12 @@ internal sealed class TerraBaseConnection
         {
             try
             {
-                await read(opened.Response, opened.Token).ConfigureAwait(false);
+                return (await read(opened.Response, opened.Token).ConfigureAwait(false), opened.Response.StatusCode);
             }
             finally
             {
                 opened.Token.ThrowIfCancellationRequested();
             }
-            return opened.Response.StatusCode;
         }
         catch (TerraBaseException error)
         {
@@ -289,7 +295,7 @@ internal sealed class TerraBaseConnection
                 if (delay >= timeout - timeProvider.GetElapsedTime(started))
                 {
                     lost?.Throw();
-                    throw refusal!;
+                    throw (Exception?)refusal ?? new InvalidOperationException("A retry requires a failed request.");
                 }
                 var retry = new HttpRequestMessage(method, request.RequestUri) { Version = request.Version, VersionPolicy = request.VersionPolicy, Content = request.Content };
                 foreach (var header in request.Headers) retry.Headers.TryAddWithoutValidation(header.Key, header.Value);
@@ -410,14 +416,13 @@ internal sealed class TerraBaseConnection
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
-    internal static bool Retryable(HttpMethod method, HttpContent? content, TerraBaseException error)
+    private static bool Retryable(HttpMethod method, HttpContent? content, TerraBaseException error)
     {
         var read = method == HttpMethod.Get || method == HttpMethod.Head;
         return (int)(error.StatusCode ?? 0) switch
         {
             503 => error.ErrorCode switch
             {
-                "remote_region_unavailable" or "confirmation_busy" or "catalog_stale" => content is null or ByteArrayContent,
                 "auth_unavailable" or "storage_busy" or "capacity" => read,
                 _ => false,
             },
@@ -437,7 +442,7 @@ internal sealed class TerraBaseConnection
         CancellationToken token) : IDisposable
     {
         public HttpResponseMessage Response { get; } = response;
-        public Uri RequestUri => request.RequestUri!;
+        public Uri RequestUri => request.RequestUri ?? throw new InvalidOperationException("The TerraBase request has no URI.");
         public CancellationToken Token { get; } = token;
         public void Dispose()
         {

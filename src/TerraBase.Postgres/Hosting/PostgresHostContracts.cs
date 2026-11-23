@@ -21,9 +21,24 @@ public sealed record PostgresGrant(
     IAsyncDisposable Lease,
     CancellationToken Revocation);
 
+public sealed record PostgresPasswordRejected(string Message);
+
+public sealed record PostgresAccessDenied(string Message);
+
+public sealed record PostgresSessionLimitReached(string Message);
+
+public sealed record PostgresBackendUnavailable(string Message);
+
+public readonly union PostgresAuthenticateOutcome(
+    PostgresGrant,
+    PostgresPasswordRejected,
+    PostgresAccessDenied,
+    PostgresSessionLimitReached,
+    PostgresBackendUnavailable);
+
 public interface IPostgresSessionFactory
 {
-    ValueTask<Result<PostgresGrant, Unauthorized, Forbidden, QuotaExceeded, Unavailable>> AuthenticateAsync(
+    ValueTask<PostgresAuthenticateOutcome> AuthenticateAsync(
         PostgresStartup startup,
         CancellationToken cancellationToken);
 }
@@ -34,19 +49,19 @@ public interface IPostgresDatabaseExecutor
 
     CausalBookmark CurrentBookmark { get; }
 
-    ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ReadAsync(
+    ValueTask<SqlReadOutcome> ReadAsync(
         SqlStatementRequest request,
         CancellationToken cancellationToken);
 
-    ValueTask<Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> WriteAsync(
+    ValueTask<ClusterWriteOutcome> WriteAsync(
         SqlStatementRequest request,
         CancellationToken cancellationToken);
 
-    ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(
+    ValueTask<ClusterBeginTransactionOutcome> BeginTransactionAsync(
         SqlTransactionOptions options,
         CancellationToken cancellationToken);
 
-    ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitAsync(
+    ValueTask<ClusterCommitTransactionOutcome> CommitAsync(
         ISqlTransaction transaction,
         CancellationToken cancellationToken);
 

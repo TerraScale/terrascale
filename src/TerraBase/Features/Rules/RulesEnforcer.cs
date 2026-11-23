@@ -2,8 +2,15 @@ using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Text;
 using TerraBase.Features.Sql;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Rules;
+
+internal readonly union EnforcementOutcome(EnforcedSql, SqlRefusal);
+
+internal readonly union StatementEnforcement(SqlStatement, SqlRefusal);
+
+internal readonly union ReadConditionOutcome(string, SqlRefusal);
 
 internal sealed record EnforcedSql(IReadOnlyList<SqlStatement> Statements, string? RulesVersion);
 
@@ -21,7 +28,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         "THEN", "ELSE", "END", "CAST", "COLLATE", "LIKE", "GLOB", "BETWEEN", "DISTINCT", "ALL", "UNION", "INTERSECT", "EXCEPT",
         "EXISTS", "WITH", "RECURSIVE", "UPDATE", "SET", "DELETE", "INSERT", "INTO", "VALUES", "RETURNING", "ROWID", "_ROWID_", "OID");
 
-    public async ValueTask<Result<EnforcedSql, SqlRefusal>> ApplyAsync(
+    public async ValueTask<EnforcementOutcome> ApplyAsync(
         Ulid databaseId, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken, ISqlDatabaseSession? session = null)
     {
         ArgumentNullException.ThrowIfNull(auth);
@@ -30,12 +37,12 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return loaded switch
         {
             StoredRules current => await RewriteAllAsync(current.Rules, current.Version, auth, statements, session, cancellationToken),
-            NotFound => await DenyMissingRulesAsync(auth, statements, session, cancellationToken),
-            Unavailable unavailable => SqlRefusal.From(unavailable),
+            ResourceNotFound => await DenyMissingRulesAsync(auth, statements, session, cancellationToken),
+            BackendUnavailable unavailable => SqlRefusal.From(unavailable),
         };
     }
 
-    private async ValueTask<Result<EnforcedSql, SqlRefusal>> DenyMissingRulesAsync(
+    private async ValueTask<EnforcementOutcome> DenyMissingRulesAsync(
         RulesAuth auth, IReadOnlyList<PlannedStatement> statements, ISqlDatabaseSession? session, CancellationToken cancellationToken)
     {
         var checkedEmpty = await RewriteAllAsync(new RulesSet(new Dictionary<string, RulesTable>()), "", auth, statements, session, cancellationToken);
@@ -46,7 +53,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         };
     }
 
-    private async ValueTask<Result<EnforcedSql, SqlRefusal>> RewriteAllAsync(
+    private async ValueTask<EnforcementOutcome> RewriteAllAsync(
         RulesSet rules, string rulesVersion, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, ISqlDatabaseSession? session, CancellationToken cancellationToken)
     {
         List<SqlStatement> rewritten = [];
@@ -67,7 +74,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return new EnforcedSql(rewritten, rulesVersion);
     }
 
-    public async ValueTask<Result<SqlStatement, SqlRefusal>> RewriteAsync(
+    public async ValueTask<StatementEnforcement> RewriteAsync(
         RulesSet rules, RulesAuth auth, PlannedStatement planned, int index, ISqlDatabaseSession? session, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rules);
@@ -88,7 +95,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         };
     }
 
-    private async ValueTask<Result<SqlStatement, SqlRefusal>> WriteAsync(
+    private async ValueTask<StatementEnforcement> WriteAsync(
         RulesSet rules, RulesAuth auth, PlannedStatement planned, int index, ISqlDatabaseSession? session, CancellationToken cancellationToken)
     {
         var tokens = planned.Tokens;
@@ -140,7 +147,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         var compiled = RulesCompiler.Compile(condition, null, operation) switch
         {
             CompiledCondition ok when !ok.UsesNew => ok,
-            CompiledCondition or Validation => null,
+            CompiledCondition or InvalidInput => null,
         };
         if (compiled is null)
         {
@@ -159,7 +166,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         };
     }
 
-    private async ValueTask<Result<string, SqlRefusal>> ReadsAsync(
+    private async ValueTask<ReadConditionOutcome> ReadsAsync(
         RulesSet rules, RulesAuth auth, string sql, IReadOnlyList<SqlToken> tokens, int index, int skipTarget, ISqlDatabaseSession? session, CancellationToken cancellationToken)
     {
         var ctes = CteNames(tokens);
@@ -261,7 +268,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             var compiled = RulesCompiler.Compile(read, liveNames, RulesOperation.Read) switch
             {
                 CompiledCondition condition => condition,
-                Validation => null,
+                InvalidInput => null,
             };
             if (compiled is null)
             {

@@ -1,16 +1,11 @@
 namespace TerraScale.DotNet;
 
-/// <summary>ts-auth route construction helpers. Path segments are data-bound
-/// from caller input, so every segment is escaped; ids like <c>usr_...</c> are
-/// plain but slugs, domains, and template names are caller-chosen.</summary>
 internal static class TerraScaleAuthPaths
 {
     public static string Escape(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         var trimmed = value.Trim();
-        // Dot segments are never valid ids, names, or domains; keeping them
-        // would let a caller mutate the route (Uri collapses ".." up a level).
         if (trimmed is "." or "..")
         {
             throw new ArgumentException("Path segments cannot be \".\" or \"..\".", nameof(value));

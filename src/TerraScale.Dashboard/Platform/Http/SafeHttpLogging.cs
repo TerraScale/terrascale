@@ -3,8 +3,6 @@ using Microsoft.Extensions.Options;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
-    // Framework formatters/scopes can contain raw targets, cookies, headers and exception messages.
-    // Keep their events and levels, but pass only operational fields to every configured provider.
     public static class SafeHttpLogging
     {
         public static string Method(string method)
@@ -79,7 +77,6 @@ namespace TerraScale.Dashboard.Platform.Http
                 {
                     safe.Add(new("ErrorType", exception.GetType().Name));
                 }
-                // Never invoke the original formatter or pass its exception/state to a provider.
                 inner.Log(logLevel, eventId, safe, null, (fields, _) => fields.ToString());
             }
 

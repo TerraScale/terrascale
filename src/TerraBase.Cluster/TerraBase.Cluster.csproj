@@ -13,7 +13,6 @@
     <PackageReference Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
   <ItemGroup>
-    <Using Include="TerraScale.Results" />
     <Using Include="TerraScale.Contracts.Consistency" />
     <Using Include="TerraScale.Contracts.Storage" />
     <Using Include="TerraScale.Contracts.Cluster" />

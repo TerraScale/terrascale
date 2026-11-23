@@ -7,6 +7,8 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Storage.Schema;
 
+public readonly union SchemaUpgrade(AuthCompleted, AuthUnavailable);
+
 public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeProvider clock, ILogger<TerraBaseDbUpRunner> logger)
 {
     private const string ScriptPrefix = "schema/";
@@ -15,26 +17,32 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
         [.. new EmbeddedScriptProvider(typeof(TerraBaseDbUpRunner).Assembly, name => name.StartsWith(ScriptPrefix, StringComparison.Ordinal)).GetScripts(null)
             .OrderBy(script => script.Name, StringComparer.Ordinal)];
 
-    public async Task<Result<Done, Unavailable>> UpgradeAsync(CancellationToken cancellationToken)
+    public async Task<SchemaUpgrade> UpgradeAsync(CancellationToken cancellationToken)
     {
         await using var connection = await connections.OpenAsync(cancellationToken);
         if (await AppliedAsync(connection, cancellationToken) is not { } applied)
         {
-            return new Unavailable("The schema journal could not be read.");
+            return new AuthUnavailable("The schema journal could not be read.");
         }
 
         foreach (var script in Scripts.Where(script => !applied.Contains(script.Name)))
         {
-            if (await ApplyAsync(connection, script, cancellationToken) is Unavailable failure
+            var appliedScript = await ApplyAsync(connection, script, cancellationToken);
+            var refused = appliedScript switch
+            {
+                AuthCompleted => (AuthUnavailable?)null,
+                AuthUnavailable unavailable => unavailable,
+            };
+            if (refused is { } blocked
                 && (await AppliedAsync(connection, cancellationToken))?.Contains(script.Name) != true)
             {
-                return failure;
+                return blocked;
             }
 
             logger.ZLogInformation($"Schema script {script.Name:@Script} is applied");
         }
 
-        return new Done();
+        return new AuthCompleted();
     }
 
     public async Task<bool> CurrentAsync(CancellationToken cancellationToken)
@@ -43,18 +51,18 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
         return await AppliedAsync(connection, cancellationToken) is { } applied && Scripts.All(script => applied.Contains(script.Name));
     }
 
-    private async Task<Result<Done, Unavailable>> ApplyAsync(DbConnection connection, SqlScript script, CancellationToken cancellationToken)
+    private async Task<SchemaUpgrade> ApplyAsync(DbConnection connection, SqlScript script, CancellationToken cancellationToken)
     {
         var sql = script.Contents.TrimEnd().TrimEnd(';') + ";\nINSERT INTO schema_versions (script_name, applied) VALUES (@name, @applied)";
         try
         {
             await connection.ExecuteAsync(sql, new { name = script.Name, applied = clock.GetUtcNow() });
-            return new Done();
+            return new AuthCompleted();
         }
         catch (TerraBaseException failure)
         {
             logger.ZLogWarning($"Schema script {script.Name:@Script} was refused ({failure.ErrorCode:@Code})");
-            return new Unavailable(failure.ErrorCode ?? "schema_refused");
+            return new AuthUnavailable(failure.ErrorCode ?? "schema_refused");
         }
     }
 

@@ -14,14 +14,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
         internal static void Protect(HttpContext http)
         {
             http.Response.Headers.CacheControl = "no-store";
-            // Retain the origin on native form POSTs without exposing the token path.
             http.Response.Headers["Referrer-Policy"] = "strict-origin";
         }
 
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, InvitationService invitations, string token, string error = "", int status = 200)
         {
             Protect(http);
-            // ts-auth looks an invitation up only for a signed-in holder of its token.
             var session = await sessions.ReadAsync(http);
             var pending = await invitations.FindAsync(session, token, http.RequestAborted);
             var slice = InvitationView.Create(new(new(pending?.Project is null ? "Invitation" : "Project invitation", DocumentModel.NonceFor(http)), Csrf.Token(http), token,

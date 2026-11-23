@@ -119,7 +119,7 @@ public sealed class SignUpRestrictions(AuthData data, ProjectAuthSettings settin
         }, cancellationToken) switch
         {
             bool joined => joined,
-            Conflict => throw new ApiException(409, "conflict", "The waitlist changed; retry."),
+            AuthConflict => throw new ApiException(409, "conflict", "The waitlist changed; retry."),
         };
     }
 

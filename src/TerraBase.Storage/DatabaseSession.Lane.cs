@@ -2,6 +2,10 @@ using System.Diagnostics;
 
 namespace TerraBase.Storage;
 
+internal sealed record LocalItemPrepared(CommitMetadata? Commit);
+
+internal readonly union LocalItemOutcome(LocalItemPrepared, SqlError, StrongRequired);
+
 internal sealed partial class DatabaseSession
 {
     private const string ItemSavepoint = "SAVEPOINT _tb_item;";
@@ -10,70 +14,70 @@ internal sealed partial class DatabaseSession
 
     private closed record class LaneRequest;
 
-    private sealed record class LocalWriteRequest(SqlStatementRequest Request, TaskCompletionSource<Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> Completion, CancellationToken CancellationToken) : LaneRequest;
+    private sealed record class LocalWriteRequest(SqlStatementRequest Request, TaskCompletionSource<SqlWriteOutcome> Completion, CancellationToken CancellationToken) : LaneRequest;
 
-    private sealed record class StageRequest(SqlStatementRequest Request, TaskCompletionSource<Result<StagedWrite, SqlError, SchemaMismatch, StorageBusy, RequestTimeout>> Completion, CancellationToken CancellationToken) : LaneRequest;
+    private sealed record class StageRequest(SqlStatementRequest Request, TaskCompletionSource<StageWriteOutcome> Completion, CancellationToken CancellationToken) : LaneRequest;
 
     private sealed record class TransactionRequest(WriteTransaction Transaction) : LaneRequest;
 
-    private sealed record class RemoteApplyRequest(IReadOnlyList<CommitMetadata> Commits, bool AllowLocalOrigin, TaskCompletionSource<Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy>> Completion, CancellationToken CancellationToken) : LaneRequest;
+    private sealed record class RemoteApplyRequest(IReadOnlyList<CommitMetadata> Commits, bool AllowLocalOrigin, TaskCompletionSource<ApplyRemoteBatchOutcome> Completion, CancellationToken CancellationToken) : LaneRequest;
 
-    private sealed record class CommitStagedRequest(StagedDescriptor Descriptor, HlcTimestamp CommitHlc, TaskCompletionSource<Result<CommitMetadata, NotFound, ReadSetConflict, SchemaMismatch, StorageBusy>> Completion) : LaneRequest;
+    private sealed record class CommitStagedRequest(StagedDescriptor Descriptor, HlcTimestamp CommitHlc, TaskCompletionSource<CommitStagedOutcome> Completion) : LaneRequest;
 
-    public async ValueTask<Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> ExecuteWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
+    public async ValueTask<SqlWriteOutcome> ExecuteWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken).ConfigureAwait(false);
-        if (waited switch { Done => false, RequestTimeout => true })
+        var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken);
+        if (waited switch { BookmarkReached => false, StorageTimeout => true })
         {
-            return new RequestTimeout("causal bookmark was not reached before the write");
+            return new StorageTimeout("causal bookmark was not reached before the write");
         }
 
-        var completion = NewCompletion<Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>>();
-        if (!await EnqueueAsync(new LocalWriteRequest(request, completion, cancellationToken), cancellationToken).ConfigureAwait(false))
+        var completion = NewCompletion<SqlWriteOutcome>();
+        if (!await EnqueueAsync(new LocalWriteRequest(request, completion, cancellationToken), cancellationToken))
         {
             return Closing();
         }
 
-        return await completion.Task.ConfigureAwait(false);
+        return await completion.Task;
     }
 
-    public async ValueTask<Result<StagedWrite, SqlError, SchemaMismatch, StorageBusy, RequestTimeout>> StageWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
+    public async ValueTask<StageWriteOutcome> StageWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var completion = NewCompletion<Result<StagedWrite, SqlError, SchemaMismatch, StorageBusy, RequestTimeout>>();
-        if (!await EnqueueAsync(new StageRequest(request, completion, cancellationToken), cancellationToken).ConfigureAwait(false))
+        var completion = NewCompletion<StageWriteOutcome>();
+        if (!await EnqueueAsync(new StageRequest(request, completion, cancellationToken), cancellationToken))
         {
             return Closing();
         }
 
-        return await completion.Task.ConfigureAwait(false);
+        return await completion.Task;
     }
 
-    public async ValueTask<Result<CommitMetadata, NotFound, ReadSetConflict, SchemaMismatch, StorageBusy>> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, CancellationToken cancellationToken)
+    public async ValueTask<CommitStagedOutcome> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, CancellationToken cancellationToken)
     {
         if (TakeStaged(token) is not { } descriptor)
         {
-            return new NotFound("staged write not found or expired");
+            return new StagedWriteMissing(token, "staged write not found or expired");
         }
 
-        var completion = NewCompletion<Result<CommitMetadata, NotFound, ReadSetConflict, SchemaMismatch, StorageBusy>>();
-        if (!await EnqueueAsync(new CommitStagedRequest(descriptor, commitHlc, completion), cancellationToken).ConfigureAwait(false))
+        var completion = NewCompletion<CommitStagedOutcome>();
+        if (!await EnqueueAsync(new CommitStagedRequest(descriptor, commitHlc, completion), cancellationToken))
         {
             return Closing();
         }
 
-        return await completion.Task.ConfigureAwait(false);
+        return await completion.Task;
     }
 
-    public ValueTask<Result<Done, NotFound>> AbortStagedAsync(StagedWriteToken token, CancellationToken cancellationToken)
+    public ValueTask<AbortStagedOutcome> AbortStagedAsync(StagedWriteToken token, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Result<Done, NotFound> result = TakeStaged(token) is null ? new NotFound("staged write not found or expired") : new Done();
+        AbortStagedOutcome result = TakeStaged(token) is null ? new StagedWriteMissing(token, "staged write not found or expired") : new StagedWriteAborted();
         return ValueTask.FromResult(result);
     }
 
-    public async ValueTask<Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy>> ApplyRemoteBatchAsync(RemoteCommitBatch batch, CancellationToken cancellationToken)
+    public async ValueTask<ApplyRemoteBatchOutcome> ApplyRemoteBatchAsync(RemoteCommitBatch batch, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(batch);
         if (batch.DatabaseId != DatabaseId)
@@ -81,38 +85,38 @@ internal sealed partial class DatabaseSession
             return new StorageCorrupted(DatabaseId, "remote batch targets a different database");
         }
 
-        var completion = NewCompletion<Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy>>();
-        if (!await EnqueueAsync(new RemoteApplyRequest(batch.Commits, false, completion, cancellationToken), cancellationToken).ConfigureAwait(false))
+        var completion = NewCompletion<ApplyRemoteBatchOutcome>();
+        if (!await EnqueueAsync(new RemoteApplyRequest(batch.Commits, false, completion, cancellationToken), cancellationToken))
         {
             return Closing();
         }
 
-        return await completion.Task.ConfigureAwait(false);
+        return await completion.Task;
     }
 
-    internal async ValueTask<Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy>> ReplayAsync(IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
+    internal async ValueTask<ApplyRemoteBatchOutcome> ReplayAsync(IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
     {
-        var completion = NewCompletion<Result<RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy>>();
-        if (!await EnqueueAsync(new RemoteApplyRequest(commits, true, completion, cancellationToken), cancellationToken).ConfigureAwait(false))
+        var completion = NewCompletion<ApplyRemoteBatchOutcome>();
+        if (!await EnqueueAsync(new RemoteApplyRequest(commits, true, completion, cancellationToken), cancellationToken))
         {
             return Closing();
         }
 
-        return await completion.Task.ConfigureAwait(false);
+        return await completion.Task;
     }
 
-    public async ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken)
+    public async ValueTask<BeginTransactionOutcome> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var waited = await WaitForBookmarkAsync(options.After, Options.BookmarkWaitTimeout, cancellationToken).ConfigureAwait(false);
-        if (waited switch { Done => false, RequestTimeout => true })
+        var waited = await WaitForBookmarkAsync(options.After, Options.BookmarkWaitTimeout, cancellationToken);
+        if (waited switch { BookmarkReached => false, StorageTimeout => true })
         {
-            return new RequestTimeout("causal bookmark was not reached before the transaction");
+            return new StorageTimeout("causal bookmark was not reached before the transaction");
         }
 
         if (options.Access == SqlAccess.Read)
         {
-            if (await RentReaderAsync(cancellationToken).ConfigureAwait(false) is not { } reader)
+            if (await RentReaderAsync(cancellationToken) is not { } reader)
             {
                 return Closing();
             }
@@ -128,32 +132,33 @@ internal sealed partial class DatabaseSession
         }
 
         var transaction = new WriteTransaction(options, Ulid.NewUlid(_context.Time.GetUtcNow()));
-        if (!await EnqueueAsync(new TransactionRequest(transaction), cancellationToken).ConfigureAwait(false))
+        if (!await EnqueueAsync(new TransactionRequest(transaction), cancellationToken))
         {
             return Closing();
         }
 
         var started = transaction.Started.Task;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var winner = await Task.WhenAny(started, Task.Delay(Options.LaneWaitTimeout, _context.Time, timeout.Token)).ConfigureAwait(false);
-        await timeout.CancelAsync().ConfigureAwait(false);
+        var winner = await Task.WhenAny(started, Task.Delay(Options.LaneWaitTimeout, _context.Time, timeout.Token));
+        await timeout.CancelAsync();
         cancellationToken.ThrowIfCancellationRequested();
         if (winner != started)
         {
             transaction.Abandon();
-            return new RequestTimeout("writer lane did not start the transaction in time");
+            return new StorageTimeout("writer lane did not start the transaction in time");
         }
 
-        return await started.ConfigureAwait(false) switch
+        var start = await started;
+        return start switch
         {
-            Done => AsResult(transaction),
+            TransactionStarted => AsResult(transaction),
             StorageBusy busy => busy,
         };
 
-        static Result<ISqlTransaction, StorageBusy, RequestTimeout> AsResult(ISqlTransaction value) => value;
+        static BeginTransactionOutcome AsResult(ISqlTransaction value) => value;
     }
 
-    internal Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout> StageRead(ReadTransaction transaction)
+    internal StagedWrite StageRead(ReadTransaction transaction)
     {
         var snapshot = _context.Clock.Tick();
         var staged = new StagedWrite(
@@ -177,7 +182,7 @@ internal sealed partial class DatabaseSession
         var reader = _requests.Reader;
         List<LaneRequest> drained = new(Options.MaxBatchSize);
         List<LaneRequest> group = new(Options.MaxBatchSize);
-        while (await reader.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
+        while (await reader.WaitToReadAsync(CancellationToken.None))
         {
             drained.Clear();
             while (drained.Count < Options.MaxBatchSize && reader.TryRead(out var request))
@@ -196,7 +201,7 @@ internal sealed partial class DatabaseSession
 
                 ProcessGroup(group);
                 group.Clear();
-                await ProcessSerialAsync(request).ConfigureAwait(false);
+                await ProcessSerialAsync(request);
             }
 
             ProcessGroup(group);
@@ -218,7 +223,7 @@ internal sealed partial class DatabaseSession
     {
         _ = request switch
         {
-            TransactionRequest transaction => await RunTransactionAsync(transaction.Transaction).ConfigureAwait(false),
+            TransactionRequest transaction => await RunTransactionAsync(transaction.Transaction),
             RemoteApplyRequest remote => remote.Completion.TrySetResult(remote.CancellationToken.IsCancellationRequested ? Closing() : ApplyRemote(remote.Commits, remote.AllowLocalOrigin)),
             CommitStagedRequest staged => staged.Completion.TrySetResult(CommitStaged(staged.Descriptor, staged.CommitHlc)),
             LocalWriteRequest or StageRequest => ProcessGroup([request]),
@@ -316,15 +321,20 @@ internal sealed partial class DatabaseSession
             return false;
         }
 
-        var (failure, context, commit) = RunLocal(local.Request, local.CancellationToken, ref nextSequence, ref epoch);
-        if (failure is { } outcome)
+        var (outcome, context) = RunLocal(local.Request, local.CancellationToken, ref nextSequence, ref epoch);
+        _ = outcome switch
         {
-            local.Completion.TrySetResult(outcome);
-            return context.IsSchemaChange;
-        }
-
-        completed.Add((local, context.Results, commit));
+            LocalItemPrepared prepared => Prepared(completed, local, context, prepared.Commit),
+            SqlError error => local.Completion.TrySetResult(error),
+            StrongRequired strong => local.Completion.TrySetResult(strong),
+        };
         return context.IsSchemaChange;
+
+        static bool Prepared(List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed, LocalWriteRequest local, WriteContext context, CommitMetadata? commit)
+        {
+            completed.Add((local, context.Results, commit));
+            return true;
+        }
     }
 
     private bool RunStageItem(StageRequest stage)
@@ -340,44 +350,64 @@ internal sealed partial class DatabaseSession
         return schemaTouched;
     }
 
-    private (Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>? Failure, WriteContext Context, CommitMetadata? Commit) RunLocal(SqlStatementRequest request, CancellationToken cancellationToken, ref long nextSequence, ref ulong epoch)
+    private (LocalItemOutcome Outcome, WriteContext Context) RunLocal(SqlStatementRequest request, CancellationToken cancellationToken, ref long nextSequence, ref ulong epoch)
     {
         var context = new WriteContext(request.Mode, analyzeReads: false, cancellationToken);
         var savepoint = _writer.Exec(ItemSavepoint);
         if (!savepoint.IsOk)
         {
-            return (savepoint.ToSqlError(-1), context, null);
+            return (savepoint.ToSqlError(-1), context);
         }
 
         _capture.Begin();
-        for (var index = 0; index < request.Statements.Count; index++)
+        var executed = ExecuteStatements(context, request.Statements);
+        LocalItemOutcome outcome = executed switch
         {
-            Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>? failure = ExecuteStatement(context, request.Statements[index], index) switch
-            {
-                SqlResultSet => null,
-                SqlError error => error,
-                StrongRequired strong => strong,
-            };
-            if (failure is { } statementFailure)
-            {
-                _capture.End();
-                RollbackItemSchema(context);
-                return (statementFailure, context, null);
-            }
-        }
+            SqlResultSet => FinishLocalItem(context, ref nextSequence, ref epoch),
+            SqlError error => AbortItem(context, error),
+            StrongRequired strong => AbortItem(context, strong),
+        };
+        return (outcome, context);
+    }
 
+    private LocalItemOutcome FinishLocalItem(WriteContext context, ref long nextSequence, ref ulong epoch)
+    {
         var finished = FinishLocal(context, ref nextSequence, ref epoch, out var commit);
         if (!finished.IsOk)
         {
             RollbackItemSchema(context);
-            return (finished.ToSqlError(-1), context, null);
+            return finished.ToSqlError(-1);
         }
 
         var released = _writer.Exec(ReleaseItem);
-        return released.IsOk ? (null, context, commit) : (released.ToSqlError(-1), context, null);
+        return released.IsOk ? new LocalItemPrepared(commit) : released.ToSqlError(-1);
     }
 
-    private (Result<StagedWrite, SqlError, SchemaMismatch, StorageBusy, RequestTimeout> Outcome, bool SchemaTouched) RunStage(SqlStatementRequest request, CancellationToken cancellationToken)
+    private LocalItemOutcome AbortItem(WriteContext context, LocalItemOutcome failure)
+    {
+        _capture.End();
+        RollbackItemSchema(context);
+        return failure;
+    }
+
+    private StatementOutcome ExecuteStatements(WriteContext context, IReadOnlyList<SqlStatement> statements)
+    {
+        StatementOutcome last = EmptyResult;
+        for (var index = 0; index < statements.Count; index++)
+        {
+            var executed = ExecuteStatement(context, statements[index], index);
+            if (executed switch { SqlResultSet => false, SqlError or StrongRequired => true })
+            {
+                return executed;
+            }
+
+            last = executed;
+        }
+
+        return last;
+    }
+
+    private (StageWriteOutcome Outcome, bool SchemaTouched) RunStage(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         var context = new WriteContext(ConsistencyMode.Strong, analyzeReads: true, cancellationToken);
         var savepoint = _writer.Exec(ItemSavepoint);
@@ -430,11 +460,11 @@ internal sealed partial class DatabaseSession
         var context = new WriteContext(transaction.Options.Mode, analyzeReads: transaction.Options.Mode == ConsistencyMode.Strong, CancellationToken.None);
         _capture.Begin();
         Volatile.Write(ref _activeTransaction, transaction);
-        transaction.Started.TrySetResult(new Done());
+        transaction.Started.TrySetResult(new TransactionStarted());
         var finished = false;
         while (!finished)
         {
-            var command = await transaction.NextCommandAsync(Options.TransactionIdleTimeout, _context.Time).ConfigureAwait(false);
+            var command = await transaction.NextCommandAsync(Options.TransactionIdleTimeout, _context.Time);
             finished = command switch
             {
                 null => EndTransaction(context),
@@ -452,7 +482,8 @@ internal sealed partial class DatabaseSession
     private bool ExecuteInTransaction(WriteContext context, WriteTransaction.ExecuteCommand execute)
     {
         context.CancellationToken = execute.CancellationToken;
-        Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout> outcome = ExecuteStatement(context, execute.Statement, execute.Index) switch
+        var executed = ExecuteStatement(context, execute.Statement, execute.Index);
+        TransactionExecuteResult outcome = executed switch
         {
             SqlResultSet result => result,
             SqlError error => error,
@@ -470,7 +501,7 @@ internal sealed partial class DatabaseSession
     private bool RollbackTransaction(WriteContext context, WriteTransaction.RollbackCommand rollback)
     {
         _ = EndTransaction(context);
-        rollback.Completion.TrySetResult(new Done());
+        rollback.Completion.TrySetResult();
         return true;
     }
 

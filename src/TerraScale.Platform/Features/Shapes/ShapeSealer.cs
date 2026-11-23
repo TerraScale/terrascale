@@ -3,6 +3,10 @@ using System.Globalization;
 
 namespace TerraScale.Platform.Features.Shapes;
 
+public readonly union SyncShapeOutcome(ShapeRecord, PlatformUnavailable);
+
+public readonly union LoadShapeChunkOutcome(ShapeChunk, PlatformNotFound, PlatformUnavailable);
+
 public sealed class ShapeSealer(
     ShapeRegistry registry,
     ShapeObjectStore objects,
@@ -15,7 +19,7 @@ public sealed class ShapeSealer(
     private const string ImmutableCache = "public, max-age=31536000, immutable";
     private readonly ConcurrentDictionary<string, ShapeChunk> _chunks = new(StringComparer.Ordinal);
 
-    public async ValueTask<Result<ShapeRecord, Unavailable>> SyncAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken)
+    public async ValueTask<SyncShapeOutcome> SyncAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken)
     {
         if (snapshot.Digest == shape.HeadDigest)
         {
@@ -24,25 +28,27 @@ public sealed class ShapeSealer(
 
         if (!objects.IsConfigured)
         {
-            return new Unavailable("shape object storage is not configured", "shapes_unconfigured");
+            return new PlatformUnavailable("shape object storage is not configured", "shapes_unconfigured");
         }
 
-        var previous = shape.Head == 0
-            ? Rows([])
-            : await LoadAsync(shape.Handle, shape.Head, cancellationToken) switch
-            {
-                ShapeChunk chunk => Rows(chunk.Rows),
-                NotFound => Rows([]),
-                Unavailable unavailable => unavailable,
-            };
-        return previous switch
+        if (shape.Head == 0)
         {
-            IReadOnlyList<ShapeRowEntry> rows => await SealAsync(shape, snapshot, Diff(rows, snapshot.Rows, shape.Where is not null), cancellationToken),
-            Unavailable unavailable => unavailable,
+            return await SealFromAsync([]);
+        }
+
+        var outcome = await LoadAsync(shape.Handle, shape.Head, cancellationToken);
+        return outcome switch
+        {
+            ShapeChunk chunk => await SealFromAsync(chunk.Rows),
+            PlatformNotFound => await SealFromAsync([]),
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        ValueTask<SyncShapeOutcome> SealFromAsync(IReadOnlyList<ShapeRowEntry> rows) =>
+            SealAsync(shape, snapshot, Diff(rows, snapshot.Rows, shape.Where is not null), cancellationToken);
     }
 
-    public async ValueTask<Result<ShapeChunk, NotFound, Unavailable>> LoadAsync(string handle, long offset, CancellationToken cancellationToken)
+    public async ValueTask<LoadShapeChunkOutcome> LoadAsync(string handle, long offset, CancellationToken cancellationToken)
     {
         var cacheKey = handle + ":" + offset.ToString(CultureInfo.InvariantCulture);
         if (_chunks.TryGetValue(cacheKey, out var cached))
@@ -50,24 +56,31 @@ public sealed class ShapeSealer(
             return cached;
         }
 
-        return await registry.ChunkAsync(handle, offset, cancellationToken) switch
+        var outcome = await registry.ChunkAsync(handle, offset, cancellationToken);
+        return outcome switch
         {
-            ShapeChunkInfo info => await objects.GetAsync(ShapeObjectStore.Key(handle, info.Name), cancellationToken) switch
+            ShapeChunkInfo info => await LoadObjectAsync(info),
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<LoadShapeChunkOutcome> LoadObjectAsync(ShapeChunkInfo info)
+        {
+            var outcome = await objects.GetAsync(ShapeObjectStore.Key(handle, info.Name), cancellationToken);
+            return outcome switch
             {
                 byte[] bytes => crypto.Open(handle, bytes) switch
                 {
                     ShapeChunk chunk => Remember(cacheKey, chunk),
-                    Unavailable unavailable => unavailable,
+                    PlatformUnavailable unavailable => unavailable,
                 },
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
-    private async ValueTask<Result<ShapeRecord, Unavailable>> SealAsync(
+    private async ValueTask<SyncShapeOutcome> SealAsync(
         ShapeRecord shape,
         ShapeSnapshot snapshot,
         IReadOnlyList<ShapeOperation> ops,
@@ -81,17 +94,23 @@ public sealed class ShapeSealer(
         var stored = await objects.PutAsync(ShapeObjectStore.Key(shape.Handle, name), sealedChunk.Bytes, "application/octet-stream", ImmutableCache, cancellationToken);
         return stored switch
         {
-            Done => await registry.CommitAsync(shape, info, snapshot.Rows.Count, cancellationToken) switch
+            ShapeObjectStored => await CommitAsync(),
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<SyncShapeOutcome> CommitAsync()
+        {
+            var outcome = await registry.CommitAsync(shape, info, snapshot.Rows.Count, cancellationToken);
+            return outcome switch
             {
                 true => await PublishAsync(shape with { Head = offset, HeadDigest = snapshot.Digest }, chunk, cancellationToken),
                 false => await RereadAsync(shape, name, cancellationToken),
-                Unavailable unavailable => unavailable,
-            },
-            Unavailable unavailable => unavailable,
-        };
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 
-    private async ValueTask<Result<ShapeRecord, Unavailable>> PublishAsync(ShapeRecord shape, ShapeChunk chunk, CancellationToken cancellationToken)
+    private async ValueTask<SyncShapeOutcome> PublishAsync(ShapeRecord shape, ShapeChunk chunk, CancellationToken cancellationToken)
     {
         metrics.ShapeChunk();
         Remember(shape.Handle + ":" + chunk.Offset.ToString(CultureInfo.InvariantCulture), chunk);
@@ -101,18 +120,20 @@ public sealed class ShapeSealer(
             ShapesJsonContext.Default.ShapeHeadPointer);
         var purge = new List<string> { objects.Url(shape.Handle, pointerName) };
         var published = await objects.PutAsync(ShapeObjectStore.Key(shape.Handle, pointerName), pointer, "application/json", "public, max-age=1", cancellationToken);
-        var trimmed = await registry.TrimAsync(shape.Handle, chunk.Offset, cancellationToken) switch
+        var trimmedOutcome = await registry.TrimAsync(shape.Handle, chunk.Offset, cancellationToken);
+        var trimmed = trimmedOutcome switch
         {
-            IReadOnlyList<ShapeChunkInfo> retired => retired,
-            Unavailable => [],
+            ShapeChunks { Items: var retired } => retired,
+            PlatformUnavailable => [],
         };
         foreach (var retired in trimmed)
         {
             _ = _chunks.TryRemove(shape.Handle + ":" + retired.Offset.ToString(CultureInfo.InvariantCulture), out _);
-            var erased = await objects.DeleteAsync(ShapeObjectStore.Key(shape.Handle, retired.Name), cancellationToken) switch
+            var erasedOutcome = await objects.DeleteAsync(ShapeObjectStore.Key(shape.Handle, retired.Name), cancellationToken);
+            var erased = erasedOutcome switch
             {
-                Done => true,
-                Unavailable => false,
+                ShapeObjectDeleted => true,
+                PlatformUnavailable => false,
             };
             if (erased)
             {
@@ -124,8 +145,8 @@ public sealed class ShapeSealer(
         notifier.Signal(shape.Database);
         return published switch
         {
-            Done => shape,
-            Unavailable unavailable => unavailable,
+            ShapeObjectStored => shape,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
@@ -144,10 +165,11 @@ public sealed class ShapeSealer(
         var kept = 0;
         foreach (var chunk in retirement.Chunks.Concat(retirement.Handles.Select(static handle => new ShapeChunkObject(handle, "head.json"))))
         {
-            var deleted = await objects.DeleteAsync(ShapeObjectStore.Key(chunk.Handle, chunk.Name), cancellationToken) switch
+            var deletedOutcome = await objects.DeleteAsync(ShapeObjectStore.Key(chunk.Handle, chunk.Name), cancellationToken);
+            var deleted = deletedOutcome switch
             {
-                Done => true,
-                Unavailable => false,
+                ShapeObjectDeleted => true,
+                PlatformUnavailable => false,
             };
             if (deleted)
             {
@@ -163,33 +185,33 @@ public sealed class ShapeSealer(
         return kept;
     }
 
-    private async ValueTask<Result<ShapeRecord, Unavailable>> RereadAsync(ShapeRecord shape, string lostObject, CancellationToken cancellationToken)
+    private async ValueTask<SyncShapeOutcome> RereadAsync(ShapeRecord shape, string lostObject, CancellationToken cancellationToken)
     {
-        var current = await registry.ReadAsync(shape.Handle, cancellationToken) switch
+        var currentOutcome = await registry.ReadAsync(shape.Handle, cancellationToken);
+        SyncShapeOutcome current = currentOutcome switch
         {
-            ShapeRecord record => Winner(record),
-            NotFound missing => new Unavailable(missing.Message ?? "the shape vanished while sealing", "shape_not_found"),
-            Unavailable unavailable => unavailable,
+            ShapeRecord record => record,
+            PlatformNotFound missing => new PlatformUnavailable(missing.Message ?? "the shape vanished while sealing", "shape_not_found"),
+            PlatformUnavailable unavailable => unavailable,
         };
         var orphaned = current switch
         {
             ShapeRecord record => record.HeadDigest.Length < 16
                 || !string.Equals(ShapeObjectStore.ObjectName(record.Head, record.HeadDigest), lostObject, StringComparison.Ordinal),
-            Unavailable => false,
+            PlatformUnavailable => false,
         };
         if (!orphaned)
         {
             return current;
         }
 
-        return await objects.DeleteAsync(ShapeObjectStore.Key(shape.Handle, lostObject), cancellationToken) switch
+        var outcome = await objects.DeleteAsync(ShapeObjectStore.Key(shape.Handle, lostObject), cancellationToken);
+        return outcome switch
         {
-            Done => current,
-            Unavailable => current,
+            ShapeObjectDeleted => current,
+            PlatformUnavailable => current,
         };
     }
-
-    private static Result<ShapeRecord, Unavailable> Winner(ShapeRecord record) => record;
 
     private ShapeChunk Remember(string key, ShapeChunk chunk)
     {
@@ -201,8 +223,6 @@ public sealed class ShapeSealer(
         _chunks[key] = chunk;
         return chunk;
     }
-
-    private static Result<IReadOnlyList<ShapeRowEntry>, Unavailable> Rows(IReadOnlyList<ShapeRowEntry> rows) => new(rows);
 
     public static IReadOnlyList<ShapeOperation> Diff(IReadOnlyList<ShapeRowEntry> before, IReadOnlyList<ShapeRowEntry> after, bool filtered)
     {

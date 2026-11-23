@@ -34,7 +34,6 @@ namespace TerraScale.Dashboard.Features.Usage
         IReadOnlyList<UsageProjectRow> Projects, IReadOnlyList<UsageDatabaseRow> Databases, IReadOnlyList<UsageAllowance> Allowances,
         string PlanName, UsageReading? Scope, AnalyticsLinePlot? History, string UsageSource, string UsageError, string AllowanceError, bool OrganizationStorageMeasured)
     {
-        // Set when a plan without overage billing has used its monthly operation units: TerraBase refuses new writes.
         public string WritesPaused { get; init; } = "";
         public InternalBill? InternalBill { get; init; }
         public BillingPlan? Plan { get; init; }
@@ -174,7 +173,6 @@ namespace TerraScale.Dashboard.Features.Usage
 
     public static class UsageCounters
     {
-        // Null when any counter is unknown or the total overflows: a partial sum is never shown as a total.
         public static long? Sum(IEnumerable<long?> counters)
         {
             long total = 0;

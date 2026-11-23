@@ -6,6 +6,8 @@ using System.Text.Json;
 
 namespace TerraBase.Cluster;
 
+public readonly union PeerDiscoveryOutcome(IReadOnlyList<PeerNodeInfo>, ClusterConfigurationError);
+
 public static class PeerMeshDiscovery
 {
     public const string OrchestratorPeersPath = "/run/ts-orch/peers.json";
@@ -16,7 +18,7 @@ public static class PeerMeshDiscovery
     private static readonly SearchValues<char> SegmentCharacters =
         SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.");
 
-    public static Result<IReadOnlyList<PeerNodeInfo>, Validation> Discover(string? peersFile, int defaultQuicPort, int defaultInternalHttpPort)
+    public static PeerDiscoveryOutcome Discover(string? peersFile, int defaultQuicPort, int defaultInternalHttpPort)
     {
         if (File.Exists(OrchestratorPeersPath))
         {
@@ -26,17 +28,17 @@ public static class PeerMeshDiscovery
         return string.IsNullOrWhiteSpace(peersFile) ? Array.Empty<PeerNodeInfo>() : Load(peersFile, defaultQuicPort, defaultInternalHttpPort);
     }
 
-    public static Result<IReadOnlyList<PeerNodeInfo>, Validation> Load(string path, int defaultQuicPort, int defaultInternalHttpPort)
+    public static PeerDiscoveryOutcome Load(string path, int defaultQuicPort, int defaultInternalHttpPort)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         return ClusterFiles.ReadBytes(path) switch
         {
             byte[] content => Parse(content, defaultQuicPort, defaultInternalHttpPort),
-            Validation invalid => invalid,
+            ClusterConfigurationError invalid => invalid,
         };
     }
 
-    public static Result<IReadOnlyList<PeerNodeInfo>, Validation> Parse(ReadOnlySpan<byte> content, int defaultQuicPort, int defaultInternalHttpPort)
+    public static PeerDiscoveryOutcome Parse(ReadOnlySpan<byte> content, int defaultQuicPort, int defaultInternalHttpPort)
     {
         var trimmed = content.Trim(" \t\r\n"u8);
         if (trimmed.IsEmpty)
@@ -49,7 +51,7 @@ public static class PeerMeshDiscovery
             : ParseLines(Encoding.UTF8.GetString(trimmed), defaultQuicPort, defaultInternalHttpPort);
     }
 
-    public static Result<IReadOnlyList<PeerNodeInfo>, Validation> ParseLines(string text, int defaultQuicPort, int defaultInternalHttpPort)
+    public static PeerDiscoveryOutcome ParseLines(string text, int defaultQuicPort, int defaultInternalHttpPort)
     {
         ArgumentNullException.ThrowIfNull(text);
         List<PeerNodeInfo> peers = [];
@@ -82,7 +84,7 @@ public static class PeerMeshDiscovery
         return Distinct(peers);
     }
 
-    public static Result<IReadOnlyList<PeerNodeInfo>, Validation> ParseJson(ReadOnlySpan<byte> json, int defaultQuicPort, int defaultInternalHttpPort)
+    public static PeerDiscoveryOutcome ParseJson(ReadOnlySpan<byte> json, int defaultQuicPort, int defaultInternalHttpPort)
     {
         var document = OpenJson(json);
         if (document is null)
@@ -197,10 +199,10 @@ public static class PeerMeshDiscovery
 
     private static bool ValidSegment(string value) => !value.AsSpan().ContainsAnyExcept(SegmentCharacters);
 
-    private static Result<IReadOnlyList<PeerNodeInfo>, Validation> Distinct(List<PeerNodeInfo> peers) =>
+    private static PeerDiscoveryOutcome Distinct(List<PeerNodeInfo> peers) =>
         peers.Select(static peer => peer.NodeId).Distinct(StringComparer.Ordinal).Count() == peers.Count
             ? peers
             : Invalid("peer node ids must be unique");
 
-    private static Validation Invalid(string message) => new(message, "cluster_peers");
+    private static ClusterConfigurationError Invalid(string message) => new(message, "cluster_peers");
 }

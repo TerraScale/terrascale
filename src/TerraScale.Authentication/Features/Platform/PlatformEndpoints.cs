@@ -6,7 +6,6 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -211,7 +210,7 @@ public sealed class DeleteOrganizationEndpoint(PlatformDirectory platform, Platf
         return await proofs.DeleteOrganizationAsync(caller, this.HttpContext.Request, this.RouteId("organization"), cancellationToken) switch
         {
             UserRecord user => await this.DeleteOrganizationAsync(user, cancellationToken),
-            Forbidden failure => ErrorResults.ToResult(failure),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
         };
     }
 
@@ -304,7 +303,7 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
     {
         return await (DeletionReceiptHeader.Read(this.HttpContext.Request) switch
         {
-            Validation invalid => Task.FromResult(ErrorResults.ToResult(invalid)),
+            AuthValidation invalid => Task.FromResult(ErrorResults.ToResult(invalid)),
             string { Length: 0 } => this.DeleteAccountAsync(caller, null, cancellationToken),
             string receipt => this.DeleteAccountAsync(caller, receipt, cancellationToken),
         });
@@ -315,7 +314,7 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
         return await proofs.DeleteAsync(caller, this.HttpContext.Request, receipt, cancellationToken) switch
         {
             StepUpConsumption consumed => await this.DeleteAccountAsync(consumed, receipt, cancellationToken),
-            Forbidden failure => ErrorResults.ToResult(failure),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
         };
     }
 

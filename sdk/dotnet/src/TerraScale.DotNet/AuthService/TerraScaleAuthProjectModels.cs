@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-/// <summary>A project tenant's sign-in methods. At least one of Passcode Password and MagicLink stays on; SignUpMode selects public, restricted or waitlist admission.</summary>
 public sealed record TerraScaleAuthProjectMethods(
     [property: JsonPropertyName("passcode")] bool Passcode,
     [property: JsonPropertyName("password")] bool Password,
@@ -11,9 +10,6 @@ public sealed record TerraScaleAuthProjectMethods(
     [property: JsonPropertyName("magic_link")] bool MagicLink = false,
     [property: JsonPropertyName("username")] bool Username = false);
 
-/// <summary>A project tenant's hosted-page branding. Null clears a value: LogoUrl is an https URL, ThemeColor is
-/// <c>#rrggbb</c> and Name is 1 to 64 characters. Name, LogoUrl, ThemeColor and EmailMessage also brand verification,
-/// sign-in and password-reset mail; the sender stays TerraScale.</summary>
 public sealed record TerraScaleAuthProjectBranding(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("logo_url")] string? LogoUrl,
@@ -24,21 +20,14 @@ public sealed record TerraScaleAuthProjectBranding(
     [property: JsonPropertyName("background_color"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BackgroundColor = null,
     [property: JsonPropertyName("text_color"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TextColor = null)
 {
-    /// <summary>Optional plain-text message in authentication emails: at most 500 characters, newlines allowed and no
-    /// other control characters. HTML and template expressions are shown as text, never executed. Omitted when null;
-    /// because a sent branding replaces the branding, leaving it null in an update clears it.</summary>
     [JsonPropertyName("email_message"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? EmailMessage { get; init; }
 }
 
-/// <summary>A labelled HTTPS footer link underneath the hosted authentication card.</summary>
 public sealed record TerraScaleAuthProjectFooterLink(
     [property: JsonPropertyName("label")] string Label,
     [property: JsonPropertyName("url")] string Url);
 
-/// <summary>Project redirect allowlist and absolute session duration, in seconds. An empty list adds no
-/// restriction to the OAuth client's exact registered redirects; the default duration is fourteen days.
-/// Redirect URLs must be absolute https URLs (http only on loopback), without userinfo or fragments.</summary>
 public sealed record TerraScaleAuthProjectConfiguration(
     [property: JsonPropertyName("redirect_urls")] IReadOnlyList<string> RedirectUrls,
     [property: JsonPropertyName("session_lifetime_seconds")] int SessionLifetimeSeconds = 1209600,
@@ -48,12 +37,10 @@ public sealed record TerraScaleAuthProjectConfiguration(
     [property: JsonPropertyName("inactivity_timeout_minutes")] int? InactivityTimeoutMinutes = null,
     [property: JsonPropertyName("single_session")] bool SingleSession = false);
 
-/// <summary>Counts of a project tenant's end users and OAuth clients.</summary>
 public sealed record TerraScaleAuthProjectCounts(
     [property: JsonPropertyName("users")] int Users,
     [property: JsonPropertyName("clients")] int Clients);
 
-/// <summary>A project tenant's settings, issuer and hosted sign-in URLs.</summary>
 public sealed record TerraScaleAuthProjectSettings(
     [property: JsonPropertyName("project_id")] string ProjectId,
     [property: JsonPropertyName("issuer")] string Issuer,
@@ -67,9 +54,6 @@ public sealed record TerraScaleAuthProjectSettings(
     [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null,
     [property: JsonPropertyName("organization_picker")] bool OrganizationPicker = false);
 
-/// <summary>A social sign-in provider of a project tenant.
-/// Unconfigured providers have null ClientId, Issuer, TeamId and KeyId. CallbackUrl is the redirect URL to register at
-/// the provider. The client secret is never returned.</summary>
 public sealed record TerraScaleAuthProjectProvider(
     [property: JsonPropertyName("provider")] string Provider,
     [property: JsonPropertyName("configured")] bool Configured,
@@ -81,8 +65,6 @@ public sealed record TerraScaleAuthProjectProvider(
     [property: JsonPropertyName("tenant")] string? Tenant = null,
     [property: JsonPropertyName("oauth2")] TerraScaleAuthProjectOAuth2? OAuth2 = null);
 
-/// <summary>PUT /providers/{provider} body. ClientSecret is required the first time; null keeps the stored secret.
-/// Apple takes TeamId, KeyId and the .p8 private key as ClientSecret; oidc takes an https Issuer.</summary>
 public sealed record TerraScaleAuthProjectProviderUpdate(
     [property: JsonPropertyName("client_id")] string ClientId,
     [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null,
@@ -92,11 +74,9 @@ public sealed record TerraScaleAuthProjectProviderUpdate(
     [property: JsonPropertyName("tenant"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tenant = null,
     [property: JsonPropertyName("oauth2"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectOAuth2? OAuth2 = null)
 {
-    /// <inheritdoc />
     public override string ToString() => "TerraScaleAuthProjectProviderUpdate { sensitive fields redacted }";
 }
 
-/// <summary>PUT /settings body. A null part is omitted from the request and stays unchanged.</summary>
 public sealed record TerraScaleAuthProjectSettingsUpdate(
     [property: JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectMethods? Methods = null,
     [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectBranding? Branding = null,
@@ -104,50 +84,36 @@ public sealed record TerraScaleAuthProjectSettingsUpdate(
     [property: JsonPropertyName("restrictions"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthRestrictions? Restrictions = null,
     [property: JsonPropertyName("organization_picker"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? OrganizationPicker = null);
 
-/// <summary>A project tenant end user. A disabled user cannot sign in.</summary>
 public sealed record TerraScaleAuthProjectUser(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("disabled")] bool Disabled)
 {
-    /// <summary>FirstName.</summary>
     [JsonPropertyName("first_name")]
     public string? FirstName { get; init; }
-    /// <summary>LastName.</summary>
     [JsonPropertyName("last_name")]
     public string? LastName { get; init; }
-    /// <summary>ImageUrl.</summary>
     [JsonPropertyName("image_url")]
     public string? ImageUrl { get; init; }
-    /// <summary>ExternalId.</summary>
     [JsonPropertyName("external_id")]
     public string? ExternalId { get; init; }
-    /// <summary>EmailVerified.</summary>
     [JsonPropertyName("email_verified")]
     public bool EmailVerified { get; init; }
-    /// <summary>PublicMetadata.</summary>
     [JsonPropertyName("public_metadata")]
     public JsonElement PublicMetadata { get; init; }
-    /// <summary>PrivateMetadata.</summary>
     [JsonPropertyName("private_metadata")]
     public JsonElement PrivateMetadata { get; init; }
-    /// <summary>UnsafeMetadata.</summary>
     [JsonPropertyName("unsafe_metadata")]
     public JsonElement UnsafeMetadata { get; init; }
 }
 
 
-/// <summary>One page of <c>GET /v1/{project}/users/export</c>. Next is the opaque cursor for the following page and null
-/// at the end. CreatedBefore is the creation cutoff fixed by the first page; this is a creation-cutoff scan, not a
-/// transaction snapshot.</summary>
 public sealed record TerraScaleAuthUserExportPage(
     [property: JsonPropertyName("items")] IReadOnlyList<TerraScaleAuthDirectoryUser> Items,
     [property: JsonPropertyName("next")] string? Next,
     [property: JsonPropertyName("created_before")] DateTimeOffset CreatedBefore);
 
-/// <summary>An exported end user: allowlisted public identity fields only, never passwords, MFA, sessions, tokens or keys.
-/// EmailVerified means email possession was proven at account creation; disabled users are included.</summary>
 public sealed record TerraScaleAuthDirectoryUser(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("email")] string Email,
@@ -156,14 +122,11 @@ public sealed record TerraScaleAuthDirectoryUser(
     [property: JsonPropertyName("disabled")] bool Disabled,
     [property: JsonPropertyName("linked_providers")] IReadOnlyList<TerraScaleAuthLinkedProvider> LinkedProviders);
 
-/// <summary>A verified social provider identity of an exported user: provider, public client id and subject. Provider
-/// credentials are never exported.</summary>
 public sealed record TerraScaleAuthLinkedProvider(
     [property: JsonPropertyName("provider")] string Provider,
     [property: JsonPropertyName("client_id")] string ClientId,
     [property: JsonPropertyName("subject")] string Subject);
 
-/// <summary>A live project tenant end-user session.</summary>
 public sealed record TerraScaleAuthProjectSession(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("user_id")] string UserId,
@@ -171,8 +134,6 @@ public sealed record TerraScaleAuthProjectSession(
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt);
 
-/// <summary>A project tenant OAuth client. ClientSecret is present only in the creation response of a
-/// confidential client; display it once and never log or persist the record.</summary>
 public sealed record TerraScaleAuthProjectOAuthClient(
     [property: JsonPropertyName("client_id")] string ClientId,
     [property: JsonPropertyName("name")] string Name,
@@ -184,13 +145,9 @@ public sealed record TerraScaleAuthProjectOAuthClient(
     [property: JsonPropertyName("allowed_audiences")] IReadOnlyList<string>? AllowedAudiences = null,
     [property: JsonPropertyName("token_lifetime_minutes")] int? TokenLifetimeMinutes = null)
 {
-    /// <inheritdoc />
     public override string ToString() => "TerraScaleAuthProjectOAuthClient { sensitive fields redacted }";
 }
 
-/// <summary>POST /clients body. Type is <c>public</c> or <c>confidential</c>; 1 to 10 absolute https redirect URIs
-/// (http only on localhost and loopback), without userinfo (embedded username or password) or fragments.
-/// Each URI must also exactly match the project's redirect allowlist when nonempty.</summary>
 public sealed record TerraScaleAuthProjectCreateOAuthClient(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("type")] string? Type,
@@ -199,8 +156,6 @@ public sealed record TerraScaleAuthProjectCreateOAuthClient(
     [property: JsonPropertyName("allowed_audiences")] IReadOnlyList<string>? AllowedAudiences = null,
     [property: JsonPropertyName("token_lifetime_minutes")] int? TokenLifetimeMinutes = null);
 
-/// <summary>PUT /clients/{client_id} body. Name and 1 to 10 redirect URIs with the same rules as creation;
-/// the client_id, type and secret stay unchanged.</summary>
 public sealed record TerraScaleAuthProjectUpdateOAuthClient(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris,
@@ -208,23 +163,17 @@ public sealed record TerraScaleAuthProjectUpdateOAuthClient(
     [property: JsonPropertyName("allowed_audiences")] IReadOnlyList<string>? AllowedAudiences = null,
     [property: JsonPropertyName("token_lifetime_minutes")] int? TokenLifetimeMinutes = null);
 
-/// <summary>POST /clients/{client_id}/secret/rotate body. GraceSeconds is 0 to 86400; null uses the producer
-/// default of 3600.</summary>
 public sealed record TerraScaleAuthProjectRotateOAuthClient(
     [property: JsonPropertyName("grace_seconds")] int? GraceSeconds = null);
 
-/// <summary>A rotated OAuth client secret. ClientSecret is answered exactly once; display it immediately and
-/// never log or persist the record.</summary>
 public sealed record TerraScaleAuthProjectClientSecret(
     [property: JsonPropertyName("client_id")] string ClientId,
     [property: JsonPropertyName("client_secret")] string ClientSecret,
     [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt)
 {
-    /// <inheritdoc />
     public override string ToString() => "TerraScaleAuthProjectClientSecret { sensitive fields redacted }";
 }
 
-/// <summary>Custom OAuth2 endpoints, scopes and dot-separated userinfo claim paths.</summary>
 public sealed record TerraScaleAuthProjectOAuth2(
     [property: JsonPropertyName("authorize_url")] string AuthorizeUrl,
     [property: JsonPropertyName("token_url")] string TokenUrl,

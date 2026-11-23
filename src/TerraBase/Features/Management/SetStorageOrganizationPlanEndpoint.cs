@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 internal sealed class SetStorageOrganizationPlanEndpoint(CatalogStore catalog, TimeProvider time)
-    : Endpoint<PlanInput, Result<OrganizationBody, Validation, Forbidden, NotFound, Unavailable>>
+    : Endpoint<PlanInput, OrganizationPlanResponse>
 {
     public override void Configure()
     {
@@ -18,6 +18,6 @@ internal sealed class SetStorageOrganizationPlanEndpoint(CatalogStore catalog, T
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<OrganizationBody, Validation, Forbidden, NotFound, Unavailable>> HandleAsync(PlanInput request, CancellationToken cancellationToken) =>
+    public override async ValueTask<OrganizationPlanResponse> HandleAsync(PlanInput request, CancellationToken cancellationToken) =>
         await PlanFlow.SetStorageOrganizationPlanAsync(HttpContext.Caller, catalog, time, request, cancellationToken);
 }

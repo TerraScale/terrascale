@@ -1,4 +1,3 @@
-using TerraScale.Results;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
@@ -12,53 +11,54 @@ public sealed class PlatformHttpClient(ServiceTransport transport)
 
     private static ClientJson Wire => ClientJson.Default;
 
-    public Task<Result<IReadOnlyList<TerraBaseFunctionInfo>, TerraBaseRefusal>> ListFunctionsAsync(ServiceCaller caller, string projectId, string database,
+    public Task<TerraBaseFunctionListOutcome> ListFunctionsAsync(ServiceCaller caller, string projectId, string database,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Get, Functions(projectId, database), Wire.IReadOnlyListTerraBaseFunctionInfo, cancellationToken);
+        transport.SendAsync<IReadOnlyList<TerraBaseFunctionInfo>, TerraBaseFunctionListOutcome>(caller, HttpMethod.Get, Functions(projectId, database), Wire.IReadOnlyListTerraBaseFunctionInfo, cancellationToken);
 
-    public Task<Result<TerraBaseFunctionInfo, TerraBaseRefusal>> GetFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
+    public Task<TerraBaseFunctionOutcome> GetFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Get, Function(projectId, database, name), Wire.TerraBaseFunctionInfo, cancellationToken);
+        transport.SendAsync<TerraBaseFunctionInfo, TerraBaseFunctionOutcome>(caller, HttpMethod.Get, Function(projectId, database, name), Wire.TerraBaseFunctionInfo, cancellationToken);
 
-    public Task<Result<IReadOnlyList<TerraBaseFunctionInvocation>, TerraBaseRefusal>> FunctionLogsAsync(ServiceCaller caller, string projectId, string database,
+    public Task<TerraBaseFunctionInvocationsOutcome> FunctionLogsAsync(ServiceCaller caller, string projectId, string database,
         string name, int? limit, CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/logs",
+        transport.SendAsync<IReadOnlyList<TerraBaseFunctionInvocation>, TerraBaseFunctionInvocationsOutcome>(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/logs",
             Query(("limit", limit?.ToString(CultureInfo.InvariantCulture)))), Wire.IReadOnlyListTerraBaseFunctionInvocation, cancellationToken);
 
-    public Task<Result<TerraBaseFunctionStats, TerraBaseRefusal>> FunctionStatsAsync(ServiceCaller caller, string projectId, string database, string name,
+    public Task<TerraBaseFunctionStatsOutcome> FunctionStatsAsync(ServiceCaller caller, string projectId, string database, string name,
         string? window, CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/stats", Query(("window", window))),
+        transport.SendAsync<TerraBaseFunctionStats, TerraBaseFunctionStatsOutcome>(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/stats", Query(("window", window))),
             Wire.TerraBaseFunctionStats, cancellationToken);
 
-    public Task<Result<Done, TerraBaseRefusal>> DeleteFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
+    public Task<TerraBaseActionOutcome> DeleteFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
         CancellationToken cancellationToken) =>
         transport.SendAsync(caller, HttpMethod.Delete, Function(projectId, database, name), null, cancellationToken);
 
-    public Task<Result<TerraBaseFunctionInfo, TerraBaseRefusal>> DeployFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
+    public Task<TerraBaseFunctionOutcome> DeployFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
         TerraBaseFunctionDeploy request, CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Put, Function(projectId, database, name), Json(request, Wire.TerraBaseFunctionDeploy), Wire.TerraBaseFunctionInfo, null,
+        transport.SendAsync<TerraBaseFunctionInfo, TerraBaseFunctionOutcome>(caller, HttpMethod.Put, Function(projectId, database, name), Json(request, Wire.TerraBaseFunctionDeploy), Wire.TerraBaseFunctionInfo, null,
             cancellationToken);
 
-    public Task<Result<IReadOnlyList<TerraBaseFunctionSecret>, TerraBaseRefusal>> ListSecretsAsync(ServiceCaller caller, string projectId, string database,
+    public Task<TerraBaseFunctionSecretsOutcome> ListSecretsAsync(ServiceCaller caller, string projectId, string database,
         string name, CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/secrets"), Wire.IReadOnlyListTerraBaseFunctionSecret,
+        transport.SendAsync<IReadOnlyList<TerraBaseFunctionSecret>, TerraBaseFunctionSecretsOutcome>(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/secrets"), Wire.IReadOnlyListTerraBaseFunctionSecret,
             cancellationToken);
 
-    public Task<Result<TerraBaseFunctionSecret, TerraBaseRefusal>> SetSecretAsync(ServiceCaller caller, string projectId, string database, string name, string secret,
+    public Task<TerraBaseFunctionSecretOutcome> SetSecretAsync(ServiceCaller caller, string projectId, string database, string name, string secret,
         TerraBaseFunctionSecretValue request, CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Put, string.Concat(Function(projectId, database, name), "/secrets/", Segment(secret)),
+        transport.SendAsync<TerraBaseFunctionSecret, TerraBaseFunctionSecretOutcome>(caller, HttpMethod.Put, string.Concat(Function(projectId, database, name), "/secrets/", Segment(secret)),
             Json(request, Wire.TerraBaseFunctionSecretValue), Wire.TerraBaseFunctionSecret, null, cancellationToken);
 
-    public Task<Result<Done, TerraBaseRefusal>> DeleteSecretAsync(ServiceCaller caller, string projectId, string database, string name, string secret,
+    public Task<TerraBaseActionOutcome> DeleteSecretAsync(ServiceCaller caller, string projectId, string database, string name, string secret,
         CancellationToken cancellationToken) =>
         transport.SendAsync(caller, HttpMethod.Delete, string.Concat(Function(projectId, database, name), "/secrets/", Segment(secret)), null, cancellationToken);
 
-    public async Task<Result<TerraBaseFunctionCall, TerraBaseRefusal>> InvokeFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
+    public async Task<TerraBaseFunctionCallOutcome> InvokeFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
         string body, IReadOnlyDictionary<string, string>? query, CancellationToken cancellationToken)
     {
         var path = string.Concat(Function(projectId, database, name), "/invoke", Query([.. (query ?? new Dictionary<string, string>()).Select(static pair => (pair.Key, (string?)pair.Value))]));
         var content = new StringContent(body, Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
-        return await transport.SendRawAsync(caller, HttpMethod.Post, path, content, null, cancellationToken) switch
+        var outcome = await transport.SendRawAsync(caller, HttpMethod.Post, path, content, null, cancellationToken);
+        return outcome switch
         {
             RawAnswer { FunctionResponse: true } answer => new TerraBaseFunctionCall(answer.Status, answer.ContentType, answer.Body),
             RawAnswer { Status: >= 200 and < 300 } answer => new TerraBaseFunctionCall(answer.Status, answer.ContentType, answer.Body),
@@ -67,48 +67,48 @@ public sealed class PlatformHttpClient(ServiceTransport transport)
         };
     }
 
-    public Task<Result<TerraBaseFileBucket, TerraBaseRefusal>> CreateBucketAsync(ServiceCaller caller, string projectId, string name, TerraBaseFileRules rules,
+    public Task<TerraBaseFileBucketOutcome> CreateBucketAsync(ServiceCaller caller, string projectId, string name, TerraBaseFileRules rules,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Post, Buckets(projectId), Json(new TerraBaseFileBucketRequest(name, rules), Wire.TerraBaseFileBucketRequest),
+        transport.SendAsync<TerraBaseFileBucket, TerraBaseFileBucketOutcome>(caller, HttpMethod.Post, Buckets(projectId), Json(new TerraBaseFileBucketRequest(name, rules), Wire.TerraBaseFileBucketRequest),
             Wire.TerraBaseFileBucket, null, cancellationToken);
 
-    public Task<Result<TerraBaseFileBucketPage, TerraBaseRefusal>> ListBucketsAsync(ServiceCaller caller, string projectId, string? after,
+    public Task<TerraBaseFileBucketPageOutcome> ListBucketsAsync(ServiceCaller caller, string projectId, string? after,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Get, string.Concat(Buckets(projectId), Query(("after", after))), Wire.TerraBaseFileBucketPage, cancellationToken);
+        transport.SendAsync<TerraBaseFileBucketPage, TerraBaseFileBucketPageOutcome>(caller, HttpMethod.Get, string.Concat(Buckets(projectId), Query(("after", after))), Wire.TerraBaseFileBucketPage, cancellationToken);
 
-    public Task<Result<TerraBaseFileBucket, TerraBaseRefusal>> SetBucketRulesAsync(ServiceCaller caller, string projectId, string bucketId, TerraBaseFileRules rules,
+    public Task<TerraBaseFileBucketOutcome> SetBucketRulesAsync(ServiceCaller caller, string projectId, string bucketId, TerraBaseFileRules rules,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Put, string.Concat(Bucket(projectId, bucketId), "/rules"),
+        transport.SendAsync<TerraBaseFileBucket, TerraBaseFileBucketOutcome>(caller, HttpMethod.Put, string.Concat(Bucket(projectId, bucketId), "/rules"),
             Json(new TerraBaseFileRulesRequest(rules), Wire.TerraBaseFileRulesRequest), Wire.TerraBaseFileBucket, null, cancellationToken);
 
-    public Task<Result<Done, TerraBaseRefusal>> DeleteBucketAsync(ServiceCaller caller, string projectId, string bucketId, CancellationToken cancellationToken) =>
+    public Task<TerraBaseActionOutcome> DeleteBucketAsync(ServiceCaller caller, string projectId, string bucketId, CancellationToken cancellationToken) =>
         transport.SendAsync(caller, HttpMethod.Delete, Bucket(projectId, bucketId), null, cancellationToken);
 
-    public Task<Result<TerraBaseFileUrl, TerraBaseRefusal>> CreateUploadAsync(ServiceCaller caller, string projectId, string bucketId,
+    public Task<TerraBaseFileUrlOutcome> CreateUploadAsync(ServiceCaller caller, string projectId, string bucketId,
         TerraBaseFileUpload upload, CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Post, string.Concat(Bucket(projectId, bucketId), "/files/upload"), Json(upload, Wire.TerraBaseFileUpload),
+        transport.SendAsync<TerraBaseFileUrl, TerraBaseFileUrlOutcome>(caller, HttpMethod.Post, string.Concat(Bucket(projectId, bucketId), "/files/upload"), Json(upload, Wire.TerraBaseFileUpload),
             Wire.TerraBaseFileUrl, null, cancellationToken);
 
-    public Task<Result<TerraBaseStoredFile, TerraBaseRefusal>> CompleteUploadAsync(ServiceCaller caller, string projectId, string bucketId, string fileId,
+    public Task<TerraBaseStoredFileOutcome> CompleteUploadAsync(ServiceCaller caller, string projectId, string bucketId, string fileId,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Post, string.Concat(File(projectId, bucketId, fileId), "/complete"), null, Wire.TerraBaseStoredFile, null,
+        transport.SendAsync<TerraBaseStoredFile, TerraBaseStoredFileOutcome>(caller, HttpMethod.Post, string.Concat(File(projectId, bucketId, fileId), "/complete"), null, Wire.TerraBaseStoredFile, null,
             cancellationToken);
 
-    public Task<Result<TerraBaseStoredFilePage, TerraBaseRefusal>> ListFilesAsync(ServiceCaller caller, string projectId, string bucketId, string? after,
+    public Task<TerraBaseStoredFilePageOutcome> ListFilesAsync(ServiceCaller caller, string projectId, string bucketId, string? after,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Get, string.Concat(Bucket(projectId, bucketId), "/files", Query(("after", after))), Wire.TerraBaseStoredFilePage,
+        transport.SendAsync<TerraBaseStoredFilePage, TerraBaseStoredFilePageOutcome>(caller, HttpMethod.Get, string.Concat(Bucket(projectId, bucketId), "/files", Query(("after", after))), Wire.TerraBaseStoredFilePage,
             cancellationToken);
 
-    public Task<Result<TerraBaseFileUrl, TerraBaseRefusal>> CreateDownloadAsync(ServiceCaller caller, string projectId, string bucketId, string fileId,
+    public Task<TerraBaseFileUrlOutcome> CreateDownloadAsync(ServiceCaller caller, string projectId, string bucketId, string fileId,
         CancellationToken cancellationToken) =>
-        transport.SendAsync(caller, HttpMethod.Post, string.Concat(File(projectId, bucketId, fileId), "/download"), null, Wire.TerraBaseFileUrl, null,
+        transport.SendAsync<TerraBaseFileUrl, TerraBaseFileUrlOutcome>(caller, HttpMethod.Post, string.Concat(File(projectId, bucketId, fileId), "/download"), null, Wire.TerraBaseFileUrl, null,
             cancellationToken);
 
-    public Task<Result<Done, TerraBaseRefusal>> DeleteFileAsync(ServiceCaller caller, string projectId, string bucketId, string fileId,
+    public Task<TerraBaseActionOutcome> DeleteFileAsync(ServiceCaller caller, string projectId, string bucketId, string fileId,
         CancellationToken cancellationToken) =>
         transport.SendAsync(caller, HttpMethod.Delete, File(projectId, bucketId, fileId), null, cancellationToken);
 
-    public Task<Result<RawAnswer, TerraBaseRefusal>> HealthAsync(CancellationToken cancellationToken) =>
+    public Task<TerraBaseRawOutcome> HealthAsync(CancellationToken cancellationToken) =>
         transport.SendRawAsync(ServiceCaller.Operator, HttpMethod.Get, "/healthz", null, null, cancellationToken);
 
     private static string Functions(string projectId, string database) =>

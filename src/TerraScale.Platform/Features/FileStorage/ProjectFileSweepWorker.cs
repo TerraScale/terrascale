@@ -44,9 +44,9 @@ public sealed class ProjectFileSweepWorker(
         var known = await store.ReadAsync(SqlValues.Statement(ProjectFileErasure.RegionsQuery), cancellationToken);
         var regions = known switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => ProjectFileErasure.Regions(results[0]),
-            Conflict conflict => Deferred<string>(conflict.Message),
-            Unavailable unavailable => Deferred<string>(unavailable.Message),
+            SqlExecuteResponse { Results: var results } => ProjectFileErasure.Regions(results[0]),
+            PlatformConflict conflict => Deferred<string>(conflict.Message),
+            PlatformUnavailable unavailable => Deferred<string>(unavailable.Message),
         };
         if (regions.Count == 0)
         {
@@ -61,15 +61,15 @@ public sealed class ProjectFileSweepWorker(
                 SqlValues.Text(after), SqlValues.Number(PageSize)), cancellationToken);
             IReadOnlyList<SqlRow> projects = page switch
             {
-                IReadOnlyList<SqlHttpStatementResult> results => results[0].RowsOf().ToArray(),
-                Conflict conflict => Deferred<SqlRow>(conflict.Message),
-                Unavailable unavailable => Deferred<SqlRow>(unavailable.Message),
+                SqlExecuteResponse { Results: var results } => results[0].RowsOf().ToArray(),
+                PlatformConflict conflict => Deferred<SqlRow>(conflict.Message),
+                PlatformUnavailable unavailable => Deferred<SqlRow>(unavailable.Message),
             };
             foreach (var row in projects)
             {
                 after = row.Text(0);
                 var erased = await erasure.SweepAsync(Ulid.Parse(after), Ulid.Parse(row.Text(1)), regions, cancellationToken);
-                var failure = erased switch { Done => null, Unavailable unavailable => unavailable };
+                var failure = erased switch { ProjectPrefixErased => null, PlatformUnavailable unavailable => unavailable };
                 if (failure is not null)
                 {
                     logger.ZLogWarning($"Closed project {after} file sweep deferred: {failure.Message}");

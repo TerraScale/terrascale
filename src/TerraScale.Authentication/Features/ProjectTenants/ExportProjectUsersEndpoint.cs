@@ -6,7 +6,6 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Storage;
@@ -50,7 +49,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         var format = this.HttpContext.Request.Query["format"].ToString();
         if (format is not ("" or "json" or "csv"))
         {
-            return ErrorResults.ToResult(new Validation("format must be json or csv."));
+            return ErrorResults.ToResult(new AuthValidation("format must be json or csv."));
         }
 
         var cutoff = clock.GetUtcNow();
@@ -69,13 +68,13 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             }
             catch (Exception error) when (error is FormatException or JsonException)
             {
-                return ErrorResults.ToResult(new Validation("after must be a cursor from this export."));
+                return ErrorResults.ToResult(new AuthValidation("after must be a cursor from this export."));
             }
         }
 
         if (position is not null && !PlatformDirectory.IsId(position))
         {
-            return ErrorResults.ToResult(new Validation("after must be a cursor from this project's export."));
+            return ErrorResults.ToResult(new AuthValidation("after must be a cursor from this project's export."));
         }
 
         var from = position ?? string.Empty;

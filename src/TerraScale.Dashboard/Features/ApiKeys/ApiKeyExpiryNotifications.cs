@@ -4,8 +4,6 @@ using TerraScale.Dashboard.Common.Formatting;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
 {
-    // A key that expires within seven days puts one notification in each viewer's inbox. ts-auth's key list is the
-    // source; the account's persisted notifications hold the item, one per key (its expiry cannot change).
     public static class ApiKeyExpiryNotifications
     {
         public const string Type = "api-key-expiring";
@@ -36,13 +34,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
 
             NotificationRecord[] added = [];
-            // The notice never blocks the page that found it; the next view retries.
             try { await accounts.UpdateAccountAsync(context.Session, account => account.Notifications.AddRange(added = Due(context, keys, account.Notifications, now)), cancellationToken); }
             catch (Exception error) when (error is HttpRequestException or AccountAccessException or IOException or JsonException) { return; }
             context.Account.Notifications.AddRange(added);
         }
 
-        // The inbox lists live keys too: a ts-auth outage leaves it as it was.
         public static async Task RefreshAsync(HttpContext http, AccountContext context)
         {
             if (context.Project is null)

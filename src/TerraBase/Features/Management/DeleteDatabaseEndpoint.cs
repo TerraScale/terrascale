@@ -27,20 +27,23 @@ internal sealed class DeleteDatabaseEndpoint(DatabaseAccess access, ManagementSe
 internal static class DatabaseDeletion
 {
     public static async ValueTask<DeleteDatabaseResponse> DeleteAsync(
-        Caller caller, DatabaseAccess access, ManagementService management, DatabaseInput request, CancellationToken cancellationToken) =>
-        await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken) switch
+        Caller caller, DatabaseAccess access, ManagementService management, DatabaseInput request, CancellationToken cancellationToken)
+    {
+        var outcome = await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved when request.ExpectedId is { } expected && !string.Equals(expected, resolved.Database.Id.ToString(), StringComparison.Ordinal) =>
-                new PreconditionFailed("the database's id is not the expected one", "database_id_mismatch"),
+                new DatabaseIdMismatch(),
             ResolvedDatabase resolved => await management.DeleteDatabaseAsync(resolved.Database, cancellationToken) switch
             {
-                Done done => done,
-                Unavailable unavailable => unavailable,
+                Completed done => done,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 }

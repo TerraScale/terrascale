@@ -954,7 +954,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
     internal static ApiException PlatformProjectProtected() =>
         Conflict("platform_project_protected", "This project holds a TerraScale service's own database and cannot be deleted.");
 
-    internal static NotFound NotFoundFailure() => new("No such resource.", "not_found");
+    internal static AuthNotFound NotFoundFailure() => new("No such resource.", "not_found");
 
     internal static Change Authority(OrganizationAccess access)
     {

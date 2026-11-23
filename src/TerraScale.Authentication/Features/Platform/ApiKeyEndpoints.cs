@@ -1,7 +1,6 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
@@ -242,7 +241,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         return await proofs.ConsumeAsync(caller, StepUpProofs.Proof(this.HttpContext.Request), "rotate_api_key", "ts-auth", null, cancellationToken) switch
         {
             StepUpConsumption rotation => await this.RotateAsync(rotation.Caller, ttl, cancellationToken),
-            Forbidden failure => ErrorResults.ToResult(failure),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
         };
     }
 

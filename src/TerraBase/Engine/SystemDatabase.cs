@@ -1,8 +1,15 @@
 using TerraBase.Configuration;
+using TerraBase.Hosting;
 using TerraBase.Storage;
 using TerraScale.Contracts.Cluster;
 
 namespace TerraBase.Engine;
+
+internal readonly union SystemSetupOutcome(Completed, ConfigurationError);
+
+internal readonly union SystemQueryOutcome(IReadOnlyList<IReadOnlyList<SqlValue>>, BackendUnavailable);
+
+internal readonly union SystemWriteOutcome(SqlWriteResult, StateConflict, BackendUnavailable);
 
 internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring keyring, IClusterCoordinator coordinator, TerraBaseOptions options, TimeProvider time)
 {
@@ -40,7 +47,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         registry.Register(Id, "usage_counters", "value");
     }
 
-    public async ValueTask<Result<Done, ConfigurationError>> OpenAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
+    public async ValueTask<SystemSetupOutcome> OpenAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
     {
         var keyFile = Path.Combine(options.DataDirectory, KeyIdFile);
         var keyId = KeyId;
@@ -48,17 +55,17 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             ? await databases.OpenAsync(Id, keyId, cancellationToken) switch
             {
                 ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, sync, cancellationToken),
-                NotFound => new ConfigurationError("the system catalog is missing from a data-directory that already holds one; restore it before starting"),
-                Unavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
+                ResourceNotFound => new ConfigurationError("the system catalog is missing from a data-directory that already holds one; restore it before starting"),
+                BackendUnavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
             }
             : await databases.OpenOrCreateAsync(Id, keyId, strict: false, cancellationToken) switch
             {
                 ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, sync, cancellationToken),
-                Unavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
+                BackendUnavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
             };
     }
 
-    private async ValueTask<Result<Done, ConfigurationError>> InitializeAsync(
+    private async ValueTask<SystemSetupOutcome> InitializeAsync(
         ISqlDatabaseSession session, string keyFile, string keyId, bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
     {
         _session = session;
@@ -70,39 +77,41 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         return await EnsureSchemaAsync(bootstrap, sync, cancellationToken);
     }
 
-    public async ValueTask<Result<IReadOnlyList<IReadOnlyList<SqlValue>>, Unavailable>> QueryAsync(SqlStatement statement, CancellationToken cancellationToken)
+    public async ValueTask<SystemQueryOutcome> QueryAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(Id, [statement], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
-        return await Session.ExecuteReadAsync(request, cancellationToken) switch
+        var outcome = await Session.ExecuteReadAsync(request, cancellationToken);
+        return outcome switch
         {
             SqlReadResult read => Rows(read.ResultSets),
-            SqlError error => new Unavailable(error.Message, "system_catalog_error"),
-            StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
-            RequestTimeout timeout => new Unavailable(timeout.Message, "system_catalog_timeout"),
+            SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
+            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
+            StorageTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
         };
     }
 
-    public async ValueTask<Result<SqlWriteResult, Conflict, Unavailable>> WriteAsync(
+    public async ValueTask<SystemWriteOutcome> WriteAsync(
         IReadOnlyList<SqlStatement> statements, ConsistencyMode mode, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, mode, CausalBookmark.Empty);
-        return await coordinator.ExecuteWriteAsync(Session, request, cancellationToken) switch
+        var outcome = await coordinator.ExecuteWriteAsync(Session, request, cancellationToken);
+        return outcome switch
         {
             SqlWriteResult written => written,
-            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new Conflict(error.Message, "already_exists"),
-            SqlError error => new Unavailable(error.Message, "system_catalog_error"),
-            SerializationConflict conflict => new Conflict(conflict.Reason, "serialization_conflict"),
-            SchemaMismatch => new Unavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
-            Unavailable unavailable => unavailable,
-            RequestTimeout timeout => new Unavailable(timeout.Message, "system_catalog_timeout"),
-            StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
+            SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
+            SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
+            SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
+            ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
+            ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
+            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
         };
     }
 
-    public ValueTask<Result<SqlWriteResult, Conflict, Unavailable>> WriteAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
+    public ValueTask<SystemWriteOutcome> WriteAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
         WriteAsync([statement], mode, cancellationToken);
 
-    private static Result<IReadOnlyList<IReadOnlyList<SqlValue>>, Unavailable> Rows(IReadOnlyList<SqlResultSet> sets) =>
+    private static SystemQueryOutcome Rows(IReadOnlyList<SqlResultSet> sets) =>
         sets.Count == 0 ? new([]) : new(sets[^1].Rows);
 
     private static ConfigurationError? WriteKeyId(string path, string keyId)
@@ -122,7 +131,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         }
     }
 
-    private async ValueTask<Result<Done, ConfigurationError>> EnsureSchemaAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
+    private async ValueTask<SystemSetupOutcome> EnsureSchemaAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
     {
         while (true)
         {
@@ -131,10 +140,10 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
                 await sync(cancellationToken);
             }
 
-            Result<Done, ConfigurationError>? settled = await QueryAsync(SqlBuild.Statement("SELECT name FROM sqlite_schema WHERE type = 'table'"), cancellationToken) switch
+            SystemSetupOutcome? settled = await QueryAsync(SqlBuild.Statement("SELECT name FROM sqlite_schema WHERE type = 'table'"), cancellationToken) switch
             {
                 IReadOnlyList<IReadOnlyList<SqlValue>> rows => await SettleAsync(Missing([.. rows.Select(static row => row.TextAt(0))]), bootstrap, cancellationToken),
-                Unavailable failure => new ConfigurationError(string.Concat("the system database schema could not be read: ", failure.Message)),
+                BackendUnavailable failure => new ConfigurationError(string.Concat("the system database schema could not be read: ", failure.Message)),
             };
             if (settled is { } outcome)
             {
@@ -148,11 +157,11 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
     private static SqlStatement[] Missing(HashSet<string> present) =>
         [.. Tables.Where(table => !present.Contains(table.Table)).Select(static table => SqlBuild.Statement(table.Sql))];
 
-    private async ValueTask<Result<Done, ConfigurationError>?> SettleAsync(SqlStatement[] missing, bool bootstrap, CancellationToken cancellationToken)
+    private async ValueTask<SystemSetupOutcome?> SettleAsync(SqlStatement[] missing, bool bootstrap, CancellationToken cancellationToken)
     {
         if (missing.Length == 0)
         {
-            return new Done();
+            return new Completed();
         }
 
         if (!bootstrap)
@@ -160,12 +169,13 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             return null;
         }
 
-        return await WriteAsync(missing, ConsistencyMode.Strong, cancellationToken) switch
+        var outcome = await WriteAsync(missing, ConsistencyMode.Strong, cancellationToken);
+        return outcome switch
         {
-            SqlWriteResult => new Done(),
-            Unavailable { Code: "strong_quorum_unreachable" } => null,
-            Conflict conflict => new ConfigurationError(string.Concat("the system database schema could not be created: ", conflict.Message)),
-            Unavailable unavailable => new ConfigurationError(string.Concat("the system database schema could not be created: ", unavailable.Message)),
+            SqlWriteResult => new Completed(),
+            BackendUnavailable { Code: "strong_quorum_unreachable" } => null,
+            StateConflict conflict => new ConfigurationError(string.Concat("the system database schema could not be created: ", conflict.Message)),
+            BackendUnavailable unavailable => new ConfigurationError(string.Concat("the system database schema could not be created: ", unavailable.Message)),
         };
     }
 }

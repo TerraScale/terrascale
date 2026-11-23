@@ -4,7 +4,6 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    /// <summary>Read-only Stripe configuration audit using the official Stripe.net V1 client.</summary>
     public sealed class StripeAuditCommand(IDashboardIdentity identity,
         Func<string, StripeClient>? clientFactory = null, TextWriter? output = null, TextWriter? error = null)
     {

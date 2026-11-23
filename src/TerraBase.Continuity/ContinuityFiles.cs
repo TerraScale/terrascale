@@ -45,11 +45,19 @@ internal sealed class StorageLayout(StorageEngineOptions storage)
                 SealedSegmentExtension));
 }
 
+internal sealed record ContinuityFilesChanged;
+
+internal sealed record ContinuityIoFailure(string Message, string Code);
+
+internal readonly union ContinuityFileOutcome(ContinuityFilesChanged, ContinuityIoFailure);
+
+internal readonly union ContinuityFileListOutcome(IReadOnlyList<string>, ContinuityIoFailure);
+
 internal static class ContinuityFiles
 {
-    public static Result<Done, Unavailable> CreateDirectory(string path) => Run(() => Directory.CreateDirectory(path));
+    public static ContinuityFileOutcome CreateDirectory(string path) => Run(() => Directory.CreateDirectory(path));
 
-    public static Result<Done, Unavailable> DeleteDirectory(string path) => Run(() =>
+    public static ContinuityFileOutcome DeleteDirectory(string path) => Run(() =>
     {
         if (Directory.Exists(path))
         {
@@ -57,21 +65,21 @@ internal static class ContinuityFiles
         }
     });
 
-    public static Result<Done, Unavailable> MoveDirectory(string source, string destination) => Run(() => Directory.Move(source, destination));
+    public static ContinuityFileOutcome MoveDirectory(string source, string destination) => Run(() => Directory.Move(source, destination));
 
-    public static Result<Done, Unavailable> MoveFile(string source, string destination) => Run(() => File.Move(source, destination, overwrite: false));
+    public static ContinuityFileOutcome MoveFile(string source, string destination) => Run(() => File.Move(source, destination, overwrite: false));
 
-    public static Result<Done, Unavailable> CopyFile(string source, string destination) => Run(() => File.Copy(source, destination, overwrite: false));
+    public static ContinuityFileOutcome CopyFile(string source, string destination) => Run(() => File.Copy(source, destination, overwrite: false));
 
-    public static Result<Done, Unavailable> DeleteFile(string path) => Run(() => File.Delete(path));
+    public static ContinuityFileOutcome DeleteFile(string path) => Run(() => File.Delete(path));
 
-    public static Result<IReadOnlyList<string>, Unavailable> ListFiles(string directory, string pattern) =>
+    public static ContinuityFileListOutcome ListFiles(string directory, string pattern) =>
         List(directory, () => [.. Directory.EnumerateFiles(directory, pattern)]);
 
-    public static Result<IReadOnlyList<string>, Unavailable> ListDirectories(string directory) =>
+    public static ContinuityFileListOutcome ListDirectories(string directory) =>
         List(directory, () => [.. Directory.EnumerateDirectories(directory)]);
 
-    private static Result<IReadOnlyList<string>, Unavailable> List(string directory, Func<IReadOnlyList<string>> enumerate)
+    private static ContinuityFileListOutcome List(string directory, Func<IReadOnlyList<string>> enumerate)
     {
         if (!Directory.Exists(directory))
         {
@@ -91,15 +99,15 @@ internal static class ContinuityFiles
             return Failure(exception.Message);
         }
 
-        static Result<IReadOnlyList<string>, Unavailable> Listed(IReadOnlyList<string> files) => files;
+        static ContinuityFileListOutcome Listed(IReadOnlyList<string> files) => files;
     }
 
-    private static Result<Done, Unavailable> Run(Action action)
+    private static ContinuityFileOutcome Run(Action action)
     {
         try
         {
             action();
-            return new Done();
+            return new ContinuityFilesChanged();
         }
         catch (IOException exception)
         {
@@ -111,5 +119,5 @@ internal static class ContinuityFiles
         }
     }
 
-    private static Unavailable Failure(string message) => new(string.Concat("local file operation failed: ", message), "continuity_io");
+    private static ContinuityIoFailure Failure(string message) => new(string.Concat("local file operation failed: ", message), "continuity_io");
 }

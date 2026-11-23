@@ -1,11 +1,19 @@
 namespace TerraScale.Platform.Features.FileStorage;
 
+public readonly union ResolveFileScopeOutcome(
+    FileScope,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public static class FileScopes
 {
-    private static readonly Validation BadQuery = new("only after (a canonical ULID) is accepted");
-    private static readonly Forbidden Restricted = new("an unrestricted project token is required", "forbidden");
+    private static readonly PlatformInvalidRequest BadQuery = new("only after (a canonical ULID) is accepted");
+    private static readonly PlatformForbidden Restricted = new("an unrestricted project token is required", "forbidden");
 
-    public static async ValueTask<Result<FileScope, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ResolveAsync(
+    public static async ValueTask<ResolveFileScopeOutcome> ResolveAsync(
         PlatformAccess access,
         HttpContext context,
         string project,
@@ -19,14 +27,15 @@ public static class FileScopes
             return BadQuery;
         }
 
-        return await access.ProjectAsync(context, project, scopes, cancellationToken) switch
+        var outcome = await access.ProjectAsync(context, project, scopes, cancellationToken);
+        return outcome switch
         {
             AccessContext { Grant.DatabaseRestricted: true } => Restricted,
             AccessContext granted => new FileScope(granted.Organization, granted.Project, granted),
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 }

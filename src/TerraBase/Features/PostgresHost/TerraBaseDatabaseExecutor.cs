@@ -1,11 +1,14 @@
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Rules;
 using TerraBase.Features.Sql;
+using TerraBase.Hosting;
 using TerraBase.Postgres.Hosting;
 using TerraScale.Contracts.Cluster;
 using TerraScale.Contracts.Continuity;
 
 namespace TerraBase.Features.PostgresHost;
+
+internal readonly union PostgresRequestPreparation(SqlStatementRequest, SqlError);
 
 internal sealed class TerraBaseDatabaseExecutor(
     ResolvedDatabase target, ISqlDatabaseSession session, IClusterCoordinator coordinator, RulesEnforcer rules, SqlRunner runner) : IPostgresDatabaseExecutor
@@ -14,58 +17,73 @@ internal sealed class TerraBaseDatabaseExecutor(
 
     public CausalBookmark CurrentBookmark => coordinator.CurrentBookmark(session.DatabaseId).Merge(session.CurrentBookmark);
 
-    public async ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ReadAsync(SqlStatementRequest request, CancellationToken cancellationToken)
+    public async ValueTask<SqlReadOutcome> ReadAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await PrepareAsync(request, cancellationToken) switch
+        var prepared = await PrepareAsync(request, cancellationToken);
+        return prepared switch
         {
-            SqlStatementRequest prepared => await session.ExecuteReadAsync(prepared, cancellationToken) switch
-            {
-                SqlReadResult read => Metered(read),
-                SqlError error => error,
-                StorageBusy busy => busy,
-                RequestTimeout timeout => timeout,
-            },
+            SqlStatementRequest ready => await ReadPreparedAsync(ready, cancellationToken),
             SqlError error => error,
         };
     }
 
-    public async ValueTask<Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> WriteAsync(
-        SqlStatementRequest request, CancellationToken cancellationToken)
+    public async ValueTask<ClusterWriteOutcome> WriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await PrepareAsync(request, cancellationToken) switch
+        var prepared = await PrepareAsync(request, cancellationToken);
+        return prepared switch
         {
-            SqlStatementRequest prepared => await coordinator.ExecuteWriteAsync(session, prepared, cancellationToken) switch
-            {
-                SqlWriteResult written => Metered(written),
-                SqlError error => error,
-                SerializationConflict conflict => conflict,
-                SchemaMismatch mismatch => mismatch,
-                Unavailable unavailable => unavailable,
-                RequestTimeout timeout => timeout,
-                StorageBusy busy => busy,
-            },
+            SqlStatementRequest ready => await WritePreparedAsync(ready, cancellationToken),
             SqlError error => error,
         };
     }
 
-    public async ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken) =>
-        await coordinator.BeginTransactionAsync(session, options, cancellationToken) switch
+    public async ValueTask<ClusterBeginTransactionOutcome> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken)
+    {
+        var begun = await coordinator.BeginTransactionAsync(session, options, cancellationToken);
+        return begun switch
         {
             ISqlTransaction transaction => Transaction(target.EndUser is { } auth ? new RulesTransaction(transaction, target.Database.Id, auth, rules) : transaction),
             StorageBusy busy => busy,
-            RequestTimeout timeout => timeout,
+            ClusterTimeout timeout => timeout,
         };
+    }
 
-    public ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitAsync(
-        ISqlTransaction transaction, CancellationToken cancellationToken) =>
+    public ValueTask<ClusterCommitTransactionOutcome> CommitAsync(ISqlTransaction transaction, CancellationToken cancellationToken) =>
         coordinator.CommitTransactionAsync(session, transaction is RulesTransaction wrapped ? wrapped.Inner : transaction, cancellationToken);
 
     public IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, CancellationToken cancellationToken) =>
         session.SubscribeChangesAsync(after, cancellationToken);
 
-    private static Result<ISqlTransaction, StorageBusy, RequestTimeout> Transaction(ISqlTransaction transaction) => new(transaction);
+    private static ClusterBeginTransactionOutcome Transaction(ISqlTransaction transaction) => new(transaction);
+
+    private async ValueTask<SqlReadOutcome> ReadPreparedAsync(SqlStatementRequest request, CancellationToken cancellationToken)
+    {
+        var read = await session.ExecuteReadAsync(request, cancellationToken);
+        return read switch
+        {
+            SqlReadResult result => Metered(result),
+            SqlError error => error,
+            StorageBusy busy => busy,
+            StorageTimeout timeout => timeout,
+        };
+    }
+
+    private async ValueTask<ClusterWriteOutcome> WritePreparedAsync(SqlStatementRequest request, CancellationToken cancellationToken)
+    {
+        var written = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
+        return written switch
+        {
+            SqlWriteResult result => Metered(result),
+            SqlError error => error,
+            SerializationConflict conflict => conflict,
+            SchemaMismatch mismatch => mismatch,
+            ClusterUnavailable unavailable => unavailable,
+            ClusterTimeout timeout => timeout,
+            StorageBusy busy => busy,
+        };
+    }
 
     private SqlReadResult Metered(SqlReadResult read)
     {
@@ -79,7 +97,7 @@ internal sealed class TerraBaseDatabaseExecutor(
         return written;
     }
 
-    private async ValueTask<Result<SqlStatementRequest, SqlError>> PrepareAsync(SqlStatementRequest request, CancellationToken cancellationToken)
+    private async ValueTask<PostgresRequestPreparation> PrepareAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         if (target.EndUser is not { } auth)
         {
@@ -124,27 +142,32 @@ internal sealed class RulesTransaction(ISqlTransaction inner, Ulid databaseId, R
 
     public SqlTransactionOptions Options => Inner.Options;
 
-    public async ValueTask<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
+    public async ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(statement);
         return SqlPlan.Classify(statement, 0) switch
         {
-            PlannedStatement planned => await rules.ApplyAsync(databaseId, auth, [planned], cancellationToken) switch
-            {
-                EnforcedSql { Statements: [var rewritten] } => await Inner.ExecuteAsync(rewritten, cancellationToken),
-                EnforcedSql => TerraBaseDatabaseExecutor.Error(SqlRefusal.RuleDenied("the statement could not be checked against the rules", 0)),
-                SqlRefusal refusal => TerraBaseDatabaseExecutor.Error(refusal),
-            },
+            PlannedStatement planned => await ExecutePlannedAsync(planned, cancellationToken),
             SqlRefusal refusal => TerraBaseDatabaseExecutor.Error(refusal),
         };
     }
 
-    public ValueTask<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> CommitLocalAsync(CancellationToken cancellationToken) =>
-        Inner.CommitLocalAsync(cancellationToken);
+    public ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken) => Inner.CommitLocalAsync(cancellationToken);
 
-    public ValueTask<Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout>> StageAsync(CancellationToken cancellationToken) => Inner.StageAsync(cancellationToken);
+    public ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken) => Inner.StageAsync(cancellationToken);
 
-    public ValueTask<Done> RollbackAsync(CancellationToken cancellationToken) => Inner.RollbackAsync(cancellationToken);
+    public ValueTask RollbackAsync(CancellationToken cancellationToken) => Inner.RollbackAsync(cancellationToken);
 
     public ValueTask DisposeAsync() => Inner.DisposeAsync();
+
+    private async ValueTask<TransactionExecuteResult> ExecutePlannedAsync(PlannedStatement planned, CancellationToken cancellationToken)
+    {
+        var enforced = await rules.ApplyAsync(databaseId, auth, [planned], cancellationToken);
+        return enforced switch
+        {
+            EnforcedSql { Statements: [var rewritten] } => await Inner.ExecuteAsync(rewritten, cancellationToken),
+            EnforcedSql => TerraBaseDatabaseExecutor.Error(SqlRefusal.RuleDenied("the statement could not be checked against the rules", 0)),
+            SqlRefusal refusal => TerraBaseDatabaseExecutor.Error(refusal),
+        };
+    }
 }

@@ -3,6 +3,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Sql;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Rules;
 
@@ -12,7 +13,7 @@ public sealed record TableColumn(string Name, string? DefaultSql);
 
 public sealed record RulesPreconditionRequired(string Message);
 
-public readonly union RulesDeployResponse(DeployedRules, InvalidRules, StaleRules, RulesPreconditionRequired, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union RulesDeployResponse(DeployedRules, InvalidRules, StaleRules, RulesPreconditionRequired, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
 internal sealed class RulesService(DatabaseAccess access, RulesStore store)
 {
@@ -22,7 +23,7 @@ internal sealed class RulesService(DatabaseAccess access, RulesStore store)
 
     public const int MaxValidate = 32;
 
-    public async ValueTask<Result<ResolvedDatabase, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ResolveAsync(
+    public async ValueTask<DatabaseResolution> ResolveAsync(
         Caller caller, string? project, string? database, string scope, CancellationToken cancellationToken) =>
         await access.ManagedAsync(caller, project, database, scope, cancellationToken);
 
@@ -34,7 +35,8 @@ internal sealed class RulesService(DatabaseAccess access, RulesStore store)
             return new RulesPreconditionRequired("send If-Match: \"<current version>\", or If-None-Match: * when the database has no rules");
         }
 
-        return await ResolveAsync(caller, project, database, Scopes.DatabasesWrite, cancellationToken) switch
+        var outcome = await ResolveAsync(caller, project, database, Scopes.DatabasesWrite, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => await access.OpenAsync(resolved.Database, cancellationToken) switch
             {
@@ -45,16 +47,16 @@ internal sealed class RulesService(DatabaseAccess access, RulesStore store)
                     {
                         StoredRules stored => new DeployedRules(stored, Warnings(rules)),
                         StaleRules stale => stale,
-                        Unavailable unavailable => unavailable,
+                        BackendUnavailable unavailable => unavailable,
                     },
                 },
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -204,11 +206,12 @@ internal sealed class RulesService(DatabaseAccess access, RulesStore store)
         ArgumentNullException.ThrowIfNull(session);
         var request = new SqlStatementRequest(session.DatabaseId, [new SqlStatement(string.Concat("PRAGMA table_info(", RulesCompiler.Quote(table), ")"), [], SqlBuild.NoNamed)],
             SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
-        return await session.ExecuteReadAsync(request, cancellationToken) switch
+        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+        return outcome switch
         {
             SqlReadResult { ResultSets: [.., var last] } => [.. last.Rows.Select(static row => new TableColumn(SqlBuild.Format(row[1]),
                 row.Count > 4 && row[4].TryGetText(out var defaultSql) ? defaultSql : null))],
-            SqlReadResult or SqlError or StorageBusy or RequestTimeout => [],
+            SqlReadResult or SqlError or StorageBusy or StorageTimeout => [],
         };
     }
 
@@ -219,7 +222,7 @@ internal sealed class RulesService(DatabaseAccess access, RulesStore store)
             return;
         }
 
-        if (RulesCompiler.Compile(condition, columns, operation) switch { CompiledCondition => null, Validation refused => refused } is { } failure)
+        if (RulesCompiler.Compile(condition, columns, operation) switch { CompiledCondition => null, InvalidInput refused => refused } is { } failure)
         {
             problems.Add(new RulesProblem(table, field, failure.Code, failure.Message));
         }

@@ -16,8 +16,6 @@ namespace TerraScale.Dashboard.Features.Organizations
         Task TransferAsync(AccountContext context, string operation, string? userId, string? stepUpProof, CancellationToken cancellationToken);
     }
 
-    // Members, invitations, ownership transfer and audit events are ts-auth's. ts-auth
-    // rechecks the caller's role on every call; the local checks only shape the UI answer.
     public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizationAccess
     {
         private static string Organization(AccountContext context)
@@ -38,7 +36,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             deadline.CancelAfter(TimeSpan.FromSeconds(5));
             cancellationToken = deadline.Token;
             var id = Organization(context);
-            // The four ts-auth reads are independent; they run together.
             var membersRead = platform.ListMembersAsync(context.Session, id, cancellationToken);
             var invitationsRead = context.CanManage ? platform.ListInvitationsAsync(context.Session, id, cancellationToken) : null;
             var auditRead = context.CanManage ? platform.ListAuditEventsAsync(context.Session, id, cancellationToken) : null;
@@ -57,10 +54,8 @@ namespace TerraScale.Dashboard.Features.Organizations
                     new AuditRecord(item.Id, item.Actor, item.Action, item.Target ?? "", item.Detail ?? "", item.OccurredAt, Source: "ts-auth")));
             }
             var transfer = await transferRead;
-            // ts-auth also records some changes the dashboard records (API keys, member changes); the dashboard's copy names the client IP.
             IReadOnlyList<AuditRecord> local = context.CanManage ? context.Organization!.AuditEvents : [];
             audit.RemoveAll(item => local.Any(own => own.Action == item.Action && own.Target == item.Target && (own.OccurredAt - item.OccurredAt).Duration() < TimeSpan.FromMinutes(5)));
-            // The plan decides the window; ts-auth keeps its events at least 90 days (its list_audit_events contract).
             return new(members, invitations, [.. audit.Concat(local).OrderByDescending(item => item.OccurredAt)],
                 transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt),
                 context.CanManage ? Audit.OrganizationAudit.RetentionDays(context.Organization!) : null);

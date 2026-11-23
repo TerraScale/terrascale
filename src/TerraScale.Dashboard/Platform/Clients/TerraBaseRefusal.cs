@@ -1,4 +1,3 @@
-using TerraScale.Results;
 using System.Net;
 
 namespace TerraScale.Dashboard.Platform.Clients;
@@ -70,15 +69,4 @@ public sealed class TerraBaseWrongRegionException(TerraBaseRefusal refusal) : Te
     public string? HomeRegion => Fault.Details?.GetValueOrDefault("homeRegion");
 
     public IReadOnlyList<string> Regions => Fault.Details?.GetValueOrDefault("regions") is { Length: > 0 } regions ? regions.Split(',') : [];
-}
-
-public static class TerraBaseResults
-{
-    public static T Require<T>(Result<T, TerraBaseRefusal> result) where T : notnull => result switch
-    {
-        T value => value,
-        TerraBaseRefusal refusal => throw refusal.Exception(),
-    };
-
-    public static async Task<T> RequireAsync<T>(Task<Result<T, TerraBaseRefusal>> pending) where T : notnull => Require(await pending);
 }

@@ -7,12 +7,11 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Impersonation;
 
-public readonly union StartImpersonationResult(ImpersonationTicket, Validation, NotFound, Forbidden);
+public readonly union StartImpersonationResult(ImpersonationTicket, AuthValidation, AuthNotFound, AuthForbidden);
 
 public sealed record ImpersonationRecord(string Id, string InstanceId, string OrganizationId, string UserId, string ActorId,
     string ActorEmail, string ActorStamp, long ActorEpoch, string UserStamp, long UserEpoch, string Reason, string ClientId,
@@ -39,7 +38,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         ArgumentNullException.ThrowIfNull(request);
         if (!Tenancy.IsProject(project) || string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)
         {
-            return new Validation("Supply a reason of 1 to 500 characters and a project client_id.");
+            return new AuthValidation("Supply a reason of 1 to 500 characters and a project client_id.");
         }
 
         await tenants.CheckAccessAsync(actor.Id, project, Roles.Admin, cancellationToken);
@@ -47,7 +46,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
             "SELECT * FROM users WHERE instance_id = @project AND id = @target AND disabled = 0", new { project, target }), cancellationToken);
         if (user is null)
         {
-            return new NotFound("No such resource.", "not_found");
+            return new AuthNotFound("No such resource.", "not_found");
         }
 
         var clientId = request.ClientId;
@@ -55,24 +54,24 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
             "SELECT * FROM oidc_applications WHERE instance_id = @project AND client_id = @clientId", new { project, clientId }), cancellationToken);
         if (client is null)
         {
-            return new NotFound("No such resource.", "not_found");
+            return new AuthNotFound("No such resource.", "not_found");
         }
 
         if (!client.Permissions.Contains(Permissions.GrantTypes.AuthorizationCode))
         {
-            return new Validation("Choose an authorization-code client in this project.");
+            return new AuthValidation("Choose an authorization-code client in this project.");
         }
 
         var organization = (await platform.ProjectAsync(project, cancellationToken))?.Value.OrganizationId;
         if (organization is null)
         {
-            return new NotFound("No such resource.", "not_found");
+            return new AuthNotFound("No such resource.", "not_found");
         }
 
         var proof = await credentials.RequireAsync(actor.InstanceId, actor.StepUpBindings, cancellationToken);
         if (actor.StepUpBindings.Count == 0 || proof is null)
         {
-            return new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
+            return new AuthForbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
         }
 
         var ticket = Tokens.RandomToken(48);

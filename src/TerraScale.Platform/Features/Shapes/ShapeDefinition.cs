@@ -5,6 +5,10 @@ using System.Text.RegularExpressions;
 
 namespace TerraScale.Platform.Features.Shapes;
 
+public readonly union ParseShapeQueryOutcome(ShapeQuery, PlatformInvalidRequest);
+
+public readonly union ShapeSnapshotOutcome(ShapeSnapshot, PlatformUnavailable);
+
 public sealed partial record ShapeQuery(string Table, string? Where, string? Columns)
 {
     public const int MaxWhere = 4096;
@@ -12,12 +16,12 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
     public const int MaxRows = 50_000;
     public const string KeyColumn = "__tb_key";
 
-    public static readonly Validation BadTable = new("table must be an ordinary table name of at most 63 letters, digits and underscores");
+    public static readonly PlatformInvalidRequest BadTable = new("table must be an ordinary table name of at most 63 letters, digits and underscores");
 
-    public static readonly Validation BadFilter = new(
+    public static readonly PlatformInvalidRequest BadFilter = new(
         $"where and columns are each at most once, non-empty, where at most {MaxWhere} and columns at most {MaxColumns} characters");
 
-    public static readonly Validation UnsafeWhere = new(
+    public static readonly PlatformInvalidRequest UnsafeWhere = new(
         "where may use this table's columns, literals, operators, CASE, CAST, COLLATE and deterministic functions; no subqueries, parameters or comments");
 
     private static readonly string[] ForbiddenWords =
@@ -31,7 +35,7 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
     private static readonly SearchValues<string> ForbiddenWordSet = SearchValues.Create(ForbiddenWords, StringComparison.OrdinalIgnoreCase);
 
-    public static Result<ShapeQuery, Validation> From(string table, IQueryCollection query)
+    public static ParseShapeQueryOutcome From(string table, IQueryCollection query)
     {
         ArgumentNullException.ThrowIfNull(query);
         if (!IsTable(table))
@@ -68,7 +72,7 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
         if (columns is not null && ColumnList(columns) is null)
         {
-            return new Validation("columns must be a comma-separated list of column names");
+            return new PlatformInvalidRequest("columns must be a comma-separated list of column names");
         }
 
         return new ShapeQuery(table, where, columns);
@@ -101,16 +105,16 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
     public bool IncludesRowid =>
         Columns is { } list && ColumnList(list)?.Any(static name => string.Equals(name, "rowid", StringComparison.OrdinalIgnoreCase)) == true;
 
-    public static Result<ShapeSnapshot, Unavailable> Snapshot(SqlHttpStatementResult result, bool includeRowid = false)
+    public static ShapeSnapshotOutcome Snapshot(SqlHttpStatementResult result, bool includeRowid = false)
     {
         if (result.Rows.Count > MaxRows)
         {
-            return new Unavailable($"the shape holds more than {MaxRows} rows", "shape_too_large");
+            return new PlatformUnavailable($"the shape holds more than {MaxRows} rows", "shape_too_large");
         }
 
         if (result.Columns.Count == 0 || result.Columns[0].Name != KeyColumn)
         {
-            return new Unavailable("TerraBase answered a shape query without its key column", "terrabase_protocol");
+            return new PlatformUnavailable("TerraBase answered a shape query without its key column", "terrabase_protocol");
         }
 
         var skip = !includeRowid && result.Columns.Count > 2 && string.Equals(result.Columns[1].Name, "rowid", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
@@ -229,7 +233,7 @@ public static class ShapeViewers
     {
         ArgumentNullException.ThrowIfNull(grant);
         return grant.EndUser
-            ? "user:" + grant.Subject + "|" + string.Join(',', grant.Roles.Order(StringComparer.Ordinal)) + "|" + (rulesVersion ?? "")
+            ? "user:" + grant.Subject + "|" + string.Join(',', grant.Roles.Order(StringComparer.Ordinal)) + "|" + rulesVersion
             : "";
     }
 }

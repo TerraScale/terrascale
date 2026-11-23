@@ -1,10 +1,10 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Home
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     [McpServerToolType]
     public sealed class HomeMcpTools(IHttpContextAccessor http, AccountService accounts, IHomeMeasurements measurements)
@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Home
             return overview switch
             {
                 HomeMcpOverview value => value,
-                NotFound error => throw new AccountAccessException(error.Message!, 404),
+                DashboardNotFound error => throw new AccountAccessException(error.Message, 404),
             };
         }
 

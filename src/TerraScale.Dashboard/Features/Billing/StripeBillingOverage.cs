@@ -7,7 +7,7 @@ using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
-internal abstract record class OverageOutcome;
+internal closed record class OverageOutcome;
 internal sealed record class ChargedAtProvider(string ProviderId, long AmountCents) : OverageOutcome;
 internal sealed record class AdoptedFromPreviousReporter(string ProviderId, long AmountCents) : OverageOutcome;
 internal sealed record class MismatchedAtProvider(string ProviderId, long AmountCents) : OverageOutcome;
@@ -146,7 +146,6 @@ public sealed partial class StripeBilling
             MismatchedAtProvider(var id, var amount) => (OverageCharge.Mismatch, id, amount, null),
             RetiredWithoutCharge(var skip) => (OverageCharge.Skipped, null, null, skip),
             Released => (OverageCharge.Pending, null, null, null),
-            _ => throw new UnreachableException(),
         };
         DateTimeOffset? acceptedAt = providerId is null ? null : now;
         await using var connection = await storage.OpenAsync(CancellationToken.None);
@@ -162,17 +161,14 @@ public sealed partial class StripeBilling
             SkipReason = reason,
         });
         if (saved != 1) { return; }
-        switch (outcome)
+        if (state == OverageCharge.Adopted)
         {
-            case AdoptedFromPreviousReporter:
-                telemetry.ReportAdoptedOverage();
-                break;
-            case MismatchedAtProvider:
-                telemetry.ReportMismatchedOverage();
-                BillingLog.OverageMismatch(logger, chargeId);
-                break;
-            default:
-                break;
+            telemetry.ReportAdoptedOverage();
+        }
+        else if (state == OverageCharge.Mismatch)
+        {
+            telemetry.ReportMismatchedOverage();
+            BillingLog.OverageMismatch(logger, chargeId);
         }
     }
 }

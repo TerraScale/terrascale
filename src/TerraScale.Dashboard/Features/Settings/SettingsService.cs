@@ -7,8 +7,6 @@ namespace TerraScale.Dashboard.Features.Settings
         Task<int> AuditRetentionAsync(AccountContext context, CancellationToken cancellationToken);
         Task<int> SetAuditRetentionAsync(AccountContext context, int days, CancellationToken cancellationToken);
     }
-    // Audit retention is the dashboard's: it narrows the plan's audit window (OrganizationAudit.RetentionDays). TerraBase's
-    // management audit retention belongs to organizations TerraBase manages itself, which ts-auth organizations are not.
     public sealed class SettingsBackend(AccountService accounts) : ISettingsBackend
     {
         public const int DefaultDays = 90;
@@ -33,9 +31,9 @@ namespace TerraScale.Dashboard.Features.Settings
     }
     public sealed record ProjectSettings(string ProjectId, string ProjectName, int AuditRetentionDays, bool CanManage, bool ProjectCanBeDeleted);
 
-    public readonly union SettingsRead(ProjectSettings, Forbidden);
+    public readonly union SettingsRead(ProjectSettings, DashboardForbidden);
 
-    public readonly union AuditRetentionSaved(Done, Validation, Forbidden);
+    public readonly union AuditRetentionSaved(Done, DashboardValidation, DashboardForbidden);
 
     public sealed class SettingsService(AccountService accounts, ISettingsBackend backend, TimeProvider time)
     {
@@ -44,7 +42,7 @@ namespace TerraScale.Dashboard.Features.Settings
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (!context.CanManage)
             {
-                return new Forbidden("Organization management is required to read audit retention.");
+                return new DashboardForbidden("Organization management is required to read audit retention.");
             }
 
             var days = await backend.AuditRetentionAsync(context, cancellationToken);
@@ -61,12 +59,12 @@ namespace TerraScale.Dashboard.Features.Settings
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (!context.CanManage)
             {
-                return new Forbidden("Organization management is required.");
+                return new DashboardForbidden("Organization management is required.");
             }
 
             if (days is < 1 or > 90)
             {
-                return new Validation("Audit retention must be from 1 to 90 days.");
+                return new DashboardValidation("Audit retention must be from 1 to 90 days.");
             }
 
             var confirmed = await backend.SetAuditRetentionAsync(context, days, cancellationToken);

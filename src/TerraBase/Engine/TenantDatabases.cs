@@ -1,11 +1,22 @@
 using System.Collections.Concurrent;
+using TerraBase.Hosting;
 using TerraScale.Contracts.Cluster;
 
 namespace TerraBase.Engine;
 
+internal readonly union TenantOpenOutcome(ISqlDatabaseSession, ResourceNotFound, BackendUnavailable);
+
+internal readonly union TenantCreateOutcome(ISqlDatabaseSession, StateConflict, BackendUnavailable);
+
+internal readonly union TenantReadyOutcome(ISqlDatabaseSession, BackendUnavailable);
+
+internal readonly union TenantBranchOutcome(ISqlDatabaseSession, ResourceNotFound, StateConflict, BackendUnavailable);
+
+internal readonly union TenantDeleteOutcome(Completed, BackendUnavailable);
+
 internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring keyring, IClusterCoordinator cluster) : IAsyncDisposable
 {
-    private static readonly Unavailable MissingKey = new("the database's master key is not configured on this node", "master_key_missing");
+    private static readonly BackendUnavailable MissingKey = new("the database's master key is not configured on this node", "master_key_missing");
 
     private readonly Lock _gate = new();
     private readonly ConcurrentDictionary<Ulid, SemaphoreSlim> _opening = new();
@@ -13,7 +24,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
 
     public string ActiveKeyId => keyring.ActiveKeyId;
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> OpenAsync(Ulid databaseId, string keyId, CancellationToken cancellationToken)
+    public async ValueTask<TenantOpenOutcome> OpenAsync(Ulid databaseId, string keyId, CancellationToken cancellationToken)
     {
         if (Cached(databaseId) is { } cached)
         {
@@ -23,54 +34,58 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         return keyring.Derive(databaseId, keyId) switch
         {
             DatabaseKey key => await OpenWithKeyAsync(databaseId, key, cancellationToken),
-            NotFound => MissingKey,
+            MasterKeyMissing => MissingKey,
         };
     }
 
-    public async ValueTask<Result<ISqlDatabaseSession, Conflict, Unavailable>> CreateAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken) =>
+    public async ValueTask<TenantCreateOutcome> CreateAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken) =>
         keyring.Derive(databaseId, keyId) switch
         {
             DatabaseKey key => await CreateWithKeyAsync(databaseId, key, strict, cancellationToken),
-            NotFound => MissingKey,
+            MasterKeyMissing => MissingKey,
         };
 
-    public async ValueTask<Result<ISqlDatabaseSession, Unavailable>> OpenOrCreateAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken) =>
-        await OpenAsync(databaseId, keyId, cancellationToken) switch
+    public async ValueTask<TenantReadyOutcome> OpenOrCreateAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken)
+    {
+        var outcome = await OpenAsync(databaseId, keyId, cancellationToken);
+        return outcome switch
         {
             ISqlDatabaseSession existing => Ready(existing),
-            NotFound => keyring.Derive(databaseId, keyId) switch
+            ResourceNotFound => keyring.Derive(databaseId, keyId) switch
             {
                 DatabaseKey key => await CreateLocalAsync(databaseId, key, strict, cancellationToken),
-                NotFound => MissingKey,
+                MasterKeyMissing => MissingKey,
             },
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
+    }
 
-    public async ValueTask<Result<ISqlDatabaseSession, NotFound, Conflict, Unavailable>> BranchAsync(
+    public async ValueTask<TenantBranchOutcome> BranchAsync(
         ISqlDatabaseSession source, Ulid branchId, string keyId, CausalBookmark at, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
         return keyring.Derive(branchId, keyId) switch
         {
             DatabaseKey key => await BranchWithKeyAsync(source, branchId, key, at, cancellationToken),
-            NotFound => MissingKey,
+            MasterKeyMissing => MissingKey,
         };
     }
 
-    private async ValueTask<Result<ISqlDatabaseSession, NotFound, Conflict, Unavailable>> BranchWithKeyAsync(
+    private async ValueTask<TenantBranchOutcome> BranchWithKeyAsync(
         ISqlDatabaseSession source, Ulid branchId, DatabaseKey key, CausalBookmark at, CancellationToken cancellationToken)
     {
         var gate = Gate(branchId);
         await gate.WaitAsync(cancellationToken);
         try
         {
-            return await engine.BranchAsync(new DatabaseBranchRequest(source.DatabaseId, branchId, key.RawKey, at), cancellationToken) switch
+            var outcome = await engine.BranchAsync(new DatabaseBranchRequest(source.DatabaseId, branchId, key.RawKey, at), cancellationToken);
+            return outcome switch
             {
                 ISqlDatabaseSession session => Branched(Track(branchId, session)),
-                NotFound error => error,
-                Conflict conflict => conflict,
-                Validation error => new Conflict(error.Message, "branch_point_invalid"),
-                StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+                DatabaseNotFound missing => new ResourceNotFound(missing.Message),
+                DatabaseAlreadyExists exists => new StateConflict(exists.Message),
+                InvalidDatabaseRequest error => new StateConflict(error.Message, "branch_point_invalid"),
+                StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
             };
         }
         finally
@@ -79,13 +94,14 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         }
     }
 
-    public async ValueTask<Result<Done, Unavailable>> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<TenantDeleteOutcome> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         await EvictAsync(databaseId);
-        return await engine.CryptoShredAsync(databaseId, cancellationToken) switch
+        var outcome = await engine.CryptoShredAsync(databaseId, cancellationToken);
+        return outcome switch
         {
-            Done or NotFound => new Done(),
-            StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+            DatabaseShredded or DatabaseNotFound => new Completed(),
+            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
         };
     }
 
@@ -126,28 +142,29 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         }
     }
 
-    private static Result<ISqlDatabaseSession, NotFound, Unavailable> Opened(ISqlDatabaseSession session) => new(session);
+    private static TenantOpenOutcome Opened(ISqlDatabaseSession session) => new(session);
 
-    private static Result<ISqlDatabaseSession, Unavailable> Ready(ISqlDatabaseSession session) => new(session);
+    private static TenantReadyOutcome Ready(ISqlDatabaseSession session) => new(session);
 
-    private static Result<ISqlDatabaseSession, NotFound, Conflict, Unavailable> Branched(ISqlDatabaseSession session) => new(session);
+    private static TenantBranchOutcome Branched(ISqlDatabaseSession session) => new(session);
 
-    private static Result<ISqlDatabaseSession, Conflict, Unavailable> Created(ISqlDatabaseSession session) => new(session);
+    private static TenantCreateOutcome Created(ISqlDatabaseSession session) => new(session);
 
     private SemaphoreSlim Gate(Ulid databaseId) => _opening.GetOrAdd(databaseId, static _ => new SemaphoreSlim(1, 1));
 
-    private async ValueTask<Result<ISqlDatabaseSession, Conflict, Unavailable>> CreateWithKeyAsync(Ulid databaseId, DatabaseKey key, bool strict, CancellationToken cancellationToken)
+    private async ValueTask<TenantCreateOutcome> CreateWithKeyAsync(Ulid databaseId, DatabaseKey key, bool strict, CancellationToken cancellationToken)
     {
         var gate = Gate(databaseId);
         await gate.WaitAsync(cancellationToken);
         try
         {
-            return await engine.CreateAsync(new DatabaseCreateRequest(databaseId, key.RawKey, strict), cancellationToken) switch
+            var outcome = await engine.CreateAsync(new DatabaseCreateRequest(databaseId, key.RawKey, strict), cancellationToken);
+            return outcome switch
             {
                 ISqlDatabaseSession session => Created(Track(databaseId, session)),
-                Conflict conflict => conflict,
-                Validation error => new Unavailable(error.Message, "database_key_invalid"),
-                StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+                DatabaseAlreadyExists exists => new StateConflict(exists.Message),
+                InvalidDatabaseRequest error => new BackendUnavailable(error.Message, "database_key_invalid"),
+                StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
             };
         }
         finally
@@ -156,7 +173,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         }
     }
 
-    private async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> OpenWithKeyAsync(Ulid databaseId, DatabaseKey key, CancellationToken cancellationToken)
+    private async ValueTask<TenantOpenOutcome> OpenWithKeyAsync(Ulid databaseId, DatabaseKey key, CancellationToken cancellationToken)
     {
         var gate = Gate(databaseId);
         await gate.WaitAsync(cancellationToken);
@@ -167,13 +184,14 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
                 return Opened(raced);
             }
 
-            return await engine.OpenAsync(new DatabaseOpenRequest(databaseId, key.RawKey), cancellationToken) switch
+            var outcome = await engine.OpenAsync(new DatabaseOpenRequest(databaseId, key.RawKey), cancellationToken);
+            return outcome switch
             {
                 ISqlDatabaseSession session => Opened(Track(databaseId, session)),
-                NotFound => new NotFound("the database has no local copy on this node", "database_not_local"),
-                Validation error => new Unavailable(error.Message, "database_key_mismatch"),
-                StorageCorrupted corrupted => new Unavailable(corrupted.Message, "storage_corrupted"),
-                StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+                DatabaseNotFound => new ResourceNotFound("the database has no local copy on this node", "database_not_local"),
+                InvalidDatabaseRequest error => new BackendUnavailable(error.Message, "database_key_mismatch"),
+                StorageCorrupted corrupted => new BackendUnavailable(corrupted.Message, "storage_corrupted"),
+                StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
             };
         }
         finally
@@ -182,7 +200,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         }
     }
 
-    private async ValueTask<Result<ISqlDatabaseSession, Unavailable>> CreateLocalAsync(Ulid databaseId, DatabaseKey key, bool strict, CancellationToken cancellationToken)
+    private async ValueTask<TenantReadyOutcome> CreateLocalAsync(Ulid databaseId, DatabaseKey key, bool strict, CancellationToken cancellationToken)
     {
         var gate = Gate(databaseId);
         await gate.WaitAsync(cancellationToken);
@@ -193,12 +211,13 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
                 return Ready(raced);
             }
 
-            return await engine.CreateAsync(new DatabaseCreateRequest(databaseId, key.RawKey, strict), cancellationToken) switch
+            var outcome = await engine.CreateAsync(new DatabaseCreateRequest(databaseId, key.RawKey, strict), cancellationToken);
+            return outcome switch
             {
                 ISqlDatabaseSession session => Ready(Track(databaseId, session)),
-                Conflict => new Unavailable("the database's local copy appeared concurrently; retry", "storage_busy"),
-                Validation error => new Unavailable(error.Message, "database_key_invalid"),
-                StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+                DatabaseAlreadyExists => new BackendUnavailable("the database's local copy appeared concurrently; retry", "storage_busy"),
+                InvalidDatabaseRequest error => new BackendUnavailable(error.Message, "database_key_invalid"),
+                StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
             };
         }
         finally

@@ -7,8 +7,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Platform;
 
+internal readonly union ListPlatformDatabasesResponse(DatabasesBody, CallerForbidden, BackendUnavailable);
+
 internal sealed class ListPlatformDatabasesEndpoint(CatalogStore catalog, TerraBaseOptions options, TimeProvider time)
-    : EndpointWithoutRequest<Result<DatabasesBody, Forbidden, Unavailable>>
+    : EndpointWithoutRequest<ListPlatformDatabasesResponse>
 {
     public override void Configure()
     {
@@ -20,20 +22,21 @@ internal sealed class ListPlatformDatabasesEndpoint(CatalogStore catalog, TerraB
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<DatabasesBody, Forbidden, Unavailable>> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<ListPlatformDatabasesResponse> HandleAsync(CancellationToken cancellationToken)
     {
         if (!PlanFlow.IsOperator(HttpContext.Caller, "platform.read"))
         {
-            return new Forbidden("listing platform databases needs the platform.read grant", "forbidden_caller");
+            return new CallerForbidden("listing platform databases needs the platform.read grant", "forbidden_caller");
         }
 
         List<DatabaseBody> items = [];
         foreach (var platform in PlatformCatalog.Databases)
         {
-            var found = await catalog.GetDatabaseAsync(platform.Id, cancellationToken) switch
+            var foundOutcome = await catalog.GetDatabaseAsync(platform.Id, cancellationToken);
+            var found = foundOutcome switch
             {
                 DatabaseRecord record => DatabaseBody.From(record, options.Region, time.GetUtcNow()),
-                NotFound or Unavailable => null,
+                ResourceNotFound or BackendUnavailable => null,
             };
             if (found is not null)
             {

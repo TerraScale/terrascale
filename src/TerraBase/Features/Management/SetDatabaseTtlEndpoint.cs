@@ -24,7 +24,7 @@ internal sealed class SetDatabaseTtlEndpoint(DatabaseAccess access, ManagementSe
     {
         ArgumentNullException.ThrowIfNull(request);
         return request.TtlSeconds is null
-            ? new Validation("ttlSeconds is required", "invalid_ttl")
+            ? new InvalidInput("ttlSeconds is required", "invalid_ttl")
             : await DatabaseUpdates.TtlAsync(HttpContext.Caller, access, management, options, time, request, request.TtlSeconds, cancellationToken);
     }
 }

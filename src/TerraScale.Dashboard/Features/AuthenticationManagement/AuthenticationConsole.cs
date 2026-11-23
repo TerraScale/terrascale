@@ -123,13 +123,15 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         await projects.UpdateSettingsAsync(session, project, new(OrganizationPicker: form.ContainsKey("organization_picker")), cancel);
                         break;
                     case ["settings"]:
-                        switch (Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString(), form["magic_link"] == "on", form["username"] == "on"))
+                        var methods = Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString(), form["magic_link"] == "on", form["username"] == "on");
+                        var methodsRefusal = methods switch
                         {
-                            case TsAuthProjectMethods methods:
-                                await projects.UpdateSettingsAsync(session, project, new(methods), cancel);
-                                break;
-                            case Validation error:
-                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                            TsAuthProjectMethods valid => await AppliedAsync(projects.UpdateSettingsAsync(session, project, new(valid), cancel)),
+                            DashboardValidation error => error,
+                        };
+                        if (methodsRefusal is not null)
+                        {
+                            return await SectionResultAsync(http, context, projects, key, methodsRefusal.Message, 422);
                         }
 
                         break;
@@ -139,37 +141,43 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                             form["account_lockout"] == "on", form["new_device_email"] == "on")), cancel);
                         break;
                     case ["branding"]:
-                        switch (HostedBranding(form))
+                        var branding = HostedBranding(form);
+                        var brandingRefusal = branding switch
                         {
-                            case TsAuthProjectBranding branding:
-                                await projects.UpdateSettingsAsync(session, project, new(Branding: branding), cancel);
-                                break;
-                            case Validation error:
-                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                            TsAuthProjectBranding valid => await AppliedAsync(projects.UpdateSettingsAsync(session, project, new(Branding: valid), cancel)),
+                            DashboardValidation error => error,
+                        };
+                        if (brandingRefusal is not null)
+                        {
+                            return await SectionResultAsync(http, context, projects, key, brandingRefusal.Message, 422);
                         }
 
                         break;
                     case ["mfa-sessions"]:
-                        switch (await SecurityConfigurationAsync(projects, session, project, form, cancel))
+                        var security = await SecurityConfigurationAsync(projects, session, project, form, cancel);
+                        var securityRefusal = security switch
                         {
-                            case TsAuthProjectConfiguration security:
-                                await projects.UpdateSettingsAsync(session, project, new(Configuration: security), cancel);
-                                break;
-                            case Validation error:
-                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                            TsAuthProjectConfiguration valid => await AppliedAsync(projects.UpdateSettingsAsync(session, project, new(Configuration: valid), cancel)),
+                            DashboardValidation error => error,
+                        };
+                        if (securityRefusal is not null)
+                        {
+                            return await SectionResultAsync(http, context, projects, key, securityRefusal.Message, 422);
                         }
 
                         break;
                     case ["configuration"]:
                         var currentConfiguration = (await projects.GetSettingsAsync(session, project, cancel)).Configuration ?? new([]);
-                        switch (Configuration(form["redirect_urls"], form["session_lifetime_seconds"]))
+                        var configuration = Configuration(form["redirect_urls"], form["session_lifetime_seconds"]);
+                        var configurationRefusal = configuration switch
                         {
-                            case TsAuthProjectConfiguration updated:
-                                await projects.UpdateSettingsAsync(session, project, new(Configuration: currentConfiguration with
-                                { RedirectUrls = updated.RedirectUrls, SessionLifetimeSeconds = updated.SessionLifetimeSeconds }), cancel);
-                                break;
-                            case Validation error:
-                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                            TsAuthProjectConfiguration updated => await AppliedAsync(projects.UpdateSettingsAsync(session, project, new(Configuration: currentConfiguration with
+                            { RedirectUrls = updated.RedirectUrls, SessionLifetimeSeconds = updated.SessionLifetimeSeconds }), cancel)),
+                            DashboardValidation error => error,
+                        };
+                        if (configurationRefusal is not null)
+                        {
+                            return await SectionResultAsync(http, context, projects, key, configurationRefusal.Message, 422);
                         }
 
                         break;
@@ -200,54 +208,38 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
                         break;
                     case ["providers", var provider]:
-                        switch (Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"], form["tenant"], provider == "oauth2" ? new TsAuthProjectOAuth2(form["authorize_url"].ToString(), form["token_url"].ToString(), form["userinfo_url"].ToString(), form["scopes"].ToString(), form["id_claim"].ToString(), form["email_claim"].ToString(), form["email_verified_claim"].ToString()) : null))
+                        var providerInput = Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"], form["tenant"], provider == "oauth2" ? new TsAuthProjectOAuth2(form["authorize_url"].ToString(), form["token_url"].ToString(), form["userinfo_url"].ToString(), form["scopes"].ToString(), form["id_claim"].ToString(), form["email_claim"].ToString(), form["email_verified_claim"].ToString()) : null);
+                        var providerRefusal = providerInput switch
                         {
-                            case TsAuthProjectProviderUpdate update:
-                                await projects.SetProviderAsync(session, project, provider, update, cancel);
-                                break;
-                            case Validation error:
-                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                            TsAuthProjectProviderUpdate update => await AppliedAsync(projects.SetProviderAsync(session, project, provider, update, cancel)),
+                            DashboardValidation error => error,
+                        };
+                        if (providerRefusal is not null)
+                        {
+                            return await SectionResultAsync(http, context, projects, key, providerRefusal.Message, 422);
                         }
 
                         break;
                     case ["providers", var provider, _]: await projects.DeleteProviderAsync(session, project, provider, cancel); break;
                     case ["clients"]:
                         var request = NewClient(form["name"], form["type"], Lines(form["redirect_uris"]), form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]);
-                        if (request is not TsAuthProjectCreateOAuthClient clientRequest)
+                        return request switch
                         {
-                            return request switch
-                            {
-                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
-                                _ => throw new UnreachableException(),
-                            };
-                        }
-
-                        var intent = StepUpFlow.Intent(http, context, "create_oauth_client");
-                        if (intent is null)
-                        {
-                            return await StepUpFlow.StartAsync(http, context, "create_oauth_client", "ts-auth");
-                        }
-
-                        var created = await projects.CreateClientAsync(session, project, clientRequest, intent.Challenge.Proof, cancel);
-                        return await PageViewAsync(http, context, projects, "clients", created: created);
+                            TsAuthProjectCreateOAuthClient clientRequest => await CreateClientAsync(clientRequest),
+                            DashboardValidation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                        };
                     case ["clients", var id, "edit"]:
                         var editRequest = ClientUpdate(form["name"], Lines(form["redirect_uris"]), form["type"], form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]);
-                        if (editRequest is not TsAuthProjectClientUpdate clientUpdate)
+                        var edited = editRequest switch
                         {
-                            return editRequest switch
-                            {
-                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
-                                _ => throw new UnreachableException(),
-                            };
+                            TsAuthProjectClientUpdate clientUpdate => await UpdateClientAsync(id, clientUpdate),
+                            DashboardValidation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                        };
+                        if (edited is not null)
+                        {
+                            return edited;
                         }
 
-                        var editIntent = StepUpFlow.Intent(http, context, "update_oauth_client");
-                        if (editIntent is null)
-                        {
-                            return await StepUpFlow.StartAsync(http, context, "update_oauth_client", "ts-auth");
-                        }
-
-                        await projects.UpdateClientAsync(session, project, id, clientUpdate, editIntent.Challenge.Proof, cancel);
                         break;
                     case ["clients", var id, "rotate"]:
                         var rotateIntent = StepUpFlow.Intent(http, context, "rotate_oauth_client");
@@ -261,23 +253,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case ["clients", var id, "delete"]: await projects.DeleteClientAsync(session, project, id, cancel); break;
                     case ["webhooks"]:
                         var webhook = NewWebhook(form["url"], form["event_types"].Select(value => (string?)value));
-                        if (webhook is not TsAuthCreateWebhookEndpoint endpoint)
+                        return webhook switch
                         {
-                            return webhook switch
-                            {
-                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
-                                _ => throw new UnreachableException(),
-                            };
-                        }
-
-                        var createIntent = StepUpFlow.Intent(http, context, "create_webhook_endpoint");
-                        if (createIntent is null)
-                        {
-                            return await StepUpFlow.StartAsync(http, context, "create_webhook_endpoint", "ts-auth");
-                        }
-
-                        var registered = await projects.CreateWebhookEndpointAsync(session, project, endpoint, createIntent.Challenge.Proof, cancel);
-                        return await PageViewAsync(http, context, projects, "webhooks", createdWebhook: registered);
+                            TsAuthCreateWebhookEndpoint endpoint => await CreateWebhookAsync(endpoint),
+                            DashboardValidation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                        };
                     case ["webhooks", var id, "rotate"]:
                         var secretIntent = StepUpFlow.Intent(http, context, "rotate_webhook_secret");
                         if (secretIntent is null)
@@ -294,39 +274,21 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case ["users", var id, "sign-out"]: await projects.SignOutUserAsync(session, project, id, cancel); break;
                     case ["users", var id, "profile"]:
                         var publicResult = ProfileMetadata(form["public_metadata"]);
-                        if (publicResult is not JsonElement publicMetadata)
-                        {
-                            return publicResult switch
-                            {
-                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
-                                _ => throw new UnreachableException(),
-                            };
-                        }
-
                         var privateResult = ProfileMetadata(form["private_metadata"]);
-                        if (privateResult is not JsonElement privateMetadata)
-                        {
-                            return privateResult switch
-                            {
-                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
-                                _ => throw new UnreachableException(),
-                            };
-                        }
-
                         var unsafeResult = ProfileMetadata(form["unsafe_metadata"]);
-                        if (unsafeResult is not JsonElement unsafeMetadata)
+                        return publicResult switch
                         {
-                            return unsafeResult switch
+                            DashboardValidation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                            JsonElement publicMetadata => privateResult switch
                             {
-                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
-                                _ => throw new UnreachableException(),
-                            };
-                        }
-
-                        await projects.UpdateUserAsync(session, project, id, new(Value(form["first_name"].ToString()), Value(form["last_name"].ToString()),
-                            Value(form["image_url"].ToString()), Value(form["external_id"].ToString()), publicMetadata,
-                            privateMetadata, unsafeMetadata), cancel);
-                        return HttpRedirects.SeeOther("/auth/users?user=" + Uri.EscapeDataString(id) + "&saved=1");
+                                DashboardValidation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                JsonElement privateMetadata => unsafeResult switch
+                                {
+                                    DashboardValidation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                    JsonElement unsafeMetadata => await UpdateProfileAsync(id, publicMetadata, privateMetadata, unsafeMetadata),
+                                },
+                            },
+                        };
                     case ["users", var id, "api-keys", var keyId, "revoke"]:
                         await projects.RevokeUserApiKeyAsync(session, project, id, keyId, cancel);
                         return HttpRedirects.SeeOther("/auth/users?user=" + Uri.EscapeDataString(id) + "&saved=1");
@@ -339,6 +301,56 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return await SectionResultAsync(http, context, projects, key, error is AccountAccessException access ? access.Message : Unreachable, error is AccountAccessException { StatusCode: var code } ? code : 503);
             }
             return await SectionResultAsync(http, context, projects, key);
+
+            async Task<IResult> CreateClientAsync(TsAuthProjectCreateOAuthClient clientRequest)
+            {
+                var intent = StepUpFlow.Intent(http, context, "create_oauth_client");
+                if (intent is null)
+                {
+                    return await StepUpFlow.StartAsync(http, context, "create_oauth_client", "ts-auth");
+                }
+
+                var created = await projects.CreateClientAsync(session, project, clientRequest, intent.Challenge.Proof, cancel);
+                return await PageViewAsync(http, context, projects, "clients", created: created);
+            }
+
+            async Task<IResult?> UpdateClientAsync(string id, TsAuthProjectClientUpdate clientUpdate)
+            {
+                var editIntent = StepUpFlow.Intent(http, context, "update_oauth_client");
+                if (editIntent is null)
+                {
+                    return await StepUpFlow.StartAsync(http, context, "update_oauth_client", "ts-auth");
+                }
+
+                await projects.UpdateClientAsync(session, project, id, clientUpdate, editIntent.Challenge.Proof, cancel);
+                return null;
+            }
+
+            async Task<IResult> CreateWebhookAsync(TsAuthCreateWebhookEndpoint endpoint)
+            {
+                var createIntent = StepUpFlow.Intent(http, context, "create_webhook_endpoint");
+                if (createIntent is null)
+                {
+                    return await StepUpFlow.StartAsync(http, context, "create_webhook_endpoint", "ts-auth");
+                }
+
+                var registered = await projects.CreateWebhookEndpointAsync(session, project, endpoint, createIntent.Challenge.Proof, cancel);
+                return await PageViewAsync(http, context, projects, "webhooks", createdWebhook: registered);
+            }
+
+            async Task<IResult> UpdateProfileAsync(string id, JsonElement publicMetadata, JsonElement privateMetadata, JsonElement unsafeMetadata)
+            {
+                await projects.UpdateUserAsync(session, project, id, new(Value(form["first_name"].ToString()), Value(form["last_name"].ToString()),
+                    Value(form["image_url"].ToString()), Value(form["external_id"].ToString()), publicMetadata,
+                    privateMetadata, unsafeMetadata), cancel);
+                return HttpRedirects.SeeOther("/auth/users?user=" + Uri.EscapeDataString(id) + "&saved=1");
+            }
+        }
+
+        private static async Task<DashboardValidation?> AppliedAsync(Task work)
+        {
+            await work;
+            return null;
         }
 
         private static async Task<IResult> SectionResultAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200)
@@ -368,12 +380,12 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         private static string[] RestrictionList(string? value) =>
             (value ?? "").Split(['\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        public static Valid<TsAuthProjectMethods> Methods(bool passcode, bool password, string signUpMode, bool magicLink = false, bool username = false)
+        public static MethodsInput Methods(bool passcode, bool password, string signUpMode, bool magicLink = false, bool username = false)
         {
-            return passcode || password || magicLink ? new TsAuthProjectMethods(passcode, password, signUpMode, magicLink, username) : new Validation("Keep email passcode, password or magic-link sign-in on.");
+            return passcode || password || magicLink ? new TsAuthProjectMethods(passcode, password, signUpMode, magicLink, username) : new DashboardValidation("Keep email passcode, password or magic-link sign-in on.");
         }
 
-        public static Valid<TsAuthProjectBranding> Branding(string? name, string? logoUrl, string? themeColor)
+        public static BrandingInput Branding(string? name, string? logoUrl, string? themeColor)
         {
             static string? Clean(string? value)
             {
@@ -383,23 +395,23 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var (title, logo, color) = (Clean(name), Clean(logoUrl), Clean(themeColor)?.ToLowerInvariant());
             if (title is { Length: > 64 } || title?.Any(char.IsControl) == true)
             {
-                return new Validation("Use a name of up to 64 characters.");
+                return new DashboardValidation("Use a name of up to 64 characters.");
             }
 
             if (logo is not null && !HttpsUrl(logo))
             {
-                return new Validation("The logo must be an https URL.");
+                return new DashboardValidation("The logo must be an https URL.");
             }
 
             if (color is not null && !Color().IsMatch(color))
             {
-                return new Validation("The theme color must look like #2158e8.");
+                return new DashboardValidation("The theme color must look like #2158e8.");
             }
 
             return new TsAuthProjectBranding(title, logo, color);
         }
 
-        public static Valid<TsAuthProjectProviderUpdate> Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
+        public static ProviderInput Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
         {
             static string? Clean(string? value)
             {
@@ -409,27 +421,27 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var (id, secret, url, team, key) = (Clean(clientId), Clean(clientSecret), Clean(issuer), Clean(teamId)?.ToUpperInvariant(), Clean(keyId)?.ToUpperInvariant());
             if (AuthenticationProvider.Find(provider) is not { } known)
             {
-                return new Validation("Choose google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.");
+                return new DashboardValidation("Choose google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.");
             }
 
             if (id is null or { Length: > 256 })
             {
-                return new Validation($"Enter the {known.ClientIdLabel.ToLowerInvariant()} of up to 256 characters.");
+                return new DashboardValidation($"Enter the {known.ClientIdLabel.ToLowerInvariant()} of up to 256 characters.");
             }
 
             if (secret is { Length: > 8192 })
             {
-                return new Validation("The client secret is too long.");
+                return new DashboardValidation("The client secret is too long.");
             }
 
             if (provider == "apple" && !(AppleId().IsMatch(team ?? "") && AppleId().IsMatch(key ?? "")))
             {
-                return new Validation("The Apple team ID and key ID are 10 letters or digits.");
+                return new DashboardValidation("The Apple team ID and key ID are 10 letters or digits.");
             }
 
             if (provider == "oidc" && !(Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && uri.Query.Length == 0 && uri.Fragment.Length == 0))
             {
-                return new Validation("The issuer must be an https URL without a query.");
+                return new DashboardValidation("The issuer must be an https URL without a query.");
             }
 
             return provider switch
@@ -445,17 +457,17 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         [GeneratedRegex("^[A-Z0-9]{10}$")]
         private static partial Regex AppleId();
 
-        public static Valid<TsAuthProjectCreateOAuthClient> NewClient(string? name, string? type, IEnumerable<string> redirectUris, string? scopes = null, string? audiences = null, string? minutes = null)
+        public static NewClientInput NewClient(string? name, string? type, IEnumerable<string> redirectUris, string? scopes = null, string? audiences = null, string? minutes = null)
         {
             var uris = redirectUris.Select(uri => uri.Trim()).Where(uri => uri.Length > 0).ToArray();
             if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 64)
             {
-                return new Validation("Name the application in up to 64 characters.");
+                return new DashboardValidation("Name the application in up to 64 characters.");
             }
 
             if (type is not ("public" or "confidential" or "machine"))
             {
-                return new Validation("Choose a public, confidential or machine application.");
+                return new DashboardValidation("Choose a public, confidential or machine application.");
             }
 
             if (type == "machine")
@@ -463,13 +475,13 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return MachinePolicy(scopes, audiences, minutes) switch
                 {
                     MachinePolicyResult policy => new TsAuthProjectCreateOAuthClient(name.Trim(), type, [], policy.Scopes, policy.Audiences, policy.Minutes),
-                    Validation error => new Valid<TsAuthProjectCreateOAuthClient>(error),
+                    DashboardValidation error => new NewClientInput(error),
                 };
             }
 
             if (uris.Length is < 1 or > 10)
             {
-                return new Validation("Add 1 to 10 redirect URIs, one per line.");
+                return new DashboardValidation("Add 1 to 10 redirect URIs, one per line.");
             }
 
             return new TsAuthProjectCreateOAuthClient(name.Trim(), type, uris);
@@ -478,7 +490,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public static readonly string[] LifecycleEvents =
             ["apiKey.created", "apiKey.revoked", "user.created", "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled", "impersonation.started", "impersonation.ended"];
 
-        public static Valid<TsAuthCreateWebhookEndpoint> NewWebhook(string? url, IEnumerable<string?> eventTypes)
+        public static WebhookInput NewWebhook(string? url, IEnumerable<string?> eventTypes)
         {
             var trimmed = url?.Trim();
             if (trimmed is not { Length: > 0 }
@@ -486,29 +498,29 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0
                 || uri.AbsoluteUri.Length > 2048)
             {
-                return new Validation("The URL must be an absolute https URL of up to 2048 characters.");
+                return new DashboardValidation("The URL must be an absolute https URL of up to 2048 characters.");
             }
 
             var events = eventTypes.Where(value => value is not null).Select(value => value!).Distinct().ToArray();
             if (events.Length == 0)
             {
-                return new Validation("Choose at least one lifecycle event.");
+                return new DashboardValidation("Choose at least one lifecycle event.");
             }
 
             if (events.Any(value => !LifecycleEvents.Contains(value)))
             {
-                return new Validation("Choose a valid lifecycle event.");
+                return new DashboardValidation("Choose a valid lifecycle event.");
             }
 
             return new TsAuthCreateWebhookEndpoint(trimmed, events);
         }
 
-        public static Valid<TsAuthProjectClientUpdate> ClientUpdate(string? name, IEnumerable<string> redirectUris, string? type = null, string? scopes = null, string? audiences = null, string? minutes = null)
+        public static ClientUpdateInput ClientUpdate(string? name, IEnumerable<string> redirectUris, string? type = null, string? scopes = null, string? audiences = null, string? minutes = null)
         {
             var uris = redirectUris.Select(uri => uri.Trim()).Where(uri => uri.Length > 0).ToArray();
             if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 64)
             {
-                return new Validation("Name the application in up to 64 characters.");
+                return new DashboardValidation("Name the application in up to 64 characters.");
             }
 
             if (type == "machine")
@@ -516,30 +528,28 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return MachinePolicy(scopes, audiences, minutes) switch
                 {
                     MachinePolicyResult policy => new TsAuthProjectClientUpdate(name.Trim(), [], policy.Scopes, policy.Audiences, policy.Minutes),
-                    Validation error => new Valid<TsAuthProjectClientUpdate>(error),
+                    DashboardValidation error => new ClientUpdateInput(error),
                 };
             }
 
             if (uris.Length is < 1 or > 10)
             {
-                return new Validation("Add 1 to 10 redirect URIs, one per line.");
+                return new DashboardValidation("Add 1 to 10 redirect URIs, one per line.");
             }
 
             return new TsAuthProjectClientUpdate(name.Trim(), uris);
         }
 
-        private static Valid<MachinePolicyResult> MachinePolicy(string? scopes, string? audiences, string? minutes)
+        private static MachinePolicyInput MachinePolicy(string? scopes, string? audiences, string? minutes)
         {
             var allowed = Lines(scopes);
             if (allowed.Length is < 1 or > 64 || !int.TryParse(minutes, out var lifetime) || lifetime is < 5 or > 60)
             {
-                return new Validation("Enter 1 to 64 allowed scopes and a token lifetime from 5 to 60 minutes.");
+                return new DashboardValidation("Enter 1 to 64 allowed scopes and a token lifetime from 5 to 60 minutes.");
             }
 
             return new MachinePolicyResult(allowed, Lines(audiences), lifetime);
         }
-
-        private sealed record MachinePolicyResult(IReadOnlyList<string> Scopes, IReadOnlyList<string> Audiences, int Minutes);
 
         [GeneratedRegex("^#[0-9a-f]{6}$")]
         private static partial Regex Color();

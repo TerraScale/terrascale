@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union DeleteOrganizationResponse(Completed, CredentialRejected, ResourceNotFound, StateConflict, BackendUnavailable);
+
 internal sealed class DeleteOrganizationEndpoint(ManagementService management, CatalogStore catalog)
-    : Endpoint<RouteInput, Result<Done, Unauthorized, NotFound, Conflict, Unavailable>>
+    : Endpoint<RouteInput, DeleteOrganizationResponse>
 {
     public override void Configure()
     {
@@ -18,20 +20,21 @@ internal sealed class DeleteOrganizationEndpoint(ManagementService management, C
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<Done, Unauthorized, NotFound, Conflict, Unavailable>> HandleAsync(RouteInput request, CancellationToken cancellationToken)
+    public override async ValueTask<DeleteOrganizationResponse> HandleAsync(RouteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken) switch
+        var outcome = await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken);
+        return outcome switch
         {
             OrganizationRecord organization => await catalog.DeleteOrganizationAsync(organization.Id, cancellationToken) switch
             {
-                Done done => done,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
+                Completed done => done,
+                StateConflict conflict => conflict,
+                BackendUnavailable unavailable => unavailable,
             },
-            Unauthorized unauthorized => unauthorized,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            CredentialRejected unauthorized => unauthorized,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

@@ -4,7 +4,6 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -75,7 +74,7 @@ public sealed class CustomTokens(ApiKeys keys, TenantDirectory tenants, KeyRing 
         }
     }
 
-    internal static Validation Invalid() => new("Supply a UTF-8 JSON object of at most 16384 bytes with user_id (canonical ULID), optional database (canonical ULID) and optional claims. No other members are accepted.");
+    internal static AuthValidation Invalid() => new("Supply a UTF-8 JSON object of at most 16384 bytes with user_id (canonical ULID), optional database (canonical ULID) and optional claims. No other members are accepted.");
 }
 
-public readonly union CustomTokenResult(CustomTokenBody, Validation);
+public readonly union CustomTokenResult(CustomTokenBody, AuthValidation);

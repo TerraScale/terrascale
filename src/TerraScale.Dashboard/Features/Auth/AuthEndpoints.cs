@@ -98,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Auth
                     return exchanged switch
                     {
                         SessionRecord fresh => await AccessTokenEndpoints.IssueAsync(context, flow, fresh, tokenExpiresAt),
-                        Validation error => ExchangeRefused(context, flow, error)
+                        DashboardValidation error => ExchangeRefused(context, flow, error)
                     };
                 }
 
@@ -109,14 +109,15 @@ namespace TerraScale.Dashboard.Features.Auth
                     return exchanged switch
                     {
                         SessionRecord fresh => await McpOAuth.GrantAsync(context, flow.Mcp, fresh, flow.StepUp, tokenExpiresAt),
-                        Validation error => ExchangeRefused(context, flow, error)
+                        DashboardValidation error => ExchangeRefused(context, flow, error)
                     };
                 }
 
-                return (await auth.ExchangeAsync(code, flow, null, context.RequestAborted)) switch
+                var signedIn = await auth.ExchangeAsync(code, flow, null, context.RequestAborted);
+                return signedIn switch
                 {
                     SessionRecord fresh => await CompleteSignInAsync(context, sessions, flow, fresh),
-                    Validation error => ExchangeRefused(context, flow, error)
+                    DashboardValidation error => ExchangeRefused(context, flow, error)
                 };
             }
             catch (AccountAccessException error) when (flow.StepUp is not null || flow.Mcp is not null)
@@ -162,7 +163,7 @@ namespace TerraScale.Dashboard.Features.Auth
             return HttpRedirects.SeeOther(await logout.EndSessionUrlAsync($"{context.Request.Scheme}://{context.Request.Host}", session?.IdToken, context.RequestAborted));
         }
 
-        private static IResult ExchangeRefused(HttpContext context, OidcFlow flow, Validation error)
+        private static IResult ExchangeRefused(HttpContext context, OidcFlow flow, DashboardValidation error)
         {
             return flow.StepUp is not null || flow.Mcp is not null
                 ? Failure(context, flow.ReturnTo, error.Message, StatusCodes.Status422UnprocessableEntity, nameof(AccountAccessException))

@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -21,7 +20,7 @@ public sealed class ListEventsEndpoint(TenantDirectory tenants, PlatformAuthenti
         return await history.EventsAsync(projectId, after, limit, cancellationToken) switch
         {
             WebhookEventPage page => TypedResults.Json(page, WebhooksJson.Default.WebhookEventPage),
-            Validation error => ErrorResults.ToResult(error),
+            AuthValidation error => ErrorResults.ToResult(error),
         };
     }
 }

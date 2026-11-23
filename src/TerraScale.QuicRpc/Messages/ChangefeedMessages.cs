@@ -24,7 +24,7 @@ public sealed record ChangefeedSubscribeMessage(Ulid DatabaseId, string After) :
         writer.WriteString(After);
     }
 
-    public Result<ChangefeedSubscription, QuicRemoteError> ToSubscription() =>
+    public ChangefeedSubscriptionDecodeOutcome ToSubscription() =>
         CausalBookmark.TryDecode(After, out var after)
             ? new ChangefeedSubscription(DatabaseId, after)
             : new QuicRemoteError(InvalidBookmark, "The changefeed subscription carries a malformed causal bookmark.");
@@ -87,7 +87,7 @@ public sealed record ChangefeedEntryMessage(
         writer.WriteInt64(CommittedAtUnixMs);
     }
 
-    public Result<ChangefeedEntry, QuicRemoteError> ToEntry() =>
+    public ChangefeedEntryDecodeOutcome ToEntry() =>
         Sequence <= 0 || OriginRegion.Length == 0 || CommittedAtUnixMs < MinUnixMs || CommittedAtUnixMs > MaxUnixMs
             ? new QuicRemoteError(InvalidEntry, "The changefeed entry carries an invalid sequence, origin or commit time.")
             : new ChangefeedEntry(

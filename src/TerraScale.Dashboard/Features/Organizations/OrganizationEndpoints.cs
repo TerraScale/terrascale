@@ -227,12 +227,15 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 if (operation == "leave")
                 {
-                    switch (await lifecycle.LeaveAsync(context, http.RequestAborted))
+                    var left = await lifecycle.LeaveAsync(context, http.RequestAborted);
+                    var refused = left switch
                     {
-                        case Conflict error:
-                            return await PageAsync(http, context, placement, error.Message, 409, "danger");
-                        case Done:
-                            break;
+                        Done => null,
+                        DashboardConflict error => error,
+                    };
+                    if (refused is not null)
+                    {
+                        return await PageAsync(http, context, placement, refused.Message, 409, "danger");
                     }
                 }
                 else if (operation == "delete-project")

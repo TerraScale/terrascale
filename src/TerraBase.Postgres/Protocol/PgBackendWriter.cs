@@ -36,7 +36,7 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            var flushed = await output.FlushAsync(linked.Token).ConfigureAwait(false);
+            var flushed = await output.FlushAsync(linked.Token);
             if (flushed.IsCompleted || flushed.IsCanceled)
             {
                 _aborted = true;

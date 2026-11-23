@@ -6,7 +6,6 @@ namespace TerraScale.Dashboard.Features.Billing
 
     public sealed partial class StripeBilling
     {
-        // Stripe owns invoice identity and VAT verification. Never infer an exemption from an entered ID.
         public async Task<BillingDetails?> DetailsAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await MemberAsync(context, cancellationToken);

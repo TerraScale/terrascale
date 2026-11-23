@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Backup;
 
-internal sealed class GetBackupStatusEndpoint(BackupFlow flow) : Endpoint<BackupInput, Result<BackupStatusBody, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>>
+internal sealed class GetBackupStatusEndpoint(BackupFlow flow) : Endpoint<BackupInput, BackupStatusResponse>
 {
     public override void Configure()
     {
@@ -16,7 +16,7 @@ internal sealed class GetBackupStatusEndpoint(BackupFlow flow) : Endpoint<Backup
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<BackupStatusBody, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>> HandleAsync(BackupInput request, CancellationToken cancellationToken)
+    public override async ValueTask<BackupStatusResponse> HandleAsync(BackupInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         return await flow.StatusAsync(HttpContext.Caller, request, archiveNow: false, cancellationToken);

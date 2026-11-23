@@ -9,10 +9,12 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Sql;
 
+internal readonly union SqlSocketResponse(SocketClosed, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable, SqlRefusal);
+
 public sealed record SqlSocketInput(string? Project, string? Database);
 
 internal sealed class SqlSocketEndpoint(SqlSockets sockets, DatabaseAccess access)
-    : Endpoint<SqlSocketInput, Result<SocketClosed, Validation, Unauthorized, Forbidden, NotFound, Unavailable, SqlRefusal>>
+    : Endpoint<SqlSocketInput, SqlSocketResponse>
 {
     public override void Configure()
     {
@@ -27,13 +29,13 @@ internal sealed class SqlSocketEndpoint(SqlSockets sockets, DatabaseAccess acces
         Metadata(ListenerMetadata.Client);
     }
 
-    public override async ValueTask<Result<SocketClosed, Validation, Unauthorized, Forbidden, NotFound, Unavailable, SqlRefusal>> HandleAsync(
+    public override async ValueTask<SqlSocketResponse> HandleAsync(
         SqlSocketInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!HttpContext.WebSockets.IsWebSocketRequest)
         {
-            return new Validation("connect with a WebSocket upgrade", "websocket_required");
+            return new InvalidInput("connect with a WebSocket upgrade", "websocket_required");
         }
 
         return SqlRunner.Causality(HttpContext.Request) switch
@@ -45,11 +47,11 @@ internal sealed class SqlSocketEndpoint(SqlSockets sockets, DatabaseAccess acces
                     await access.DataAsync(HttpContext.Caller, request.Project, request.Database, cancellationToken) switch
                     {
                         ResolvedDatabase target => await sockets.ServeAsync(HttpContext, request.Project, request.Database, target, causality, cancellationToken),
-                        Validation invalid => invalid,
-                        Unauthorized unauthorized => unauthorized,
-                        Forbidden forbidden => forbidden,
-                        NotFound missing => missing,
-                        Unavailable unavailable => unavailable,
+                        InvalidInput invalid => invalid,
+                        CredentialRejected unauthorized => unauthorized,
+                        CallerForbidden forbidden => forbidden,
+                        ResourceNotFound missing => missing,
+                        BackendUnavailable unavailable => unavailable,
                     },
             },
             SqlRefusal refusal => refusal,

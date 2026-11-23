@@ -125,15 +125,11 @@ back and retry the unit of work. Disposing the transaction without committing ro
 5 seconds for the rollback, and a synchronous `Dispose` (a `using var` declaration) closes the session at once, which
 rolls it back on the server, and never hides the exception that left the block.
 
-The execution strategy retries nothing else. Below it, the SDK's HTTP client resends a SQL request up to 2 more
-times, after `Retry-After` when TerraBase sends one, only when TerraBase answers `serialization_conflict` or a `503` it
-marks retry-safe (`remote_region_unavailable`, `confirmation_busy`, `catalog_stale`). SQL requests are POSTs, so a
-`502`, a `504` or a lost connection is not resent: the write may already have committed. A `421 wrong_region` is not
-retried at any level either; it means nothing was written, so catch `TerraBaseWrongRegionException` and send the work to
-`HomeRegion`. A region that forwards the request to the database's writer answers `421` only when the request never
-left it. When the writer was sent the request and did not answer, the region answers
-`503 write_outcome_unknown` instead (`TerraBaseException.ErrorCode`, the writer's region in `OutcomeRegion`): the write
-may have committed, so nothing resends it. Read what it would have written before you run it again.
+The SDK's HTTP client resends a buffered SQL request up to twice after `serialization_conflict` or
+`schema_mismatch`, honoring `Retry-After`. SQL requests are POSTs. A gateway error, lost connection or
+`503 write_outcome_unknown` leaves the write outcome uncertain. Check the database state before repeating
+the write. `TerraBaseException.OutcomeRegion` carries the region that accepted an ambiguous write when
+the server includes it.
 
 ## Consistency and bookmarks
 

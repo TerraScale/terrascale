@@ -25,7 +25,7 @@ internal sealed class BatchRowsEndpoint(RowsService rows)
         ArgumentNullException.ThrowIfNull(request);
         if (request.Operations is not { Count: > 0 and <= RowsService.MaxOperations } operations)
         {
-            return new Validation("operations holds 1 to 100 operations", "invalid_request");
+            return new InvalidInput("operations holds 1 to 100 operations", "invalid_request");
         }
 
         List<RowCommand> commands = [];
@@ -40,15 +40,15 @@ internal sealed class BatchRowsEndpoint(RowsService rows)
             };
             if (operation is null || action is not { } verb || operation.Table is not { Length: > 0 } table)
             {
-                return new Validation("each operation has op (create, update or delete) and table", "invalid_request");
+                return new InvalidInput("each operation has op (create, update or delete) and table", "invalid_request");
             }
 
             long? key = null;
             if (verb != RowAction.Create)
             {
-                if (RowsService.Key(operation.Key) switch { long parsed => parsed, Validation => (long?)null } is not { } parsedKey)
+                if (RowsService.Key(operation.Key) switch { long parsed => parsed, InvalidInput => (long?)null } is not { } parsedKey)
                 {
-                    return new Validation("update and delete need the row's integer key", "invalid_key");
+                    return new InvalidInput("update and delete need the row's integer key", "invalid_key");
                 }
 
                 key = parsedKey;

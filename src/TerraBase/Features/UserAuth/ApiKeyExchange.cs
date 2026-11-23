@@ -7,8 +7,13 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Memory;
 using TerraBase.Configuration;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
+
+internal readonly union ApiKeyExchangeOutcome(string, CredentialRejected, BackendUnavailable);
+
+internal readonly union TokenIssueOutcome(ApiKeyExchange.IssuedToken, CredentialRejected, BackendUnavailable);
 
 internal sealed record ApiKeyTokenResponse(
     [property: JsonPropertyName("access_token")] string? AccessToken,
@@ -31,9 +36,9 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
 
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("0123456789abcdefghjkmnpqrstvwxyz");
 
-    private static readonly Unauthorized Refused = new("the API key was refused for this project", "invalid_key");
+    private static readonly CredentialRejected Refused = new("the API key was refused for this project", "invalid_key");
 
-    private static readonly Unavailable Busy = new("ts-auth could not exchange the API key; retry", "key_exchange_unavailable");
+    private static readonly BackendUnavailable Busy = new("ts-auth could not exchange the API key; retry", "key_exchange_unavailable");
 
     private readonly MemoryCache _tokens = new(new MemoryCacheOptions { SizeLimit = MaxCachedTokens });
 
@@ -45,18 +50,18 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
             && !body[27..].ContainsAnyExcept(SecretCharacters);
     }
 
-    public async ValueTask<Result<string, Unauthorized, Unavailable>> ExchangeAsync(string secret, string project, CancellationToken cancellationToken)
+    public async ValueTask<ApiKeyExchangeOutcome> ExchangeAsync(string secret, string project, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(secret);
         ArgumentNullException.ThrowIfNull(project);
         if (options.AuthIssuer is not { } issuer)
         {
-            return new Unauthorized("API keys need TERRABASE_AUTH_ISSUER", "invalid_key");
+            return new CredentialRejected("API keys need TERRABASE_AUTH_ISSUER", "invalid_key");
         }
 
         if (!IsKey(secret) || project.Length != 26 || !Ulid.TryParse(project, out _))
         {
-            return new Unauthorized("send an API key and connect to <project id>/<database>", "invalid_key");
+            return new CredentialRejected("send an API key and connect to <project id>/<database>", "invalid_key");
         }
 
         var cacheKey = string.Concat(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))), "/", project);
@@ -69,8 +74,8 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
         return outcome switch
         {
             IssuedToken issued => Remember(cacheKey, issued),
-            Unauthorized refused => refused,
-            Unavailable unavailable => unavailable,
+            CredentialRejected refused => refused,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -86,7 +91,7 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
         return issued.Token;
     }
 
-    private async ValueTask<Result<IssuedToken, Unauthorized, Unavailable>> RequestAsync(string issuer, string secret, string project, CancellationToken cancellationToken)
+    private async ValueTask<TokenIssueOutcome> RequestAsync(string issuer, string secret, string project, CancellationToken cancellationToken)
     {
         var body = secret.StartsWith(KeyPrefix, StringComparison.Ordinal) ? secret[KeyPrefix.Length..] : secret;
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(string.Concat(issuer.TrimEnd('/'), "/oauth/token")))
@@ -128,5 +133,5 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
         }
     }
 
-    private sealed record IssuedToken(string Token, TimeSpan Lifetime);
+    internal sealed record IssuedToken(string Token, TimeSpan Lifetime);
 }

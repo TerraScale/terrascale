@@ -1,5 +1,4 @@
 using Dapper;
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Metadata;
@@ -7,7 +6,6 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -31,6 +29,8 @@ public sealed record ProjectStepUpBody(string Proof, DateTimeOffset ExpiresAt)
 {
     public override string ToString() => nameof(ProjectStepUpBody);
 }
+
+public readonly union ProjectStepUpRead(ProjectStepUpRequest, AuthValidation);
 
 public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication, Sessions sessions, HostedAuth hosted, TotpCredentials mfa,
     StepUpProofs proofs, PasskeyCredentials passkeys, ProjectAuthSettings settings, AuthData data, KeyRing ring, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
@@ -64,17 +64,15 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         }
 
         var read = await this.ReadAsync(cancellationToken);
-        if (read is Validation invalid)
+        return read switch
         {
-            return ErrorResults.ToResult(invalid);
-        }
-
-        var request = read switch
-        {
-            ProjectStepUpRequest body => body,
-            Validation => throw new UnreachableException(),
+            ProjectStepUpRequest request => await this.IssueAsync(project, request, cancellationToken),
+            AuthValidation invalid => ErrorResults.ToResult(invalid),
         };
+    }
 
+    private async Task<IResult> IssueAsync(string project, ProjectStepUpRequest request, CancellationToken cancellationToken)
+    {
         if (!PlatformDirectory.IsId(request.ClientId)
             || await authentication.AuthenticateAsync(this.HttpContext.Request, cancellationToken, project, request.ClientId) is not { } caller
             || await sessions.ResolveIdAsync(project, caller.Id, caller.SessionId, cancellationToken) is not { } live)
@@ -194,7 +192,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         }
     }
 
-    private async Task<Valid<ProjectStepUpRequest>> ReadAsync(CancellationToken cancellationToken)
+    private async Task<ProjectStepUpRead> ReadAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -216,11 +214,11 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         }
         catch (Exception error) when (error is JsonException or BadHttpRequestException)
         {
-            return new Validation("Supply a JSON object with client_id and password, code, or challenge and passkey.");
+            return new AuthValidation("Supply a JSON object with client_id and password, code, or challenge and passkey.");
         }
 
-        return new Validation("Supply a JSON object of at most 16384 bytes with client_id and password, code, or challenge and passkey.");
+        return new AuthValidation("Supply a JSON object of at most 16384 bytes with client_id and password, code, or challenge and passkey.");
     }
 
-    private static IResult Denied() => ErrorResults.ToResult(new Unauthorized("Present a live project sign-in token and reverify with the password or an allowed factor.", "step_up_denied"));
+    private static IResult Denied() => ErrorResults.ToResult(new AuthUnauthorized("Present a live project sign-in token and reverify with the password or an allowed factor.", "step_up_denied"));
 }

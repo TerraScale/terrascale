@@ -24,7 +24,7 @@ internal sealed class MoveDatabaseHomeEndpoint(DatabaseAccess access, Management
     {
         ArgumentNullException.ThrowIfNull(request);
         return request.Region is null
-            ? new Validation("region is required", "invalid_region")
+            ? new InvalidInput("region is required", "invalid_region")
             : await DatabaseUpdates.UpdateAsync(HttpContext.Caller, access, management, options, time, request with { Regions = null, ReplicaRegions = null }, cancellationToken);
     }
 }

@@ -69,7 +69,8 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 try
                 {
-                    paymentMethod = await PaymentMethodAsync(context, cancellationToken) switch { BillingCard card => card, NoCard => null, Unavailable => null };
+                    var outcome = await PaymentMethodAsync(context, cancellationToken);
+                    paymentMethod = outcome switch { BillingCard card => card, NoCard => null, DashboardUnavailable => null };
                 }
                 catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {

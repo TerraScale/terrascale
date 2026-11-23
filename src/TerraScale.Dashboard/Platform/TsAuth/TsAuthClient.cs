@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         private const int MaxResponseBytes = 16 * 1024 * 1024;
         private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
 
-        // Immutable header values shared by every request: one allocation, not one per call.
         private static readonly MediaTypeWithQualityHeaderValue AcceptJson = new("application/json");
 
         private static readonly MediaTypeHeaderValue JsonContentType = new("application/json");
@@ -48,8 +47,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 requestUri,
                 bodyFactory: null,
                 null,
-                cancellationToken).ConfigureAwait(false);
-            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
+                cancellationToken);
+            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken);
         }
 
         private async Task<TResponse> SendOAuthFormCoreAsync<TResponse>(
@@ -64,9 +63,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 requestUri,
                 CreateFormBodyFactory(formValues),
                 authorization,
-                cancellationToken).ConfigureAwait(false);
-            await RequireStatusAsync(response, HttpStatusCode.OK, cancellationToken).ConfigureAwait(false);
-            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
+                cancellationToken);
+            await RequireStatusAsync(response, HttpStatusCode.OK, cancellationToken);
+            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken);
         }
 
         private async Task SendOAuthFormForSuccessCoreAsync(
@@ -80,10 +79,10 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 requestUri,
                 CreateFormBodyFactory(formValues),
                 authorization,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken);
             if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
             {
-                throw await TsAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+                throw await TsAuthErrors.CreateAsync(response, cancellationToken);
             }
         }
 
@@ -99,8 +98,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 requestUri,
                 bodyFactory: null,
                 TsAuthCredentials.Bearer(accessToken),
-                cancellationToken).ConfigureAwait(false);
-            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
+                cancellationToken);
+            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken);
         }
 
         private async Task<TResponse> SendAuthenticatedJsonCoreAsync<TRequest, TResponse>(
@@ -111,9 +110,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         {
             using var response = await SendRequestAsync(method, route,
                 body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
-                authorization, cancellationToken, stepUpProof: stepUpProof).ConfigureAwait(false);
-            await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
-            return await ReadJsonAsync(response, responseType, cancellationToken).ConfigureAwait(false);
+                authorization, cancellationToken, stepUpProof: stepUpProof);
+            await RequireStatusAsync(response, expectedStatus, cancellationToken);
+            return await ReadJsonAsync(response, responseType, cancellationToken);
         }
 
         private async Task SendAuthenticatedForStatusCoreAsync<TRequest>(
@@ -124,21 +123,19 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         {
             using var response = await SendRequestAsync(method, route,
                 body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
-                authorization, cancellationToken, stepUpProof: stepUpProof).ConfigureAwait(false);
-            await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
+                authorization, cancellationToken, stepUpProof: stepUpProof);
+            await RequireStatusAsync(response, expectedStatus, cancellationToken);
         }
 
-        // A deletion that ts-auth may finish in the background: true for 204 (done), false for 202 (pending; repeating the
-        // request resumes it). Any other success status is not evidence either way.
         private async Task<bool> SendAuthenticatedForDeletionCoreAsync(string route, AuthenticationHeaderValue authorization, CancellationToken cancellationToken)
         {
-            using var response = await SendRequestAsync(HttpMethod.Delete, route, null, authorization, cancellationToken).ConfigureAwait(false);
+            using var response = await SendRequestAsync(HttpMethod.Delete, route, null, authorization, cancellationToken);
             if (response.StatusCode == HttpStatusCode.Accepted)
             {
                 return false;
             }
 
-            await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
+            await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken);
             return true;
         }
 
@@ -149,13 +146,13 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
             using var response = await SendRequestAsync(method, route, null,
                 authorization,
-                cancellationToken, deletionReceipt, deletionAuthorization: deletionAuthorization).ConfigureAwait(false);
+                cancellationToken, deletionReceipt, deletionAuthorization: deletionAuthorization);
             if (response.StatusCode == HttpStatusCode.Accepted)
             {
                 return false;
             }
 
-            await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
+            await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken);
             return true;
         }
 
@@ -174,7 +171,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         {
             if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
             {
-                throw await TsAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+                throw await TsAuthErrors.CreateAsync(response, cancellationToken);
             }
 
             if (response.StatusCode != expected)
@@ -203,7 +200,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         private static Func<HttpContent?> CreateFormBodyFactory(IReadOnlyList<KeyValuePair<string, string>> values)
         {
             using var content = new FormUrlEncodedContent(values);
-            // FormUrlEncodedContent buffers synchronously; its computed length is exact.
             if (content.Headers.ContentLength > MaxOperationBytes)
             {
                 throw new ArgumentException("The ts-auth form exceeds the request byte limit.", nameof(values));
@@ -247,7 +243,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             {
                 request.Content = content;
             }
-            return await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            return await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
 
         private static async Task<TResponse> ReadJsonAsync<TResponse>(
@@ -257,7 +253,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         {
             if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
             {
-                throw await TsAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+                throw await TsAuthErrors.CreateAsync(response, cancellationToken);
             }
 
             var media = response.Content.Headers.ContentType;
@@ -267,7 +263,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 throw new TsAuthException(response.StatusCode, "ts-auth returned an unexpected response media type.", "invalid_response", TsAuthErrors.ResolveRetryAfter(response), response);
             }
 
-            // Bound successful bodies before deserialization, including unknown-length responses.
             using var destination = new BoundedHttpBodyStream(MaxResponseBytes,
                 () => new TsAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TsAuthErrors.ResolveRetryAfter(response), response), cancellationToken);
             if (response.Content.Headers.ContentLength > MaxResponseBytes)
@@ -276,7 +271,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             }
             try
             {
-                await response.Content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+                await response.Content.CopyToAsync(destination, cancellationToken);
             }
             catch (Exception exception) when (exception is IOException or HttpRequestException)
             {
@@ -291,7 +286,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             }
             catch (Exception exception) when (exception is JsonException or InvalidOperationException)
             {
-                // Do not retain response fragments or paths in diagnostics.
                 throw new TsAuthException(
                     response.StatusCode,
                     "ts-auth returned an invalid response body.",

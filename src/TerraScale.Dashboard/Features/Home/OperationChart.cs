@@ -53,7 +53,6 @@ namespace TerraScale.Dashboard.Features.Home
                 return new ChartTick(Coordinate(coordinates[index].X), tick, step == 0 ? "start" : step == 4 ? "end" : "middle");
             }).ToArray();
             var path = Smooth(coordinates);
-            // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.
             var columnWidth = 660d / Math.Max(1, points.Count - 1);
             var columns = new List<ChartColumn>();
             for (var index = 0; index < points.Count; index++)

@@ -12,10 +12,11 @@ namespace TerraScale.Dashboard.Features.Settings
         [McpServerTool(Name = "get_project_settings", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read provider audit retention and the selected project's deletion eligibility. Requires organization management.")]
         public async Task<ProjectSettings> Read(string? organizationId = null, string? projectId = null)
         {
-            return await settings.ReadAsync(Scope(organizationId, projectId), Cancellation) switch
+            var outcome = await settings.ReadAsync(Scope(organizationId, projectId), Cancellation);
+            return outcome switch
             {
                 ProjectSettings value => value,
-                Forbidden error => throw new AccountAccessException(error.Message),
+                DashboardForbidden error => throw new AccountAccessException(error.Message),
             };
         }
 
@@ -27,8 +28,8 @@ namespace TerraScale.Dashboard.Features.Settings
             return saved switch
             {
                 Done => new(true),
-                Validation error => throw new AccountAccessException(error.Message, 400),
-                Forbidden error => throw new AccountAccessException(error.Message),
+                DashboardValidation error => throw new AccountAccessException(error.Message, 400),
+                DashboardForbidden error => throw new AccountAccessException(error.Message),
             };
         }
 

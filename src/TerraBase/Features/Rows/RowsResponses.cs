@@ -20,19 +20,19 @@ public sealed record RowRefused(int Status, string Code, string Message, RowsErr
     }
 }
 
-public readonly union RowsOutcome(IReadOnlyList<RowAnswer>, RowRefused, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union RowsOutcome(IReadOnlyList<RowAnswer>, RowRefused, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
-public readonly union RowResponse(RowAnswer, RowRefused, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union RowResponse(RowAnswer, RowRefused, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
-public readonly union CreatedRowResponse(Created<RowAnswer>, RowRefused, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union CreatedRowResponse(Created<RowAnswer>, RowRefused, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
-public readonly union DeletedRowResponse(Done, RowRefused, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union DeletedRowResponse(Completed, RowRefused, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
-public readonly union RowsBatchResponse(RowsBatchAnswer, RowRefused, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union RowsBatchResponse(RowsBatchAnswer, RowRefused, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
 internal static class RowsResponses
 {
-    private static readonly NotFound RowNotFound = new("the row does not exist", "row_not_found");
+    private static readonly ResourceNotFound RowNotFound = new("the row does not exist", "row_not_found");
 
     public static RowResponse Single(RowsOutcome outcome) => outcome switch
     {
@@ -40,11 +40,11 @@ internal static class RowsResponses
         IReadOnlyList<RowAnswer> => RowNotFound,
         RowRefused refused => refused,
         SqlRefusal refusal => refusal,
-        Validation invalid => invalid,
-        Unauthorized unauthorized => unauthorized,
-        Forbidden forbidden => forbidden,
-        NotFound missing => missing,
-        Unavailable unavailable => unavailable,
+        InvalidInput invalid => invalid,
+        CredentialRejected unauthorized => unauthorized,
+        CallerForbidden forbidden => forbidden,
+        ResourceNotFound missing => missing,
+        BackendUnavailable unavailable => unavailable,
     };
 
     public static CreatedRowResponse Created(RowsOutcome outcome, string rows) => outcome switch
@@ -53,24 +53,24 @@ internal static class RowsResponses
         IReadOnlyList<RowAnswer> => new RowRefused(StatusCodes.Status403Forbidden, "rule_denied", "the rules refused the row"),
         RowRefused refused => refused,
         SqlRefusal refusal => refusal,
-        Validation invalid => invalid,
-        Unauthorized unauthorized => unauthorized,
-        Forbidden forbidden => forbidden,
-        NotFound missing => missing,
-        Unavailable unavailable => unavailable,
+        InvalidInput invalid => invalid,
+        CredentialRejected unauthorized => unauthorized,
+        CallerForbidden forbidden => forbidden,
+        ResourceNotFound missing => missing,
+        BackendUnavailable unavailable => unavailable,
     };
 
     public static DeletedRowResponse Deleted(RowsOutcome outcome) => outcome switch
     {
-        IReadOnlyList<RowAnswer> { Count: > 0 } => new Done(),
+        IReadOnlyList<RowAnswer> { Count: > 0 } => new Completed(),
         IReadOnlyList<RowAnswer> => RowNotFound,
         RowRefused refused => refused,
         SqlRefusal refusal => refusal,
-        Validation invalid => invalid,
-        Unauthorized unauthorized => unauthorized,
-        Forbidden forbidden => forbidden,
-        NotFound missing => missing,
-        Unavailable unavailable => unavailable,
+        InvalidInput invalid => invalid,
+        CredentialRejected unauthorized => unauthorized,
+        CallerForbidden forbidden => forbidden,
+        ResourceNotFound missing => missing,
+        BackendUnavailable unavailable => unavailable,
     };
 
     public static RowsBatchResponse Batch(RowsOutcome outcome) => outcome switch
@@ -78,10 +78,10 @@ internal static class RowsResponses
         IReadOnlyList<RowAnswer> answers => new RowsBatchAnswer(answers),
         RowRefused refused => refused,
         SqlRefusal refusal => refusal,
-        Validation invalid => invalid,
-        Unauthorized unauthorized => unauthorized,
-        Forbidden forbidden => forbidden,
-        NotFound missing => missing,
-        Unavailable unavailable => unavailable,
+        InvalidInput invalid => invalid,
+        CredentialRejected unauthorized => unauthorized,
+        CallerForbidden forbidden => forbidden,
+        ResourceNotFound missing => missing,
+        BackendUnavailable unavailable => unavailable,
     };
 }

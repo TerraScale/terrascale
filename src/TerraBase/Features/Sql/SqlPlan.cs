@@ -3,6 +3,10 @@ using TerraBase.Storage;
 
 namespace TerraBase.Features.Sql;
 
+internal readonly union StatementPlan(PlannedStatement, SqlRefusal);
+
+internal readonly union SqlBatchPlan(SqlBatch, SqlRefusal);
+
 internal enum StatementKind
 {
     Read,
@@ -34,7 +38,7 @@ internal static class SqlPlan
 
     private static readonly FrozenSet<string> SchemaVerbs = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "CREATE", "ALTER", "DROP", "REINDEX");
 
-    public static Result<PlannedStatement, SqlRefusal> Classify(SqlStatement statement, int index)
+    public static StatementPlan Classify(SqlStatement statement, int index)
     {
         ArgumentNullException.ThrowIfNull(statement);
         if (string.IsNullOrWhiteSpace(statement.Sql))
@@ -83,7 +87,7 @@ internal static class SqlPlan
         return new PlannedStatement(statement, reads && !writes ? StatementKind.Read : StatementKind.Write, meaningful, null);
     }
 
-    public static Result<SqlBatch, SqlRefusal> Batch(IReadOnlyList<SqlStatement> statements, bool allowTransactionControl)
+    public static SqlBatchPlan Batch(IReadOnlyList<SqlStatement> statements, bool allowTransactionControl)
     {
         ArgumentNullException.ThrowIfNull(statements);
         if (statements.Count is 0 or > MaxStatements)

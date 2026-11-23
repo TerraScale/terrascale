@@ -11,7 +11,6 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
-using TerraScale.Authentication.Errors;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -30,7 +29,7 @@ public sealed record AgentIdPendingBody(string Status, string TransactionId, str
 
 public sealed record AgentIdSignIn(AgentRecord Agent, UserRecord Owner, string Kid);
 
-public readonly union ProveResult(Done, NotFound, Unauthorized);
+public readonly union ProveResult(AuthCompleted, AuthNotFound, AuthUnauthorized);
 
 public sealed record AgentIdFence(Versioned<AgentKeyRecord> Key, Versioned<AgentRecord> Agent, Versioned<UserRecord> Owner, AgentIdRegistration? Registration = null)
 {
@@ -98,7 +97,7 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
         var current = TerraScaleIds.IsValid(id) ? await this.FindAsync(id, cancellationToken) : null;
         if (current is not { Value: var transaction } || !this.IsOpen(transaction))
         {
-            return new NotFound(Expired, "expired_transaction");
+            return new AuthNotFound(Expired, "expired_transaction");
         }
 
         var (verified, refusedAgent, reason) = proof is { Length: > 0 }
@@ -136,9 +135,9 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
             return Refused(agent.Id, "proof replayed, or the transaction, key or owner changed");
         }
 
-        return new Done();
+        return new AuthCompleted();
 
-        Unauthorized Refused(string? agentId, string why)
+        AuthUnauthorized Refused(string? agentId, string why)
         {
             logger.ZLogInformation($"Agent sign-in proof refused for transaction {id} and agent {agentId ?? "unknown"}: {why}");
             return new("Sign an ES256 JWT with an active key of an active agent: iss and sub the agent id, aud this URL, txn this transaction, client_id the app's client_id, a jti, iat, and exp at most 300 seconds after iat.",

@@ -86,16 +86,18 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             StatementTimeout = context.Options.StatementTimeout,
         };
         var opened = SqliteConnection.Open(options);
-        SessionOpenResult? failed = opened switch
+        return opened switch
         {
-            SqliteConnection => null,
-            SqliteStatus status => status.IsBusy ? new StorageBusy(status.Message, TimeSpan.FromMilliseconds(50)) : new StorageCorrupted(context.DatabaseId, status.Message),
+            SqliteConnection writer => Initialize(context, options, writer, create, strict, release),
+            SqliteStatus status => OpenFailure(context, status),
         };
-        if (failed is { } failure || SqliteConnection.Opened(opened) is not { } writer)
-        {
-            return failed ?? new StorageCorrupted(context.DatabaseId, "writer connection unavailable");
-        }
+    }
 
+    private static SessionOpenResult OpenFailure(SessionContext context, SqliteStatus status) =>
+        status.IsBusy ? new StorageBusy(status.Message, TimeSpan.FromMilliseconds(50)) : new StorageCorrupted(context.DatabaseId, status.Message);
+
+    private static SessionOpenResult Initialize(SessionContext context, SqliteOpenOptions options, SqliteConnection writer, bool create, bool strict, Func<DatabaseSession, Task> release)
+    {
         var setup = writer.Exec(MetaStore.SchemaSql);
         if (setup.IsOk && create)
         {
@@ -157,7 +159,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     {
         if (Interlocked.Decrement(ref _references) == 0)
         {
-            await _release(this).ConfigureAwait(false);
+            await _release(this);
         }
     }
 
@@ -170,10 +172,10 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
         _requests.Writer.TryComplete();
         Volatile.Read(ref _activeTransaction)?.Abandon();
-        await _lane.ConfigureAwait(false);
+        await _lane;
         for (var index = 0; index < _readerCount; index++)
         {
-            var reader = await _readers.Reader.ReadAsync(CancellationToken.None).ConfigureAwait(false);
+            var reader = await _readers.Reader.ReadAsync(CancellationToken.None);
             reader.Dispose();
         }
 
@@ -182,7 +184,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         DisposeResources();
     }
 
-    public async ValueTask<Result<Done, RequestTimeout>> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
+    public async ValueTask<WaitForBookmarkOutcome> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bookmark);
         var started = _context.Time.GetTimestamp();
@@ -197,17 +199,17 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             var remaining = timeout - _context.Time.GetElapsedTime(started);
             if (remaining <= TimeSpan.Zero || IsClosed)
             {
-                return new RequestTimeout(string.Concat("bookmark ", bookmark.Encode(), " was not reached in time"));
+                return new StorageTimeout(string.Concat("bookmark ", bookmark.Encode(), " was not reached in time"));
             }
 
             using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var delay = Task.Delay(remaining, _context.Time, delayCancellation.Token);
-            _ = await Task.WhenAny(changed, delay).ConfigureAwait(false);
-            await delayCancellation.CancelAsync().ConfigureAwait(false);
+            _ = await Task.WhenAny(changed, delay);
+            await delayCancellation.CancelAsync();
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        return new Done();
+        return new BookmarkReached();
     }
 
     public async IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -281,22 +283,23 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
             if (!progressed)
             {
-                await signal.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await signal.WaitAsync(cancellationToken);
             }
         }
     }
 
-    public ValueTask<Result<CommitLogPage, CommitLogGap, StorageBusy>> ReadCommitLogAsync(string originRegion, long fromSequence, int maxEntries, CancellationToken cancellationToken)
+    public ValueTask<ReadCommitLogOutcome> ReadCommitLogAsync(string originRegion, long fromSequence, int maxEntries, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxEntries);
         cancellationToken.ThrowIfCancellationRequested();
         if (Log(originRegion) is not { } log)
         {
-            return ValueTask.FromResult<Result<CommitLogPage, CommitLogGap, StorageBusy>>(new CommitLogPage(DatabaseId, originRegion, [], fromSequence));
+            return ValueTask.FromResult<ReadCommitLogOutcome>(new CommitLogPage(DatabaseId, originRegion, [], fromSequence));
         }
 
         var visible = _versions.Get(originRegion);
-        Result<CommitLogPage, CommitLogGap, StorageBusy> result = log.Read(Math.Max(fromSequence, 1), maxEntries) switch
+        var read = log.Read(Math.Max(fromSequence, 1), maxEntries);
+        ReadCommitLogOutcome result = read switch
         {
             IReadOnlyList<CommitMetadata> page => Page(originRegion, fromSequence, [.. page.Where(entry => entry.Sequence <= visible)]),
             CommitLogGap gap => gap,
@@ -305,36 +308,36 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         return ValueTask.FromResult(result);
     }
 
-    public ValueTask<Result<IReadOnlyList<CommitLogSegment>, StorageBusy>> ListSealedSegmentsAsync(string originRegion, long afterSequence, CancellationToken cancellationToken)
+    public ValueTask<ListSegmentsOutcome> ListSealedSegmentsAsync(string originRegion, long afterSequence, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         IReadOnlyList<CommitLogSegment> segments = Log(originRegion) is { } log ? log.ListSealed(afterSequence) : [];
-        return ValueTask.FromResult<Result<IReadOnlyList<CommitLogSegment>, StorageBusy>>(segments);
+        return ValueTask.FromResult<ListSegmentsOutcome>(segments);
     }
 
-    public ValueTask<Result<Stream, NotFound, StorageBusy>> OpenSegmentAsync(CommitLogSegment segment, CancellationToken cancellationToken)
+    public ValueTask<OpenSegmentOutcome> OpenSegmentAsync(CommitLogSegment segment, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(segment);
         cancellationToken.ThrowIfCancellationRequested();
-        Result<Stream, NotFound, StorageBusy> result = Log(segment.OriginRegion)?.SegmentPath(segment) is not { } path
-            ? new NotFound("commit log segment not found")
+        OpenSegmentOutcome result = Log(segment.OriginRegion)?.SegmentPath(segment) is not { } path
+            ? new SegmentNotFound(segment.DatabaseId, segment.OriginRegion, segment.FirstSequence, segment.LastSequence)
             : FileIo.OpenRead(path) is { } stream
                 ? stream
                 : new StorageBusy("commit log segment could not be opened", TimeSpan.FromMilliseconds(50));
         return ValueTask.FromResult(result);
     }
 
-    public async ValueTask<Result<Done, Validation, StorageCorrupted, StorageBusy>> ImportSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken)
+    public async ValueTask<ImportSegmentOutcome> ImportSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(segment);
         ArgumentNullException.ThrowIfNull(content);
         if (segment.DatabaseId != DatabaseId || !StorageEngineOptions.IsValidRegion(segment.OriginRegion) || string.Equals(segment.OriginRegion, Region, StringComparison.Ordinal))
         {
-            return new Validation("segment does not belong to a remote origin of this database");
+            return new InvalidSegment("segment does not belong to a remote origin of this database");
         }
 
         using var buffer = new MemoryStream();
-        await content.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+        await content.CopyToAsync(buffer, cancellationToken);
         List<CommitMetadata> commits = [];
         if (!CommitFrame.TryParseAll(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), segment.OriginRegion, _cipher, commits))
         {
@@ -345,20 +348,20 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         {
             if (commits[index].Sequence != segment.FirstSequence + index)
             {
-                return new Validation("segment sequences are not contiguous");
+                return new InvalidSegment("segment sequences are not contiguous");
             }
         }
 
         if (commits.Count == 0 || commits[^1].Sequence != segment.LastSequence)
         {
-            return new Validation("segment range does not match its content");
+            return new InvalidSegment("segment range does not match its content");
         }
 
-        var applied = await ApplyRemoteBatchAsync(new RemoteCommitBatch(DatabaseId, commits), cancellationToken).ConfigureAwait(false);
+        var applied = await ApplyRemoteBatchAsync(new RemoteCommitBatch(DatabaseId, commits), cancellationToken);
         return applied switch
         {
-            RemoteApplyOutcome => new Done(),
-            SchemaMismatch mismatch => new Validation(string.Concat("segment schema epoch mismatch: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture))),
+            RemoteApplyOutcome => new SegmentImported(),
+            SchemaMismatch mismatch => new InvalidSegment(string.Concat("segment schema epoch mismatch: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture))),
             StorageCorrupted corrupted => corrupted,
             StorageBusy busy => busy,
         };
@@ -517,7 +520,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private async ValueTask<SqliteConnection?> RentReaderAsync(CancellationToken cancellationToken)
     {
-        while (await _readers.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+        while (await _readers.Reader.WaitToReadAsync(cancellationToken))
         {
             if (_readers.Reader.TryRead(out var reader))
             {
@@ -545,7 +548,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return false;
         }
 
-        while (await _requests.Writer.WaitToWriteAsync(cancellationToken).ConfigureAwait(false))
+        while (await _requests.Writer.WaitToWriteAsync(cancellationToken))
         {
             if (_requests.Writer.TryWrite(request))
             {

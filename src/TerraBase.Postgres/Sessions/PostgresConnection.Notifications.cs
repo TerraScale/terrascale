@@ -44,7 +44,7 @@ internal sealed partial class PostgresConnection
 
         if (session.Channels.Count == 0)
         {
-            await StopListeningAsync(session).ConfigureAwait(false);
+            await StopListeningAsync(session);
         }
 
         return PgResult.Command("UNLISTEN");
@@ -55,10 +55,10 @@ internal sealed partial class PostgresConnection
         session.Channels.Clear();
         if (session.Subscription is { } subscription)
         {
-            await subscription.CancelAsync().ConfigureAwait(false);
+            await subscription.CancelAsync();
             if (session.SubscriptionTask is { } task)
             {
-                await task.ConfigureAwait(false);
+                await task;
             }
 
             subscription.Dispose();
@@ -80,9 +80,9 @@ internal sealed partial class PostgresConnection
     {
         try
         {
-            await foreach (var entry in executor.SubscribeChangesAsync(after, cancellationToken).ConfigureAwait(false))
+            await foreach (var entry in executor.SubscribeChangesAsync(after, cancellationToken))
             {
-                await notifications.WriteAsync(entry, cancellationToken).ConfigureAwait(false);
+                await notifications.WriteAsync(entry, cancellationToken);
                 reader.Interrupt();
             }
         }
@@ -104,7 +104,7 @@ internal sealed partial class PostgresConnection
             }
         }
 
-        return !delivered || await Writer.FlushAsync(closed).ConfigureAwait(false);
+        return !delivered || await Writer.FlushAsync(closed);
     }
 
     private static string Payload(ChangefeedEntry entry)

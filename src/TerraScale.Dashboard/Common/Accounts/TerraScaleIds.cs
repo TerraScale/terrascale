@@ -4,7 +4,6 @@ using System.Runtime.CompilerServices;
 
 namespace TerraScale.Dashboard.Common.Accounts
 {
-    // Accept only canonical uppercase Crockford ULIDs, without prefixes or ambiguous letters.
     public static class TerraScaleIds
     {
         private static readonly SearchValues<char> Alphabet = SearchValues.Create("0123456789ABCDEFGHJKMNPQRSTVWXYZ");

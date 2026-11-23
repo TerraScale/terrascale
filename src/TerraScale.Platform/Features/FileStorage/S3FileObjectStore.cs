@@ -7,13 +7,25 @@ using Amazon.S3.Model;
 
 namespace TerraScale.Platform.Features.FileStorage;
 
-public readonly union ProjectPrefixErasure(Done, Unavailable);
+public sealed record FileObjectDeleted;
+
+public sealed record ProjectPrefixErased;
+
+public readonly union SignFileUploadOutcome(FileSignedUrl, PlatformUnavailable);
+
+public readonly union SignFileDownloadOutcome(FileSignedUrl, PlatformUnavailable);
+
+public readonly union VerifyFileObjectOutcome(bool, PlatformUnavailable);
+
+public readonly union DeleteFileObjectOutcome(FileObjectDeleted, PlatformUnavailable);
+
+public readonly union ProjectPrefixErasure(ProjectPrefixErased, PlatformUnavailable);
 
 public sealed class S3FileObjectStore : IDisposable
 {
     private const int ProjectPageSize = 100;
     private const int ParallelDeletes = 16;
-    private static readonly Unavailable Unconfigured = new("file object storage is not configured", "files_unconfigured");
+    private static readonly PlatformUnavailable Unconfigured = new("file object storage is not configured", "files_unconfigured");
     private readonly AmazonS3Client? _client;
     private readonly Protocol _protocol;
     private readonly TimeProvider _timeProvider;
@@ -44,7 +56,7 @@ public sealed class S3FileObjectStore : IDisposable
 
     public static string Key(Ulid organization, Ulid project, string bucket, string file) => $"{ProjectPrefix(organization, project)}{bucket}/{file}";
 
-    public Result<FileSignedUrl, Unavailable> Upload(string region, string key, FileObject file)
+    public SignFileUploadOutcome Upload(string region, string key, FileObject file)
     {
         if (_client is not { } client)
         {
@@ -70,11 +82,11 @@ public sealed class S3FileObjectStore : IDisposable
                 ["Content-Length"] = file.Size.ToString(CultureInfo.InvariantCulture),
                 ["x-amz-checksum-sha256"] = file.Sha256,
             }),
-            Unavailable unavailable => unavailable,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public Result<FileSignedUrl, Unavailable> Download(string region, string key, FileObject file)
+    public SignFileDownloadOutcome Download(string region, string key, FileObject file)
     {
         if (_client is not { } client)
         {
@@ -99,11 +111,11 @@ public sealed class S3FileObjectStore : IDisposable
         return Presign(client, request) switch
         {
             string url => new FileSignedUrl(file.Id, url, expires, new Dictionary<string, string>(StringComparer.Ordinal)),
-            Unavailable unavailable => unavailable,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<bool, Unavailable>> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
+    public async ValueTask<VerifyFileObjectOutcome> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
     {
         if (_client is not { } client)
         {
@@ -143,11 +155,11 @@ public sealed class S3FileObjectStore : IDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new Unavailable("the object store did not answer in time", "files_timeout");
+            return new PlatformUnavailable("the object store did not answer in time", "files_timeout");
         }
     }
 
-    public async ValueTask<Result<Done, Unavailable>> DeleteAsync(string region, string key, CancellationToken cancellationToken)
+    public async ValueTask<DeleteFileObjectOutcome> DeleteAsync(string region, string key, CancellationToken cancellationToken)
     {
         if (_client is not { } client)
         {
@@ -157,7 +169,7 @@ public sealed class S3FileObjectStore : IDisposable
         try
         {
             _ = await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken);
-            return new Done();
+            return new FileObjectDeleted();
         }
         catch (AmazonServiceException error)
         {
@@ -173,7 +185,7 @@ public sealed class S3FileObjectStore : IDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new Unavailable("the object store did not answer in time", "files_timeout");
+            return new PlatformUnavailable("the object store did not answer in time", "files_timeout");
         }
     }
 
@@ -189,11 +201,11 @@ public sealed class S3FileObjectStore : IDisposable
         do
         {
             var listed = await ListProjectObjectsAsync(client, region, prefix, cancellationToken);
-            var swept = await (listed switch
+            var swept = listed switch
             {
-                ProjectObjectPage page => ErasePageAsync(region, prefix, page, cancellationToken),
-                Unavailable unavailable => ValueTask.FromResult<(bool Truncated, Unavailable? Failure)>((false, unavailable)),
-            });
+                ProjectObjectPage page => await ErasePageAsync(region, prefix, page, cancellationToken),
+                PlatformUnavailable unavailable => (Truncated: false, Failure: unavailable),
+            };
             if (swept.Failure is { } failure)
             {
                 return failure;
@@ -203,23 +215,23 @@ public sealed class S3FileObjectStore : IDisposable
         }
         while (truncated);
 
-        return new Done();
+        return new ProjectPrefixErased();
     }
 
-    private async ValueTask<(bool Truncated, Unavailable? Failure)> ErasePageAsync(
+    private async ValueTask<(bool Truncated, PlatformUnavailable? Failure)> ErasePageAsync(
         string region, string prefix, ProjectObjectPage page, CancellationToken cancellationToken)
     {
         if (page.Keys.Any(key => !key.StartsWith(prefix, StringComparison.Ordinal)) || (page.Truncated && page.Keys.Count == 0))
         {
-            return (false, new Unavailable("the object store returned an invalid project listing", "files_invalid_listing"));
+            return (false, new PlatformUnavailable("the object store returned an invalid project listing", "files_invalid_listing"));
         }
 
-        Unavailable? failure = null;
+        PlatformUnavailable? failure = null;
         await Parallel.ForEachAsync(page.Keys, new ParallelOptions { MaxDegreeOfParallelism = ParallelDeletes, CancellationToken = cancellationToken },
             async (key, token) =>
             {
                 var removed = await DeleteAsync(region, key, token);
-                if (removed switch { Done => null, Unavailable unavailable => unavailable } is { } deleteFailure)
+                if (removed switch { FileObjectDeleted => null, PlatformUnavailable unavailable => unavailable } is { } deleteFailure)
                 {
                     Interlocked.CompareExchange(ref failure, deleteFailure, null);
                 }
@@ -227,7 +239,7 @@ public sealed class S3FileObjectStore : IDisposable
         return (page.Truncated, failure);
     }
 
-    private static async ValueTask<ListProjectObjectsResult> ListProjectObjectsAsync(
+    private static async ValueTask<ListProjectObjectsOutcome> ListProjectObjectsAsync(
         AmazonS3Client client, string region, string prefix, CancellationToken cancellationToken)
     {
         try
@@ -263,13 +275,13 @@ public sealed class S3FileObjectStore : IDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new Unavailable("the object store did not answer in time", "files_timeout");
+            return new PlatformUnavailable("the object store did not answer in time", "files_timeout");
         }
     }
 
     public void Dispose() => _client?.Dispose();
 
-    private static Result<string, Unavailable> Presign(AmazonS3Client client, GetPreSignedUrlRequest request)
+    private static PresignFileObjectOutcome Presign(AmazonS3Client client, GetPreSignedUrlRequest request)
     {
         try
         {
@@ -281,9 +293,11 @@ public sealed class S3FileObjectStore : IDisposable
         }
     }
 
-    private static Unavailable Failed(Exception error) => new($"file storage is unavailable; retry ({error.Message})", "files_unavailable");
+    private static PlatformUnavailable Failed(Exception error) => new($"file storage is unavailable; retry ({error.Message})", "files_unavailable");
 
     private readonly record struct ProjectObjectPage(IReadOnlyList<string> Keys, bool Truncated);
 
-    private readonly union ListProjectObjectsResult(ProjectObjectPage, Unavailable);
+    private readonly union PresignFileObjectOutcome(string, PlatformUnavailable);
+
+    private readonly union ListProjectObjectsOutcome(ProjectObjectPage, PlatformUnavailable);
 }

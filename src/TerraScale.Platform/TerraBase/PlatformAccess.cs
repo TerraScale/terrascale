@@ -2,6 +2,20 @@ using System.Collections.Concurrent;
 
 namespace TerraScale.Platform.TerraBase;
 
+public readonly union ResolveAccessOutcome(
+    AccessContext,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
+public readonly union DatabaseAccessOutcome(
+    DatabaseAccess,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public static class Scopes
 {
     public const string SqlRead = "sql:read";
@@ -31,44 +45,40 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
     private static readonly TimeSpan GrantLifetime = TimeSpan.FromSeconds(15);
     private readonly ConcurrentDictionary<string, CachedGrant> _grants = new(StringComparer.Ordinal);
 
-    public async ValueTask<Result<AccessContext, Unauthorized, Forbidden, NotFound, Unavailable>> ProjectAsync(
+    public ValueTask<ResolveAccessOutcome> ProjectAsync(
         HttpContext context,
         string project,
         IReadOnlyList<string> scopes,
         CancellationToken cancellationToken) =>
-        await AuthorizeAsync(context.Request, new AuthorizeRequest(project, null, scopes), cancellationToken) switch
-        {
-            AccessContext access => access,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+        AuthorizeAsync(context.Request, new AuthorizeRequest(project, null, scopes), cancellationToken);
 
-    public async ValueTask<Result<DatabaseAccess, Unauthorized, Forbidden, NotFound, Unavailable>> DatabaseAsync(
+    public async ValueTask<DatabaseAccessOutcome> DatabaseAsync(
         HttpContext context,
         string project,
         string database,
         IReadOnlyList<string> scopes,
-        CancellationToken cancellationToken) =>
-        await AuthorizeAsync(context.Request, new AuthorizeRequest(project, database, scopes), cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await AuthorizeAsync(context.Request, new AuthorizeRequest(project, database, scopes), cancellationToken);
+        return outcome switch
         {
             AccessContext { Grant: { DatabaseId: { } id, DatabaseName: { } name } } access => new DatabaseAccess(access, id, name),
-            AccessContext => new NotFound("Database was not found in this project.", "database_not_found"),
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            AccessContext => new PlatformNotFound("Database was not found in this project.", "database_not_found"),
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
-    public async ValueTask<Result<AccessContext, Unauthorized, Forbidden, NotFound, Unavailable>> AuthorizeAsync(
+    public async ValueTask<ResolveAccessOutcome> AuthorizeAsync(
         HttpRequest request,
         AuthorizeRequest authorize,
         CancellationToken cancellationToken)
     {
         if (CallerCredential.From(request, options.PeerSecret) is not { } credential)
         {
-            return new Unauthorized("a bearer token, API key or peer credential is required", "invalid_key");
+            return new PlatformUnauthorized("a bearer token, API key or peer credential is required", "invalid_key");
         }
 
         var key = credential.CacheKey(authorize);
@@ -80,31 +90,41 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
 
         var screened = credential.BearerToken is { } token && credential.IsJwt
             ? await tokens.ValidateAsync(token, authorize.Project, cancellationToken)
-            : new Done();
+            : new TokenAccepted();
         return screened switch
         {
-            Done => await GrantAsync(key, credential, authorize, now, cancellationToken),
-            TokenRejected rejected => new Unauthorized(rejected.Message, "invalid_token"),
-            Unavailable unavailable => unavailable,
+            TokenAccepted => await GrantAsync(key, credential, authorize, now, cancellationToken),
+            TokenRejected rejected => new PlatformUnauthorized(rejected.Message, "invalid_token"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<AccessContext, Unauthorized, Forbidden, NotFound, Unavailable>> GrantAsync(
+    private async ValueTask<ResolveAccessOutcome> GrantAsync(
         string key,
         CallerCredential credential,
         AuthorizeRequest authorize,
         DateTimeOffset now,
-        CancellationToken cancellationToken) =>
-        await terraBase.AuthorizeAsync(credential, authorize, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var outcome = await terraBase.AuthorizeAsync(credential, authorize, cancellationToken);
+        return outcome switch
         {
-            CallerGrant grant => Admit(key, grant, credential, authorize, now),
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            CallerGrant grant => Admit(key, grant, credential, authorize, now) switch
+            {
+                AccessContext access => access,
+                PlatformUnauthorized unauthorized => unauthorized,
+                PlatformForbidden forbidden => forbidden,
+            },
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
-    private Result<AccessContext, Unauthorized, Forbidden, NotFound, Unavailable> Admit(
+    private readonly union AdmitCallerOutcome(AccessContext, PlatformUnauthorized, PlatformForbidden);
+
+    private AdmitCallerOutcome Admit(
         string key,
         CallerGrant grant,
         CallerCredential credential,
@@ -113,12 +133,12 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
     {
         if (grant.Anonymous)
         {
-            return new Unauthorized("a credential is required", "invalid_key");
+            return new PlatformUnauthorized("a credential is required", "invalid_key");
         }
 
         if (authorize.Scopes.FirstOrDefault(scope => !grant.Scopes.Contains(scope, StringComparer.Ordinal)) is { } missing)
         {
-            return new Forbidden($"The API key does not grant {missing}.", "insufficient_scope");
+            return new PlatformForbidden($"The API key does not grant {missing}.", "insufficient_scope");
         }
 
         if (_grants.Count >= CacheLimit)

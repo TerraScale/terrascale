@@ -5,10 +5,8 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>Signs short-lived service assertions for TerraBase using a private P-256 JWK.</summary>
 public sealed class CallerCredential
 {
-    /// <summary>The caller assertion header, independent of user authorization.</summary>
     public const string HeaderName = "X-TerraScale-Caller";
 
     private readonly Lock gate = new();
@@ -19,7 +17,6 @@ public sealed class CallerCredential
     private string? token;
     private DateTimeOffset minted;
 
-    /// <summary>Loads a private EC JWK with a key id and signs as the supplied service.</summary>
     public CallerCredential(string caller, string privateJwk, TimeProvider clock)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(caller);
@@ -73,7 +70,6 @@ public sealed class CallerCredential
         }
     }
 
-    /// <summary>Returns a five-minute assertion, replacing the cached assertion after one minute.</summary>
     public string Token
     {
         get

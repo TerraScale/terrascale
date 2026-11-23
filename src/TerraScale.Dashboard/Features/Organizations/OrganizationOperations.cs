@@ -2,7 +2,6 @@ using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
-    // Native forms and MCP calls share provider mutations and canonical CAS writes.
     public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatform platform,
         IWorkspacePlacement placement, IOrganizationAccess access, DashboardSessions sessions,
         TimeProvider time, ILogger<OrganizationOperations> logger)
@@ -26,7 +25,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             name = AccountService.ValidName(name);
             CanCreate(context.Organization!, context.UserId, name);
             var chosen = await LocationsAsync(regions, cancellationToken);
-            // ts-auth refuses a duplicate name (409 name_taken), so a repeated submit fails clearly.
             var remote = await platform.CreateProjectAsync(context.Session, context.Organization!.Id, name, cancellationToken);
             var project = new ProjectRecord
             {
@@ -39,7 +37,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             };
             await accounts.UpdateOrganizationAsync(context, org =>
             {
-                // ts-auth already lists the new project; its dashboard settings start here.
                 Manage(org, context.UserId);
                 if (!org.CanProvision(context.UserId))
                 {
@@ -51,7 +48,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                 org.Projects[project.Id] = project;
                 org.AuditEvents.Add(Event(context, "project.created", name, "project"));
             }, cancellationToken);
-            // An explicit MCP scope never replaces an unrelated saved selection.
             await accounts.UpdateAccountAsync(context.Session, account =>
             {
                 if (account.ActiveOrganizationId == project.OrganizationId && account.ActiveProjectId.Length == 0)
@@ -79,7 +75,6 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             name = AccountService.ValidName(name);
             var project = context.Project!;
-            // Names belong to ts-auth. A project grant never authorizes an organization aggregate write.
             if (!placementRequested)
             {
                 if (project.Name != name)
@@ -147,8 +142,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 await access.TransferAsync(context, operation, userId, stepUpProof, cancellationToken);
             }
-            // Ownership confirmation changes the caller's role. Resolve it again
-            // before recording the change; the write refreshes members from ts-auth.
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
             await accounts.UpdateOrganizationAsync(context, org =>
             {
@@ -218,7 +211,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             Duplicate(org, name);
         }
 
-        // Mirrors DatabaseService.DatabaseLimit: an internal policy without a project limit is unlimited.
         public static int ProjectLimit(OrganizationRecord org)
         {
             return org.InternalBilling is not null
@@ -230,7 +222,6 @@ namespace TerraScale.Dashboard.Features.Organizations
         internal static void DemandProjectRoom(OrganizationRecord org, string? createdProjectId = null)
         {
             var limit = ProjectLimit(org);
-            // The canonical provider snapshot already includes this request's new project.
             if (org.Projects.Keys.Count(id => id != createdProjectId) >= limit)
             {
                 throw new AccountAccessException($"Your organization has reached its plan's project limit ({limit} {(limit == 1 ? "project" : "projects")}). Upgrade the plan on the organization's Billing tab or delete a project.", 409);

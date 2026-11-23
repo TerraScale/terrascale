@@ -6,7 +6,7 @@ using BoundSqlRequest = TerraScale.Endpoints.Binding.Bound<TerraBase.Features.Sq
 namespace TerraBase.Features.Sql;
 
 internal sealed class SqlEndpoint(SqlFlow flow)
-    : Endpoint<SqlExecuteInput, Result<ExecuteBody, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<SqlExecuteInput, ExecuteSqlResponse>
 {
     public override void Configure()
     {
@@ -23,7 +23,7 @@ internal sealed class SqlEndpoint(SqlFlow flow)
     protected override ValueTask<BoundSqlRequest> BindAsync(CancellationToken cancellationToken) =>
         SqlFlow.BindAsync(HttpContext.Request, base.BindAsync, cancellationToken);
 
-    public override async ValueTask<Result<ExecuteBody, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<ExecuteSqlResponse> HandleAsync(
         SqlExecuteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

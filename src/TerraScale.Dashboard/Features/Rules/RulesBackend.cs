@@ -10,6 +10,14 @@ namespace TerraScale.Dashboard.Features.Rules
 {
     public sealed record RulesRequest(string Operation, string Table, string Auth, string Row, string New);
 
+    public readonly union RulesVersionResult(TerraBaseRules, DashboardNotFound);
+
+    public readonly union RulesDeployResult(TerraBaseRulesDeploy, DashboardValidation);
+
+    public readonly union RulesTestOutcome(TerraBaseRulesTestResult, DashboardValidation);
+
+    public readonly union RulesSourceInput(JsonElement, DashboardValidation);
+
     public sealed class RulesBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseHttpClient terraBase)
     {
         public const int MaxVersions = 100;
@@ -30,11 +38,11 @@ namespace TerraScale.Dashboard.Features.Rules
             return await CurrentAsync(target.Client, target.ProjectId, target.Database);
         }
 
-        public async Task<Found<TerraBaseRules>> VersionAsync(AccountContext context, DatabaseRecord database, string version, CancellationToken cancellationToken)
+        public async Task<RulesVersionResult> VersionAsync(AccountContext context, DatabaseRecord database, string version, CancellationToken cancellationToken)
         {
             if (!TerraScaleIds.IsValid(version))
             {
-                return new Errors.NotFound("This rules version does not exist.");
+                return new DashboardNotFound("This rules version does not exist.");
             }
 
             var target = await ClientAsync(context, database, false, cancellationToken);
@@ -48,14 +56,14 @@ namespace TerraScale.Dashboard.Features.Rules
             return await VersionsAsync(target.Client, target.ProjectId, target.Database);
         }
 
-        public Task<Valid<TerraBaseRulesDeploy>> DeployAsync(AccountContext context, DatabaseRecord database, string? version, string source, CancellationToken cancellationToken) =>
+        public Task<RulesDeployResult> DeployAsync(AccountContext context, DatabaseRecord database, string? version, string source, CancellationToken cancellationToken) =>
             Parse(source) switch
             {
                 JsonElement rules => DeployValidatedAsync(context, database, version, rules, cancellationToken),
-                Validation invalid => Task.FromResult<Valid<TerraBaseRulesDeploy>>(invalid),
+                DashboardValidation invalid => Task.FromResult<RulesDeployResult>(invalid),
             };
 
-        private async Task<Valid<TerraBaseRulesDeploy>> DeployValidatedAsync(AccountContext context, DatabaseRecord database, string? version, JsonElement rules, CancellationToken cancellationToken)
+        private async Task<RulesDeployResult> DeployValidatedAsync(AccountContext context, DatabaseRecord database, string? version, JsonElement rules, CancellationToken cancellationToken)
         {
             var target = await ClientAsync(context, database, true, cancellationToken);
             return await DeployAsync(target.Client, target.ProjectId, target.Database, version, rules);
@@ -67,21 +75,24 @@ namespace TerraScale.Dashboard.Features.Rules
             return await RestoreAsync(target.Client, target.ProjectId, target.Database, version, current);
         }
 
-        public async Task<Valid<TerraBaseRulesTestResult>> TestAsync(AccountContext context, DatabaseRecord database, string? draft, RulesRequest request, CancellationToken cancellationToken)
+        public async Task<RulesTestOutcome> TestAsync(AccountContext context, DatabaseRecord database, string? draft, RulesRequest request, CancellationToken cancellationToken)
         {
-            JsonElement? rules = null;
-            if (draft is not null)
+            if (draft is null)
             {
-                switch (Parse(draft))
-                {
-                    case JsonElement parsed:
-                        rules = parsed;
-                        break;
-                    case Validation error:
-                        return error;
-                }
+                return await TestBodyAsync(context, database, null, request, cancellationToken);
             }
 
+            var parsed = Parse(draft);
+            return parsed switch
+            {
+                JsonElement rules => await TestBodyAsync(context, database, rules, request, cancellationToken),
+                DashboardValidation error => error,
+            };
+        }
+
+        private async Task<RulesTestOutcome> TestBodyAsync(AccountContext context, DatabaseRecord database, JsonElement? rules, RulesRequest request,
+            CancellationToken cancellationToken)
+        {
             var body = TestBody(rules, request);
             var target = await ClientAsync(context, database, false, cancellationToken);
             return await TestAsync(target.Client, target.ProjectId, target.Database, body);
@@ -149,16 +160,16 @@ namespace TerraScale.Dashboard.Features.Rules
             return Encoding.UTF8.GetString(buffer.WrittenSpan);
         }
 
-        internal static Valid<JsonElement> Parse(string source)
+        internal static RulesSourceInput Parse(string source)
         {
             if (Encoding.UTF8.GetByteCount(source) > MaxSourceBytes)
             {
-                return new Validation("Rules are at most 256 KiB.");
+                return new DashboardValidation("Rules are at most 256 KiB.");
             }
 
             if (Json(source, "Rules must be a JSON object.") is not { ValueKind: JsonValueKind.Object } rules)
             {
-                return new Validation("Rules must be a JSON object.");
+                return new DashboardValidation("Rules must be a JSON object.");
             }
 
             return rules;

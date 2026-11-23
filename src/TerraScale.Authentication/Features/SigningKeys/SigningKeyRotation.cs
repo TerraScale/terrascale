@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Storage;
@@ -28,17 +27,8 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
         {
             try
             {
-                switch (await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken))
-                {
-                    case Added:
-                        this.Log(target => target.ZLogInformation($"Scheduled rotation added a signing key"));
-                        break;
-                    case Conflict full:
-                        this.Log(target => target.ZLogWarning($"Scheduled signing key rotation failed: {full.Message:@Reason}; retrying at the next interval"));
-                        break;
-                    case Done:
-                        break;
-                }
+                var rotated = await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken);
+                this.Record(rotated);
             }
             catch (Exception error) when (error is not OutOfMemoryException)
             {
@@ -49,6 +39,25 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+
+    private bool Record(RotateIfDueResult rotated) => rotated switch
+    {
+        Added => this.RecordAdded(),
+        AuthConflict full => this.RecordConflict(full),
+        AuthCompleted => false,
+    };
+
+    private bool RecordAdded()
+    {
+        this.Log(target => target.ZLogInformation($"Scheduled rotation added a signing key"));
+        return true;
+    }
+
+    private bool RecordConflict(AuthConflict full)
+    {
+        this.Log(target => target.ZLogWarning($"Scheduled signing key rotation failed: {full.Message:@Reason}; retrying at the next interval"));
+        return true;
     }
 
     private async Task<bool> TryBootstrapAsync(CancellationToken stoppingToken)

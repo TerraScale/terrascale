@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Errors;
-using ValidationCase = TerraScale.Dashboard.Errors.Validation;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -33,7 +32,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 ?? throw new HttpRequestException("This database's region is not a TerraBase region.");
         }
 
-        public readonly union ConfiguredPlacement(IReadOnlyList<DatabaseRegion>, Failure);
+        public readonly union ConfiguredPlacement(IReadOnlyList<DatabaseRegion>, DatabaseInvalid);
 
         internal async Task<ConfiguredPlacement> ConfiguredPlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
         {
@@ -49,7 +48,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             if (placement.Count == 0)
             {
-                return (Failure)new ValidationCase("Choose at least one region.");
+                return new DatabaseInvalid("Choose at least one region.");
             }
 
             return placement;
@@ -83,7 +82,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
                 {
                     var found = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name);
-                    if (found is null) { return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists.")); }
+                    if (found is null) { return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists.")); }
                     remote = found;
                     recovered = true;
                 }
@@ -94,7 +93,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
                 if (recovered && discovery.Catalog.Count == 0 && remote.HomeRegion != home.Id)
                 {
-                    return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists in another region."));
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists in another region."));
                 }
 
                 if (ttlSeconds is not null && remote.ExpiresAt is null)
@@ -103,7 +102,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var expected = allRegions ? discovery.Catalog.Select(region => region.Id) : replicas.Prepend(home.Id);
                 if (discovery.Catalog.Count > 0 && !placement.Select(region => region.Id).ToHashSet(StringComparer.Ordinal).SetEquals(expected))
                 {
-                    if (recovered) { return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists in other regions.")); }
+                    if (recovered) { return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists in other regions.")); }
                     throw new HttpRequestException("Database provisioning returned a different placement.");
                 }
 
@@ -131,7 +130,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.ToFailure(error);
+                return DatabaseMutations.ToRefusal(error);
             }
         }
 
@@ -145,7 +144,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 DemandProvision(context.Organization!, context.UserId);
                 if (source.Status != "ready")
                 {
-                    return DatabaseMutations.MutationRefused(new Conflict("Only a ready database can be branched."));
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("Only a ready database can be branched."));
                 }
 
                 name = ValidName(string.IsNullOrWhiteSpace(name) ? PreviewName(source.Name) : name);
@@ -158,7 +157,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
                 {
                     var found = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id);
-                    if (found is null) { return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists.")); }
+                    if (found is null) { return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists.")); }
                     remote = found;
                 }
                 if (remote.ProjectId != scope.ProjectId || remote.Name != name || string.IsNullOrEmpty(remote.Id) || remote.Id == source.Id || remote.BranchedFrom != source.Id)
@@ -168,7 +167,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
                 if (remote.HomeRegion != home.Id)
                 {
-                    return DatabaseMutations.MutationRefused(new Conflict("A branch with this name is in a different region."));
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A branch with this name is in a different region."));
                 }
 
                 if (ttlSeconds is not null && remote.ExpiresAt is null)
@@ -203,7 +202,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.ToFailure(error);
+                return DatabaseMutations.ToRefusal(error);
             }
         }
 
@@ -235,7 +234,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.ToFailure(error);
+                return DatabaseMutations.ToRefusal(error);
             }
         }
 
@@ -252,29 +251,29 @@ namespace TerraScale.Dashboard.Common.Databases
 
                 if (database.Status != "ready")
                 {
-                    return DatabaseMutations.MutationRefused(new Conflict("Only a ready database can be renamed."));
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("Only a ready database can be renamed."));
                 }
 
                 if (confirmation != database.Name)
                 {
-                    return DatabaseMutations.MutationRefused(new ValidationCase("Type the current database name to confirm the rename."));
+                    return DatabaseMutations.MutationRefused(new DatabaseInvalid("Type the current database name to confirm the rename."));
                 }
 
                 name = ValidName(name);
 
                 if (name == database.Name && database.ConflictOf is null)
                 {
-                    return DatabaseMutations.MutationRefused(new ValidationCase("Choose a different database name."));
+                    return DatabaseMutations.MutationRefused(new DatabaseInvalid("Choose a different database name."));
                 }
 
                 if (context.Project!.Databases.Values.Any(other => other.Id != id && other.Name == name))
                 {
-                    return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists."));
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists."));
                 }
 
                 if (PlatformDatabases.IsPlatform(context.Organization?.Id))
                 {
-                    return DatabaseMutations.MutationRefused(new Conflict("Platform databases keep their names."));
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("Platform databases keep their names."));
                 }
 
                 var scope = Scope(context);
@@ -308,7 +307,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.ToFailure(error);
+                return DatabaseMutations.ToRefusal(error);
             }
         }
 
@@ -325,7 +324,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.ToFailure(error);
+                return DatabaseMutations.ToRefusal(error);
             }
         }
 
@@ -339,7 +338,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var target = DatabaseRegion.Resolve(await backend.RegionsAsync(cancellationToken), homeRegion.Trim());
                 if (target is null || target.Id == home.Id || !Regions(database).Skip(1).Any(code => code.Equals(target.Code, StringComparison.OrdinalIgnoreCase) || code == target.Id))
                 {
-                    return DatabaseMutations.MutationRefused(new ValidationCase("Choose one of this database's regions."));
+                    return DatabaseMutations.MutationRefused(new DatabaseInvalid("Choose one of this database's regions."));
                 }
 
                 ManagedDatabase remote;
@@ -353,7 +352,7 @@ namespace TerraScale.Dashboard.Common.Databases
                             DatabaseFormat.Region(home.Id) + " keeps serving.",
                         _ => "The region change is still being settled, and writes are paused until it is. Try again."
                     };
-                    return DatabaseMutations.MutationRefused(error.ErrorCode == "move_in_progress" ? new Conflict(message) : new Unavailable(message));
+                    return DatabaseMutations.MutationRefused(error.ErrorCode == "move_in_progress" ? new DatabaseStateConflict(message) : new DatabaseUnavailable(message));
                 }
                 if (remote.HomeRegion != target.Id)
                 {
@@ -364,7 +363,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.ToFailure(error);
+                return DatabaseMutations.ToRefusal(error);
             }
         }
 
@@ -444,7 +443,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
                 if (confirmation != database.Name)
                 {
-                    return DatabaseMutations.DeletionRefused(new ValidationCase("Type the database name to confirm deletion."));
+                    return DatabaseMutations.DeletionRefused(new DatabaseInvalid("Type the database name to confirm deletion."));
                 }
 
                 var scope = Scope(context);
@@ -470,7 +469,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                return DatabaseMutations.ToFailure(error);
+                return DatabaseMutations.ToRefusal(error);
             }
         }
 

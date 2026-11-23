@@ -58,10 +58,12 @@ namespace TerraScale.Dashboard.Features.Profile
             [Description("Display name, 1–128 characters.")] string? name = null,
             [Description("Phone number with 7–15 digits, optionally starting with +; spaces, dots, dashes and parentheses are allowed. An empty string clears it.")] string? phone = null)
         {
-            return await ProfileChanges.SaveAsync(accounts, Account().Session, name, phone, Cancellation) switch
+            var saved = await ProfileChanges.SaveAsync(accounts, Account().Session, name, phone, Cancellation);
+            return saved switch
             {
                 Done => new(true),
-                Validation error => throw new AccountAccessException(error.Message, 422, error.Code)
+                ProfileNameInvalid error => throw new AccountAccessException(error.Message, 422, ProfileNameInvalid.Code),
+                ProfilePhoneInvalid error => throw new AccountAccessException(error.Message, 422, ProfilePhoneInvalid.Code),
             };
         }
 

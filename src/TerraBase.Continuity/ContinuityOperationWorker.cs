@@ -10,19 +10,21 @@ public sealed class ContinuityOperationWorker(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var cleaned = restorer.RecoverStaging() switch
+        var cleaned = restorer.RecoverStaging();
+        var reason = cleaned switch
         {
-            Done => null,
-            Unavailable unavailable => unavailable.Message,
+            ContinuityFilesChanged => (string?)null,
+            ContinuityIoFailure failure => failure.Message,
         };
-        if (cleaned is not null)
+        if (reason is not null)
         {
-            ContinuityLog.StagingCleanupFailed(logger, cleaned);
+            ContinuityLog.StagingCleanupFailed(logger, reason);
         }
 
-        await foreach (var work in continuity.PendingOperationsAsync(stoppingToken).ConfigureAwait(false))
+        await foreach (var work in continuity.PendingOperationsAsync(stoppingToken))
         {
-            Report(await RunAsync(work, stoppingToken).ConfigureAwait(false));
+            var finished = await RunAsync(work, stoppingToken);
+            Report(finished);
         }
     }
 
@@ -30,12 +32,12 @@ public sealed class ContinuityOperationWorker(
     {
         try
         {
-            return await continuity.ExecuteAsync(work, stoppingToken).ConfigureAwait(false);
+            return await continuity.ExecuteAsync(work, stoppingToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             ContinuityLog.OperationFaulted(logger, exception, work.OperationId);
-            return await continuity.FaultAsync(work, exception.Message).ConfigureAwait(false);
+            return await continuity.FaultAsync(work, exception.Message);
         }
     }
 

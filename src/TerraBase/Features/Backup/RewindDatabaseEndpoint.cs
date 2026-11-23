@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Backup;
 
-internal sealed class RewindDatabaseEndpoint(BackupFlow flow) : Endpoint<BackupInput, Result<Accepted<RestoreOperationBody>, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>>
+internal sealed class RewindDatabaseEndpoint(BackupFlow flow) : Endpoint<BackupInput, RestoreStartResponse>
 {
     public override void Configure()
     {
@@ -16,7 +16,7 @@ internal sealed class RewindDatabaseEndpoint(BackupFlow flow) : Endpoint<BackupI
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<Accepted<RestoreOperationBody>, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>> HandleAsync(BackupInput request, CancellationToken cancellationToken)
+    public override async ValueTask<RestoreStartResponse> HandleAsync(BackupInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         return await flow.RewindAsync(HttpContext.Caller, request, cancellationToken);

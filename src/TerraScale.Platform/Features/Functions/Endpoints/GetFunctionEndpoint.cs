@@ -1,7 +1,15 @@
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union GetFunctionReply(
+    FunctionBody,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class GetFunctionEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<FunctionRequest, Result<FunctionBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<FunctionRequest, GetFunctionReply>
 {
     public override void Configure()
     {
@@ -13,24 +21,31 @@ public sealed class GetFunctionEndpoint(PlatformAccess access, FunctionService f
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FunctionBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<GetFunctionReply> HandleAsync(
         FunctionRequest request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.Read, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.Read, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.GetAsync(target, request.Function, cancellationToken) switch
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<GetFunctionReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.GetAsync(target, request.Function, cancellationToken);
+            return operation switch
             {
                 FunctionBody body => body,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

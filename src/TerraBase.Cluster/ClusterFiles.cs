@@ -1,8 +1,10 @@
 namespace TerraBase.Cluster;
 
+internal readonly union ClusterFileReadOutcome(byte[], ClusterConfigurationError);
+
 internal static class ClusterFiles
 {
-    public static Result<byte[], Validation> ReadBytes(string path)
+    public static ClusterFileReadOutcome ReadBytes(string path)
     {
         try
         {
@@ -18,6 +20,6 @@ internal static class ClusterFiles
         }
     }
 
-    private static Validation Unreadable(string path) =>
+    private static ClusterConfigurationError Unreadable(string path) =>
         new(string.Concat("cluster file '", Path.GetFileName(path), "' could not be read"), "cluster_file_unreadable");
 }

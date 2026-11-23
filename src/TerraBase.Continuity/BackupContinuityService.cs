@@ -16,6 +16,22 @@ internal sealed record FinishedOperation(RestoreOperation Operation, string Kind
 
 internal sealed record ArchiveProof(CausalBookmark Bookmark, DateTimeOffset CheckedAtUtc);
 
+internal sealed record ShredFound;
+
+internal sealed record ShredAbsent;
+
+internal readonly union ShredPresence(ShredFound, ShredAbsent, ContinuityUnavailable);
+
+internal sealed record SourceReady;
+
+internal readonly union SourceAvailability(SourceReady, ContinuityNotFound, ContinuityUnavailable);
+
+internal sealed record ArchiveTruncated;
+
+internal readonly union ArchiveTruncateOutcome(ArchiveTruncated, ContinuityUnavailable);
+
+public readonly union ContinuityRewindOutcome(CausalBookmark, ContinuityUnavailable);
+
 public sealed class BackupContinuityService(
     ContinuitySessions sessions,
     ArchiveManifests manifests,
@@ -24,7 +40,7 @@ public sealed class BackupContinuityService(
     ContinuityMetrics metrics,
     TimeProvider timeProvider) : IBackupContinuity
 {
-    private static readonly Unavailable Disabled = new("continuous backup is disabled on this node", "backup_disabled");
+    private static readonly ContinuityUnavailable Disabled = new("continuous backup is disabled on this node", "backup_disabled");
 
     private readonly Lock _gate = new();
     private readonly Dictionary<Ulid, RestoreOperation> _operations = [];
@@ -38,47 +54,48 @@ public sealed class BackupContinuityService(
 
     public bool IsBackupEnabled => manifests.IsEnabled;
 
-    public async ValueTask<Result<BackupStatus, NotFound, Unavailable>> GetStatusAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<BackupStatusOutcome> GetStatusAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         if (!manifests.IsEnabled)
         {
             return Disabled;
         }
 
-        return await manifests.LoadAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+        var loaded = await manifests.LoadAsync(databaseId, cancellationToken);
+        return loaded switch
         {
-            ArchiveManifest manifest => await StatusAsync(manifest, databaseId, cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => unavailable,
+            ArchiveManifest manifest => await StatusAsync(manifest, databaseId, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
         };
     }
 
-    public ValueTask<Result<BackupStatus, NotFound, Unavailable>> ArchiveNowAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+    public ValueTask<BackupStatusOutcome> ArchiveNowAsync(Ulid databaseId, CancellationToken cancellationToken) =>
         ArchiveAsync(databaseId, forceSnapshot: true, cancellationToken);
 
-    public async ValueTask<Result<BackupStatus, NotFound, Unavailable>> ArchiveAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken)
+    public async ValueTask<BackupStatusOutcome> ArchiveAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken)
     {
         if (!manifests.IsEnabled)
         {
             return Disabled;
         }
 
-        using var lease = await manifests.AcquireAsync(databaseId, cancellationToken).ConfigureAwait(false);
-        return await ArchiveLockedAsync(databaseId, forceSnapshot, cancellationToken).ConfigureAwait(false);
+        using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
+        return await ArchiveLockedAsync(databaseId, forceSnapshot, cancellationToken);
     }
 
-    public ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> RestoreAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken)
+    public ValueTask<RestoreStartOutcome> RestoreAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         return EnqueueCopyAsync(OperationKind.Restore, request.SourceDatabaseId, request.TargetDatabaseId, request.Target, cancellationToken);
     }
 
-    public ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> BranchAsync(BranchRequest request, CancellationToken cancellationToken)
+    public ValueTask<RestoreStartOutcome> BranchAsync(BranchRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         return EnqueueCopyAsync(OperationKind.Branch, request.SourceDatabaseId, request.BranchDatabaseId, request.Target, cancellationToken);
     }
 
-    public async ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> RewindAsync(Ulid databaseId, RestoreTarget target, CancellationToken cancellationToken)
+    public async ValueTask<RestoreStartOutcome> RewindAsync(Ulid databaseId, RestoreTarget target, CancellationToken cancellationToken)
     {
         if (ValidateTarget(target) is { } invalid)
         {
@@ -87,46 +104,57 @@ public sealed class BackupContinuityService(
 
         if (!restorer.Layout.Exists(databaseId))
         {
-            return new NotFound("database is not stored on this node", "database_not_local");
+            return new ContinuityNotFound("database is not stored on this node", "database_not_local");
         }
 
-        return await sessions.ResolveKeyAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+        var resolved = await sessions.ResolveKeyAsync(databaseId, cancellationToken);
+        return resolved switch
         {
-            ReadOnlyMemory<byte> => Enqueue(OperationKind.Rewind, databaseId, databaseId, target),
-            NotFound notFound => notFound,
+            ContinuityRawKey => Enqueue(OperationKind.Rewind, databaseId, databaseId, target),
+            ContinuityDatabaseKeyMissing missing => new ContinuityNotFound(missing.Message, missing.Code),
         };
     }
 
-    public ValueTask<Result<RestoreOperation, NotFound>> GetOperationAsync(Ulid operationId, CancellationToken cancellationToken)
+    public ValueTask<RestoreOperationOutcome> GetOperationAsync(Ulid operationId, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            return ValueTask.FromResult<Result<RestoreOperation, NotFound>>(_operations.TryGetValue(operationId, out var operation)
+            RestoreOperationOutcome outcome = _operations.TryGetValue(operationId, out var operation)
                 ? operation
-                : new NotFound("continuity operation not found", "operation_not_found"));
+                : new ContinuityNotFound("continuity operation not found", "operation_not_found");
+            return ValueTask.FromResult(outcome);
         }
     }
 
-    public async ValueTask<Result<Done, NotFound, Unavailable>> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<CryptoShredBackupOutcome> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
-        using var lease = await manifests.AcquireAsync(databaseId, cancellationToken).ConfigureAwait(false);
-        var local = await sessions.Engine.CryptoShredAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+        using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
+        var shredded = await sessions.Engine.CryptoShredAsync(databaseId, cancellationToken);
+        var local = shredded switch
         {
-            Done => Shredded(true),
-            NotFound => Shredded(false),
-            StorageBusy busy => new Unavailable(busy.Message, "storage_busy"),
+            DatabaseShredded => (ShredPresence)new ShredFound(),
+            DatabaseNotFound => new ShredAbsent(),
+            StorageBusy busy => new ContinuityUnavailable(busy.Message, "storage_busy"),
         };
         var remote = manifests.IsEnabled
-            ? await manifests.PurgeAsync(databaseId, cancellationToken).ConfigureAwait(false)
-            : Shredded(false);
-        return (local, remote) switch
+            ? await RemotePresenceAsync(databaseId, cancellationToken)
+            : new ShredAbsent();
+        return local switch
         {
-            (Unavailable unavailable, _) => unavailable,
-            (_, Unavailable unavailable) => unavailable,
-            (bool localFound, bool remoteFound) => localFound || remoteFound ? new Done() : new NotFound("database has no local files or archived objects"),
+            ContinuityUnavailable unavailable => unavailable,
+            ShredFound => remote switch
+            {
+                ContinuityUnavailable unavailable => unavailable,
+                ShredFound => new ArchiveShredded(),
+                ShredAbsent => new ArchiveShredded(),
+            },
+            ShredAbsent => remote switch
+            {
+                ContinuityUnavailable unavailable => unavailable,
+                ShredFound => new ArchiveShredded(),
+                ShredAbsent => new ContinuityNotFound("database has no local files or archived objects"),
+            },
         };
-
-        static Result<bool, Unavailable> Shredded(bool found) => found;
     }
 
     internal IAsyncEnumerable<OperationWork> PendingOperationsAsync(CancellationToken cancellationToken) => _queue.Reader.ReadAllAsync(cancellationToken);
@@ -134,36 +162,45 @@ public sealed class BackupContinuityService(
     internal async ValueTask<FinishedOperation> ExecuteAsync(OperationWork work, CancellationToken cancellationToken)
     {
         Transition(work.OperationId, RestoreOperationState.Running, null);
-        var outcome = work.Kind switch
+        var performed = work.Kind switch
         {
-            OperationKind.Restore or OperationKind.Branch => await restorer.CopyAsync(work.OperationId, work.SourceDatabaseId, work.TargetDatabaseId, work.Target, cancellationToken).ConfigureAwait(false),
-            OperationKind.Rewind => await RewindLockedAsync(work, cancellationToken).ConfigureAwait(false),
+            OperationKind.Restore or OperationKind.Branch => await restorer.CopyAsync(work.OperationId, work.SourceDatabaseId, work.TargetDatabaseId, work.Target, cancellationToken),
+            OperationKind.Rewind => await RewindLockedAsync(work, cancellationToken),
             _ => throw new UnreachableException(),
         };
-        return outcome switch
+        return performed switch
         {
-            CausalBookmark => await FinishAsync(work, null, record: true, cancellationToken).ConfigureAwait(false),
-            OperationFailed failed => await FailAsync(work, failed.Message, cancellationToken).ConfigureAwait(false),
+            CausalBookmark => await FinishAsync(work, null, record: true, cancellationToken),
+            OperationFailed failed => await FailAsync(work, failed.Message, cancellationToken),
         };
     }
 
     internal async ValueTask<FinishedOperation> FaultAsync(OperationWork work, string message) =>
-        await FailAsync(work, message, CancellationToken.None).ConfigureAwait(false);
+        await FailAsync(work, message, CancellationToken.None);
 
     private async ValueTask<FinishedOperation> FailAsync(OperationWork work, string message, CancellationToken cancellationToken) =>
         work.Kind switch
         {
-            OperationKind.Restore or OperationKind.Branch => await sessions.Catalog.DiscardCopyTargetAsync(work.TargetDatabaseId, CancellationToken.None).ConfigureAwait(false) switch
-            {
-                Done => await FinishAsync(work, message, record: false, cancellationToken).ConfigureAwait(false),
-                Unavailable unavailable => await FinishAsync(work, string.Concat(message, "; the target database could not be discarded: ", unavailable.Message), record: true,
-                    cancellationToken).ConfigureAwait(false),
-            },
-            OperationKind.Rewind => await FinishAsync(work, message, record: true, cancellationToken).ConfigureAwait(false),
+            OperationKind.Restore or OperationKind.Branch => await DiscardTargetAsync(work, message, cancellationToken),
+            OperationKind.Rewind => await FinishAsync(work, message, record: true, cancellationToken),
             _ => throw new UnreachableException(),
         };
 
-    private ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> EnqueueCopyAsync(
+    private async ValueTask<FinishedOperation> DiscardTargetAsync(OperationWork work, string message, CancellationToken cancellationToken)
+    {
+        var discarded = await sessions.Catalog.DiscardCopyTargetAsync(work.TargetDatabaseId, CancellationToken.None);
+        return discarded switch
+        {
+            CopyTargetDiscarded => await FinishAsync(work, message, record: false, cancellationToken),
+            CopyTargetDiscardFailed failed => await FinishAsync(
+                work,
+                string.Concat(message, "; the target database could not be discarded: ", failed.Message),
+                record: true,
+                cancellationToken),
+        };
+    }
+
+    private ValueTask<RestoreStartOutcome> EnqueueCopyAsync(
         OperationKind kind,
         Ulid sourceId,
         Ulid targetId,
@@ -172,66 +209,80 @@ public sealed class BackupContinuityService(
     {
         if (sourceId == targetId)
         {
-            return ValueTask.FromResult<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>>(
-                new Validation("source and target databases must differ", "same_database", [new ValidationDetail("targetDatabaseId", "distinct")]));
+            RestoreStartOutcome sameDatabase = new ContinuityInvalidTarget("source and target databases must differ", "same_database");
+            return ValueTask.FromResult(sameDatabase);
         }
 
         if (ValidateTarget(target) is { } invalid)
         {
-            return ValueTask.FromResult<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>>(invalid);
+            RestoreStartOutcome rejected = invalid;
+            return ValueTask.FromResult(rejected);
         }
 
         if (restorer.Layout.DirectoryExists(targetId))
         {
-            return ValueTask.FromResult<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>>(
-                new Conflict("target database already exists on this node", "database_exists"));
+            RestoreStartOutcome exists = new ContinuityConflict("target database already exists on this node", "database_exists");
+            return ValueTask.FromResult(exists);
         }
 
         return EnqueueResolvedCopyAsync(kind, sourceId, targetId, target, cancellationToken);
     }
 
-    private async ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> EnqueueResolvedCopyAsync(
+    private async ValueTask<RestoreStartOutcome> EnqueueResolvedCopyAsync(
         OperationKind kind,
         Ulid sourceId,
         Ulid targetId,
         RestoreTarget target,
         CancellationToken cancellationToken)
     {
-        var keys = (await sessions.ResolveKeyAsync(sourceId, cancellationToken).ConfigureAwait(false), await sessions.ResolveKeyAsync(targetId, cancellationToken).ConfigureAwait(false));
-        return keys switch
+        var sourceKey = await sessions.ResolveKeyAsync(sourceId, cancellationToken);
+        var targetKey = await sessions.ResolveKeyAsync(targetId, cancellationToken);
+        return sourceKey switch
         {
-            (NotFound notFound, _) => notFound,
-            (_, NotFound notFound) => notFound,
-            (ReadOnlyMemory<byte>, ReadOnlyMemory<byte>) => await SourceAvailableAsync(sourceId, cancellationToken).ConfigureAwait(false) switch
-            {
-                Done => Enqueue(kind, sourceId, targetId, target),
-                NotFound notFound => notFound,
-                Unavailable unavailable => unavailable,
-            },
+            ContinuityDatabaseKeyMissing missing => new ContinuityNotFound(missing.Message, missing.Code),
+            ContinuityRawKey => await MatchTargetAsync(targetKey),
         };
+
+        async ValueTask<RestoreStartOutcome> MatchTargetAsync(ContinuityRawKeyOutcome resolvedTarget) => resolvedTarget switch
+        {
+            ContinuityDatabaseKeyMissing missing => new ContinuityNotFound(missing.Message, missing.Code),
+            ContinuityRawKey => await MatchSourceAsync(await SourceAvailableAsync(sourceId, cancellationToken)),
+        };
+
+        ValueTask<RestoreStartOutcome> MatchSourceAsync(SourceAvailability available)
+        {
+            RestoreStartOutcome started = available switch
+            {
+                SourceReady => Enqueue(kind, sourceId, targetId, target),
+                ContinuityNotFound missing => missing,
+                ContinuityUnavailable unavailable => unavailable,
+            };
+            return ValueTask.FromResult(started);
+        }
     }
 
-    private async ValueTask<Result<Done, NotFound, Unavailable>> SourceAvailableAsync(Ulid sourceId, CancellationToken cancellationToken)
+    private async ValueTask<SourceAvailability> SourceAvailableAsync(Ulid sourceId, CancellationToken cancellationToken)
     {
         if (restorer.Layout.Exists(sourceId))
         {
-            return new Done();
+            return new SourceReady();
         }
 
         if (!manifests.IsEnabled)
         {
-            return new NotFound("source database is not stored on this node and continuous backup is disabled", "database_not_local");
+            return new ContinuityNotFound("source database is not stored on this node and continuous backup is disabled", "database_not_local");
         }
 
-        return await manifests.LoadAsync(sourceId, cancellationToken).ConfigureAwait(false) switch
+        var loaded = await manifests.LoadAsync(sourceId, cancellationToken);
+        return loaded switch
         {
-            ArchiveManifest { Snapshots.Count: > 0 } => new Done(),
-            ArchiveManifest => new NotFound("source database has no local files or archived snapshots", "no_restore_point"),
-            Unavailable unavailable => unavailable,
+            ArchiveManifest { Snapshots.Count: > 0 } => new SourceReady(),
+            ArchiveManifest => new ContinuityNotFound("source database has no local files or archived snapshots", "no_restore_point"),
+            ContinuityUnavailable unavailable => unavailable,
         };
     }
 
-    private Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable> Enqueue(OperationKind kind, Ulid sourceId, Ulid targetId, RestoreTarget target)
+    private RestoreStartOutcome Enqueue(OperationKind kind, Ulid sourceId, Ulid targetId, RestoreTarget target)
     {
         var now = timeProvider.GetUtcNow();
         var operation = new RestoreOperation(Ulid.NewUlid(now), sourceId, targetId, RestoreOperationState.Pending, now, now, null);
@@ -239,13 +290,13 @@ public sealed class BackupContinuityService(
         {
             if (!_claimed.Add(targetId))
             {
-                return new Conflict("another continuity operation is already running for this database", "operation_in_progress");
+                return new ContinuityConflict("another continuity operation is already running for this database", "operation_in_progress");
             }
 
             if (!_queue.Writer.TryWrite(new OperationWork(operation.OperationId, kind, sourceId, targetId, target)))
             {
                 _ = _claimed.Remove(targetId);
-                return new Unavailable("the continuity operation queue is full", "operation_queue_full");
+                return new ContinuityUnavailable("the continuity operation queue is full", "operation_queue_full");
             }
 
             _operations[operation.OperationId] = operation;
@@ -254,59 +305,60 @@ public sealed class BackupContinuityService(
         return operation;
     }
 
-    private Validation? ValidateTarget(RestoreTarget target) => target switch
+    private ContinuityInvalidTarget? ValidateTarget(RestoreTarget target) => target switch
     {
-        DateTimeOffset at when at > timeProvider.GetUtcNow() => new Validation("the restore point is in the future", "restore_point_in_future", [new ValidationDetail("target", "past")]),
+        DateTimeOffset at when at > timeProvider.GetUtcNow() => new ContinuityInvalidTarget("the restore point is in the future", "restore_point_in_future"),
         DateTimeOffset => null,
         CausalBookmark => null,
     };
 
-    public async ValueTask<Result<CausalBookmark, Unavailable>> RewindLocalAsync(Ulid databaseId, CausalBookmark bookmark, CancellationToken cancellationToken)
+    public async ValueTask<ContinuityRewindOutcome> RewindLocalAsync(Ulid databaseId, CausalBookmark bookmark, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bookmark);
-        using var lease = await manifests.AcquireAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
         var operationId = Ulid.NewUlid(timeProvider.GetUtcNow());
-        var rewound = await restorer.RewindAsync(operationId, databaseId, new RestoreTarget(bookmark), notifyPeers: false, cancellationToken).ConfigureAwait(false);
+        var rewound = await restorer.RewindAsync(operationId, databaseId, new RestoreTarget(bookmark), notifyPeers: false, cancellationToken);
         return rewound switch
         {
             CausalBookmark applied => applied,
-            OperationFailed failed => new Unavailable(failed.Message, "rewind_failed"),
+            OperationFailed failed => new ContinuityUnavailable(failed.Message, "rewind_failed"),
         };
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> RewindLockedAsync(OperationWork work, CancellationToken cancellationToken)
+    private async ValueTask<ContinuityCopyOutcome> RewindLockedAsync(OperationWork work, CancellationToken cancellationToken)
     {
-        using var lease = await manifests.AcquireAsync(work.TargetDatabaseId, cancellationToken).ConfigureAwait(false);
-        var rewound = await restorer.RewindAsync(work.OperationId, work.TargetDatabaseId, work.Target, notifyPeers: true, cancellationToken).ConfigureAwait(false);
+        using var lease = await manifests.AcquireAsync(work.TargetDatabaseId, cancellationToken);
+        var rewound = await restorer.RewindAsync(work.OperationId, work.TargetDatabaseId, work.Target, notifyPeers: true, cancellationToken);
         return rewound switch
         {
-            CausalBookmark bookmark when manifests.IsEnabled => await ReconcileArchiveAsync(work.TargetDatabaseId, bookmark, cancellationToken).ConfigureAwait(false),
+            CausalBookmark bookmark when manifests.IsEnabled => await ReconcileArchiveAsync(work.TargetDatabaseId, bookmark, cancellationToken),
             CausalBookmark bookmark => bookmark,
             OperationFailed failed => failed,
         };
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> ReconcileArchiveAsync(Ulid databaseId, CausalBookmark rewoundTo, CancellationToken cancellationToken)
+    private async ValueTask<ContinuityCopyOutcome> ReconcileArchiveAsync(Ulid databaseId, CausalBookmark rewoundTo, CancellationToken cancellationToken)
     {
-        var truncated = await manifests.LoadAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
+        var loaded = await manifests.LoadAsync(databaseId, cancellationToken);
+        ArchiveTruncateOutcome truncated = loaded switch
         {
-            ArchiveManifest manifest => await TruncateAsync(manifest, rewoundTo, cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => unavailable,
+            ArchiveManifest manifest => await TruncateAsync(manifest, rewoundTo, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
         };
         var archived = truncated switch
         {
-            Done => await ArchiveLockedAsync(databaseId, forceSnapshot: true, cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => unavailable,
+            ArchiveTruncated => await ArchiveLockedAsync(databaseId, forceSnapshot: true, cancellationToken),
+            ContinuityUnavailable unavailable => (BackupStatusOutcome)unavailable,
         };
         return archived switch
         {
             BackupStatus => rewoundTo,
-            NotFound notFound => new OperationFailed(string.Concat("database was rewound but could not be archived: ", notFound.Message)),
-            Unavailable unavailable => new OperationFailed(string.Concat("database was rewound but could not be archived: ", unavailable.Message)),
+            ContinuityNotFound notFound => new OperationFailed(string.Concat("database was rewound but could not be archived: ", notFound.Message)),
+            ContinuityUnavailable unavailable => new OperationFailed(string.Concat("database was rewound but could not be archived: ", unavailable.Message)),
         };
     }
 
-    private async ValueTask<Result<Done, Unavailable>> TruncateAsync(ArchiveManifest manifest, CausalBookmark rewoundTo, CancellationToken cancellationToken)
+    private async ValueTask<ArchiveTruncateOutcome> TruncateAsync(ArchiveManifest manifest, CausalBookmark rewoundTo, CancellationToken cancellationToken)
     {
         var snapshots = ManifestCodec.Snapshots(manifest);
         var keptSnapshots = snapshots.Where(snapshot => rewoundTo.Dominates(snapshot.Bookmark)).Select(static snapshot => snapshot.Archived).ToArray();
@@ -318,70 +370,110 @@ public sealed class BackupContinuityService(
             .ToArray();
         if (dropped.Length == 0)
         {
-            return new Done();
+            return new ArchiveTruncated();
         }
 
-        var saved = await manifests.SaveAsync(manifest with { Snapshots = keptSnapshots, Segments = keptSegments }, cancellationToken).ConfigureAwait(false);
+        var saved = await manifests.SaveAsync(manifest with { Snapshots = keptSnapshots, Segments = keptSegments }, cancellationToken);
         return saved switch
         {
-            ArchiveManifest => await manifests.DeleteObjectsAsync(dropped, cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => unavailable,
+            ArchiveManifest => await DeletedAsync(dropped, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<BackupStatus, NotFound, Unavailable>> ArchiveLockedAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken) =>
-        await sessions.OpenAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
-        {
-            ISqlDatabaseSession session => await ArchiveSessionAsync(session, forceSnapshot, cancellationToken).ConfigureAwait(false),
-            NotFound notFound => notFound,
-            Unavailable unavailable => unavailable,
-        };
-
-    private async ValueTask<Result<BackupStatus, NotFound, Unavailable>> ArchiveSessionAsync(ISqlDatabaseSession session, bool forceSnapshot, CancellationToken cancellationToken)
+    private async ValueTask<ArchiveTruncateOutcome> DeletedAsync(IReadOnlyList<string> dropped, CancellationToken cancellationToken)
     {
-        await using (session.ConfigureAwait(false))
+        var deleted = await manifests.DeleteObjectsAsync(dropped, cancellationToken);
+        return deleted switch
+        {
+            ArchiveObjectsDeleted => new ArchiveTruncated(),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<ShredPresence> RemotePresenceAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var purged = await manifests.PurgeAsync(databaseId, cancellationToken);
+        return purged switch
+        {
+            ArchivePurged { RemovedObjects: true } => new ShredFound(),
+            ArchivePurged => new ShredAbsent(),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> ArchiveLockedAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken)
+    {
+        var opened = await sessions.OpenAsync(databaseId, cancellationToken);
+        return opened switch
+        {
+            ISqlDatabaseSession session => await ArchiveSessionAsync(session, forceSnapshot, cancellationToken),
+            ContinuitySessionMissing missing => new ContinuityNotFound(missing.Message, missing.Code),
+            ContinuitySessionUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> ArchiveSessionAsync(ISqlDatabaseSession session, bool forceSnapshot, CancellationToken cancellationToken)
+    {
+        await using (session)
         {
             var archiver = new SessionArchiver(session, manifests, sessions.Engine, options, metrics, timeProvider);
-            return await manifests.LoadAsync(session.DatabaseId, cancellationToken).ConfigureAwait(false) switch
+            var loaded = await manifests.LoadAsync(session.DatabaseId, cancellationToken);
+            return loaded switch
             {
-                ArchiveManifest manifest => await archiver.RunAsync(manifest, forceSnapshot, cancellationToken).ConfigureAwait(false) switch
-                {
-                    ArchiveManifest archived => await StatusForSessionAsync(archived, session, cancellationToken).ConfigureAwait(false),
-                    Unavailable unavailable => unavailable,
-                },
-                Unavailable unavailable => unavailable,
+                ArchiveManifest manifest => await ArchivedAsync(archiver, manifest, session, forceSnapshot, cancellationToken),
+                ContinuityUnavailable unavailable => unavailable,
             };
         }
     }
 
-    private async ValueTask<Result<BackupStatus, NotFound, Unavailable>> StatusAsync(ArchiveManifest manifest, Ulid databaseId, CancellationToken cancellationToken) =>
-        await sessions.OpenAsync(databaseId, cancellationToken).ConfigureAwait(false) switch
-        {
-            ISqlDatabaseSession session => await StatusForOpenSessionAsync(manifest, session, cancellationToken).ConfigureAwait(false),
-            NotFound when manifest.IsEmpty => new NotFound("database has no local files or archived restore points"),
-            NotFound => Status(manifest, 0, null),
-            Unavailable unavailable => unavailable,
-        };
-
-    private async ValueTask<Result<BackupStatus, NotFound, Unavailable>> StatusForOpenSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
+    private async ValueTask<BackupStatusOutcome> ArchivedAsync(
+        SessionArchiver archiver,
+        ArchiveManifest manifest,
+        ISqlDatabaseSession session,
+        bool forceSnapshot,
+        CancellationToken cancellationToken)
     {
-        await using (session.ConfigureAwait(false))
+        var archived = await archiver.RunAsync(manifest, forceSnapshot, cancellationToken);
+        return archived switch
         {
-            return await StatusForSessionAsync(manifest, session, cancellationToken).ConfigureAwait(false);
+            ArchiveManifest stored => await StatusForSessionAsync(stored, session, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> StatusAsync(ArchiveManifest manifest, Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var opened = await sessions.OpenAsync(databaseId, cancellationToken);
+        return opened switch
+        {
+            ISqlDatabaseSession session => await StatusForOpenSessionAsync(manifest, session, cancellationToken),
+            ContinuitySessionMissing when manifest.IsEmpty => new ContinuityNotFound("database has no local files or archived restore points"),
+            ContinuitySessionMissing => Status(manifest, 0, null),
+            ContinuitySessionUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> StatusForOpenSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
+    {
+        await using (session)
+        {
+            return await StatusForSessionAsync(manifest, session, cancellationToken);
         }
     }
 
-    private async ValueTask<Result<BackupStatus, NotFound, Unavailable>> StatusForSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
+    private async ValueTask<BackupStatusOutcome> StatusForSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
     {
         var checkedAt = timeProvider.GetUtcNow();
         var current = session.CurrentBookmark;
         var pending = 0;
         foreach (var (origin, _) in current.Entries)
         {
-            var (count, busy) = Pending(await session.ListSealedSegmentsAsync(origin, manifest.ArchivedSegmentThrough(origin), cancellationToken).ConfigureAwait(false));
+            var listed = await session.ListSealedSegmentsAsync(origin, manifest.ArchivedSegmentThrough(origin), cancellationToken);
+            var (count, busy) = Pending(listed);
             if (busy is not null)
             {
-                return new Unavailable(busy.Message, "storage_busy");
+                return new ContinuityUnavailable(busy.Message, "storage_busy");
             }
 
             pending += count;
@@ -390,18 +482,18 @@ public sealed class BackupContinuityService(
         return Status(manifest, pending, new ArchiveProof(current, checkedAt));
     }
 
-    private static (int Count, StorageBusy? Busy) Pending(Result<IReadOnlyList<CommitLogSegment>, StorageBusy> listed) => listed switch
+    private static (int Count, StorageBusy? Busy) Pending(ListSegmentsOutcome listed) => listed switch
     {
         IReadOnlyList<CommitLogSegment> segments => (segments.Count, null),
         StorageBusy busy => (0, busy),
     };
 
-    private static Result<BackupStatus, NotFound, Unavailable> Status(ArchiveManifest manifest, int pendingSegments, ArchiveProof? proof)
+    private static BackupStatusOutcome Status(ArchiveManifest manifest, int pendingSegments, ArchiveProof? proof)
     {
         var snapshots = ManifestCodec.Snapshots(manifest);
         if (snapshots.Count == 0 || !Ulid.TryParse(manifest.DatabaseId, out var databaseId))
         {
-            return new NotFound("no restore point has been archived for this database yet", "backup_pending");
+            return new ContinuityNotFound("no restore point has been archived for this database yet", "backup_pending");
         }
 
         var latest = snapshots.MaxBy(static snapshot => snapshot.Archived.TakenAtUtc) ?? throw new UnreachableException();
@@ -447,13 +539,13 @@ public sealed class BackupContinuityService(
         var operation = Transition(work.OperationId, state, failure);
         var kind = KindLabel(work.Kind);
         metrics.OperationFinished(kind, state);
-        var recordFailure = record && manifests.IsEnabled ? await RecordAsync(work, operation, kind, cancellationToken).ConfigureAwait(false) : null;
+        var recordFailure = record && manifests.IsEnabled ? await RecordAsync(work, operation, kind, cancellationToken) : null;
         return new FinishedOperation(operation, kind, recordFailure);
     }
 
     private async ValueTask<string?> RecordAsync(OperationWork work, RestoreOperation operation, string kind, CancellationToken cancellationToken)
     {
-        using var lease = await manifests.AcquireAsync(work.TargetDatabaseId, cancellationToken).ConfigureAwait(false);
+        using var lease = await manifests.AcquireAsync(work.TargetDatabaseId, cancellationToken);
         var archived = new ArchivedOperation(
             operation.OperationId.ToString(),
             kind,
@@ -463,17 +555,18 @@ public sealed class BackupContinuityService(
             operation.StartedAtUtc,
             operation.UpdatedAtUtc,
             operation.FailureMessage);
-        var saved = await manifests.LoadAsync(work.TargetDatabaseId, cancellationToken).ConfigureAwait(false) switch
+        var loaded = await manifests.LoadAsync(work.TargetDatabaseId, cancellationToken);
+        var saved = loaded switch
         {
             ArchiveManifest manifest => await manifests.SaveAsync(
                 manifest with { Operations = [.. manifest.Operations.TakeLast(options.RetainedOperations - 1), archived] },
-                cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => unavailable,
+                cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
         };
         return saved switch
         {
             ArchiveManifest => null,
-            Unavailable unavailable => unavailable.Message,
+            ContinuityUnavailable unavailable => unavailable.Message,
         };
     }
 

@@ -57,29 +57,29 @@ internal static class QuicFaults
         PeerUnknown => false,
     };
 
-    public static Unavailable ToUnavailable(QuicFault fault) => fault switch
+    public static QuicUnavailable ToUnavailable(QuicFault fault) => fault switch
     {
-        ConnectionLost lost => new Unavailable(lost.Message, "peer_unreachable"),
-        StreamReset reset when reset.ErrorCode == QuicProtocol.PeerClosedErrorCode => new Unavailable(reset.Message, "peer_draining"),
-        StreamReset reset => new Unavailable(reset.Message, "stream_reset"),
-        LocalAbort aborted => new Unavailable(aborted.Message, "stream_aborted"),
-        DeadlineExceeded exceeded => new Unavailable(exceeded.Message, "request_timeout"),
-        TransportShutdown shutdown => new Unavailable(shutdown.Message, "transport_shutdown"),
-        PeerRejected rejected => new Unavailable(rejected.Message, "peer_unauthenticated"),
-        ProtocolFault protocol => new Unavailable(protocol.Message, QuicRemoteError.ProtocolViolation),
-        PeerUnknown unknown => new Unavailable(unknown.Message, "peer_unknown"),
+        ConnectionLost lost => new QuicUnavailable(lost.Message, "peer_unreachable"),
+        StreamReset reset when reset.ErrorCode == QuicProtocol.PeerClosedErrorCode => new QuicUnavailable(reset.Message, "peer_draining"),
+        StreamReset reset => new QuicUnavailable(reset.Message, "stream_reset"),
+        LocalAbort aborted => new QuicUnavailable(aborted.Message, "stream_aborted"),
+        DeadlineExceeded exceeded => new QuicUnavailable(exceeded.Message, "request_timeout"),
+        TransportShutdown shutdown => new QuicUnavailable(shutdown.Message, "transport_shutdown"),
+        PeerRejected rejected => new QuicUnavailable(rejected.Message, "peer_unauthenticated"),
+        ProtocolFault protocol => new QuicUnavailable(protocol.Message, QuicRemoteError.ProtocolViolation),
+        PeerUnknown unknown => new QuicUnavailable(unknown.Message, "peer_unknown"),
     };
 
-    public static Result<T, Unavailable, RequestTimeout, QuicRemoteError> ToCallFailure<T>(QuicFault fault) => fault switch
+    public static QuicCallOutcome<T> ToCallFailure<T>(QuicFault fault) => fault switch
     {
-        DeadlineExceeded exceeded => new RequestTimeout(exceeded.Message),
+        DeadlineExceeded exceeded => new QuicTimeout(exceeded.Message),
         ProtocolFault protocol => new QuicRemoteError(QuicRemoteError.ProtocolViolation, protocol.Message),
         ConnectionLost or StreamReset or LocalAbort or TransportShutdown or PeerRejected or PeerUnknown => ToUnavailable(fault),
     };
 
-    public static Result<Done, Unavailable, RequestTimeout> ToPushFailure(QuicFault fault) => fault switch
+    public static QuicPushOutcome ToPushFailure(QuicFault fault) => fault switch
     {
-        DeadlineExceeded exceeded => new RequestTimeout(exceeded.Message),
+        DeadlineExceeded exceeded => new QuicTimeout(exceeded.Message),
         ConnectionLost or StreamReset or LocalAbort or TransportShutdown or PeerRejected or ProtocolFault or PeerUnknown => ToUnavailable(fault),
     };
 }

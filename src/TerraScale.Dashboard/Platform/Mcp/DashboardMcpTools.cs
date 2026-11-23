@@ -4,8 +4,6 @@ using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
-    // Tools invoke the same feature services as native forms. The HTTP transport
-    // authenticates each request and does not retain any connection state.
     [McpServerToolType]
     public sealed class DashboardMcpTools(IHttpContextAccessor http, AccountService accounts, TimeProvider time)
     {

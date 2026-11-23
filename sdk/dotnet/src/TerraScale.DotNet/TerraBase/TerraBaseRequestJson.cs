@@ -4,7 +4,6 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>Compacts optional Unicode escapes in generated JSON without buffering an expanded request.</summary>
 internal sealed class TerraBaseRequestJson : Stream
 {
     private readonly BoundedHttpBodyStream body = new(64 * 1024 * 1024,

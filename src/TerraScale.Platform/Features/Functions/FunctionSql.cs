@@ -71,19 +71,21 @@ public sealed class FunctionSql(TerraBaseClient terraBase, Ulid database, string
 
         if (_transaction is { } session)
         {
-            return await session.SendAsync(SqlWsFrameTypes.Batch, request.Statements, Bookmark, cancellationToken) switch
+            var sessionOutcome = await session.SendAsync(SqlWsFrameTypes.Batch, request.Statements, Bookmark, cancellationToken);
+            return sessionOutcome switch
             {
                 SqlWsServerFrame frame => Frame(frame),
-                Unavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
+                PlatformUnavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
             };
         }
 
-        return await terraBase.ExecuteLowLatencyAsync(database, request, SqlContext.After(Bookmark), cancellationToken) switch
+        var outcome = await terraBase.ExecuteLowLatencyAsync(database, request, SqlContext.After(Bookmark), cancellationToken);
+        return outcome switch
         {
             SqlExecuteResponse response => Complete(response.Results, response.Bookmark),
             SqlFailure failure => Failure(failure.Error.Code, failure.Error.Message, failure.Error.Statement, failure.Error.SqlState),
-            NotFound missing => Failure(missing.Code, missing.Message ?? "the database does not exist", null, null),
-            Unavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
+            PlatformNotFound missing => Failure(missing.Code, missing.Message ?? "the database does not exist", null, null),
+            PlatformUnavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
         };
     }
 
@@ -94,20 +96,22 @@ public sealed class FunctionSql(TerraBaseClient terraBase, Ulid database, string
             return Failure("invalid_request", "a transaction is already open", null, null);
         }
 
-        return await FunctionSqlSession.OpenAsync(terraBase, database, cancellationToken) switch
+        var outcome = await FunctionSqlSession.OpenAsync(terraBase, database, cancellationToken);
+        return outcome switch
         {
             FunctionSqlSession session => await StartAsync(session, cancellationToken),
-            Unavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
+            PlatformUnavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
         };
     }
 
     private async Task<string> StartAsync(FunctionSqlSession session, CancellationToken cancellationToken)
     {
         _transaction = session;
-        return await session.SendAsync(SqlWsFrameTypes.Begin, null, Bookmark, cancellationToken) switch
+        var outcome = await session.SendAsync(SqlWsFrameTypes.Begin, null, Bookmark, cancellationToken);
+        return outcome switch
         {
             SqlWsServerFrame frame => Frame(frame),
-            Unavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
+            PlatformUnavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
         };
     }
 
@@ -121,10 +125,11 @@ public sealed class FunctionSql(TerraBaseClient terraBase, Ulid database, string
         _transaction = null;
         await using (session)
         {
-            return await session.SendAsync(type, null, Bookmark, cancellationToken) switch
+            var outcome = await session.SendAsync(type, null, Bookmark, cancellationToken);
+            return outcome switch
             {
                 SqlWsServerFrame frame => Frame(frame),
-                Unavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
+                PlatformUnavailable unavailable => Failure(unavailable.Code, unavailable.Message, null, null),
             };
         }
     }

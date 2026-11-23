@@ -10,7 +10,6 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed record LogDrain(string ProjectId, string OrganizationId, string Revision, string Url, string? HeaderName, DateTimeOffset CreatedAt,
         DateTimeOffset? LastSuccessAt, DateTimeOffset? LastErrorAt, int? LastErrorStatus, DateTimeOffset? LastGapAt);
@@ -20,9 +19,9 @@ namespace TerraScale.Dashboard.Features.Logs
         Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken);
     }
 
-    public readonly union LogDrainSaved(Done, Validation, Forbidden, NotFound);
+    public readonly union LogDrainSaved(Done, DashboardValidation, DashboardForbidden, DashboardNotFound);
 
-    public readonly union LogDrainDeleted(Done, Forbidden, NotFound);
+    public readonly union LogDrainDeleted(Done, DashboardForbidden, DashboardNotFound);
 
     public sealed partial class LogDrains(DashboardDb storage, OrganizationStore organizations, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
         TimeProvider clock, ILogger<LogDrains> logger, BackgroundJobs jobs, BillingSchemaGate gate)
@@ -68,7 +67,7 @@ namespace TerraScale.Dashboard.Features.Logs
             }
             catch (ArgumentException error) when (error.Message == CustomerUrls.Rule)
             {
-                return new Validation(error.Message);
+                return new DashboardValidation(error.Message);
             }
 
             var name = headerName?.Trim() is { Length: > 0 } text ? text : null;
@@ -76,7 +75,7 @@ namespace TerraScale.Dashboard.Features.Logs
             if (name is not null && (name.Length > 64 || !HeaderToken().IsMatch(name) || ReservedHeaders.Contains(name.ToLowerInvariant())) ||
                 value is not null && (name is null || value.Length > 4096 || value.Any(char.IsControl)))
             {
-                return new Validation("Use a header name of letters, digits and dashes and a value of up to 4096 characters without line breaks.");
+                return new DashboardValidation("Use a header name of letters, digits and dashes and a value of up to 4096 characters without line breaks.");
             }
 
             var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
@@ -90,7 +89,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 var keep = header is null && name is not null && row?.HeaderName == name;
                 if (name is not null && header is null && !keep)
                 {
-                    return new Validation("Enter the header value.");
+                    return new DashboardValidation("Enter the header value.");
                 }
 
                 if (row is null)
@@ -385,15 +384,15 @@ namespace TerraScale.Dashboard.Features.Logs
         private static LogDrainSaved SaveRefused(AccountContext context)
         {
             return context.Organization is null || context.Project is null
-                ? new LogDrainSaved(new NotFound("Select a project."))
-                : new LogDrainSaved(new Forbidden("Only organization owners manage the log drain."));
+                ? new LogDrainSaved(new DashboardNotFound("Select a project."))
+                : new LogDrainSaved(new DashboardForbidden("Only organization owners manage the log drain."));
         }
 
         private static LogDrainDeleted DeleteRefused(AccountContext context)
         {
             return context.Organization is null || context.Project is null
-                ? new LogDrainDeleted(new NotFound("Select a project."))
-                : new LogDrainDeleted(new Forbidden("Only organization owners manage the log drain."));
+                ? new LogDrainDeleted(new DashboardNotFound("Select a project."))
+                : new LogDrainDeleted(new DashboardForbidden("Only organization owners manage the log drain."));
         }
 
         private static LogDrain Drain(LogDrainRow row)

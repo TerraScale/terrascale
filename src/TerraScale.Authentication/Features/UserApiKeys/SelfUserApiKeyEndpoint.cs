@@ -1,6 +1,5 @@
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -24,7 +23,7 @@ public abstract class SelfUserApiKeyEndpoint(PlatformAuthentication authenticati
         var options = this.HttpContext.RequestServices.GetRequiredService<AuthOptions>();
         if (!HttpMethods.IsGet(request.Method) && (request.Headers.Origin is not [{ } origin] || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin)))
         {
-            return ErrorResults.ToResult(new Forbidden("Your role does not allow this.", "forbidden_role"));
+            return ErrorResults.ToResult(new AuthForbidden("Your role does not allow this.", "forbidden_role"));
         }
 
         var sessions = this.HttpContext.RequestServices.GetRequiredService<Sessions>();
@@ -37,7 +36,7 @@ public abstract class SelfUserApiKeyEndpoint(PlatformAuthentication authenticati
         {
             if (!SecurityFlow.Recent(this.HttpContext, live.Session, SecurityFlow.FactorEnrollmentWindow))
             {
-                return ErrorResults.ToResult(new Forbidden("Sign in again to create an API key.", "reauthentication_required"));
+                return ErrorResults.ToResult(new AuthForbidden("Sign in again to create an API key.", "reauthentication_required"));
             }
 
             this.CreationAuthorization = new(Sessions.Live(live.Session, live.Version, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()),

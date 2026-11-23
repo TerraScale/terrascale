@@ -23,7 +23,6 @@ namespace TerraScale.Dashboard.Platform.Assets
             {
                 return "";
             }
-            // Assets are immutable in a release. Metadata also invalidates versions during development/HMR.
             if (versions.TryGetValue(path, out var saved) && saved.Modified == file.LastModified && saved.Length == file.Length)
             {
                 return saved.Hash;

@@ -34,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     return DatabaseResults.WantsHtml(http)
                         ? await DatabaseEndpoints.DetailPageAsync(http, context, id, "tables", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
                             http.RequestServices.GetRequiredService<DatabaseService>(), denied, status: StatusCodes.Status403Forbidden, formError: "", tableDraft: null)
-                        : DatabaseResults.PageFailureOf(http, context, new Forbidden(denied));
+                        : DatabaseResults.PageFailureOf(http, context, new DatabaseForbidden(denied));
                 }
 
                 var parsed = CreateTableSql.Parse(form);

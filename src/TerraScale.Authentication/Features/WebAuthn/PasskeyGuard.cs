@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
 
@@ -6,7 +5,7 @@ namespace TerraScale.Authentication.Features.WebAuthn;
 
 internal static class PasskeyGuard
 {
-    internal static readonly Conflict LastFactor = new("This is your last passkey and an organization you belong to requires two-factor authentication; add another passkey or an authenticator app first.",
+    internal static readonly AuthConflict LastFactor = new("This is your last passkey and an organization you belong to requires two-factor authentication; add another passkey or an authenticator app first.",
         "last_factor");
 
     internal static async Task<bool> LastFactorAsync(PlatformDirectory platform, TotpCredentials mfa, string userId, int remaining, CancellationToken cancellationToken)

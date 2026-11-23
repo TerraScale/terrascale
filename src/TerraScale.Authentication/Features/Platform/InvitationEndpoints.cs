@@ -1,6 +1,5 @@
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 
@@ -202,7 +201,7 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
             "start_ownership_transfer", "ts-auth", null, cancellationToken, this.RouteId("organization")) switch
         {
             StepUpConsumption consumption => await this.StartTransferAsync(consumption.Caller, nominee!, cancellationToken),
-            Forbidden failure => ErrorResults.ToResult(failure),
+            AuthForbidden failure => ErrorResults.ToResult(failure),
         };
     }
 

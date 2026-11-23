@@ -3,18 +3,13 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // ts-auth owns organizations, projects, memberships, invitations, ownership
-    // transfer and audit events. Every call carries the signed-in user's own
-    // access token, so ts-auth checks the current membership and role each time.
     public partial interface ITsAuthPlatform
     {
         Task<IReadOnlyList<TsAuthPlatformOrganization>> ListOrganizationsAsync(SessionRecord session, CancellationToken cancellationToken);
         Task<TsAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken);
         Task RenameOrganizationAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
         Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
-        // Ends every ts-auth sign-in of the account on every device, this one included; API keys stay valid.
         Task SignOutEverywhereAsync(SessionRecord session, CancellationToken cancellationToken);
-        // Owner only; ts-auth refuses with not_empty while the organization still has projects.
         Task DeleteOrganizationAsync(SessionRecord session, string organizationId, string stepUpProof, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken);
@@ -25,8 +20,6 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task<TsAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken);
-        // With a project id, an invitation to that project only. A platform without project invitations refuses one
-        // rather than send it as an organization invitation.
         Task<TsAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, string? projectId, CancellationToken cancellationToken)
         {
             return projectId is null ? CreateInvitationAsync(session, organizationId, email, role, cancellationToken)
@@ -42,14 +35,11 @@ namespace TerraScale.Dashboard.Features.Auth
         Task ConfirmOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task CancelOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
-        // Deletes the caller's user, sessions, tokens, memberships and the organizations only they belong to.
-        // ts-auth refuses with last_owner while the caller is the last owner of an organization with other members.
         Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, string authorization, CancellationToken cancellationToken);
         Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken);
         Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken);
     }
 
-    // The official ts-dotnet platform client, called with the user's own sign-in token.
     public sealed partial class TsAuthGateway : ITsAuthPlatform
     {
         private const int MaxPages = 100;
@@ -112,7 +102,6 @@ namespace TerraScale.Dashboard.Features.Auth
             try { return await PagesAsync(after => Client().Platform.ListProjectsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken)); }
             catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status403Forbidden && error.Code.Length == 0)
             {
-                // ts-dotnet 0.0.6 omits codes it does not know, mfa_required among them; ts-auth's organization read names it.
                 if (await MfaRefusedAsync(session, organizationId, cancellationToken))
                 {
                     throw new AccountAccessException(Message(MfaRequiredCode, HttpStatusCode.Forbidden), StatusCodes.Status403Forbidden, MfaRequiredCode);
@@ -157,7 +146,6 @@ namespace TerraScale.Dashboard.Features.Auth
         public async Task<TsAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, string? projectId, CancellationToken cancellationToken)
         {
             var created = await PlatformAsync(() => Client().Platform.CreateInvitationAsync(Bearer(session), Id(organizationId), new(email, role, projectId is null ? null : Id(projectId)), cancellationToken));
-            // An answer for another scope or role is not the invitation asked for.
             if (created.Invitation is null || !TerraScaleIds.IsValid(created.Invitation.Id) || created.Token is not { Length: > 0 and <= 4096 } ||
                 !created.Invitation.Email.Equals(email, StringComparison.OrdinalIgnoreCase) || created.Invitation.ProjectId != projectId || created.Invitation.Role != role)
             {
@@ -240,7 +228,6 @@ namespace TerraScale.Dashboard.Features.Auth
             return string.IsNullOrWhiteSpace(session.AccessToken) ? throw new AccountAccessException("Sign in again to continue.", 401) : session.AccessToken;
         }
 
-        // ts-auth answers 404 to anything but a canonical ULID; refuse it before sending a bearer token.
         private static string Id(string id)
         {
             return TerraScaleIds.IsValid(id) ? id : throw new AccountAccessException("The requested resource is unavailable.", 404);
@@ -275,8 +262,6 @@ namespace TerraScale.Dashboard.Features.Auth
             await PlatformAsync(async () => { await call(); return true; });
         }
 
-        // ts-auth refusals become account errors with its fixed code and a dashboard message; the SDK
-        // keeps no producer text. Server and transport failures stay HttpRequestException (503 page).
         private static async Task<T> PlatformAsync<T>(Func<Task<T>> call)
         {
             try { return await call(); }

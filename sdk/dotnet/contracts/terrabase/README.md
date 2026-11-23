@@ -7,7 +7,7 @@
 
 ## Route, identity and scope
 
-Project lifecycle, usage and branch methods use `/v1/projects/{project}`. `{project}` is the canonical ts-auth project ULID. `{database}` is its name, or its immutable ULID where the route says so. A database lives in exactly one region, `homeRegion`; `region` names the region that answered. List pagination is `items`/nullable `next`, query `after` and `limit` 1–100 (default 20).
+Project lifecycle, usage and branch methods use `/v1/projects/{project}`. `{project}` is the canonical ts-auth project ULID. `{database}` is its name, or its immutable ULID where the route says so. A database can have copies in multiple regions. The `region` field names the region that answered. List pagination is `items`/nullable `next`, query `after` and `limit` 1–100 (default 20).
 
 Lifecycle reads and usage require `databases:read`; create, delete, rename and branch require `databases:write`. Project/database mismatch is 404, not disclosure of foreign ownership. All mutations send once; there are no transport retries.
 
@@ -17,6 +17,6 @@ Usage JSON carries 64-bit totals, a `period` (`from`, `to`, `granularity`, `read
 
 ## Routing errors
 
-`TerraBaseWrongRegionException` preserves 421 and exposes the validated answering `Region`, `HomeRegion`, `Regions` and `ErrorCode`. The SDK never redirects, retries or changes hosts on 421.
+On HTTP 421, `TerraBaseException` carries the status and any supplied `ErrorCode` and valid answering `Region`. The SDK sends the request once.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

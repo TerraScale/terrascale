@@ -12,15 +12,19 @@ public static class PlatformResponses
         options.Title = "TerraScale Platform (ts-platform)";
         options.Version = "v1";
         options
-            .MapResponse<Done>(static _ => TypedResults.NoContent(), StatusCodes.Status204NoContent)
-            .MapResponse<Validation>(static error => ErrorResults.From(error), StatusCodes.Status400BadRequest, typeof(ApiErrorEnvelope))
-            .MapResponse<Unauthorized>(static error => ErrorResults.From(error), StatusCodes.Status401Unauthorized, typeof(ApiErrorEnvelope))
-            .MapResponse<Forbidden>(static error => ErrorResults.From(error), StatusCodes.Status403Forbidden, typeof(ApiErrorEnvelope))
-            .MapResponse<NotFound>(static error => ErrorResults.From(error), StatusCodes.Status404NotFound, typeof(ApiErrorEnvelope))
-            .MapResponse<Conflict>(static error => ErrorResults.From(error), StatusCodes.Status409Conflict, typeof(ApiErrorEnvelope))
-            .MapResponse<PayloadTooLarge>(static error => ErrorResults.From(error), StatusCodes.Status413PayloadTooLarge, typeof(ApiErrorEnvelope))
-            .MapResponse<QuotaExceeded>(static error => ErrorResults.From(error), StatusCodes.Status429TooManyRequests, typeof(ApiErrorEnvelope))
-            .MapResponse<Unavailable>(static error => ErrorResults.From(error), StatusCodes.Status503ServiceUnavailable, typeof(ApiErrorEnvelope))
+            .MapResponse<BucketDeleted>(static _ => TypedResults.NoContent(), StatusCodes.Status204NoContent)
+            .MapResponse<FileDeleted>(static _ => TypedResults.NoContent(), StatusCodes.Status204NoContent)
+            .MapResponse<FunctionDeleted>(static _ => TypedResults.NoContent(), StatusCodes.Status204NoContent)
+            .MapResponse<SecretDeleted>(static _ => TypedResults.NoContent(), StatusCodes.Status204NoContent)
+            .MapResponse<ProjectClosed>(static _ => TypedResults.NoContent(), StatusCodes.Status204NoContent)
+            .MapResponse<PlatformInvalidRequest>(static error => ErrorResults.From(error), StatusCodes.Status400BadRequest, typeof(ApiErrorEnvelope))
+            .MapResponse<PlatformUnauthorized>(static error => ErrorResults.From(error), StatusCodes.Status401Unauthorized, typeof(ApiErrorEnvelope))
+            .MapResponse<PlatformForbidden>(static error => ErrorResults.From(error), StatusCodes.Status403Forbidden, typeof(ApiErrorEnvelope))
+            .MapResponse<PlatformNotFound>(static error => ErrorResults.From(error), StatusCodes.Status404NotFound, typeof(ApiErrorEnvelope))
+            .MapResponse<PlatformConflict>(static error => ErrorResults.From(error), StatusCodes.Status409Conflict, typeof(ApiErrorEnvelope))
+            .MapResponse<PlatformPayloadTooLarge>(static error => ErrorResults.From(error), StatusCodes.Status413PayloadTooLarge, typeof(ApiErrorEnvelope))
+            .MapResponse<PlatformQuotaExceeded>(static error => ErrorResults.From(error), StatusCodes.Status429TooManyRequests, typeof(ApiErrorEnvelope))
+            .MapResponse<PlatformUnavailable>(static error => ErrorResults.From(error), StatusCodes.Status503ServiceUnavailable, typeof(ApiErrorEnvelope))
             .MapResponse<FunctionList>(
                 static list => TypedResults.Json(list.Items, FunctionsJsonContext.Default.IReadOnlyListFunctionBody),
                 StatusCodes.Status200OK,

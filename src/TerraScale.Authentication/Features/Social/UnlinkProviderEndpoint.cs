@@ -1,6 +1,5 @@
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -26,7 +25,7 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
         var provider = this.HttpContext.GetRouteValue("provider") as string;
         if (provider is not (SocialProviders.GitHub or SocialProviders.Google))
         {
-            return ErrorResults.ToResult(new Validation("Unknown provider."));
+            return ErrorResults.ToResult(new AuthValidation("Unknown provider."));
         }
 
         var body = await this.BodyAsync(PlatformSocialJson.Default.UnlinkProviderRequest, cancellationToken);
@@ -40,7 +39,7 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
             || proof.Id != caller.Id || proof.AuthStamp != caller.AuthStamp || proof.AuthEpoch != caller.AuthEpoch
             || !await users.UnlinkProviderAsync(proof, provider, cancellationToken))
         {
-            return ErrorResults.ToResult(new Unauthorized("A current sign-in code is required.", "invalid_credentials"));
+            return ErrorResults.ToResult(new AuthUnauthorized("A current sign-in code is required.", "invalid_credentials"));
         }
 
         return TypedResults.NoContent();

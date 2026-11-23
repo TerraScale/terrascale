@@ -17,11 +17,11 @@ internal sealed class PgWire(IDuplexPipe transport, TimeProvider timeProvider) :
         var tls = new SslStream(new DuplexPipeStream(transport), leaveInnerStreamOpen: false);
         try
         {
-            await tls.AuthenticateAsServerAsync(options, cancellationToken).ConfigureAwait(false);
+            await tls.AuthenticateAsServerAsync(options, cancellationToken);
         }
         catch (Exception error) when (error is AuthenticationException or IOException)
         {
-            await tls.DisposeAsync().ConfigureAwait(false);
+            await tls.DisposeAsync();
             return false;
         }
 
@@ -37,7 +37,7 @@ internal sealed class PgWire(IDuplexPipe transport, TimeProvider timeProvider) :
         Writer.Dispose();
         if (_tls is { } tls)
         {
-            await tls.DisposeAsync().ConfigureAwait(false);
+            await tls.DisposeAsync();
         }
     }
 

@@ -24,23 +24,23 @@ internal sealed class CreateDatabaseEndpoint(DatabaseAccess access, ManagementSe
     public override async ValueTask<CreateDatabaseResponse> HandleAsync(DatabaseInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesWrite, cancellationToken) switch
+        var outcome = await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesWrite, cancellationToken);
+        return outcome switch
         {
             ResolvedProject project => await management.CreateDatabaseAsync(project.Project, request, cancellationToken) switch
             {
                 DatabaseRecord created => new Created<DatabaseBody>(
                     string.Concat("/v1/projects/", created.ProjectId.ToString(), "/databases/", created.Name), DatabaseBody.From(created, options.Region, time.GetUtcNow())),
-                Validation invalid => invalid,
-                Forbidden forbidden => forbidden,
-                Conflict conflict => conflict,
-                QuotaExceeded quota => quota,
-                Unavailable unavailable => unavailable,
+                InvalidInput invalid => invalid,
+                CallerForbidden forbidden => forbidden,
+                StateConflict conflict => conflict,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

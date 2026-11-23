@@ -23,11 +23,12 @@ namespace TerraScale.Dashboard.Features.Billing
 
             try
             {
-                return await billing.PortalAsync(context, http.RequestAborted) switch
+                var outcome = await billing.PortalAsync(context, http.RequestAborted);
+                return outcome switch
                 {
                     PortalSessionUrl session => HttpRedirects.SeeOther(session.Url),
-                    Validation error when DatabaseEndpoints.WantsHtml(http) => BillingRecoveryModel.Response(http, 422, "Billing portal unavailable", error.Message + " Return to billing to choose a plan or finish checkout."),
-                    Validation error => TypedResults.Problem(error.Message, statusCode: 422)
+                    DashboardValidation error when DatabaseEndpoints.WantsHtml(http) => BillingRecoveryModel.Response(http, 422, "Billing portal unavailable", error.Message + " Return to billing to choose a plan or finish checkout."),
+                    DashboardValidation error => TypedResults.Problem(error.Message, statusCode: 422)
                 };
             }
             catch (AccountAccessException error) when (DatabaseEndpoints.WantsHtml(http))

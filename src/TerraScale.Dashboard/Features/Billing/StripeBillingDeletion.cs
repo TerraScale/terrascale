@@ -4,8 +4,6 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed partial class StripeBilling
     {
-        // Retained cleanup re-queries canonical provider state: even an unpublished
-        // late Checkout remains discoverable through its durably owned customer.
         internal async Task EndCustomersForDeletionAsync(string organizationId, IReadOnlyList<string> retainedCustomers, CancellationToken cancellationToken)
         {
             if (!TerraScaleIds.IsValid(organizationId))

@@ -5,11 +5,6 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Identity
 {
-    // Signed double-submit proof. The __Host- cookie holds a random nonce that a sibling subdomain
-    // cannot set; the form token is an HMAC of that nonce and the browser's session, keyed from the
-    // existing session encryption key. A form proof is valid only for the session it was issued to:
-    // anonymous forms (OAuth consent) bind to no session, and an account-deletion continuation binds
-    // to its recovery cookie, which keeps the original session handle after ts-auth revokes it.
     public static class Csrf
     {
         internal const string Cookie = "__Host-ts-dashboard-csrf";
@@ -57,8 +52,6 @@ namespace TerraScale.Dashboard.Platform.Identity
                 CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Sign(context, nonce!)), Encoding.ASCII.GetBytes(token));
         }
 
-        // Called when this response changes the browser's session cookie, so forms rendered by the
-        // same response bind to the session the browser will hold next ("" when it holds none).
         internal static void Bind(HttpContext context, string? session)
         {
             context.Items[BindingKey] = session ?? "";
@@ -69,7 +62,6 @@ namespace TerraScale.Dashboard.Platform.Identity
             var session = context.Items[BindingKey] as string ?? context.Request.Cookies[DashboardSessions.Cookie];
             var deletion = context.Request.Cookies[AccountDeletion.Cookie];
             var binding = Hex(session) ? session! : Hex(deletion) ? deletion! : "";
-            // The configured credentials are read synchronously from the environment or secret files.
             var credentials = context.RequestServices.GetRequiredService<IDashboardIdentity>().ReadAsync(context.RequestAborted).GetAwaiter().GetResult();
             var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, Convert.FromBase64String(credentials.SessionEncryptionKey), 32, info: "ts-dashboard/csrf"u8.ToArray());
             try { return Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.ASCII.GetBytes(binding + "." + nonce))); }

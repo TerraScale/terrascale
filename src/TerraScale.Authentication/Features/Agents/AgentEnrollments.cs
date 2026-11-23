@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -36,9 +35,9 @@ public sealed record AgentEnrollmentBody(string EnrollmentId, string UserCode, s
 public sealed record AgentEnrollmentTokenRequest(string? Proof);
 public sealed record AgentEnrollmentTokenBody(string AgentId, string Kid);
 
-public readonly union StartAgentEnrollmentResult(AgentEnrollmentBody, Validation, NotFound, Conflict);
+public readonly union StartAgentEnrollmentResult(AgentEnrollmentBody, AuthValidation, AuthNotFound, AuthConflict);
 
-public readonly union RedeemAgentEnrollmentResult(AgentEnrollmentTokenBody, Unauthorized, Validation);
+public readonly union RedeemAgentEnrollmentResult(AgentEnrollmentTokenBody, AuthUnauthorized, AuthValidation);
 
 public sealed record LiveApprover(SessionRecord Session, string SessionVersion, UserRecord User);
 
@@ -90,14 +89,14 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         var name = PlatformDirectory.Name(request.Name);
         if (name is not { Length: <= 64 } || request.RequestedScopes is not { } scopes || !MachineClients.ValidScopes(scopes))
         {
-            return new Validation("Supply a name of 1 to 64 characters, 1 to 64 unique requested_scopes and a public_jwk.", "invalid_request");
+            return new AuthValidation("Supply a name of 1 to 64 characters, 1 to 64 unique requested_scopes and a public_jwk.", "invalid_request");
         }
 
         var key = AgentJwk.Parse(request.PublicJwk);
         var tenant = Tenancy.IsProject(project) ? await platform.ProjectAsync(project, cancellationToken) : null;
         if (Tenancy.IsProject(project) && tenant is null)
         {
-            return new NotFound("No such resource.");
+            return new AuthNotFound("No such resource.");
         }
 
         if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken)
@@ -112,7 +111,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             AgentEnrollmentStatus.Pending, now, now + Lifetime);
         if (!await data.SaveAsync([Change.Insert(enrollment), .. tenant is null ? [] : new[] { Change.Assert(tenant) }], cancellationToken))
         {
-            return new Conflict("The enrollment could not be stored; start it again.", "version_conflict");
+            return new AuthConflict("The enrollment could not be stored; start it again.", "version_conflict");
         }
 
         var page = new Uri(options.PublicOrigin, PagePath(project)).AbsoluteUri;
@@ -221,7 +220,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             || await AgentProof.IssuedAtAsync(proof, enrollment.PublicJwk, audience, now) is not { } issuedAt
             || issuedAt <= enrollment.LastProofIssuedAt)
         {
-            return new Unauthorized("Sign a fresh ES256 JWT with the enrolled key: aud this URL, a jti, iat, and exp at most 300 seconds ahead.", "invalid_proof");
+            return new AuthUnauthorized("Sign a fresh ES256 JWT with the enrolled key: aud this URL, a jti, iat, and exp at most 300 seconds ahead.", "invalid_proof");
         }
 
         if (enrollment.Status == AgentEnrollmentStatus.Collected || enrollment.ExpiresAt <= now)
@@ -261,7 +260,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             """, new { cutoff, batchSize }), cancellationToken);
     }
 
-    private static Validation Answer(string code, string message) => new(message, code);
+    private static AuthValidation Answer(string code, string message) => new(message, code);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, AllowDuplicateProperties = false)]

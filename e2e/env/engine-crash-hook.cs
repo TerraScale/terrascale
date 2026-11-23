@@ -128,11 +128,12 @@ internal sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<Key
             return "error invalid database id " + database;
         }
 
-        return await services.GetRequiredService<ContinuitySessions>().OpenAsync(id, cancellationToken) switch
+        var opened = await services.GetRequiredService<ContinuitySessions>().OpenAsync(id, cancellationToken);
+        return opened switch
         {
             ISqlDatabaseSession session => await UseAsync(session, action, cancellationToken),
-            NotFound missing => string.Concat("error not found ", missing.Code, " ", missing.Message),
-            Unavailable unavailable => string.Concat("error unavailable ", unavailable.Code, " ", unavailable.Message),
+            ContinuitySessionMissing missing => string.Concat("error not found ", missing.Code, " ", missing.Message),
+            ContinuitySessionUnavailable unavailable => string.Concat("error unavailable ", unavailable.Code, " ", unavailable.Message),
         };
     }
 
@@ -256,12 +257,13 @@ internal sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<Key
     {
         var request = new SqlStatementRequest(session.DatabaseId, [new SqlStatement("SELECT count(*) FROM sqlite_schema", [], Named)], SqlAccess.Read,
             ConsistencyMode.Fast, CausalBookmark.Empty);
-        return await session.ExecuteReadAsync(request, cancellationToken) switch
+        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+        return outcome switch
         {
             SqlReadResult => null,
             SqlError error => "error sql " + error.Message,
             StorageBusy busy => "error busy " + busy.Message,
-            RequestTimeout timeout => "error timeout " + timeout.Message,
+            StorageTimeout timeout => "error timeout " + timeout.Message,
         };
     }
 
@@ -272,14 +274,15 @@ internal sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<Key
             SqlAccess.Write, ConsistencyMode.Fast, CausalBookmark.Empty);
         for (var index = 0; index < count; index++)
         {
-            var failure = await coordinator.ExecuteWriteAsync(session, request, cancellationToken) switch
+            var outcome = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
+            var failure = outcome switch
             {
                 SqlWriteResult => null,
                 SqlError error => "error sql " + error.Message,
                 SerializationConflict conflict => "error conflict " + conflict.Reason,
                 SchemaMismatch => "error schema mismatch",
-                Unavailable unavailable => string.Concat("error unavailable ", unavailable.Code, " ", unavailable.Message),
-                RequestTimeout timeout => "error timeout " + timeout.Message,
+                ClusterUnavailable unavailable => string.Concat("error unavailable ", unavailable.Code, " ", unavailable.Message),
+                ClusterTimeout timeout => "error timeout " + timeout.Message,
                 StorageBusy busy => "error busy " + busy.Message,
             };
             if (failure is not null)

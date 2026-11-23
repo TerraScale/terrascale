@@ -69,13 +69,14 @@ namespace TerraScale.Dashboard.Features.Rules
             var playground = Playground(form);
             try
             {
-                return await rules.DeployAsync(context!, database!, loaded.Length == 0 ? null : loaded, source, http.RequestAborted) switch
+                var outcome = await rules.DeployAsync(context!, database!, loaded.Length == 0 ? null : loaded, source, http.RequestAborted);
+                return outcome switch
                 {
                     TerraBaseRulesDeploy { Rules: { } saved } => await RenderAsync(http, rules, context!, database!, (source, saved.Version), playground,
                         state: page => page with { Notice = "Rules deployed.", Warnings = saved.Warnings ?? [] }),
                     TerraBaseRulesDeploy notDeployed => await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
                         state: page => page with { Error = "The rules were not deployed.", Problems = notDeployed.Problems }),
-                    Validation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => Refused(page, invalid.Message)),
+                    DashboardValidation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => Refused(page, invalid.Message)),
                 };
             }
             catch (Exception error) when (KnownFailure(error, http))
@@ -97,10 +98,11 @@ namespace TerraScale.Dashboard.Features.Rules
             var playground = Playground(form);
             try
             {
-                return await rules.TestAsync(context!, database!, source, playground, http.RequestAborted) switch
+                var outcome = await rules.TestAsync(context!, database!, source, playground, http.RequestAborted);
+                return outcome switch
                 {
                     TerraBaseRulesTestResult result => await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => page with { Result = result }),
-                    Validation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
+                    DashboardValidation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
                         state: page => page with { PlaygroundError = invalid.Message }),
                 };
             }
@@ -181,17 +183,13 @@ namespace TerraScale.Dashboard.Features.Rules
                     versions = await rules.VersionsAsync(context, database, http.RequestAborted);
                     if (compare.Length > 0)
                     {
-                        switch (await rules.VersionAsync(context, database, compare, http.RequestAborted))
+                        var version = await rules.VersionAsync(context, database, compare, http.RequestAborted);
+                        (comparison, error, status) = version switch
                         {
-                            case TerraBaseRules older:
-                                comparison = new(versions.FirstOrDefault(item => item.Version == older.Version) ?? new(older.Version, older.UpdatedAt, older.UpdatedBy, ""),
-                                    RulesDiff.Lines(RulesBackend.Source(older.Tables), RulesBackend.Source(current.Tables)));
-                                break;
-                            case Errors.NotFound missing:
-                                error = missing.Message ?? "This rules version does not exist.";
-                                status = 404;
-                                break;
-                        }
+                            TerraBaseRules older => (new RulesComparison(versions.FirstOrDefault(item => item.Version == older.Version) ?? new(older.Version, older.UpdatedAt, older.UpdatedBy, ""),
+                                RulesDiff.Lines(RulesBackend.Source(older.Tables), RulesBackend.Source(current.Tables))), error, status),
+                            DashboardNotFound missing => (comparison, missing.Message, 404),
+                        };
                     }
                 }
             }

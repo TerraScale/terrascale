@@ -6,11 +6,6 @@ using System.Text.RegularExpressions;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>
-/// Exchanges a TerraScale API key for project access tokens at ts-auth (platform contract 6.1: client credentials,
-/// Basic keyId:key) and renews each project's token in the background before expiry. Concurrent callers share one
-/// exchange. The key goes only to the configured ts-auth origin.
-/// </summary>
 internal sealed partial class TerraScaleApiKeyTokens
 {
     internal static readonly Uri ProductionOrigin = new("https://auth.terrascale.tech/");
@@ -39,7 +34,6 @@ internal sealed partial class TerraScaleApiKeyTokens
         basic = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{id}:{key}")));
     }
 
-    /// <summary>Returns the access-token provider for <paramref name="project"/>.</summary>
     internal Func<CancellationToken, ValueTask<string>> For(string project)
     {
         var cache = new ProjectToken(this, project);
@@ -102,17 +96,17 @@ internal sealed partial class TerraScaleApiKeyTokens
         }
 
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("access_token", out var token) || token.ValueKind != JsonValueKind.String
-            || !root.TryGetProperty("expires_in", out var expires) || !expires.TryGetInt64(out var seconds) || seconds <= 0 || string.IsNullOrEmpty(token.GetString()))
+            || !root.TryGetProperty("expires_in", out var expires) || !expires.TryGetInt64(out var seconds) || seconds <= 0 || token.GetString() is not { Length: > 0 } accessToken)
         {
             throw new InvalidDataException("ts-auth's token answer lacks access_token or a positive expires_in.");
         }
 
-        return (token.GetString()!, TimeSpan.FromSeconds(seconds));
+        return (accessToken, TimeSpan.FromSeconds(seconds));
     }
 
     private sealed class ProjectToken(TerraScaleApiKeyTokens owner, string project)
     {
-        private readonly object gate = new();
+        private readonly Lock gate = new();
         private Cached? cached;
         private Task<string>? flight;
         private Exception? refusal;
@@ -125,22 +119,19 @@ internal sealed partial class TerraScaleApiKeyTokens
             {
                 if (refusal is not null) throw refusal;
                 var now = owner.time.GetUtcNow();
-                var valid = cached is { } entry && now < entry.ExpiresAt;
-                if (valid && now < cached!.RefreshAt) return cached.Token;
+                var valid = cached is { } entry && now < entry.ExpiresAt ? entry : null;
+                if (valid is not null && now < valid.RefreshAt) return valid.Token;
                 if (flight is null)
                 {
                     var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                     flight = completion.Task;
-                    // Queue renewal so even a synchronous HTTP handler cannot
-                    // delay callers using the still-valid cached token.
                     _ = Task.Run(() => RefreshAsync(completion));
                 }
 
-                if (valid) return cached!.Token;
+                if (valid is not null) return valid.Token;
                 pending = flight;
             }
 
-            // A caller's cancellation ends its wait, not the shared exchange.
             return await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -170,8 +161,6 @@ internal sealed partial class TerraScaleApiKeyTokens
                     }
                     else if (cached is { } entry) cached = entry with { RefreshAt = owner.time.GetUtcNow() + TimeSpan.FromSeconds(1) };
                     completion.SetException(error);
-                    // Background errors are observed; expired callers still
-                    // receive the same failure through their shared task.
                     _ = completion.Task.Exception;
                     flight = null;
                 }

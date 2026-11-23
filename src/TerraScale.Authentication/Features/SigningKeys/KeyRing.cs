@@ -6,7 +6,6 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -33,7 +32,7 @@ public sealed record KeyRingRefresh
 
 public sealed record Added;
 
-public readonly union RotateIfDueResult(Added, Done, Conflict);
+public readonly union RotateIfDueResult(Added, AuthCompleted, AuthConflict);
 
 public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clock, KeyRingRefresh? refresh = null)
 {
@@ -165,14 +164,14 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
         var now = clock.GetUtcNow().ToUnixTimeSeconds();
         if (now < keys.Max(key => key.CreatedAt) + (long)RotationAge.TotalSeconds)
         {
-            return new Done();
+            return new AuthCompleted();
         }
 
         var byActivation = keys.OrderBy(key => key.ActivatesAt).ThenBy(key => key.CreatedAt).ThenBy(key => key.Id, StringComparer.Ordinal).ToList();
         var retired = byActivation.TakeWhile((_, index) => index < byActivation.Count - 1 && byActivation[index + 1].ActivatesAt + (long)Overlap.TotalSeconds <= now).ToList();
         if (keys.Length - retired.Count >= MaxKeys)
         {
-            return new Conflict("The signing key ring is full until its superseded keys pass the overlap.", "signing_key_limit");
+            return new AuthConflict("The signing key ring is full until its superseded keys pass the overlap.", "signing_key_limit");
         }
 
         foreach (var record in retired)

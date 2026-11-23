@@ -3,6 +3,43 @@ using Cronos;
 
 namespace TerraScale.Platform.Features.Functions;
 
+public sealed record FunctionDeleted;
+
+public sealed record SecretDeleted;
+
+public sealed record FunctionRunRecorded;
+
+public readonly union DeployFunctionOutcome(
+    FunctionBody,
+    PlatformInvalidRequest,
+    PlatformConflict,
+    PlatformUnavailable);
+
+public readonly union ListFunctionsOutcome(FunctionList, PlatformUnavailable);
+
+public readonly union GetFunctionOutcome(FunctionBody, PlatformNotFound, PlatformUnavailable);
+
+public readonly union DeleteFunctionOutcome(FunctionDeleted, PlatformNotFound, PlatformUnavailable);
+
+public readonly union ListFunctionLogsOutcome(FunctionLogList, PlatformNotFound, PlatformUnavailable);
+
+public readonly union GetFunctionStatsOutcome(FunctionStats, PlatformNotFound, PlatformUnavailable);
+
+public readonly union ListFunctionSecretsOutcome(FunctionSecretList, PlatformNotFound, PlatformUnavailable);
+
+public readonly union SetFunctionSecretOutcome(
+    FunctionSecretBody,
+    PlatformInvalidRequest,
+    PlatformNotFound,
+    PlatformConflict,
+    PlatformUnavailable);
+
+public readonly union DeleteFunctionSecretOutcome(SecretDeleted, PlatformInvalidRequest, PlatformNotFound, PlatformUnavailable);
+
+public readonly union LoadFunctionOutcome(FunctionCode, PlatformNotFound, PlatformUnavailable);
+
+public readonly union RecordFunctionRunOutcome(FunctionRunRecorded, PlatformUnavailable);
+
 public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal, TimeProvider timeProvider)
 {
     public const int MaxFunctions = 32;
@@ -13,15 +50,15 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
     private const string FunctionColumns = "name, source, cron, created_at, updated_at";
     private const string Exists = "SELECT 1 FROM platform_functions WHERE database_id = ? AND name = ?";
 
-    public static Validation? CheckCron(string? cron) =>
-        cron is null || CronExpression.TryParse(cron, CronFormat.Standard, out _) ? null : new Validation("cron must be a five-field cron expression");
+    public static PlatformInvalidRequest? CheckCron(string? cron) =>
+        cron is null || CronExpression.TryParse(cron, CronFormat.Standard, out _) ? null : new PlatformInvalidRequest("cron must be a five-field cron expression");
 
     public static long? NextRun(string? cron, DateTimeOffset after) =>
         cron is not null && CronExpression.TryParse(cron, CronFormat.Standard, out var expression)
             ? expression.GetNextOccurrence(after, TimeZoneInfo.Utc)?.ToUnixTimeMilliseconds()
             : null;
 
-    public async ValueTask<Result<FunctionBody, Validation, Conflict, Unavailable>> DeployAsync(
+    public async ValueTask<DeployFunctionOutcome> DeployAsync(
         FunctionTarget target,
         string name,
         string? source,
@@ -30,12 +67,12 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
     {
         if (source is not { Length: > 0 and <= FunctionRunner.MaxSourceChars })
         {
-            return new Validation("source is required and at most 256 KiB");
+            return new PlatformInvalidRequest("source is required and at most 256 KiB");
         }
 
         if (FunctionRunner.Check(source) is { } rejected)
         {
-            return new Validation("source is not valid JavaScript: " + rejected.Message);
+            return new PlatformInvalidRequest("source is not valid JavaScript: " + rejected.Message);
         }
 
         if (CheckCron(cron) is { } invalidCron)
@@ -67,40 +104,47 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             database,
             function);
         var read = SqlValues.Statement($"SELECT {FunctionColumns} FROM platform_functions WHERE database_id = ? AND name = ?", database, function);
-        return await store.ExecuteAsync([upsert, read], SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync([upsert, read], SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].RowsAffected == 0 =>
-                new Conflict($"at most {MaxFunctions} functions may be deployed per database", "function_limit"),
-            IReadOnlyList<SqlHttpStatementResult> results => results[1].FirstRow() is { } row
+            SqlExecuteResponse { Results: var results } when results[0].RowsAffected == 0 =>
+                new PlatformConflict($"at most {MaxFunctions} functions may be deployed per database", "function_limit"),
+            SqlExecuteResponse { Results: var results } => results[1].FirstRow() is { } row
                 ? Body(row, withSource: true)
-                : new Unavailable("the deployed function was not readable", "platform_state"),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+                : new PlatformUnavailable("the deployed function was not readable", "platform_state"),
+            PlatformConflict conflict => conflict,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FunctionList, Unavailable>> ListAsync(FunctionTarget target, CancellationToken cancellationToken) =>
-        await store.ReadAsync(
+    public async ValueTask<ListFunctionsOutcome> ListAsync(FunctionTarget target, CancellationToken cancellationToken)
+    {
+        var outcome = await store.ReadAsync(
             SqlValues.Statement($"SELECT {FunctionColumns} FROM platform_functions WHERE database_id = ? ORDER BY name", SqlValues.Text(target.Database.ToString())),
-            cancellationToken) switch
+            cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => new FunctionList([.. results[0].RowsOf().Select(static row => Body(row, withSource: false))]),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => new FunctionList([.. results[0].RowsOf().Select(static row => Body(row, withSource: false))]),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
-    public async ValueTask<Result<FunctionBody, NotFound, Unavailable>> GetAsync(FunctionTarget target, string name, CancellationToken cancellationToken) =>
-        await store.ReadAsync(
+    public async ValueTask<GetFunctionOutcome> GetAsync(FunctionTarget target, string name, CancellationToken cancellationToken)
+    {
+        var outcome = await store.ReadAsync(
             SqlValues.Statement($"SELECT {FunctionColumns} FROM platform_functions WHERE database_id = ? AND name = ?",
                 SqlValues.Text(target.Database.ToString()), SqlValues.Text(name)),
-            cancellationToken) switch
+            cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => results[0].FirstRow() is { } row ? Body(row, withSource: true) : Missing(),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => results[0].FirstRow() is { } row ? Body(row, withSource: true) : Missing(),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
-    public async ValueTask<Result<Done, NotFound, Unavailable>> DeleteAsync(FunctionTarget target, string name, CancellationToken cancellationToken)
+    public async ValueTask<DeleteFunctionOutcome> DeleteAsync(FunctionTarget target, string name, CancellationToken cancellationToken)
     {
         var database = SqlValues.Text(target.Database.ToString());
         var function = SqlValues.Text(name);
@@ -111,15 +155,16 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             SqlValues.Statement("DELETE FROM platform_function_logs WHERE database_id = ? AND function_name = ?", database, function),
             SqlValues.Statement("DELETE FROM platform_function_stats WHERE database_id = ? AND function_name = ?", database, function),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => results[0].RowsAffected == 0 ? Missing() : new Done(),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } => results[0].RowsAffected == 0 ? Missing() : new FunctionDeleted(),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FunctionLogList, NotFound, Unavailable>> LogsAsync(FunctionTarget target, string name, int limit, CancellationToken cancellationToken)
+    public async ValueTask<ListFunctionLogsOutcome> LogsAsync(FunctionTarget target, string name, int limit, CancellationToken cancellationToken)
     {
         var database = SqlValues.Text(target.Database.ToString());
         var function = SqlValues.Text(name);
@@ -130,16 +175,17 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
                 "SELECT body FROM platform_function_logs WHERE database_id = ? AND function_name = ? ORDER BY at DESC, id DESC LIMIT ?",
                 database, function, SqlValues.Number(limit)),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].Rows.Count == 0 => Missing(),
-            IReadOnlyList<SqlHttpStatementResult> results => new FunctionLogList([.. results[1].RowsOf().Select(static row => Log(row.Text(0))).OfType<FunctionLogBody>()]),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[0].Rows.Count == 0 => Missing(),
+            SqlExecuteResponse { Results: var results } => new FunctionLogList([.. results[1].RowsOf().Select(static row => Log(row.Text(0))).OfType<FunctionLogBody>()]),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FunctionStats, NotFound, Unavailable>> StatsAsync(FunctionTarget target, string name, string window, CancellationToken cancellationToken)
+    public async ValueTask<GetFunctionStatsOutcome> StatsAsync(FunctionTarget target, string name, string window, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         IReadOnlyList<SqlHttpStatement> statements =
@@ -147,16 +193,17 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             SqlValues.Statement(Exists, SqlValues.Text(target.Database.ToString()), SqlValues.Text(name)),
             FunctionStatsMath.Read(target, name, window, now),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].Rows.Count == 0 => Missing(),
-            IReadOnlyList<SqlHttpStatementResult> results => FunctionStatsMath.Aggregate(window, results[1], now),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[0].Rows.Count == 0 => Missing(),
+            SqlExecuteResponse { Results: var results } => FunctionStatsMath.Aggregate(window, results[1], now),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FunctionSecretList, NotFound, Unavailable>> ListSecretsAsync(FunctionTarget target, string name, CancellationToken cancellationToken)
+    public async ValueTask<ListFunctionSecretsOutcome> ListSecretsAsync(FunctionTarget target, string name, CancellationToken cancellationToken)
     {
         var database = SqlValues.Text(target.Database.ToString());
         var function = SqlValues.Text(name);
@@ -166,17 +213,18 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             SqlValues.Statement(
                 "SELECT name, updated_at FROM platform_function_secrets WHERE database_id = ? AND function_name = ? ORDER BY name", database, function),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].Rows.Count == 0 => Missing(),
-            IReadOnlyList<SqlHttpStatementResult> results =>
+            SqlExecuteResponse { Results: var results } when results[0].Rows.Count == 0 => Missing(),
+            SqlExecuteResponse { Results: var results } =>
                 new FunctionSecretList([.. results[1].RowsOf().Select(static row => new FunctionSecretBody(row.Text(0), row.Number(1).FromUnixMs()))]),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FunctionSecretBody, Validation, NotFound, Conflict, Unavailable>> SetSecretAsync(
+    public async ValueTask<SetFunctionSecretOutcome> SetSecretAsync(
         FunctionTarget target,
         string name,
         string secret,
@@ -190,7 +238,7 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
 
         if (value is null || Encoding.UTF8.GetByteCount(value) is 0 or > MaxSecretBytes)
         {
-            return new Validation("value is required and at most 4 KiB");
+            return new PlatformInvalidRequest("value is required and at most 4 KiB");
         }
 
         var now = timeProvider.GetUtcNow();
@@ -216,18 +264,19 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             database,
             function,
             key);
-        return await store.ExecuteAsync([upsert, SqlValues.Statement(Exists, database, function)], SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync([upsert, SqlValues.Statement(Exists, database, function)], SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[1].Rows.Count == 0 => Missing(),
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].RowsAffected == 0 =>
-                new Conflict($"at most {MaxSecrets} secrets may be set per function", "function_secret_limit"),
-            IReadOnlyList<SqlHttpStatementResult> => new FunctionSecretBody(secret, DateTimeOffset.FromUnixTimeMilliseconds(now.UnixMs())),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[1].Rows.Count == 0 => Missing(),
+            SqlExecuteResponse { Results: var results } when results[0].RowsAffected == 0 =>
+                new PlatformConflict($"at most {MaxSecrets} secrets may be set per function", "function_secret_limit"),
+            SqlExecuteResponse => new FunctionSecretBody(secret, DateTimeOffset.FromUnixTimeMilliseconds(now.UnixMs())),
+            PlatformConflict conflict => conflict,
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<Done, Validation, NotFound, Unavailable>> DeleteSecretAsync(
+    public async ValueTask<DeleteFunctionSecretOutcome> DeleteSecretAsync(
         FunctionTarget target,
         string name,
         string secret,
@@ -245,17 +294,18 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             SqlValues.Statement(Exists, database, function),
             SqlValues.Statement("DELETE FROM platform_function_secrets WHERE database_id = ? AND function_name = ? AND name = ?", database, function, SqlValues.Text(secret)),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].Rows.Count == 0 => Missing(),
-            IReadOnlyList<SqlHttpStatementResult> results when results[1].RowsAffected == 0 => new NotFound("secret not found", "secret_not_found"),
-            IReadOnlyList<SqlHttpStatementResult> => new Done(),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse { Results: var results } when results[0].Rows.Count == 0 => Missing(),
+            SqlExecuteResponse { Results: var results } when results[1].RowsAffected == 0 => new PlatformNotFound("secret not found", "secret_not_found"),
+            SqlExecuteResponse => new SecretDeleted(),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<FunctionCode, NotFound, Unavailable>> LoadAsync(FunctionTarget target, string name, CancellationToken cancellationToken)
+    public async ValueTask<LoadFunctionOutcome> LoadAsync(FunctionTarget target, string name, CancellationToken cancellationToken)
     {
         var database = SqlValues.Text(target.Database.ToString());
         var function = SqlValues.Text(name);
@@ -264,17 +314,18 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             SqlValues.Statement("SELECT source FROM platform_functions WHERE database_id = ? AND name = ?", database, function),
             SqlValues.Statement("SELECT name, sealed FROM platform_function_secrets WHERE database_id = ? AND function_name = ?", database, function),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results => results[0].FirstRow() is { } row
+            SqlExecuteResponse { Results: var results } => results[0].FirstRow() is { } row
                 ? new FunctionCode(row.Text(0), [.. results[1].RowsOf().Select(static secret => new SealedSecret(secret.Text(0), secret.Text(1)))])
                 : Missing(),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<Done, Unavailable>> RecordAsync(FunctionTarget target, string name, FunctionLogBody log, CancellationToken cancellationToken)
+    public async ValueTask<RecordFunctionRunOutcome> RecordAsync(FunctionTarget target, string name, FunctionLogBody log, CancellationToken cancellationToken)
     {
         var database = SqlValues.Text(target.Database.ToString());
         var function = SqlValues.Text(name);
@@ -293,15 +344,16 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
                 "DELETE FROM platform_function_stats WHERE database_id = ? AND function_name = ? AND minute < ?",
                 database, function, SqlValues.Number(log.At.ToUnixTimeSeconds() - FunctionStatsMath.RetainedSeconds)),
         ];
-        return await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken) switch
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
+        return outcome switch
         {
-            IReadOnlyList<SqlHttpStatementResult> => new Done(),
-            Conflict conflict => new Unavailable(conflict.Message, "platform_state"),
-            Unavailable unavailable => unavailable,
+            SqlExecuteResponse => new FunctionRunRecorded(),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    private static NotFound Missing() => new("the function does not exist", "function_not_found");
+    private static PlatformNotFound Missing() => new("the function does not exist", "function_not_found");
 
     private static FunctionBody Body(SqlRow row, bool withSource) =>
         new(row.Text(0), withSource ? row.Text(1) : null, row.OptionalText(2), row.Number(3).FromUnixMs(), row.Number(4).FromUnixMs());

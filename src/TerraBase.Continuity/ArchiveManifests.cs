@@ -7,6 +7,14 @@ internal readonly struct DatabaseGateLease(SemaphoreSlim gate) : IDisposable
     public void Dispose() => gate.Release();
 }
 
+internal sealed record ArchiveObjectsDeleted;
+
+internal readonly union ArchiveObjectsDeletedOutcome(ArchiveObjectsDeleted, ContinuityUnavailable);
+
+internal sealed record ArchivePurged(bool RemovedObjects);
+
+internal readonly union ArchivePurgeOutcome(ArchivePurged, ContinuityUnavailable);
+
 public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics metrics, TimeProvider timeProvider)
 {
     private readonly ConcurrentDictionary<Ulid, ArchiveManifest> _cache = new();
@@ -19,32 +27,39 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
     internal async ValueTask<DatabaseGateLease> AcquireAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         var gate = _gates.GetOrAdd(databaseId, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken);
         return new DatabaseGateLease(gate);
     }
 
-    internal async ValueTask<Result<ArchiveManifest, Unavailable>> LoadAsync(Ulid databaseId, CancellationToken cancellationToken)
+    internal async ValueTask<ArchiveManifestOutcome> LoadAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         if (_cache.TryGetValue(databaseId, out var cached))
         {
             return cached;
         }
 
-        Result<ArchiveManifest, Unavailable> loaded = await store.GetBytesAsync(ArchiveKeys.Manifest(databaseId), cancellationToken).ConfigureAwait(false) switch
+        var fetched = await store.GetBytesAsync(ArchiveKeys.Manifest(databaseId), cancellationToken);
+        var loaded = fetched switch
         {
-            byte[] json => ManifestCodec.Deserialize(databaseId, json),
-            NotFound => ArchiveManifest.Empty(databaseId, timeProvider.GetUtcNow()),
-            Unavailable unavailable => unavailable,
-            RequestTimeout timeout => new Unavailable(timeout.Message, timeout.Code),
+            byte[] json => Decoded(ManifestCodec.Deserialize(databaseId, json)),
+            ArchiveObjectMissing => ArchiveManifest.Empty(databaseId, timeProvider.GetUtcNow()),
+            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
         };
         return loaded switch
         {
             ArchiveManifest manifest => _cache.GetOrAdd(databaseId, manifest),
-            Unavailable unavailable => unavailable,
+            ContinuityUnavailable unavailable => unavailable,
+        };
+
+        static ArchiveManifestOutcome Decoded(ArchiveManifestDecodeOutcome decoded) => decoded switch
+        {
+            ArchiveManifest manifest => manifest,
+            ArchiveManifestCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, corrupted.Code),
         };
     }
 
-    internal async ValueTask<Result<ArchiveManifest, Unavailable>> SaveAsync(ArchiveManifest manifest, CancellationToken cancellationToken)
+    internal async ValueTask<ArchiveManifestOutcome> SaveAsync(ArchiveManifest manifest, CancellationToken cancellationToken)
     {
         if (!Ulid.TryParse(manifest.DatabaseId, out var databaseId))
         {
@@ -53,36 +68,37 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
 
         var updated = manifest with { UpdatedAtUtc = timeProvider.GetUtcNow() };
         var json = ManifestCodec.Serialize(updated);
-        return await store.PutBytesAsync(ArchiveKeys.Manifest(databaseId), json, ManifestCodec.JsonContentType, cancellationToken).ConfigureAwait(false) switch
+        var stored = await store.PutBytesAsync(ArchiveKeys.Manifest(databaseId), json, ManifestCodec.JsonContentType, cancellationToken);
+        return stored switch
         {
-            Done => Stored(databaseId, updated, json.Length),
-            Unavailable unavailable => unavailable,
-            RequestTimeout timeout => new Unavailable(timeout.Message, timeout.Code),
+            ArchiveObjectWritten => Stored(databaseId, updated, json.Length),
+            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
         };
     }
 
-    internal async ValueTask<Result<bool, Unavailable>> PurgeAsync(Ulid databaseId, CancellationToken cancellationToken)
+    internal async ValueTask<ArchivePurgeOutcome> PurgeAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         _cache.TryRemove(databaseId, out _);
-        var listed = await store.ListKeysAsync(ArchiveKeys.DatabasePrefix(databaseId), cancellationToken).ConfigureAwait(false);
+        var listed = await store.ListKeysAsync(ArchiveKeys.DatabasePrefix(databaseId), cancellationToken);
         return listed switch
         {
-            IReadOnlyList<string> keys => await DeleteAllAsync(keys, cancellationToken).ConfigureAwait(false),
-            Unavailable unavailable => unavailable,
-            RequestTimeout timeout => new Unavailable(timeout.Message, timeout.Code),
+            IReadOnlyList<string> keys => await DeleteAllAsync(keys, cancellationToken),
+            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
         };
     }
 
-    internal async ValueTask<Result<Done, Unavailable>> DeleteObjectsAsync(IEnumerable<string> keys, CancellationToken cancellationToken)
+    internal async ValueTask<ArchiveObjectsDeletedOutcome> DeleteObjectsAsync(IEnumerable<string> keys, CancellationToken cancellationToken)
     {
         foreach (var key in keys)
         {
-            var deleted = await store.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
-            Unavailable? failure = deleted switch
+            var deleted = await store.DeleteAsync(key, cancellationToken);
+            var failure = deleted switch
             {
-                Done => null,
-                Unavailable unavailable => unavailable,
-                RequestTimeout timeout => new Unavailable(timeout.Message, timeout.Code),
+                ArchiveObjectWritten => (ContinuityUnavailable?)null,
+                ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+                ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
             };
             if (failure is not null)
             {
@@ -90,17 +106,20 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
             }
         }
 
-        return new Done();
+        return new ArchiveObjectsDeleted();
     }
 
     internal void Forget(Ulid databaseId) => _cache.TryRemove(databaseId, out _);
 
-    private async ValueTask<Result<bool, Unavailable>> DeleteAllAsync(IReadOnlyList<string> keys, CancellationToken cancellationToken) =>
-        await DeleteObjectsAsync(keys, cancellationToken).ConfigureAwait(false) switch
+    private async ValueTask<ArchivePurgeOutcome> DeleteAllAsync(IReadOnlyList<string> keys, CancellationToken cancellationToken)
+    {
+        var deleted = await DeleteObjectsAsync(keys, cancellationToken);
+        return deleted switch
         {
-            Done => keys.Count > 0,
-            Unavailable unavailable => unavailable,
+            ArchiveObjectsDeleted => new ArchivePurged(keys.Count > 0),
+            ContinuityUnavailable unavailable => unavailable,
         };
+    }
 
     private ArchiveManifest Stored(Ulid databaseId, ArchiveManifest manifest, long bytes)
     {

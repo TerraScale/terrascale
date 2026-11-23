@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
@@ -23,14 +22,14 @@ public sealed class PasskeyDeleteEndpoint(PasskeyCredentials passkeys, TotpCrede
     {
         if (this.HttpContext.GetRouteValue("id") is not (string value and { Length: > 0 and <= 1024 }))
         {
-            return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
+            return ErrorResults.ToResult(new AuthNotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
         }
 
         var id = value;
         var entries = await passkeys.ListAsync(caller, cancellationToken);
         if (entries.All(entry => entry.CredentialId != id))
         {
-            return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
+            return ErrorResults.ToResult(new AuthNotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
         }
 
         if (await PasskeyGuard.LastFactorAsync(platform, mfa, caller.Id, entries.Count - 1, cancellationToken))
@@ -42,9 +41,9 @@ public sealed class PasskeyDeleteEndpoint(PasskeyCredentials passkeys, TotpCrede
         return await passkeys.DeleteAsync(verified, id, cancellationToken) switch
         {
             PasskeyCredentialEntry => TypedResults.NoContent(),
-            Forbidden error => ErrorResults.ToResult(error),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            AuthForbidden error => ErrorResults.ToResult(error),
+            AuthNotFound error => ErrorResults.ToResult(error),
+            AuthConflict error => ErrorResults.ToResult(error),
         };
     }
 }

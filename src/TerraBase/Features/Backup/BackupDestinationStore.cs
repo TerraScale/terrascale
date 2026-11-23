@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Backup;
 
@@ -11,7 +12,7 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
 {
     public const string Route = "/v1/projects/{project}/backup-destination";
 
-    private static readonly NotFound Missing = new("no backup destination is set for this project", "backup_destination_not_found");
+    private static readonly ResourceNotFound Missing = new("no backup destination is set for this project", "backup_destination_not_found");
 
     public async ValueTask<GetBackupDestinationResult> GetAsync(Caller caller, string? project, CancellationToken cancellationToken)
     {
@@ -19,11 +20,11 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
         return authorized switch
         {
             ResolvedProject resolved => await GetAsync(resolved.Project, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -33,11 +34,11 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
         return authorized switch
         {
             ResolvedProject resolved => await SetAsync(resolved.Project, input, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -47,20 +48,20 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
         return authorized switch
         {
             ResolvedProject resolved => await DeleteAsync(resolved.Project.Id, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<ResolvedProject, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> AuthorizeAsync(
+    private async ValueTask<ProjectResolution> AuthorizeAsync(
         Caller caller, string? project, string scope, CancellationToken cancellationToken)
     {
         if (caller is ProjectCaller { Database: not null } or ApiKeyCaller { Key.DatabaseId: not null } or EndUserCaller { Database: not null })
         {
-            return new NotFound("the project does not exist", "unknown_project");
+            return new ResourceNotFound("the project does not exist", "unknown_project");
         }
 
         var authorized = await access.ProjectAsync(caller, project, scope, cancellationToken);
@@ -68,24 +69,24 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
         {
             ResolvedProject resolved when scope == Scopes.DatabasesWrite => await RequireWritableAsync(resolved, cancellationToken),
             ResolvedProject resolved => resolved,
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<ResolvedProject, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> RequireWritableAsync(
+    private async ValueTask<ProjectResolution> RequireWritableAsync(
         ResolvedProject resolved, CancellationToken cancellationToken)
     {
         var organization = await catalog.GetOrganizationAsync(resolved.Project.OrganizationId, cancellationToken);
         return organization switch
         {
             OrganizationRecord { Suspended: false } => resolved,
-            OrganizationRecord => new Forbidden("the organization is suspended", "organization_suspended"),
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            OrganizationRecord => new CallerForbidden("the organization is suspended", "organization_suspended"),
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -98,7 +99,7 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows => new BackupDestinationBody(
                 new Uri(rows[0].TextAt(0)), rows[0].TextAt(1), rows[0].TextAt(2), rows[0].TextAt(3), rows[0].TimeAt(4)),
             IReadOnlyList<IReadOnlyList<SqlValue>> => Missing,
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -108,7 +109,7 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
         return validated switch
         {
             BackupDestinationConfig destination => await ProbeAndSaveAsync(project, destination, cancellationToken),
-            Validation invalid => invalid,
+            InvalidInput invalid => invalid,
         };
     }
 
@@ -123,7 +124,7 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
         return key switch
         {
             DatabaseKey material => await SaveAsync(project.Id, destination, material, cancellationToken),
-            NotFound => new Unavailable("the backup credential key is unavailable", "backup_key_unavailable"),
+            MasterKeyMissing => new BackendUnavailable("the backup credential key is unavailable", "backup_key_unavailable"),
         };
     }
 
@@ -146,9 +147,9 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
         return written switch
         {
             SqlWriteResult { ResultSets: [{ RowsAffected: > 0 }] } => new BackupDestinationBody(destination.Endpoint, destination.Region, destination.Bucket, destination.Mode, updated),
-            SqlWriteResult => new Conflict("the project changed while the bucket was being verified", "project_changed"),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            SqlWriteResult => new StateConflict("the project changed while the bucket was being verified", "project_changed"),
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -158,9 +159,9 @@ internal sealed class BackupDestinationStore(SystemDatabase system, DatabaseAcce
             "DELETE FROM backup_destinations WHERE project_id = ?", SqlBuild.Id(project)), ConsistencyMode.Strong, cancellationToken);
         return written switch
         {
-            SqlWriteResult => new Done(),
-            Conflict conflict => conflict,
-            Unavailable unavailable => unavailable,
+            SqlWriteResult => new Completed(),
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 

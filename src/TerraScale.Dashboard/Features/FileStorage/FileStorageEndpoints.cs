@@ -68,36 +68,44 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 switch (operation)
                 {
                     case "bucket":
-                        switch (await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted))
+                        var createdBucket = await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted);
+                        var createdId = createdBucket switch
                         {
-                            case TerraBaseFileBucket created:
-                                bucket = created.Id;
-                                break;
-                            case Forbidden:
-                                return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
+                            TerraBaseFileBucket created => created.Id,
+                            DashboardForbidden => null,
+                        };
+                        if (createdId is null)
+                        {
+                            return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
                         }
 
+                        bucket = createdId;
                         break;
                     case "delete-bucket":
-                        switch (await files.DeleteBucketAsync(context, bucket, http.RequestAborted))
+                        var deletedBucket = await files.DeleteBucketAsync(context, bucket, http.RequestAborted);
+                        IResult? deleteBucketRefusal = deletedBucket switch
                         {
-                            case Done:
-                                bucket = "";
-                                break;
-                            case Forbidden:
-                                return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
-                            case Validation failure:
-                                return await Refused(StatusCodes.Status422UnprocessableEntity, failure.Message);
+                            Done => null,
+                            DashboardForbidden => await Refused(StatusCodes.Status403Forbidden, Message(403, operation)),
+                            DashboardValidation failure => await Refused(StatusCodes.Status422UnprocessableEntity, failure.Message),
+                        };
+                        if (deleteBucketRefusal is not null)
+                        {
+                            return deleteBucketRefusal;
                         }
 
+                        bucket = "";
                         break;
                     case "rules":
-                        switch (await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted))
+                        var rulesSet = await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted);
+                        IResult? rulesRefusal = rulesSet switch
                         {
-                            case Done:
-                                break;
-                            case Forbidden:
-                                return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
+                            Done => null,
+                            DashboardForbidden => await Refused(StatusCodes.Status403Forbidden, Message(403, operation)),
+                        };
+                        if (rulesRefusal is not null)
+                        {
+                            return rulesRefusal;
                         }
 
                         if (http.Request.IsDatastarRequest)
@@ -113,25 +121,30 @@ namespace TerraScale.Dashboard.Features.FileStorage
                                 throw new ArgumentException("Invalid file size.");
                             }
 
-                            if (await files.UploadAsync(context, bucket, new(form["name"].ToString(), form["contentType"].ToString(), size, form["sha256"].ToString(), metadata.RootElement.Clone()), http.RequestAborted)
-                                is not TerraBaseFileUrl upload)
+                            var uploaded = await files.UploadAsync(context, bucket, new(form["name"].ToString(), form["contentType"].ToString(), size, form["sha256"].ToString(), metadata.RootElement.Clone()), http.RequestAborted);
+                            return uploaded switch
                             {
-                                return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
-                            }
-
-                            return TypedResults.Json(upload, ClientJson.Default.TerraBaseFileUrl);
+                                TerraBaseFileUrl upload => TypedResults.Json(upload, ClientJson.Default.TerraBaseFileUrl),
+                                DashboardForbidden => await Refused(StatusCodes.Status403Forbidden, Message(403, operation)),
+                            };
                         }
                     case "complete":
-                        if (await files.CompleteAsync(context, bucket, file, http.RequestAborted) is not Done)
+                        var completed = await files.CompleteAsync(context, bucket, file, http.RequestAborted);
+                        return completed switch
                         {
-                            return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
-                        }
-
-                        return TypedResults.NoContent();
+                            Done => TypedResults.NoContent(),
+                            DashboardForbidden => await Refused(StatusCodes.Status403Forbidden, Message(403, operation)),
+                        };
                     case "delete":
-                        if (await files.DeleteAsync(context, bucket, file, http.RequestAborted) is not Done)
+                        var deletedFile = await files.DeleteAsync(context, bucket, file, http.RequestAborted);
+                        IResult? deleteFileRefusal = deletedFile switch
                         {
-                            return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
+                            Done => null,
+                            DashboardForbidden => await Refused(StatusCodes.Status403Forbidden, Message(403, operation)),
+                        };
+                        if (deleteFileRefusal is not null)
+                        {
+                            return deleteFileRefusal;
                         }
 
                         if (http.Request.IsDatastarRequest)
@@ -199,15 +212,16 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 }
                 else
                 {
-                    switch (await files.ListAsync(context, selected, Empty(http.Request.Query["after"].ToString()), Empty(bucketAfter), http.RequestAborted))
+                    var listed = await files.ListAsync(context, selected, Empty(http.Request.Query["after"].ToString()), Empty(bucketAfter), http.RequestAborted);
+                    (listing, var invalid) = listed switch
                     {
-                        case FileStorageListing listed:
-                            listing = listed;
-                            break;
-                        case Validation failure:
-                            error ??= failure.Message;
-                            http.Response.StatusCode = StatusCodes.Status422UnprocessableEntity;
-                            break;
+                        FileStorageListing found => (found, (DashboardValidation?)null),
+                        DashboardValidation failure => (listing, failure),
+                    };
+                    if (invalid is not null)
+                    {
+                        error ??= invalid.Message;
+                        http.Response.StatusCode = StatusCodes.Status422UnprocessableEntity;
                     }
                 }
             }

@@ -2,10 +2,13 @@ using Microsoft.AspNetCore.Mvc;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Logs;
+using TerraBase.Hosting;
 using TerraScale.Contracts.Http;
 using BoundSqlRequest = TerraScale.Endpoints.Binding.Bound<TerraBase.Features.Sql.SqlExecuteInput>;
 
 namespace TerraBase.Features.Sql;
+
+internal readonly union SqlRunResolution(SqlRun, SqlRefusal, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
 internal sealed class SqlFlow(DatabaseAccess access, SqlRunner runner)
 {
@@ -33,37 +36,39 @@ internal sealed class SqlFlow(DatabaseAccess access, SqlRunner runner)
         }
     }
 
-    public async ValueTask<Result<SqlRun, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ExecuteAsync(
+    public async ValueTask<SqlRunResolution> ExecuteAsync(
         HttpContext context, string? project, string? database, IReadOnlyList<SqlHttpStatement>? statements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
-        return await access.DataAsync(context.Caller, project, database, cancellationToken) switch
+        var outcome = await access.DataAsync(context.Caller, project, database, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase target => await RunAsync(context, target, statements, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<SqlRun, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ExecuteByIdAsync(
+    public async ValueTask<SqlRunResolution> ExecuteByIdAsync(
         HttpContext context, Ulid databaseId, IReadOnlyList<SqlHttpStatement>? statements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
-        return await access.DataByIdAsync(context.Caller, databaseId, cancellationToken) switch
+        var outcome = await access.DataByIdAsync(context.Caller, databaseId, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase target => await RunAsync(context, target, statements, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<SqlRun, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> RunAsync(
+    public async ValueTask<SqlRunResolution> RunAsync(
         HttpContext context, ResolvedDatabase target, IReadOnlyList<SqlHttpStatement>? statements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -85,7 +90,7 @@ internal sealed class SqlFlow(DatabaseAccess access, SqlRunner runner)
         };
     }
 
-    private static Result<SqlRun, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable> Written(HttpContext context, SqlRun run)
+    private static SqlRunResolution Written(HttpContext context, SqlRun run)
     {
         SqlRunner.WriteHeaders(context.Response, run);
         return run;

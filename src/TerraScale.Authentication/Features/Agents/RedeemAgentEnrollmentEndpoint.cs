@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Agents;
@@ -21,8 +20,8 @@ public sealed class RedeemAgentEnrollmentEndpoint(PlatformAuthentication authent
         return await enrollments.RedeemAsync(project, enrollment, request.Proof, cancellationToken) switch
         {
             AgentEnrollmentTokenBody token => TypedResults.Json(token, AgentEnrollmentJson.Default.AgentEnrollmentTokenBody),
-            Unauthorized unauthorized => ErrorResults.ToResult(unauthorized),
-            Validation invalid => ErrorResults.ToResult(invalid),
+            AuthUnauthorized unauthorized => ErrorResults.ToResult(unauthorized),
+            AuthValidation invalid => ErrorResults.ToResult(invalid),
         };
     }
 }

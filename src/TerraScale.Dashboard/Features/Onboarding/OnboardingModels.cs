@@ -5,7 +5,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
 {
     public interface IOnboardingProjectProvisioner
     {
-        // Complete the existing provider-backed Personal project; do not invent provider IDs.
         Task<ProjectRecord> CompleteProjectAsync(AccountContext context, string name, string region, CancellationToken cancellationToken);
     }
 

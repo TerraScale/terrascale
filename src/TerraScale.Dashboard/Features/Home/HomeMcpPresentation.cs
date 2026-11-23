@@ -4,7 +4,6 @@ using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Home
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed record HomeMcpOverview(string OrganizationId, string ProjectId, string ProjectName, int DatabaseCount,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? OrganizationMembers, int UnreadNotifications, int TotalNotifications,
@@ -17,18 +16,20 @@ namespace TerraScale.Dashboard.Features.Home
     public sealed record HomeMcpTask(string Title,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? Done, string Path);
 
+    public readonly union HomeOverviewResult(HomeMcpOverview, DashboardNotFound);
+
     public static class HomeMcpPresentation
     {
-        public static Found<HomeMcpOverview> For(AccountContext context, HomeMeasurement measurement, string range)
+        public static HomeOverviewResult For(AccountContext context, HomeMeasurement measurement, string range)
         {
             if (context.Organization is not { } organization)
             {
-                return new NotFound("Organization is unavailable.", "organization_unavailable");
+                return new DashboardNotFound("Organization is unavailable.");
             }
 
             if (context.Project is not { } project)
             {
-                return new NotFound("Project is unavailable.", "project_unavailable");
+                return new DashboardNotFound("Project is unavailable.");
             }
 
             var notifications = context.Account.Notifications.Where(item => item.VisibleTo(context)).ToArray();

@@ -24,22 +24,25 @@ public sealed class GetShapeEndpoint(ShapeReader reader) : Endpoint<ShapeRouteRe
             ShapeParameters parameters => ShapeQuery.From(request.Table, query) switch
             {
                 ShapeQuery shape => await ServeAsync(request, parameters, shape, cancellationToken),
-                Validation invalid => invalid,
+                PlatformInvalidRequest invalid => invalid,
             },
-            Validation invalid => invalid,
+            PlatformInvalidRequest invalid => invalid,
         };
     }
 
-    private async ValueTask<ShapeReply> ServeAsync(ShapeRouteRequest request, ShapeParameters parameters, ShapeQuery query, CancellationToken cancellationToken) =>
-        await reader.ResolveAsync(HttpContext, request, query, cancellationToken) switch
+    private async ValueTask<ShapeReply> ServeAsync(ShapeRouteRequest request, ShapeParameters parameters, ShapeQuery query, CancellationToken cancellationToken)
+    {
+        var outcome = await reader.ResolveAsync(HttpContext, request, query, cancellationToken);
+        return outcome switch
         {
             ResolvedShape resolved => await AnswerAsync(request, parameters, resolved, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+    }
 
     private async ValueTask<ShapeReply> AnswerAsync(ShapeRouteRequest request, ShapeParameters parameters, ResolvedShape resolved, CancellationToken cancellationToken)
     {
@@ -67,10 +70,10 @@ public sealed class GetShapeEndpoint(ShapeReader reader) : Endpoint<ShapeRouteRe
         };
     }
 
-    private static ShapeReply Reply(Result<ShapeAnswer, ShapeRefetch, Unavailable> read) => read switch
+    private static ShapeReply Reply(ReadShapePageOutcome read) => read switch
     {
         ShapeAnswer answer => answer,
         ShapeRefetch refetch => refetch,
-        Unavailable unavailable => unavailable,
+        PlatformUnavailable unavailable => unavailable,
     };
 }

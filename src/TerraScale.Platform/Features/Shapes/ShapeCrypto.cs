@@ -5,6 +5,8 @@ using System.Text;
 
 namespace TerraScale.Platform.Features.Shapes;
 
+public readonly union OpenShapeChunkOutcome(ShapeChunk, PlatformUnavailable);
+
 public sealed record SealedChunk(byte[] Bytes, long Epoch, string Sha256);
 
 public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvider)
@@ -58,11 +60,11 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
         return new SealedChunk(output, epoch, Convert.ToHexStringLower(SHA256.HashData(output)));
     }
 
-    public Result<ShapeChunk, Unavailable> Open(string handle, ReadOnlySpan<byte> sealedChunk)
+    public OpenShapeChunkOutcome Open(string handle, ReadOnlySpan<byte> sealedChunk)
     {
         if (sealedChunk.Length < HeaderBytes + TagBytes || !sealedChunk[..4].SequenceEqual(Magic) || sealedChunk[4] != 1)
         {
-            return new Unavailable("a sealed shape chunk is malformed", "shape_chunk_unreadable");
+            return new PlatformUnavailable("a sealed shape chunk is malformed", "shape_chunk_unreadable");
         }
 
         var keyId = new Ulid(sealedChunk.Slice(5, 16));
@@ -78,7 +80,7 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
         }
         catch (AuthenticationTagMismatchException)
         {
-            return new Unavailable("a sealed shape chunk is not authentic", "shape_chunk_unreadable");
+            return new PlatformUnavailable("a sealed shape chunk is not authentic", "shape_chunk_unreadable");
         }
         finally
         {
@@ -89,8 +91,8 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
         {
             byte[] json => TerraBaseAnswers.Parse(json, ShapesJsonContext.Default.ShapeChunk) is { } chunk
                 ? chunk
-                : new Unavailable("a sealed shape chunk holds unreadable JSON", "shape_chunk_unreadable"),
-            Unavailable unavailable => unavailable,
+                : new PlatformUnavailable("a sealed shape chunk holds unreadable JSON", "shape_chunk_unreadable"),
+            PlatformUnavailable unavailable => unavailable,
         };
     }
 
@@ -105,7 +107,9 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
         return output.ToArray();
     }
 
-    private static Result<byte[], Unavailable> Decompress(byte[] compressed)
+    private readonly union DecompressShapeChunkOutcome(byte[], PlatformUnavailable);
+
+    private static DecompressShapeChunkOutcome Decompress(byte[] compressed)
     {
         try
         {
@@ -117,7 +121,7 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
         }
         catch (InvalidDataException)
         {
-            return new Unavailable("a sealed shape chunk is not valid Brotli", "shape_chunk_unreadable");
+            return new PlatformUnavailable("a sealed shape chunk is not valid Brotli", "shape_chunk_unreadable");
         }
     }
 }

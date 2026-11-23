@@ -59,8 +59,13 @@ public sealed partial class StripeBilling
                     continue;
                 }
 
-                RefundCancellation settled = await RefundDraftPaymentAsync(client, payment, cancellationToken);
-                if (settled is OrganizationRefundPending pendingRefund)
+                var settled = await RefundDraftPaymentAsync(client, payment, cancellationToken);
+                var pendingRefund = settled switch
+                {
+                    bool => null,
+                    OrganizationRefundPending pending => pending,
+                };
+                if (pendingRefund is not null)
                 {
                     return pendingRefund;
                 }

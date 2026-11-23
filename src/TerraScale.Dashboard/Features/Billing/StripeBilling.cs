@@ -224,7 +224,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var binding = await ReadAsync(context.Organization!.Id, cancellationToken);
             if (binding is null || binding.CustomerId.Length == 0)
             {
-                return new Validation("Set up billing before opening the customer portal.");
+                return new DashboardValidation("Set up billing before opening the customer portal.");
             }
 
             var client = await ClientAsync(cancellationToken);

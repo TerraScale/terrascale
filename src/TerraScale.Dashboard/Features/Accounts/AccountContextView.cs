@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.Features.Accounts
         private static AccountContextOrganization Organization(AccountContext context, OrganizationRecord org)
         {
             var member = org.ContainsMember(context.UserId);
-            // Null means outside this caller's organization scope, rather than a negative billing or membership fact.
             return new(org.Id, org.Name, member ? org.Kind : null, org.Slug, org.Status, member ? org.OwnerUserId : null,
                 member ? org.PlanId : null, member ? org.BillingStatus : null, member ? org.PaymentMethodValidated : null,
                 member ? org.Archived : null, member ? org.DeletionRequested : null, member ? org.PendingOwnerUserId : null,

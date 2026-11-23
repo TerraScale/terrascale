@@ -55,12 +55,13 @@ namespace TerraScale.Dashboard.Features.Data
         [McpServerTool(Name = "save_query", Title = "Save query", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Save a read-only SQL query for everyone in the project. Requires write access.")]
         public async Task<McpSavedQuery> SaveQuery(string name, string sql, string? organizationId = null, string? projectId = null)
         {
-            return await saved.SaveAsync(Scope(organizationId, projectId), "", name, sql, Cancellation) switch
+            var outcome = await saved.SaveAsync(Scope(organizationId, projectId), "", name, sql, Cancellation);
+            return outcome switch
             {
                 SavedQuery query => SavedQueryOutput(query),
-                Forbidden failure => throw new AccountAccessException(failure.Message),
-                Validation failure => throw new AccountAccessException(failure.Message, 422),
-                Conflict failure => throw new AccountAccessException(failure.Message, 409),
+                DashboardForbidden failure => throw new AccountAccessException(failure.Message),
+                DashboardValidation failure => throw new AccountAccessException(failure.Message, 422),
+                DashboardConflict failure => throw new AccountAccessException(failure.Message, 409),
             };
         }
 

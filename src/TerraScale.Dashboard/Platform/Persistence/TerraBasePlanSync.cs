@@ -1,6 +1,5 @@
 using System.Data;
 using Dapper;
-using TerraScale.Results;
 using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Platform.Persistence
@@ -158,7 +157,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 : await control.SetOrganizationPlanAsync(id, plan, cancellationToken);
             return published switch
             {
-                Done => StatusCodes.Status200OK,
+                TerraBaseCompleted => StatusCodes.Status200OK,
                 TerraBaseRefusal refusal => refusal.Status,
             };
         }

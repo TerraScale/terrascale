@@ -33,7 +33,7 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
         ValueTask.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>(StringComparer.Ordinal) { ["node"] = NodeId });
 
     public async Task<bool> ResignAsync(CancellationToken token) =>
-        (await VoteCallAsync(RaftVoteKind.Resign, 0, 0, 0, token).ConfigureAwait(false)).Value != 0;
+        (await VoteCallAsync(RaftVoteKind.Resign, 0, 0, 0, token)).Value != 0;
 
     public async Task<Result<bool>> VoteAsync(long term, long lastLogIndex, long lastLogTerm, CancellationToken token)
     {
@@ -42,7 +42,7 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
             return new Result<bool> { Term = term, Value = true };
         }
 
-        var response = await VoteCallAsync(RaftVoteKind.Vote, term, lastLogIndex, lastLogTerm, token).ConfigureAwait(false);
+        var response = await VoteCallAsync(RaftVoteKind.Vote, term, lastLogIndex, lastLogTerm, token);
         return new Result<bool> { Term = response.Term, Value = response.Value != 0 };
     }
 
@@ -53,7 +53,7 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
             return new Result<PreVoteResult> { Term = term, Value = PreVoteResult.Accepted };
         }
 
-        var response = await VoteCallAsync(RaftVoteKind.PreVote, term, lastLogIndex, lastLogTerm, token).ConfigureAwait(false);
+        var response = await VoteCallAsync(RaftVoteKind.PreVote, term, lastLogIndex, lastLogTerm, token);
         return new Result<PreVoteResult> { Term = response.Term, Value = (PreVoteResult)(int)response.Value };
     }
 
@@ -64,7 +64,7 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
             return null;
         }
 
-        var response = await VoteCallAsync(RaftVoteKind.Synchronize, 0, commitIndex, 0, token).ConfigureAwait(false);
+        var response = await VoteCallAsync(RaftVoteKind.Synchronize, 0, commitIndex, 0, token);
         return response.HasValue ? response.Value : null;
     }
 
@@ -80,11 +80,11 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
         List<RaftWireEntry> wire = new(entries.Count);
         foreach (var entry in entries)
         {
-            wire.Add(new RaftWireEntry(entry.Term, entry.CommandId, entry.IsConfiguration, await PayloadAsync(entry, token).ConfigureAwait(false)));
+            wire.Add(new RaftWireEntry(entry.Term, entry.CommandId, entry.IsConfiguration, await PayloadAsync(entry, token)));
         }
 
         var message = new RaftAppendMessage(context.Shard, RaftAppendKind.Append, context.LocalId, term, prevLogIndex, prevLogTerm, commitIndex, context.StateVersion, wire);
-        var response = await CallAsync<RaftAppendMessage, RaftAppendResponse>(QuicMessageType.RaftAppendEntries, message, token).ConfigureAwait(false);
+        var response = await CallAsync<RaftAppendMessage, RaftAppendResponse>(QuicMessageType.RaftAppendEntries, message, token);
         return new Result<ReplicationStatus>
         {
             Term = response.Term,
@@ -99,15 +99,15 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
             return new Result<HeartbeatResult> { Term = term, Value = HeartbeatResult.ReplicatedWithLeaderTerm };
         }
 
-        var payload = await PayloadAsync(snapshot, token).ConfigureAwait(false);
+        var payload = await PayloadAsync(snapshot, token);
         var message = new RaftSnapshotMessage(context.Shard, context.LocalId, term, snapshotIndex, context.StateVersion, new RaftWireEntry(snapshot.Term, snapshot.CommandId, snapshot.IsConfiguration, payload));
-        var response = await CallAsync<RaftSnapshotMessage, RaftAppendResponse>(QuicMessageType.RaftInstallSnapshot, message, token).ConfigureAwait(false);
+        var response = await CallAsync<RaftSnapshotMessage, RaftAppendResponse>(QuicMessageType.RaftInstallSnapshot, message, token);
         return new Result<HeartbeatResult> { Term = response.Term, Value = (HeartbeatResult)response.Heartbeat };
     }
 
     public async ValueTask CancelPendingRequestsAsync()
     {
-        await _pending.CancelAsync().ConfigureAwait(false);
+        await _pending.CancelAsync();
     }
 
     public void Dispose() => _pending.Dispose();
@@ -122,15 +122,15 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
             return memory;
         }
 
-        return await DataTransferObject.ToByteArrayAsync(entry, null, token).ConfigureAwait(false);
+        return await DataTransferObject.ToByteArrayAsync(entry, null, token);
     }
 
     private async Task<RaftVoteResponse> VoteCallAsync(RaftVoteKind kind, long term, long lastLogIndex, long lastLogTerm, CancellationToken token)
     {
         var message = new RaftVoteMessage(context.Shard, kind, context.LocalId, term, lastLogIndex, lastLogTerm, context.StateVersion);
         return IsRemote
-            ? await CallAsync<RaftVoteMessage, RaftVoteResponse>(QuicMessageType.RaftRequestVote, message, token).ConfigureAwait(false)
-            : await Local().HandleVoteAsync(message, token).ConfigureAwait(false);
+            ? await CallAsync<RaftVoteMessage, RaftVoteResponse>(QuicMessageType.RaftRequestVote, message, token)
+            : await Local().HandleVoteAsync(message, token);
     }
 
     private RaftShard Local() => context.Owner ?? throw new InvalidOperationException("The raft shard owning the local member is not started.");
@@ -140,12 +140,12 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, En
         where TResponse : IBinaryMessage<TResponse>
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, _pending.Token);
-        var outcome = await context.Client.CallAsync<TRequest, TResponse>(NodeId, messageType, request, context.RequestTimeout, linked.Token).ConfigureAwait(false);
+        var outcome = await context.Client.CallAsync<TRequest, TResponse>(NodeId, messageType, request, context.RequestTimeout, linked.Token);
         var (response, failure) = outcome switch
         {
             TResponse received => (received, (string?)null),
-            Unavailable unavailable => (default(TResponse), unavailable.Message),
-            RequestTimeout timeout => (default(TResponse), timeout.Message),
+            QuicUnavailable unavailable => (default(TResponse), unavailable.Message),
+            QuicTimeout timeout => (default(TResponse), timeout.Message),
             QuicRemoteError error => (default(TResponse), error.Message),
         };
         if (failure is not null || response is null)

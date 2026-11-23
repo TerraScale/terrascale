@@ -7,6 +7,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Logs;
 
+internal readonly union ListDatabaseLogsResponse(LogsBody, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
+internal readonly union RecordInternalLogResponse(Completed, InvalidInput, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 public sealed record LogsInput(string? Project, string? Database, string? After, int? Limit, string? Status);
 
 public sealed record InternalLogInput(string? Project, string? Database, string? Id, string? Method, string? Path, int Status, long DurationMs);
@@ -20,7 +24,7 @@ public sealed record LogsBody(IReadOnlyList<RequestLogEntry> Items, string? Next
 internal sealed partial class LogsJsonContext : JsonSerializerContext;
 
 internal sealed class ListDatabaseLogsEndpoint(DatabaseAccess access, RequestLogRecorder logs)
-    : Endpoint<LogsInput, Result<LogsBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<LogsInput, ListDatabaseLogsResponse>
 {
     public override void Configure()
     {
@@ -34,45 +38,45 @@ internal sealed class ListDatabaseLogsEndpoint(DatabaseAccess access, RequestLog
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<LogsBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(LogsInput request, CancellationToken cancellationToken)
+    public override async ValueTask<ListDatabaseLogsResponse> HandleAsync(LogsInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!TryParseStatus(request.Status, out var minStatus, out var maxStatus))
         {
-            return new Validation("status must be 2xx, 3xx, 4xx, 5xx, error, or an HTTP status code", "invalid_request");
+            return new InvalidInput("status must be 2xx, 3xx, 4xx, 5xx, error, or an HTTP status code", "invalid_request");
         }
 
         var checkedLimit = ManagementService.Limit(request.Limit);
         return checkedLimit switch
         {
             int limit => await QueryAsync(request, limit, minStatus, maxStatus, cancellationToken),
-            Validation invalid => invalid,
+            InvalidInput invalid => invalid,
         };
     }
 
-    private async ValueTask<Result<LogsBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> QueryAsync(
+    private async ValueTask<ListDatabaseLogsResponse> QueryAsync(
         LogsInput request, int limit, int? minStatus, int? maxStatus, CancellationToken cancellationToken)
     {
         var resolvedOutcome = await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken);
         return resolvedOutcome switch
         {
             ResolvedDatabase resolved => await ListEntriesAsync(resolved.Database.Id, request.After, limit, minStatus, maxStatus, cancellationToken),
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<Result<LogsBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ListEntriesAsync(
+    private async ValueTask<ListDatabaseLogsResponse> ListEntriesAsync(
         Ulid databaseId, string? after, int limit, int? minStatus, int? maxStatus, CancellationToken cancellationToken)
     {
         var listed = await logs.ListAsync(databaseId, after, limit, minStatus, maxStatus, cancellationToken);
         return listed switch
         {
             IReadOnlyList<RequestLogEntry> entries => new LogsBody(entries, Next(entries, after, limit), logs.HasGap(after)),
-            Unavailable unavailable => unavailable,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -121,7 +125,7 @@ internal sealed class ListDatabaseLogsEndpoint(DatabaseAccess access, RequestLog
 }
 
 internal sealed class RecordInternalLogEndpoint(CatalogStore catalog, RequestLogRecorder logs)
-    : Endpoint<InternalLogInput, Result<Done, Validation, Forbidden, NotFound, Unavailable>>
+    : Endpoint<InternalLogInput, RecordInternalLogResponse>
 {
     public override void Configure()
     {
@@ -133,32 +137,32 @@ internal sealed class RecordInternalLogEndpoint(CatalogStore catalog, RequestLog
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<Result<Done, Validation, Forbidden, NotFound, Unavailable>> HandleAsync(InternalLogInput request, CancellationToken cancellationToken)
+    public override async ValueTask<RecordInternalLogResponse> HandleAsync(InternalLogInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!PlanFlow.IsOperator(HttpContext.Caller, "admin"))
         {
-            return new Forbidden("recording internal logs needs an operator credential", "forbidden_caller");
+            return new CallerForbidden("recording internal logs needs an operator credential", "forbidden_caller");
         }
 
         if (ManagementService.Id(request.Project) is not { } projectId || string.IsNullOrWhiteSpace(request.Database)
             || request.Method is not { Length: > 0 } method || request.Path is not { Length: > 0 } path || request.Status is < 100 or > 599)
         {
-            return new Validation("invalid internal log entry", "invalid_request");
+            return new InvalidInput("invalid internal log entry", "invalid_request");
         }
 
         var found = await catalog.FindDatabaseAsync(projectId, request.Database, cancellationToken);
         return found switch
         {
             DatabaseRecord database => Record(database.Id, request.Id, method, path, request.Status, request.DurationMs),
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private Done Record(Ulid databaseId, string? id, string method, string path, int status, long durationMs)
+    private Completed Record(Ulid databaseId, string? id, string method, string path, int status, long durationMs)
     {
         logs.Enqueue(databaseId, id, method, path, status, durationMs);
-        return new Done();
+        return new Completed();
     }
 }

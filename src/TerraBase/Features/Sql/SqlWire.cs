@@ -5,6 +5,8 @@ using TerraScale.Contracts.Http;
 
 namespace TerraBase.Features.Sql;
 
+internal readonly union SqlStatementsParse(IReadOnlyList<SqlStatement>, SqlRefusal);
+
 public sealed record SqlExecuteInput(string? Project, string? Database, IReadOnlyList<SqlHttpStatement>? Statements, string? Durability = null);
 
 public sealed record SqlRequestInput(IReadOnlyList<SqlHttpStatement>? Statements);
@@ -33,7 +35,7 @@ internal static class SqlWire
 {
     private static readonly IReadOnlyDictionary<string, JsonElement> NoNamed = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 
-    public static Result<IReadOnlyList<SqlStatement>, SqlRefusal> Statements(IReadOnlyList<SqlHttpStatement>? statements)
+    public static SqlStatementsParse Statements(IReadOnlyList<SqlHttpStatement>? statements)
     {
         if (statements is not { Count: > 0 and <= SqlPlan.MaxStatements })
         {

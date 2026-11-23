@@ -1,7 +1,15 @@
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union DeleteFunctionSecretReply(
+    SecretDeleted,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class DeleteFunctionSecretEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<FunctionSecretRequest, Result<Done, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<FunctionSecretRequest, DeleteFunctionSecretReply>
 {
     public override void Configure()
     {
@@ -13,25 +21,32 @@ public sealed class DeleteFunctionSecretEndpoint(PlatformAccess access, Function
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<Done, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<DeleteFunctionSecretReply> HandleAsync(
         FunctionSecretRequest request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.DeleteSecretAsync(target, request.Function, request.Secret, cancellationToken) switch
-            {
-                Done done => done,
-                Validation invalid => invalid,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
         };
+
+        async ValueTask<DeleteFunctionSecretReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.DeleteSecretAsync(target, request.Function, request.Secret, cancellationToken);
+            return operation switch
+            {
+                SecretDeleted deleted => deleted,
+                PlatformInvalidRequest invalid => invalid,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

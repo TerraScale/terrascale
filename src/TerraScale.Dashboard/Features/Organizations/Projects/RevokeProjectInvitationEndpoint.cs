@@ -7,7 +7,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
-    using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
     public sealed class RevokeProjectInvitationEndpoint(DashboardSessions sessions, AccountService accounts, ProjectInvitationService invitations) : EndpointWithoutRequest<IResult>
     {
@@ -54,34 +53,32 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             catch (AccountAccessException error) { return await Error(error.Message, error.StatusCode); }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             { return await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503); }
-            switch (revoked)
+            IResult? refusal = revoked switch
             {
-                case Forbidden error:
-                    return await Error(error.Message, 403);
-                case Validation error:
-                    return await Error(error.Message, 400);
-                case InvalidInvitation error:
-                    return await Error(error.Message, 422);
-                case NotFound error:
-                    return await Error(error.Message!, 404);
-                case Conflict error:
-                    return await Error(error.Message, 409);
-                case Unavailable:
-                    return await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503);
-                case Done:
-                    break;
+                DashboardForbidden error => await Error(error.Message, 403),
+                DashboardValidation error => await Error(error.Message, 400),
+                InvalidInvitation error => await Error(error.Message, 422),
+                DashboardNotFound error => await Error(error.Message, 404),
+                DashboardConflict error => await Error(error.Message, 409),
+                DashboardUnavailable => await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503),
+                Done => null,
+            };
+            if (refusal is not null)
+            {
+                return refusal;
             }
 
             try
             {
                 if (http.Request.IsDatastarRequest)
                 {
-                    return await invitations.ReadAsync(context, after.Length == 0 ? null : after, http.RequestAborted) switch
+                    var outcome = await invitations.ReadAsync(context, after.Length == 0 ? null : after, http.RequestAborted);
+                    return outcome switch
                     {
                         TsAuthPlatformPage<TsAuthPlatformInvitation> listed => await PatchedAsync(http, context, listed.Items, listed.Next, "Project invitation revoked. Its acceptance link no longer works."),
-                        Forbidden error => await Error(error.Message, 403),
-                        Validation error => await Error(error.Message, 400),
-                        Unavailable => await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503),
+                        DashboardForbidden error => await Error(error.Message, 403),
+                        DashboardValidation error => await Error(error.Message, 400),
+                        DashboardUnavailable => await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503),
                     };
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project/invitations?revoked=1", replace: true));

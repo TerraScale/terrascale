@@ -3,6 +3,8 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Qos;
 
+internal readonly union TenantSessionOutcome(TenantSessions.TenantSession, TenantBusy);
+
 internal sealed class TenantSessions
 {
     public const string LimitMessage = "organization session limit exceeded";
@@ -32,7 +34,7 @@ internal sealed class TenantSessions
         return new PreauthenticationSession(this);
     }
 
-    public Result<TenantSession, TenantBusy> TryOpen(Tenant tenant)
+    public TenantSessionOutcome TryOpen(Tenant tenant)
     {
         ArgumentNullException.ThrowIfNull(tenant);
         lock (_gate)

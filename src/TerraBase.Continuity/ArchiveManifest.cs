@@ -63,6 +63,12 @@ internal sealed partial class ContinuityJsonContext : JsonSerializerContext;
 
 internal sealed record DecodedSnapshot(ArchivedSnapshot Archived, CausalBookmark Bookmark);
 
+internal sealed record ArchiveManifestCorrupted(string Message, string Code);
+
+internal readonly union ArchiveManifestDecodeOutcome(ArchiveManifest, ArchiveManifestCorrupted);
+
+internal readonly union ArchiveManifestOutcome(ArchiveManifest, ContinuityUnavailable);
+
 internal static class ManifestCodec
 {
     public const string JsonContentType = "application/json";
@@ -71,7 +77,7 @@ internal static class ManifestCodec
     public static byte[] Serialize(ArchiveManifest manifest) =>
         JsonSerializer.SerializeToUtf8Bytes(manifest, ContinuityJsonContext.Default.ArchiveManifest);
 
-    public static Result<ArchiveManifest, Unavailable> Deserialize(Ulid databaseId, ReadOnlySpan<byte> json)
+    public static ArchiveManifestDecodeOutcome Deserialize(Ulid databaseId, ReadOnlySpan<byte> json)
     {
         ArchiveManifest? manifest;
         try
@@ -80,7 +86,7 @@ internal static class ManifestCodec
         }
         catch (JsonException exception)
         {
-            return new Unavailable(string.Concat("archive manifest is unreadable: ", exception.Message), "archive_manifest_corrupted");
+            return new ArchiveManifestCorrupted(string.Concat("archive manifest is unreadable: ", exception.Message), "archive_manifest_corrupted");
         }
 
         if (manifest is not { Version: ArchiveManifest.CurrentVersion } decoded
@@ -88,7 +94,7 @@ internal static class ManifestCodec
             || id != databaseId
             || decoded.Snapshots.Any(static snapshot => !CausalBookmark.TryDecode(snapshot.Bookmark, out _)))
         {
-            return new Unavailable("archive manifest does not describe this database", "archive_manifest_corrupted");
+            return new ArchiveManifestCorrupted("archive manifest does not describe this database", "archive_manifest_corrupted");
         }
 
         return decoded;

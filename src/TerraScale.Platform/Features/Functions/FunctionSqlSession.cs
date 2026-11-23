@@ -4,12 +4,16 @@ using TerraScale.Contracts;
 
 namespace TerraScale.Platform.Features.Functions;
 
+public readonly union OpenFunctionSqlSessionOutcome(FunctionSqlSession, PlatformUnavailable);
+
+public readonly union SendFunctionSqlFrameOutcome(SqlWsServerFrame, PlatformUnavailable);
+
 public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposable
 {
     private const int MaxFrameBytes = 16 * 1024 * 1024;
     private long _nextId;
 
-    public static async ValueTask<Result<FunctionSqlSession, Unavailable>> OpenAsync(TerraBaseClient terraBase, Ulid database, CancellationToken cancellationToken)
+    public static async ValueTask<OpenFunctionSqlSessionOutcome> OpenAsync(TerraBaseClient terraBase, Ulid database, CancellationToken cancellationToken)
     {
         var target = new UriBuilder(new Uri(terraBase.BaseAddress, TerraBaseRoutes.InternalSqlSocket(database)))
         {
@@ -27,16 +31,16 @@ public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposabl
         catch (WebSocketException error)
         {
             socket.Dispose();
-            return new Unavailable($"TerraBase refused the SQL session: {error.Message}", "sql_session_unavailable");
+            return new PlatformUnavailable($"TerraBase refused the SQL session: {error.Message}", "sql_session_unavailable");
         }
         catch (HttpRequestException error)
         {
             socket.Dispose();
-            return new Unavailable($"TerraBase is unreachable: {error.Message}", "terrabase_unreachable");
+            return new PlatformUnavailable($"TerraBase is unreachable: {error.Message}", "terrabase_unreachable");
         }
     }
 
-    public async ValueTask<Result<SqlWsServerFrame, Unavailable>> SendAsync(
+    public async ValueTask<SendFunctionSqlFrameOutcome> SendAsync(
         string type,
         IReadOnlyList<SqlHttpStatement>? statements,
         string bookmark,
@@ -55,13 +59,13 @@ public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposabl
                 var received = await socket.ReceiveAsync(memory, cancellationToken);
                 if (received.MessageType == WebSocketMessageType.Close)
                 {
-                    return new Unavailable("TerraBase closed the SQL session", "sql_session_closed");
+                    return new PlatformUnavailable("TerraBase closed the SQL session", "sql_session_closed");
                 }
 
                 buffer.Advance(received.Count);
                 if (buffer.WrittenCount > MaxFrameBytes)
                 {
-                    return new Unavailable("TerraBase sent an oversized SQL frame", "terrabase_protocol");
+                    return new PlatformUnavailable("TerraBase sent an oversized SQL frame", "terrabase_protocol");
                 }
 
                 if (received.EndOfMessage)
@@ -72,12 +76,12 @@ public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposabl
         }
         catch (WebSocketException error)
         {
-            return new Unavailable($"the SQL session broke: {error.Message}", "sql_session_broken");
+            return new PlatformUnavailable($"the SQL session broke: {error.Message}", "sql_session_broken");
         }
 
         return TerraBaseAnswers.Parse(buffer.WrittenSpan, TerraScaleContractsJsonContext.Default.SqlWsServerFrame) is { } answer && answer.Id == id
             ? answer
-            : new Unavailable("TerraBase answered an unreadable SQL frame", "terrabase_protocol");
+            : new PlatformUnavailable("TerraBase answered an unreadable SQL frame", "terrabase_protocol");
     }
 
     public async ValueTask DisposeAsync()

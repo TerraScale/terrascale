@@ -1,5 +1,6 @@
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Platform;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Qos;
 
@@ -8,7 +9,7 @@ internal sealed record NoTenant
     public static NoTenant Instance { get; } = new();
 }
 
-internal readonly union TenantResolution(Tenant, NoTenant, Unavailable);
+internal readonly union TenantResolution(Tenant, NoTenant, BackendUnavailable);
 
 internal sealed class TenantDirectory(CatalogStore catalog)
 {
@@ -18,8 +19,8 @@ internal sealed class TenantDirectory(CatalogStore catalog)
         return project switch
         {
             ProjectRecord record => await ForAsync(record, cancellationToken),
-            NotFound => NoTenant.Instance,
-            Unavailable unavailable => unavailable,
+            ResourceNotFound => NoTenant.Instance,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 
@@ -35,8 +36,8 @@ internal sealed class TenantDirectory(CatalogStore catalog)
         return organization switch
         {
             OrganizationRecord record => new Tenant(record.Id, record.Plan),
-            NotFound => new Tenant(project.OrganizationId, project.Plan ?? Plans.Hobby),
-            Unavailable unavailable => unavailable,
+            ResourceNotFound => new Tenant(project.OrganizationId, project.Plan ?? Plans.Hobby),
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

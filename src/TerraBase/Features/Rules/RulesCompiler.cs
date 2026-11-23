@@ -5,8 +5,13 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Features.Sql;
+using TerraBase.Hosting;
 
 namespace TerraBase.Features.Rules;
+
+internal readonly union ConditionCompilation(CompiledCondition, InvalidInput);
+
+internal readonly union ConditionPartCompilation(ConditionPart, InvalidInput);
 
 public enum ConditionSource
 {
@@ -40,7 +45,7 @@ internal static class RulesCompiler
         "abs", "coalesce", "ifnull", "nullif", "iif", "length", "lower", "upper", "ltrim", "rtrim", "trim", "substr", "substring", "instr", "replace", "round",
         "typeof", "hex", "like", "glob");
 
-    public static Result<CompiledCondition, Validation> Compile(string condition, IReadOnlyList<string>? columns, RulesOperation operation)
+    public static ConditionCompilation Compile(string condition, IReadOnlyList<string>? columns, RulesOperation operation)
     {
         if (condition.Length > MaxCondition || !SqlText.TryTokenize(condition, out var tokens) || tokens.Count == 0)
         {
@@ -59,7 +64,7 @@ internal static class RulesCompiler
                 var failure = Reference(tokens, ref index, columns, operation, previous.Is("IN"), lists.Contains(true)) switch
                 {
                     ConditionPart part => Append(parts, part),
-                    Validation refused => refused,
+                    InvalidInput refused => refused,
                 };
                 if (failure is not null)
                 {
@@ -128,7 +133,7 @@ internal static class RulesCompiler
         return lists.Count == 0 ? new CompiledCondition(parts, usesNew) : Refused("the condition has unbalanced parentheses");
     }
 
-    private static Validation? Append(List<ConditionPart> parts, ConditionPart part)
+    private static InvalidInput? Append(List<ConditionPart> parts, ConditionPart part)
     {
         parts.Add(new ConditionPart(" "));
         parts.Add(part);
@@ -261,7 +266,7 @@ internal static class RulesCompiler
         double real => real.ToString("R", CultureInfo.InvariantCulture),
     };
 
-    private static Result<ConditionPart, Validation> Reference(
+    private static ConditionPartCompilation Reference(
         List<SqlToken> tokens, ref int index, IReadOnlyList<string>? columns, RulesOperation operation, bool listPosition, bool inList)
     {
         var head = tokens[index].Value;
@@ -292,7 +297,7 @@ internal static class RulesCompiler
             case "row" or "new" when path.Count == 1:
                 if (columns is not null && !columns.Contains(path[0].Value, StringComparer.OrdinalIgnoreCase))
                 {
-                    return new Validation(string.Concat(reference, ": the table has no column ", path[0].Value), "unknown_column");
+                    return new InvalidInput(string.Concat(reference, ": the table has no column ", path[0].Value), "unknown_column");
                 }
 
                 var allowed = head == "row"
@@ -300,7 +305,7 @@ internal static class RulesCompiler
                     : operation is RulesOperation.Create or RulesOperation.Update or RulesOperation.Validate;
                 return allowed
                     ? new ConditionPart(string.Concat(head == "new" ? "new." : "row.", Quote(path[0].Value)))
-                    : new Validation(string.Concat(head, ".* is not allowed in ", Name(operation)), "reference_not_allowed");
+                    : new InvalidInput(string.Concat(head, ".* is not allowed in ", Name(operation)), "reference_not_allowed");
             case "auth" when path is [{ Kind: SqlTokenKind.Word } field]:
                 return field.Value switch
                 {
@@ -316,10 +321,10 @@ internal static class RulesCompiler
                 return new ConditionPart(new ConditionParameter(string.Concat("auth_claim_", path[1].Value), ConditionSource.Claim, path[1].Value));
             case "request" when name == "time":
                 return operation == RulesOperation.Read
-                    ? new Validation("request.time is not allowed in read", "reference_not_allowed")
+                    ? new InvalidInput("request.time is not allowed in read", "reference_not_allowed")
                     : new ConditionPart(new ConditionParameter("request_time", ConditionSource.RequestTime));
             case "request" when name == "ulid":
-                return new Validation("request.ulid is allowed only as a set.create value", "reference_not_allowed");
+                return new InvalidInput("request.ulid is allowed only as a set.create value", "reference_not_allowed");
             default:
                 return Refused(string.Concat(reference, " is not a reference; use row.<column>, new.<column>, auth.<value> or request.time"));
         }
@@ -338,7 +343,7 @@ internal static class RulesCompiler
     private static bool IsClaimName(string name) => name is { Length: >= 1 and <= 63 } && name[0] is >= 'a' and <= 'z'
         && name.All(static character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
 
-    private static Validation Refused(string message) => new(message, "unsafe_where");
+    private static InvalidInput Refused(string message) => new(message, "unsafe_where");
 }
 
 [JsonSerializable(typeof(string))]

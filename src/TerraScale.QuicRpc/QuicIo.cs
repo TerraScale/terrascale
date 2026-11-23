@@ -8,6 +8,22 @@ using TerraScale.Contracts.Quic;
 
 namespace TerraScale.QuicRpc;
 
+internal readonly union QuicListenerOpenOutcome(QuicListener, QuicFault);
+
+internal readonly union QuicConnectionOpenOutcome(QuicConnection, QuicFault);
+
+internal readonly union QuicConnectionAcceptOutcome(QuicConnection, QuicFault);
+
+internal readonly union QuicStreamOpenOutcome(QuicStream, QuicFault);
+
+internal readonly union QuicStreamAcceptOutcome(QuicStream, QuicFault);
+
+internal readonly union QuicIoWriteOutcome(QuicSent, QuicFault);
+
+internal sealed record QuicConnectionClosed;
+
+internal readonly union QuicConnectionCloseOutcome(QuicConnectionClosed, QuicFault);
+
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
@@ -15,11 +31,11 @@ internal static class QuicIo
 {
     private static readonly StreamEnded Ended = new();
 
-    public static async ValueTask<Result<QuicListener, QuicFault>> ListenAsync(QuicListenerOptions options, CancellationToken cancellationToken)
+    public static async ValueTask<QuicListenerOpenOutcome> ListenAsync(QuicListenerOptions options, CancellationToken cancellationToken)
     {
         try
         {
-            return await QuicListener.ListenAsync(options, cancellationToken).ConfigureAwait(false);
+            return await QuicListener.ListenAsync(options, cancellationToken);
         }
         catch (QuicException exception)
         {
@@ -31,11 +47,11 @@ internal static class QuicIo
         }
     }
 
-    public static async ValueTask<Result<QuicConnection, QuicFault>> ConnectAsync(QuicClientConnectionOptions options, CallScope scope)
+    public static async ValueTask<QuicConnectionOpenOutcome> ConnectAsync(QuicClientConnectionOptions options, CallScope scope)
     {
         try
         {
-            return await QuicConnection.ConnectAsync(options, scope.Token).ConfigureAwait(false);
+            return await QuicConnection.ConnectAsync(options, scope.Token);
         }
         catch (QuicException exception)
         {
@@ -55,11 +71,11 @@ internal static class QuicIo
         }
     }
 
-    public static async ValueTask<Result<QuicConnection, QuicFault>> AcceptConnectionAsync(QuicListener listener, CallScope scope)
+    public static async ValueTask<QuicConnectionAcceptOutcome> AcceptConnectionAsync(QuicListener listener, CallScope scope)
     {
         try
         {
-            return await listener.AcceptConnectionAsync(scope.Token).ConfigureAwait(false);
+            return await listener.AcceptConnectionAsync(scope.Token);
         }
         catch (QuicException exception)
         {
@@ -83,11 +99,11 @@ internal static class QuicIo
         }
     }
 
-    public static async ValueTask<Result<QuicStream, QuicFault>> AcceptStreamAsync(QuicConnection connection, CallScope scope)
+    public static async ValueTask<QuicStreamAcceptOutcome> AcceptStreamAsync(QuicConnection connection, CallScope scope)
     {
         try
         {
-            return await connection.AcceptInboundStreamAsync(scope.Token).ConfigureAwait(false);
+            return await connection.AcceptInboundStreamAsync(scope.Token);
         }
         catch (QuicException exception)
         {
@@ -107,11 +123,11 @@ internal static class QuicIo
         }
     }
 
-    public static async ValueTask<Result<QuicStream, QuicFault>> OpenStreamAsync(QuicConnection connection, QuicStreamType type, CallScope scope)
+    public static async ValueTask<QuicStreamOpenOutcome> OpenStreamAsync(QuicConnection connection, QuicStreamType type, CallScope scope)
     {
         try
         {
-            return await connection.OpenOutboundStreamAsync(type, scope.Token).ConfigureAwait(false);
+            return await connection.OpenOutboundStreamAsync(type, scope.Token);
         }
         catch (QuicException exception)
         {
@@ -135,12 +151,12 @@ internal static class QuicIo
         }
     }
 
-    public static async ValueTask<Result<Done, QuicFault>> WriteAsync(QuicStream stream, ReadOnlyMemory<byte> frame, bool completeWrites, CallScope scope)
+    public static async ValueTask<QuicIoWriteOutcome> WriteAsync(QuicStream stream, ReadOnlyMemory<byte> frame, bool completeWrites, CallScope scope)
     {
         try
         {
-            await stream.WriteAsync(frame, completeWrites, scope.Token).ConfigureAwait(false);
-            return new Done();
+            await stream.WriteAsync(frame, completeWrites, scope.Token);
+            return new QuicSent();
         }
         catch (QuicException exception)
         {
@@ -174,7 +190,7 @@ internal static class QuicIo
         byte[]? payload = null;
         try
         {
-            var read = await stream.ReadAtLeastAsync(header.AsMemory(0, QuicProtocol.FrameHeaderSize), QuicProtocol.FrameHeaderSize, throwOnEndOfStream: false, scope.Token).ConfigureAwait(false);
+            var read = await stream.ReadAtLeastAsync(header.AsMemory(0, QuicProtocol.FrameHeaderSize), QuicProtocol.FrameHeaderSize, throwOnEndOfStream: false, scope.Token);
             if (read == 0)
             {
                 return Ended;
@@ -191,7 +207,7 @@ internal static class QuicIo
             }
 
             payload = ArrayPool<byte>.Shared.Rent(parsed.PayloadLength);
-            await stream.ReadExactlyAsync(payload.AsMemory(0, parsed.PayloadLength), scope.Token).ConfigureAwait(false);
+            await stream.ReadExactlyAsync(payload.AsMemory(0, parsed.PayloadLength), scope.Token);
             var frame = new PooledFrame(parsed, payload);
             payload = null;
             return frame;
@@ -234,12 +250,12 @@ internal static class QuicIo
         }
     }
 
-    public static async ValueTask<Result<Done, QuicFault>> CloseAsync(QuicConnection connection, long errorCode)
+    public static async ValueTask<QuicConnectionCloseOutcome> CloseAsync(QuicConnection connection, long errorCode)
     {
         try
         {
-            await connection.CloseAsync(errorCode, CancellationToken.None).ConfigureAwait(false);
-            return new Done();
+            await connection.CloseAsync(errorCode, CancellationToken.None);
+            return new QuicConnectionClosed();
         }
         catch (QuicException exception)
         {
@@ -259,7 +275,7 @@ internal static class QuicIo
     {
         try
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await connection.DisposeAsync();
         }
         catch (QuicException)
         {
@@ -273,7 +289,7 @@ internal static class QuicIo
     {
         try
         {
-            await stream.DisposeAsync().ConfigureAwait(false);
+            await stream.DisposeAsync();
         }
         catch (QuicException)
         {
@@ -286,7 +302,7 @@ internal static class QuicIo
     public static async Task<bool> PeerStoppedReadingAsync(QuicStream stream, Task finished)
     {
         var writesClosed = stream.WritesClosed;
-        await Task.WhenAny(writesClosed, finished).ConfigureAwait(false);
+        await Task.WhenAny(writesClosed, finished);
         return writesClosed.IsCanceled || writesClosed.Exception is not null;
     }
 

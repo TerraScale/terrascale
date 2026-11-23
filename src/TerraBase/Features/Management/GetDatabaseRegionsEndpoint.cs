@@ -9,8 +9,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union GetDatabaseRegionsResponse(DatabaseReplicationBody, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
+
 internal sealed class GetDatabaseRegionsEndpoint(DatabaseAccess access, IClusterCoordinator coordinator, TerraBaseOptions options, TimeProvider time)
-    : Endpoint<DatabaseInput, Result<DatabaseReplicationBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<DatabaseInput, GetDatabaseRegionsResponse>
 {
     public override void Configure()
     {
@@ -22,22 +24,23 @@ internal sealed class GetDatabaseRegionsEndpoint(DatabaseAccess access, ICluster
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<DatabaseReplicationBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<GetDatabaseRegionsResponse> HandleAsync(
         DatabaseInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken) switch
+        var outcome = await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken);
+        return outcome switch
         {
             ResolvedDatabase resolved => await access.OpenAsync(resolved.Database, cancellationToken) switch
             {
                 ISqlDatabaseSession session => Body(resolved.Database, session),
-                Unavailable unavailable => unavailable,
+                BackendUnavailable unavailable => unavailable,
             },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            InvalidInput invalid => invalid,
+            CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 

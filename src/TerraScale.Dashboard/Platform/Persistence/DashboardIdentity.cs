@@ -2,8 +2,6 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
-    // Each secret arrives as an environment variable, or as a file named by <NAME>_FILE (ts-orch delivers OCI Vault
-    // secrets as files). No default or fallback exists, and the values are never logged or echoed.
     public interface IDashboardIdentity
     {
         Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken);
@@ -11,12 +9,10 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
     public sealed class DashboardIdentity(Func<string, string?> environment) : IDashboardIdentity
     {
-        // ts-auth seeds its dashboard client from the same-named secret on its own app.
         public const string AuthClientSecretName = "TS_AUTH_DASHBOARD_CLIENT_SECRET";
         public const string SessionEncryptionKeyName = "TS_DASHBOARD_SESSION_ENCRYPTION_KEY";
         public const string StripeSecretKeyName = "STRIPE_SECRET_KEY";
         public const string StripeWebhookSecretName = "STRIPE_WEBHOOK_SECRET";
-        // TerraBase and ts-auth hold the same value; TerraBase verifies it on its internal listener.
         public const string TerraBasePeerSecretName = "TERRABASE_PEER_SECRET";
 
         private readonly Lazy<CallerCredential?> caller = new(() =>
@@ -54,12 +50,10 @@ namespace TerraScale.Dashboard.Platform.Persistence
         public CallerCredential? Caller { get; init; }
         public string RequestProofKey { get; init; } = TerraBasePeerSecret;
 
-        // ts-auth fixes the dashboard client's ID in its code; only the secret is delivered.
         public string AuthClientId => "01M4EQ2FRJ8S8B29E8TQVWNW4J";
 
         public void Validate()
         {
-            // ts-auth accepts 32-512 characters without whitespace or ';' for this secret.
             if (AuthClientSecret is not { Length: >= 32 and <= 512 } || AuthClientSecret.Any(character => char.IsWhiteSpace(character) || char.IsControl(character) || character == ';'))
             {
                 throw new IOException("Dashboard authentication client secret is invalid.");
@@ -83,7 +77,6 @@ namespace TerraScale.Dashboard.Platform.Persistence
             {
                 throw new IOException("Dashboard Stripe identity is invalid.");
             }
-            // 32 random bytes as 64 hexadecimal characters, the format TerraBase and ts-auth accept.
             if (TerraBasePeerSecret is not { Length: 64 } || !TerraBasePeerSecret.All(char.IsAsciiHexDigit))
             {
                 throw new IOException("Dashboard secret TERRABASE_PEER_SECRET must be 64 hexadecimal characters.");
@@ -96,8 +89,6 @@ namespace TerraScale.Dashboard.Platform.Persistence
         }
     }
 
-    // Vendor-issued Stripe keys arrive through ts-orch's OCI Vault secret delivery.
-    // There are no payment feature toggles.
     public sealed record StripeCredentials(string SecretKey, string WebhookSecret)
     {
         public bool IsLive => SecretKey.StartsWith("sk_live_", StringComparison.Ordinal) || SecretKey.StartsWith("rk_live_", StringComparison.Ordinal);

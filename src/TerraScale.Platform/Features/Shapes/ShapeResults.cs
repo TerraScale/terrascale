@@ -67,6 +67,6 @@ public sealed class ShapeSocketClosed : IResult
     public Task ExecuteAsync(HttpContext httpContext) => Task.CompletedTask;
 }
 
-public readonly union ShapeReply(ShapeAnswer, ShapeRedirect, ShapeRefetch, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union ShapeReply(ShapeAnswer, ShapeRedirect, ShapeRefetch, PlatformInvalidRequest, PlatformUnauthorized, PlatformForbidden, PlatformNotFound, PlatformUnavailable);
 
 public sealed record ResolvedShape(ShapeRecord Shape, DatabaseAccess Access, ShapeQuery Query);

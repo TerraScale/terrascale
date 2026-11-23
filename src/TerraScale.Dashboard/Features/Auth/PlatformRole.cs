@@ -2,8 +2,6 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public interface IPlatformRoleGateway
     {
-        // The caller must obtain this grant through the persisted forced rotation;
-        // a cached access token does not prove the user's current platform role.
         Task<string?> PlatformRoleAsync(SessionRecord freshlyRotatedSession, CancellationToken cancellationToken);
     }
 

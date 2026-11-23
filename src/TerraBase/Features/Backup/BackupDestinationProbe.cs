@@ -1,6 +1,7 @@
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using TerraBase.Hosting;
 using S3HttpClientFactory = Amazon.Runtime.HttpClientFactory;
 
 namespace TerraBase.Features.Backup;
@@ -9,14 +10,14 @@ internal sealed class BackupDestinationProbe(IHttpClientFactory clients, TimePro
 {
     public const string ClientName = "customer-backup";
 
-    private static readonly Unavailable Inaccessible = new("customer backup bucket could not be accessed", "backup_destination_unavailable");
-    private static readonly Unavailable Busy = new("customer backup configuration request limit reached", "backup_destination_busy");
+    private static readonly BackendUnavailable Inaccessible = new("customer backup bucket could not be accessed", "backup_destination_unavailable");
+    private static readonly BackendUnavailable Busy = new("customer backup configuration request limit reached", "backup_destination_busy");
     private static readonly byte[] ProbeContents = "TerraBase backup access check"u8.ToArray();
 
     private readonly Lock _gate = new();
     private readonly HashSet<Ulid> _inFlight = [];
 
-    public async Task<Unavailable?> ProbeAsync(BackupDestinationConfig destination, Ulid organization, Ulid project, CancellationToken cancellationToken)
+    public async Task<BackendUnavailable?> ProbeAsync(BackupDestinationConfig destination, Ulid organization, Ulid project, CancellationToken cancellationToken)
     {
         lock (_gate)
         {

@@ -368,31 +368,29 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
-  /v1/projects/{project}/functions:
+  /v1/projects/{project}/databases/{database}/functions:
     get:
       tags: [functions]
       operationId: listFunctions
       parameters:
         - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
       responses:
         '200':
-          description: Functions of the project.
+          description: Functions of the database.
           content:
             application/json:
               schema:
-                type: object
-                required: [functions]
-                properties:
-                  functions:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Function'
-  /v1/projects/{project}/functions/{function}:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Function'
+  /v1/projects/{project}/databases/{database}/functions/{function}:
     get:
       tags: [functions]
       operationId: getFunction
       parameters:
         - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
         - $ref: '#/components/parameters/Function'
       responses:
         '200':
@@ -408,6 +406,7 @@ paths:
       operationId: putFunction
       parameters:
         - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
         - $ref: '#/components/parameters/Function'
       requestBody:
         required: true
@@ -429,18 +428,20 @@ paths:
       operationId: deleteFunction
       parameters:
         - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
         - $ref: '#/components/parameters/Function'
       responses:
         '204':
           description: Deleted.
         '404':
           $ref: '#/components/responses/Error'
-  /v1/projects/{project}/functions/{function}/invoke:
+  /v1/projects/{project}/databases/{database}/functions/{function}/invoke:
     post:
       tags: [functions]
       operationId: invokeFunction
       parameters:
         - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
         - $ref: '#/components/parameters/Function'
         - $ref: '#/components/parameters/Bookmark'
       requestBody:
@@ -463,7 +464,156 @@ paths:
           $ref: '#/components/responses/Error'
         '504':
           $ref: '#/components/responses/Error'
-  /v1/projects/{project}/buckets/{bucket}/uploads:
+  /v1/projects/{project}/databases/{database}/functions/{function}/logs:
+    get:
+      tags: [functions]
+      operationId: listFunctionLogs
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Function'
+      responses:
+        '200':
+          description: Recent function invocations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {}
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/functions/{function}/stats:
+    get:
+      tags: [functions]
+      operationId: getFunctionStats
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Function'
+      responses:
+        '200':
+          description: Aggregated function invocation metrics.
+          content:
+            application/json:
+              schema: {}
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/functions/{function}/secrets:
+    get:
+      tags: [functions]
+      operationId: listFunctionSecrets
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Function'
+      responses:
+        '200':
+          description: Secret names configured for the function.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {}
+  /v1/projects/{project}/databases/{database}/functions/{function}/secrets/{secret}:
+    put:
+      tags: [functions]
+      operationId: putFunctionSecret
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Function'
+        - $ref: '#/components/parameters/Secret'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+      responses:
+        '200':
+          description: Stored.
+    delete:
+      tags: [functions]
+      operationId: deleteFunctionSecret
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Function'
+        - $ref: '#/components/parameters/Secret'
+      responses:
+        '204':
+          description: Deleted.
+  /v1/projects/{project}/buckets:
+    get:
+      tags: [files]
+      operationId: listBuckets
+      parameters:
+        - $ref: '#/components/parameters/Project'
+      responses:
+        '200':
+          description: Buckets of the project.
+          content:
+            application/json:
+              schema: {}
+    post:
+      tags: [files]
+      operationId: createBucket
+      parameters:
+        - $ref: '#/components/parameters/Project'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: {}
+  /v1/projects/{project}/buckets/{bucket}:
+    delete:
+      tags: [files]
+      operationId: deleteBucket
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+      responses:
+        '204':
+          description: Deleted.
+  /v1/projects/{project}/buckets/{bucket}/rules:
+    put:
+      tags: [files]
+      operationId: putBucketRules
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '200':
+          description: Updated.
+  /v1/projects/{project}/buckets/{bucket}/files:
+    get:
+      tags: [files]
+      operationId: listBucketFiles
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+      responses:
+        '200':
+          description: Files in the bucket.
+          content:
+            application/json:
+              schema: {}
+  /v1/projects/{project}/buckets/{bucket}/files/upload:
     post:
       tags: [files]
       operationId: createUpload
@@ -489,14 +639,43 @@ paths:
           $ref: '#/components/responses/Error'
         '413':
           $ref: '#/components/responses/Error'
-  /v1/projects/{project}/buckets/{bucket}/objects/{key}:
-    get:
+  /v1/projects/{project}/buckets/{bucket}/files/{file}:
+    delete:
       tags: [files]
-      operationId: getObject
+      operationId: deleteFile
       parameters:
         - $ref: '#/components/parameters/Project'
         - $ref: '#/components/parameters/Bucket'
-        - $ref: '#/components/parameters/ObjectKey'
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '204':
+          description: Deleted.
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/buckets/{bucket}/files/{file}/complete:
+    post:
+      tags: [files]
+      operationId: completeUpload
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Upload completed.
+          content:
+            application/json:
+              schema: {}
+  /v1/projects/{project}/buckets/{bucket}/files/{file}/download:
+    post:
+      tags: [files]
+      operationId: createDownload
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+        - $ref: '#/components/parameters/FileId'
       responses:
         '200':
           description: Presigned download.
@@ -508,88 +687,78 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
-    delete:
-      tags: [files]
-      operationId: deleteObject
-      parameters:
-        - $ref: '#/components/parameters/Project'
-        - $ref: '#/components/parameters/Bucket'
-        - $ref: '#/components/parameters/ObjectKey'
-      responses:
-        '204':
-          description: Deleted.
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-  /v1/projects/{project}/databases/{database}/shapes:
+  /v1/projects/{project}/databases/{database}/tables/{table}/shape:
     get:
       tags: [shapes]
-      operationId: listShapes
+      operationId: readShape
       parameters:
         - $ref: '#/components/parameters/Project'
         - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Table'
       responses:
         '200':
-          description: Shapes of the database.
+          description: Shape log entries and control messages.
           content:
             application/json:
               schema:
-                type: object
-                required: [shapes]
-                properties:
-                  shapes:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Shape'
-    post:
-      tags: [shapes]
-      operationId: createShape
-      parameters:
-        - $ref: '#/components/parameters/Project'
-        - $ref: '#/components/parameters/Database'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateShapeRequest'
-      responses:
-        '201':
-          description: Created; chunks are served from the CDN at the returned location.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Shape'
-        '400':
-          $ref: '#/components/responses/Error'
-  /v1/projects/{project}/databases/{database}/shapes/{shape}:
-    get:
-      tags: [shapes]
-      operationId: getShape
-      parameters:
-        - $ref: '#/components/parameters/Project'
-        - $ref: '#/components/parameters/Database'
-        - $ref: '#/components/parameters/Shape'
-      responses:
-        '200':
-          description: The shape and its newest chunk.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Shape'
+                type: array
+                items: {}
         '404':
           $ref: '#/components/responses/Error'
-    delete:
+  /v1/projects/{project}/databases/{database}/tables/{table}/shape/ws:
+    get:
       tags: [shapes]
-      operationId: deleteShape
+      operationId: openShapeHints
       parameters:
         - $ref: '#/components/parameters/Project'
         - $ref: '#/components/parameters/Database'
-        - $ref: '#/components/parameters/Shape'
+        - $ref: '#/components/parameters/Table'
       responses:
-        '204':
-          description: Deleted.
+        '101':
+          description: Switching protocols for shape change hints.
+  /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys:
+    get:
+      tags: [shapes]
+      operationId: getShapeKey
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Table'
+      responses:
+        '200':
+          description: Shape primary key metadata.
+          content:
+            application/json:
+              schema: {}
+  /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest:
+    get:
+      tags: [shapes]
+      operationId: getShapeManifest
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Table'
+      responses:
+        '200':
+          description: Shape snapshot manifest.
+          content:
+            application/json:
+              schema: {}
+  /v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}:
+    get:
+      tags: [shapes]
+      operationId: getRow
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Table'
+        - $ref: '#/components/parameters/RowKey'
+      responses:
+        '200':
+          description: The authorized row.
+          content:
+            application/json:
+              schema: {}
         '404':
           $ref: '#/components/responses/Error'
 components:
@@ -619,26 +788,39 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^[a-z][a-z0-9-]{0,62}$'
+        pattern: '^[a-z][a-z0-9_-]{0,62}$'
+    Secret:
+      name: secret
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Z_][A-Z0-9_]{0,63}$'
     Bucket:
       name: bucket
       in: path
       required: true
       schema:
         type: string
-        pattern: '^[a-z][a-z0-9-]{0,62}$'
-    ObjectKey:
+        pattern: '^[a-z][a-z0-9_-]{0,62}$'
+    FileId:
+      name: file
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Ulid'
+    Table:
+      name: table
+      in: path
+      required: true
+      schema:
+        type: string
+    RowKey:
       name: key
       in: path
       required: true
       schema:
         type: string
-    Shape:
-      name: shape
-      in: path
-      required: true
-      schema:
-        $ref: '#/components/schemas/Ulid'
     Bookmark:
       name: TerraScale-Bookmark
       in: header

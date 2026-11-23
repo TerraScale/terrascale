@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -39,14 +38,14 @@ public sealed class UpdateSelfProfileEndpoint(Sessions sessions, UserProfiles pr
         var request = this.HttpContext.Request;
         if (request.Headers.Origin.Count != 1 || request.Headers.Origin[0] != options.PublicOrigin.GetLeftPart(UriPartial.Authority))
         {
-            return ErrorResults.ToResult(new Forbidden("Use the hosted account origin.", "origin_denied"));
+            return ErrorResults.ToResult(new AuthForbidden("Use the hosted account origin.", "origin_denied"));
         }
 
         var project = this.HttpContext.GetRouteValue("project") as string;
         if (project is null || !TerraScaleIds.IsValid(project)
             || await sessions.ResolveVersionedAsync(project, request.Cookies[Tenancy.SessionCookie(project)], cancellationToken) is not { } live)
         {
-            return ErrorResults.ToResult(new Unauthorized("Sign in to this project."));
+            return ErrorResults.ToResult(new AuthUnauthorized("Sign in to this project."));
         }
 
         var ip = HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) ?? "unknown";
@@ -58,7 +57,7 @@ public sealed class UpdateSelfProfileEndpoint(Sessions sessions, UserProfiles pr
 
         if (!request.HasJsonContentType())
         {
-            return ErrorResults.ToResult(new Validation("Supply a JSON object."));
+            return ErrorResults.ToResult(new AuthValidation("Supply a JSON object."));
         }
 
         using var buffer = new MemoryStream();
@@ -71,7 +70,7 @@ public sealed class UpdateSelfProfileEndpoint(Sessions sessions, UserProfiles pr
 
         if (read > 0)
         {
-            return ErrorResults.ToResult(new Validation("Profile patch exceeds 16384 bytes."));
+            return ErrorResults.ToResult(new AuthValidation("Profile patch exceeds 16384 bytes."));
         }
 
         SelfProfilePatch patch;
@@ -82,7 +81,7 @@ public sealed class UpdateSelfProfileEndpoint(Sessions sessions, UserProfiles pr
         }
         catch (JsonException)
         {
-            return ErrorResults.ToResult(new Validation("Only first_name, last_name and unsafe_metadata are accepted."));
+            return ErrorResults.ToResult(new AuthValidation("Only first_name, last_name and unsafe_metadata are accepted."));
         }
 
         var updated = await profiles.UpdateSelfAsync(live.User, patch, Sessions.Live(live.Session, live.Version, clock.GetUtcNow()), cancellationToken);

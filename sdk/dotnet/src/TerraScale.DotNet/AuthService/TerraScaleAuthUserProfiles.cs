@@ -6,7 +6,6 @@ using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet;
 
-/// <summary>Creates a project user without sending email.</summary>
 public sealed record TerraScaleAuthCreateUser(
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("password"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Password = null,
@@ -18,7 +17,6 @@ public sealed record TerraScaleAuthCreateUser(
     [property: JsonPropertyName("private_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? PrivateMetadata = null,
     [property: JsonPropertyName("unsafe_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? UnsafeMetadata = null);
 
-/// <summary>Merge patch. Omit with null; use a JSON null element to clear a scalar.</summary>
 public sealed record TerraScaleAuthUpdateUser(
     [property: JsonPropertyName("first_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? FirstName = null,
     [property: JsonPropertyName("last_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? LastName = null,
@@ -28,7 +26,6 @@ public sealed record TerraScaleAuthUpdateUser(
     [property: JsonPropertyName("private_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? PrivateMetadata = null,
     [property: JsonPropertyName("unsafe_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? UnsafeMetadata = null);
 
-/// <summary>Imported account. Hashes are never logged or returned.</summary>
 public sealed record TerraScaleAuthImportUser(
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("email_verified")] bool EmailVerified,
@@ -41,41 +38,34 @@ public sealed record TerraScaleAuthImportUser(
     [property: JsonPropertyName("private_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? PrivateMetadata = null,
     [property: JsonPropertyName("unsafe_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? UnsafeMetadata = null);
 
-/// <summary>Imports one to 500 accounts.</summary>
 public sealed record TerraScaleAuthImportUsers(
     [property: JsonPropertyName("users")] IReadOnlyList<TerraScaleAuthImportUser> Users);
 
-/// <summary>One imported row and its zero-based input index.</summary>
 public sealed record TerraScaleAuthImportedUser(
     [property: JsonPropertyName("index")] int Index,
     [property: JsonPropertyName("user")] TerraScaleAuthProjectUser User);
 
-/// <summary>One refused row.</summary>
 public sealed record TerraScaleAuthUserImportError(
     [property: JsonPropertyName("index")] int Index,
     [property: JsonPropertyName("code")] string Code,
     [property: JsonPropertyName("message")] string Message);
 
-/// <summary>Import partial result; inspect Errors before treating the batch as complete.</summary>
 public sealed record TerraScaleAuthImportUsersResult(
     [property: JsonPropertyName("items")] IReadOnlyList<TerraScaleAuthImportedUser> Items,
     [property: JsonPropertyName("errors")] IReadOnlyList<TerraScaleAuthUserImportError> Errors);
 
 public sealed partial class TerraScaleAuthProjectsClient
 {
-    /// <summary>CreateUser with auth:write or the project admin role. Sent once.</summary>
     public Task<AuthResult<TerraScaleAuthProjectUser>> CreateUserAsync(string accessToken, string projectId, TerraScaleAuthCreateUser request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/users"), request, Json.TerraScaleAuthCreateUser,
             Json.TerraScaleAuthProjectUser, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 32 * 1024, cancellationToken);
 
-    /// <summary>UpdateUser with auth:write or the project admin role. Sent once.</summary>
     public Task<AuthResult<TerraScaleAuthProjectUser>> UpdateUserAsync(string accessToken, string projectId, string userId, TerraScaleAuthUpdateUser request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Patch, Route(projectId, "/users/" + Id(userId)), request, Json.TerraScaleAuthUpdateUser,
             Json.TerraScaleAuthProjectUser, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 32 * 1024, cancellationToken);
 
-    /// <summary>ImportUsers with auth:write or the project admin role. Sent once.</summary>
     public Task<AuthResult<TerraScaleAuthImportUsersResult>> ImportUsersAsync(string accessToken, string projectId, TerraScaleAuthImportUsers request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/users/import"), request, Json.TerraScaleAuthImportUsers,

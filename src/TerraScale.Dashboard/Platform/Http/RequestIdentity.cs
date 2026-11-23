@@ -14,7 +14,6 @@ namespace TerraScale.Dashboard.Platform.Http
 
         public static async Task MiddlewareAsync(HttpContext http, Func<Task> next, ILogger logger)
         {
-            // Public caller headers are correlation claims, never authority.
             var supplied = http.Request.Headers[Header];
             var proof = http.Request.Headers[ProofHeader];
             var id = supplied.Count == 1 && proof.Count == 1 && TerraScaleIds.IsValid(supplied[0]) &&

@@ -4,9 +4,6 @@ using TerraScale.Dashboard.Common.Validation;
 
 namespace TerraScale.Dashboard.Features.Databases
 {
-    // The Personal project is ts-auth's; onboarding renames it there and records the
-    // chosen serving region as the dashboard's placement preference. TerraBase needs
-    // no project registration before the project's first database.
     public sealed class OnboardingProjectProvisioner(ITsAuthPlatform platform, IDatabaseBackend backend) : IOnboardingProjectProvisioner
     {
         public async Task<ProjectRecord> CompleteProjectAsync(AccountContext context, string name, string region, CancellationToken cancellationToken)

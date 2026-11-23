@@ -44,14 +44,11 @@ namespace TerraScale.Dashboard.Features.Databases
 
         public DatabaseListMetrics? Metrics { get; init; }
         public string Range { get; init; } = "24h";
-        // Range links keep the search filter.
         public string RangePath(string range)
         {
             return "/databases?" + (Search.Length > 0 ? "q=" + Uri.EscapeDataString(Search) + "&" : "") + "range=" + range + "#project-databases";
         }
 
-        // Retrying the counts reloads the same filter and range.
-        // Clearing the search keeps the selected range.
         public string ClearPath => "/databases?range=" + Range + "#project-databases";
         public IEnumerable<(string Label, string? Value, string Title, AnalyticsLinePlot? Trend, string Hue)> Cells(string databaseId)
         {
@@ -63,15 +60,11 @@ namespace TerraScale.Dashboard.Features.Databases
         }
     }
 
-    // Totals for one database over the list range; null means TerraBase did not report it and is never shown as zero.
     public sealed record DatabaseListMetric(long? Reads, long? Writes, long? StorageBytes, double? P95Ms, AnalyticsLinePlot? ReadTrend, AnalyticsLinePlot? WriteTrend);
 
-    // One project-wide analytics read for the whole list; Message says why metrics are missing.
     public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseListMetric> Databases, string Message)
     {
         private static readonly string[] Writes = ["put", "patch", "delete"];
-        // The list's sparklines are secondary: TerraBase's analytics route has a multi-second tail (gru p99 4.4 s against a
-        // 7 ms median), so the list stops waiting for them well before the analytics page's own deadline.
         private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
 
         public static async Task<DatabaseListMetrics> LoadAsync(IAnalyticsBackend backend, AccountContext context, string range, CancellationToken cancellationToken)
@@ -96,7 +89,6 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     return new(new Dictionary<string, DatabaseListMetric>(), "No database measurements in the last " + range + ".");
                 }
-                // Build validates buckets and values the same way the analytics page does.
                 _ = AnalyticsService.Build(selection, batch.Points);
                 var bucket = range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, _ => 86400 };
                 var first = batch.Points.Min(point => point.Start.ToUniversalTime());
@@ -123,8 +115,6 @@ namespace TerraScale.Dashboard.Features.Databases
                     }
                     var readTrend = Trend("reads", point => point.Operations.GetValueOrDefault("read"), out var reads);
                     var writeTrend = Trend("writes", point => Writes.Sum(op => point.Operations.GetValueOrDefault(op)), out var writes);
-                    // Gauges read only the latest project bucket, like the analytics page: an explicit null there stays missing and never falls back
-                    // to an older reading, and storage is a total only when every region this database reported from has a value in that bucket.
                     var current = group.Where(point => point.Start.ToUniversalTime() == starts[^1]).ToArray();
                     var storage = current.Length > 0 && current.All(point => point.StorageBytes is not null) &&
                         group.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count() == current.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count()
@@ -164,7 +154,6 @@ namespace TerraScale.Dashboard.Features.Databases
         public IReadOnlyList<string>? SqlHistory { get; init; }
         public bool ShowFork { get; init; }
         public bool OpenBranch => Tab == "branches" && (ShowFork || BranchName is not null && Error.Length > 0) && Context.CanManage && Database.Status == "ready";
-        // Each activity card keeps its own range; changing one keeps the others as they are.
         public string RangePath(string key, string range)
         {
             return DatabaseService.Path(Database.Id) + "?" +
@@ -201,23 +190,18 @@ namespace TerraScale.Dashboard.Features.Databases
         };
     }
 
-    // One activity card with its own range; Plot is null when Message says why there is no chart.
     public sealed record DatabaseActivityCard(string Key, string Title, string Range, AnalyticsLinePlot? Plot, string Message, bool Failed = false);
 
-    // Per-region activity for one database, read from the same TerraBase analytics route as /analytics, once per distinct card range.
     public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards, IReadOnlyList<AnalyticsRegionRow> Regions)
     {
         public static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (ms)")];
-        // Analytics reports writes as put, patch and delete operations.
         private static readonly string[] WriteOperations = ["put", "patch", "delete"];
         private const string FailedMessage = "Could not load activity measurements. Reload the page to retry.";
 
-        // rangeFor returns an already normalized range for each card key.
         public static async Task<DatabaseActivity> LoadAsync(IAnalyticsBackend backend, AccountContext context, string databaseId, Func<string, string> rangeFor, CancellationToken cancellationToken)
         {
             var cards = Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, rangeFor(kind.Key), null, "")).ToArray();
             IReadOnlyList<AnalyticsRegionRow> latencyRegions = [];
-            // Each distinct range is one analytics read; they run together and each updates only its own cards.
             await Task.WhenAll(cards.Select(card => card.Range).Distinct().ToArray().Select(async range =>
             {
                 void Set(Func<DatabaseActivityCard, DatabaseActivityCard> update) { for (var i = 0; i < cards.Length; i++) { if (cards[i].Range == range) { cards[i] = update(cards[i]); } } }
@@ -227,7 +211,6 @@ namespace TerraScale.Dashboard.Features.Databases
                     var batch = await backend.ReadAsync(selection, cancellationToken);
                     if (batch.State == AnalyticsSourceState.Unavailable) { Set(card => card with { Message = "Activity measurements are unavailable." }); return; }
                     if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0) { Set(card => card with { Message = "No activity measurements for this database in the last " + range + "." }); return; }
-                    // Build validates buckets and values the same way the analytics page does; the backend already bounds buckets to the reporting window.
                     var regions = AnalyticsService.Build(selection, batch.Points).Totals.Regions;
                     if (cards.Any(card => card.Key == "latency" && card.Range == range))
                     {
@@ -245,7 +228,6 @@ namespace TerraScale.Dashboard.Features.Databases
                         foreach (var point in batch.Points.Where(sample => sample.Region.Equals(region.Code, StringComparison.OrdinalIgnoreCase)))
                         {
                             if (Measure(card.Key, point) is not { } value) { continue; } var index = (int)((point.Start.ToUniversalTime() - first).TotalSeconds / bucket);
-                            // Counters add up within a bucket; gauges (storage, p95) keep the highest observation and are never summed.
                             values[index] = missing[index] ? value : card.Key is "reads" or "writes" ? checked(values[index] + value) : Math.Max(values[index], value);
                             missing[index] = false;
                         }
@@ -272,7 +254,6 @@ namespace TerraScale.Dashboard.Features.Databases
             : AnalyticsLinePlot.For(card.Title + ", " + card.Range, card.Range, starts, series);
         }
 
-        // A returned counter bucket omits zero-valued operation keys; only nullable gauges represent missing observations.
         private static decimal? Measure(string key, AnalyticsPoint point)
         {
             return key switch

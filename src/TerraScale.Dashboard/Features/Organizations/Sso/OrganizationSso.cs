@@ -23,6 +23,8 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             return $"OIDC {Issuer} {ClientId} [REDACTED]";
         }
     }
+    public readonly union SsoUpdateInput(SsoUpdate, DashboardValidation);
+
     public sealed record OrganizationSsoView(SsoConnection? Connection, bool PlanIncludesSso, string Unavailable = "");
 
     [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -153,91 +155,59 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             return new(message, status == HttpStatusCode.BadRequest ? StatusCodes.Status422UnprocessableEntity : (int)status, code);
         }
 
-        public static Valid<SsoUpdate> Parse(IFormCollection form)
+        public static SsoUpdateInput Parse(IFormCollection form)
         {
-            Valid<string> Field(string name, int max = 2048) =>
-                form[name].ToString().Trim() is var trimmed && trimmed.Length <= max
-                    ? trimmed : new Validation("A single sign-on field is too long.", "unprocessable");
+            string? Field(string name, int max = 2048) =>
+                form[name].ToString().Trim() is var trimmed && trimmed.Length <= max ? trimmed : null;
 
-            static Valid<string> Https(string value, string label) =>
-                Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0
-                    ? value : new Validation(label + " must be an https:// URL.", "unprocessable");
+            static bool Https(string value) =>
+                Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0;
 
-            static Valid<string> Required(string value, string label) =>
-                value.Length > 0 ? value : new Validation("Enter the " + label + ".", "unprocessable");
-
-            string domain = "";
-            switch (Field("domain", 253))
+            var tooLong = new DashboardValidation("A single sign-on field is too long.");
+            if (Field("domain", 253) is not { } rawDomain)
             {
-                case Validation error:
-                    return error;
-                case string raw:
-                    domain = raw.ToLowerInvariant();
-                    break;
+                return tooLong;
             }
 
+            var domain = rawDomain.ToLowerInvariant();
             if (Uri.CheckHostName(domain) != UriHostNameType.Dns || !domain.Contains('.'))
             {
-                return new Validation("Enter the email domain, for example acme.com.", "unprocessable");
+                return new DashboardValidation("Enter the email domain, for example acme.com.");
             }
 
-            string role = "";
-            switch (Field("default_role"))
+            if (Field("default_role") is not { } role)
             {
-                case Validation error:
-                    return error;
-                case string raw:
-                    role = raw;
-                    break;
+                return tooLong;
             }
 
             if (role is not ("viewer" or "member" or "admin"))
             {
-                return new Validation("Choose a default role.", "unprocessable");
+                return new DashboardValidation("Choose a default role.");
             }
 
-            string issuer = "";
-            switch (Field("oidc_issuer"))
+            if (Field("oidc_issuer") is not { } issuer)
             {
-                case Validation error:
-                    return error;
-                case string raw:
-                    switch (Https(raw, "The issuer"))
-                    {
-                        case Validation error:
-                            return error;
-                        case string url:
-                            issuer = url;
-                            break;
-                    }
-                    break;
+                return tooLong;
             }
 
-            string clientId = "";
-            switch (Field("oidc_client_id"))
+            if (!Https(issuer))
             {
-                case Validation error:
-                    return error;
-                case string raw:
-                    switch (Required(raw, "client ID"))
-                    {
-                        case Validation error:
-                            return error;
-                        case string id:
-                            clientId = id;
-                            break;
-                    }
-                    break;
+                return new DashboardValidation("The issuer must be an https:// URL.");
             }
 
-            string secret = "";
-            switch (Field("oidc_client_secret", 1024))
+            if (Field("oidc_client_id") is not { } clientId)
             {
-                case Validation error:
-                    return error;
-                case string raw:
-                    secret = raw;
-                    break;
+                return tooLong;
+            }
+
+            if (clientId.Length == 0)
+            {
+                return new DashboardValidation("Enter the client ID.");
+            }
+
+            if (Field("oidc_client_secret", 1024) is not { } secret)
+            {
+                return tooLong;
             }
 
             return new SsoUpdate(domain, "oidc", role, new(issuer, clientId, secret is { Length: > 0 } text ? text : null));
@@ -273,18 +243,20 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                 }
                 else
                 {
-                    switch (OrganizationSsoService.Parse(form))
+                    var parsed = OrganizationSsoService.Parse(form);
+                    var invalid = parsed switch
                     {
-                        case Validation error:
-                            if (http.Request.IsDatastarRequest)
-                            {
-                                await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "sso");
-                                return TypedResults.Empty;
-                            }
-                            return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, 422, "sso");
-                        case SsoUpdate update:
-                            await sso.SaveAsync(context, update, http.RequestAborted);
-                            break;
+                        DashboardValidation error => error,
+                        SsoUpdate update => await SaveAsync(update),
+                    };
+                    if (invalid is not null)
+                    {
+                        if (http.Request.IsDatastarRequest)
+                        {
+                            await OrganizationEndpoints.PatchAsync(http, context, placement, invalid.Message, "sso");
+                            return TypedResults.Empty;
+                        }
+                        return await OrganizationEndpoints.PageAsync(http, context, placement, invalid.Message, 422, "sso");
                     }
                 }
 
@@ -313,6 +285,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                     return TypedResults.Empty;
                 }
                 return await OrganizationEndpoints.PageAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", 503, "sso");
+            }
+
+            async Task<DashboardValidation?> SaveAsync(SsoUpdate update)
+            {
+                await sso.SaveAsync(context, update, http.RequestAborted);
+                return null;
             }
         }
 

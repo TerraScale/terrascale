@@ -42,11 +42,12 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 ["name"] = name,
                 ["region"] = region
             });
-            var destination = await onboarding.SaveAsync(session, form, Cancellation) switch
+            var outcome = await onboarding.SaveAsync(session, form, Cancellation);
+            var destination = outcome switch
             {
                 string saved => saved,
-                Validation invalid => throw new AccountAccessException(invalid.Message, 422),
-                Forbidden refused => throw new AccountAccessException(refused.Message, 403)
+                DashboardValidation invalid => throw new AccountAccessException(invalid.Message, 422),
+                DashboardForbidden refused => throw new AccountAccessException(refused.Message, 403)
             };
             var account = (await accounts.GetContextAsync(session, Cancellation)).Account;
             return new(account.OnboardingCompleted, account.OnboardingCompleted ? "" : account.OnboardingStep,

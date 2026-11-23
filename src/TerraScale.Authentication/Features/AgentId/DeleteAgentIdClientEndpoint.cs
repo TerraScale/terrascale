@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -20,15 +19,15 @@ public sealed class DeleteAgentIdClientEndpoint(PlatformAuthentication authentic
         var proof = await proofs.PrepareHeaderAsync(owner, this.HttpContext.Request, "delete_oauth_client", null, cancellationToken);
         if (proof is null)
         {
-            return ErrorResults.ToResult(new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required"));
+            return ErrorResults.ToResult(new AuthForbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required"));
         }
 
         return await clients.DeleteAsync(proof, clientId, cancellationToken) switch
         {
-            Done => TypedResults.NoContent(),
-            NotFound notFound => ErrorResults.ToResult(notFound),
-            Conflict conflict => ErrorResults.ToResult(conflict),
-            Forbidden forbidden => ErrorResults.ToResult(forbidden),
+            AuthCompleted => TypedResults.NoContent(),
+            AuthNotFound notFound => ErrorResults.ToResult(notFound),
+            AuthConflict conflict => ErrorResults.ToResult(conflict),
+            AuthForbidden forbidden => ErrorResults.ToResult(forbidden),
         };
     }
 }

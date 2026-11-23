@@ -19,7 +19,7 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
     private bool _headerConsumed;
     private bool _finished;
 
-    public Result<List<SqlValue[]>, PgError> Feed(ReadOnlySpan<byte> data)
+    public PgCopyRowsResult Feed(ReadOnlySpan<byte> data)
     {
         if (_finished)
         {
@@ -30,7 +30,7 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
         return Drain(final: false);
     }
 
-    public Result<List<SqlValue[]>, PgError> Complete()
+    public PgCopyRowsResult Complete()
     {
         if (_finished || _start == _end)
         {
@@ -67,7 +67,7 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
         _end += data.Length;
     }
 
-    private Result<List<SqlValue[]>, PgError> Drain(bool final)
+    private PgCopyRowsResult Drain(bool final)
     {
         List<SqlValue[]> records = [];
         while (_start < _end && !_finished)
@@ -561,3 +561,5 @@ internal static class PgCopyWriter
         buffer.WriteUtf8(escaped.ToString());
     }
 }
+
+internal readonly union PgCopyRowsResult(List<SqlValue[]>, PgError);

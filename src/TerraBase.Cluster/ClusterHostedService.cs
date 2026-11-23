@@ -31,19 +31,19 @@ public sealed class ClusterHostedService(QuicRpcHost host, ClusterComponents com
             endpoint.Map(host);
         }
 
-        var started = await host.StartAsync(cancellationToken).ConfigureAwait(false);
+        var started = await host.StartAsync(cancellationToken);
         var failure = started switch
         {
             IPEndPoint bound => Bound(bound),
-            Unavailable unavailable => unavailable,
+            QuicUnavailable unavailable => unavailable,
         };
         if (failure is not null)
         {
             throw new InvalidOperationException(string.Concat("QUIC mesh failed to start: ", failure.Message));
         }
 
-        await components.Health.RegisterPeersAsync(cancellationToken).ConfigureAwait(false);
-        await components.Raft.StartAsync(cancellationToken).ConfigureAwait(false);
+        await components.Health.RegisterPeersAsync(cancellationToken);
+        await components.Raft.StartAsync(cancellationToken);
         var stopping = _stopping.Token;
         _loops =
         [
@@ -55,11 +55,11 @@ public sealed class ClusterHostedService(QuicRpcHost host, ClusterComponents com
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        await _stopping.CancelAsync().ConfigureAwait(false);
-        await Task.WhenAll(_loops).WaitAsync(cancellationToken).ConfigureAwait(false);
-        await components.Raft.DisposeAsync().ConfigureAwait(false);
-        await components.Replicator.DisposeAsync().ConfigureAwait(false);
-        await host.DisposeAsync().ConfigureAwait(false);
+        await _stopping.CancelAsync();
+        await Task.WhenAll(_loops).WaitAsync(cancellationToken);
+        await components.Raft.DisposeAsync();
+        await components.Replicator.DisposeAsync();
+        await host.DisposeAsync();
     }
 
     public ValueTask DisposeAsync()
@@ -68,7 +68,7 @@ public sealed class ClusterHostedService(QuicRpcHost host, ClusterComponents com
         return ValueTask.CompletedTask;
     }
 
-    private Unavailable? Bound(IPEndPoint bound)
+    private QuicUnavailable? Bound(IPEndPoint bound)
     {
         ClusterLog.MeshStarted(logger, host.NodeId, host.Region, bound);
         return null;
@@ -78,7 +78,7 @@ public sealed class ClusterHostedService(QuicRpcHost host, ClusterComponents com
     {
         try
         {
-            await loop.ConfigureAwait(false);
+            await loop;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

@@ -1,7 +1,15 @@
 namespace TerraScale.Platform.Features.FileStorage.Endpoints;
 
+public readonly union ListBucketFilesReply(
+    FileObjectPage,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class ListBucketFilesEndpoint(PlatformAccess access, FileStorageService files)
-    : Endpoint<ListBucketFilesRequest, Result<FileObjectPage, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<ListBucketFilesRequest, ListBucketFilesReply>
 {
     public override void Configure()
     {
@@ -13,23 +21,30 @@ public sealed class ListBucketFilesEndpoint(PlatformAccess access, FileStorageSe
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FileObjectPage, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(ListBucketFilesRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<ListBucketFilesReply> HandleAsync(ListBucketFilesRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Read, cancellationToken) switch
+        var outcome = await FileScopes.ResolveAsync(access, HttpContext, request.Project, Scopes.Read, cancellationToken);
+        return outcome switch
         {
-            FileScope scope => await files.ListFilesAsync(scope, request.Bucket, request.After, cancellationToken) switch
+            FileScope scope => await HandleAuthorizedAsync(scope),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<ListBucketFilesReply> HandleAuthorizedAsync(FileScope scope)
+        {
+            var operation = await files.ListFilesAsync(scope, request.Bucket, request.After, cancellationToken);
+            return operation switch
             {
                 FileObjectPage page => page,
-                Forbidden forbidden => forbidden,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformForbidden forbidden => forbidden,
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

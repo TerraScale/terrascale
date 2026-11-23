@@ -14,7 +14,6 @@ namespace TerraScale.Dashboard.Features.Data
 
     public static partial class SqlValidation
     {
-        // Each run is one TerraBase request, and every request is its own transaction.
         private static readonly HashSet<string> Transaction = ["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"];
 
         public static IReadOnlyList<SqlDiagnostic> Diagnostics(string statement)
@@ -35,7 +34,6 @@ namespace TerraScale.Dashboard.Features.Data
             return result;
         }
 
-        // Reads run with read access only; anything else (writes, DDL) needs write access, and TerraBase enforces the same split.
         public static bool IsRead(string statement)
         {
             if (Visible(statement) is not { } visible)
@@ -58,7 +56,6 @@ namespace TerraScale.Dashboard.Features.Data
             {
                 return false;
             }
-            // CTE column names may be write keywords. Find the command after the CTE bodies instead.
             var depth = 0;
             var body = false;
             foreach (Match token in CteTokenPattern().Matches(visible))
@@ -95,7 +92,6 @@ namespace TerraScale.Dashboard.Features.Data
             return false;
         }
 
-        // A cheap guard for stored text, not a parser: the first keyword must be an SQLite statement verb.
         public static bool StartsWithCommand(string statement)
         {
             return Visible(statement) is { } visible &&
@@ -195,7 +191,6 @@ namespace TerraScale.Dashboard.Features.Data
             return quote == '\0' ? new string(chars) : null;
         }
         [GeneratedRegex(@"[A-Za-z_][A-Za-z0-9_]*|[()]", RegexOptions.CultureInvariant)] private static partial Regex CteTokenPattern();
-        // Only known introspection forms qualify; assignments and unknown pragmas still need write access.
         [GeneratedRegex(@"\A\s*PRAGMA\s+(?:(?:main|temp)\s*\.\s*)?(?:(?:table_info|table_xinfo|index_list|index_info|foreign_key_list)\s*\([^()]*\)|read_uncommitted|foreign_keys)\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)] private static partial Regex ReadPragmaPattern();
         [GeneratedRegex("[A-Za-z_][A-Za-z0-9_]*", RegexOptions.CultureInvariant)] private static partial Regex WordPattern();
         [GeneratedRegex(@"\$[A-Za-z0-9_]+|\?[0-9]*|[:@][A-Za-z_][A-Za-z0-9_]*", RegexOptions.CultureInvariant)] private static partial Regex AnyParameterPattern();

@@ -2,6 +2,10 @@ using System.Threading.Channels;
 
 namespace TerraBase.Storage;
 
+internal sealed record TransactionStarted;
+
+internal readonly union TransactionStartOutcome(TransactionStarted, StorageBusy);
+
 internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId) : ISqlTransaction
 {
     private readonly Channel<Command> _commands = Channel.CreateUnbounded<Command>(new UnboundedChannelOptions { SingleReader = true });
@@ -13,7 +17,7 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
 
     public SqlTransactionOptions Options { get; } = options;
 
-    public TaskCompletionSource<Result<Done, StorageBusy>> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource<TransactionStartOutcome> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public bool IsAbandoned => Volatile.Read(ref _abandoned) != 0;
 
@@ -28,9 +32,9 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
         using var cancellation = new CancellationTokenSource();
         var ready = _commands.Reader.WaitToReadAsync(cancellation.Token).AsTask();
         var delay = Task.Delay(idleTimeout, time, cancellation.Token);
-        var winner = await Task.WhenAny(ready, delay).ConfigureAwait(false);
-        await cancellation.CancelAsync().ConfigureAwait(false);
-        if (winner == ready && await ready.ConfigureAwait(false) && _commands.Reader.TryRead(out var command))
+        var winner = await Task.WhenAny(ready, delay);
+        await cancellation.CancelAsync();
+        if (winner == ready && await ready && _commands.Reader.TryRead(out var command))
         {
             return command;
         }
@@ -39,67 +43,67 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
         return null;
     }
 
-    public async ValueTask<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
+    public async ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(statement);
-        var completion = new TaskCompletionSource<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<TransactionExecuteResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Volatile.Read(ref _finished) != 0 || !_commands.Writer.TryWrite(new ExecuteCommand(statement, Interlocked.Increment(ref _statements) - 1, completion, cancellationToken)))
         {
             return Expired();
         }
 
-        return await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await completion.Task.WaitAsync(cancellationToken);
     }
 
-    public async ValueTask<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> CommitLocalAsync(CancellationToken cancellationToken)
+    public async ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken)
     {
-        var completion = new TaskCompletionSource<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<TransactionCommitLocalResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.Exchange(ref _finished, 1) != 0 || !_commands.Writer.TryWrite(new CommitCommand(completion)))
         {
             return Expired();
         }
 
         _commands.Writer.TryComplete();
-        return await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await completion.Task.WaitAsync(cancellationToken);
     }
 
-    public async ValueTask<Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout>> StageAsync(CancellationToken cancellationToken)
+    public async ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken)
     {
-        var completion = new TaskCompletionSource<Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<TransactionStageResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.Exchange(ref _finished, 1) != 0 || !_commands.Writer.TryWrite(new StageCommand(completion)))
         {
             return Expired();
         }
 
         _commands.Writer.TryComplete();
-        return await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await completion.Task.WaitAsync(cancellationToken);
     }
 
-    public async ValueTask<Done> RollbackAsync(CancellationToken cancellationToken)
+    public async ValueTask RollbackAsync(CancellationToken cancellationToken)
     {
-        var completion = new TaskCompletionSource<Done>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.Exchange(ref _finished, 1) != 0 || !_commands.Writer.TryWrite(new RollbackCommand(completion)))
         {
-            return new Done();
+            return;
         }
 
         _commands.Writer.TryComplete();
-        return await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await completion.Task.WaitAsync(cancellationToken);
     }
 
-    public async ValueTask DisposeAsync() => _ = await RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+    public async ValueTask DisposeAsync() => await RollbackAsync(CancellationToken.None);
 
-    private static RequestTimeout Expired() => new("transaction has finished or expired");
+    private static StorageTimeout Expired() => new("transaction has finished or expired");
 
     internal closed record class Command;
 
-    internal sealed record class ExecuteCommand(SqlStatement Statement, int Index, TaskCompletionSource<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> Completion, CancellationToken CancellationToken) : Command;
+    internal sealed record class ExecuteCommand(SqlStatement Statement, int Index, TaskCompletionSource<TransactionExecuteResult> Completion, CancellationToken CancellationToken) : Command;
 
-    internal sealed record class CommitCommand(TaskCompletionSource<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> Completion) : Command;
+    internal sealed record class CommitCommand(TaskCompletionSource<TransactionCommitLocalResult> Completion) : Command;
 
-    internal sealed record class StageCommand(TaskCompletionSource<Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout>> Completion) : Command;
+    internal sealed record class StageCommand(TaskCompletionSource<TransactionStageResult> Completion) : Command;
 
-    internal sealed record class RollbackCommand(TaskCompletionSource<Done> Completion) : Command;
+    internal sealed record class RollbackCommand(TaskCompletionSource Completion) : Command;
 }
 
 internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection reader, SqlTransactionOptions options, Ulid txId) : ISqlTransaction
@@ -117,20 +121,21 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
 
     public List<SqlResultSet> Results { get; } = [];
 
-    public ValueTask<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
+    public ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(statement);
         cancellationToken.ThrowIfCancellationRequested();
-        Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout> outcome;
+        TransactionExecuteResult outcome;
         lock (_gate)
         {
             if (_finished)
             {
-                outcome = new RequestTimeout("transaction has finished");
+                outcome = new StorageTimeout("transaction has finished");
             }
             else
             {
-                outcome = DatabaseSession.ExecuteOnReader(reader, statement, _statements++, _info, ReadTables, limitResults: true, cancellationToken) switch
+                var executed = DatabaseSession.ExecuteOnReader(reader, statement, _statements++, _info, ReadTables, limitResults: true, cancellationToken);
+                outcome = executed switch
                 {
                     SqlResultSet result => Record(result),
                     SqlError error => error,
@@ -141,33 +146,33 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
         return ValueTask.FromResult(outcome);
     }
 
-    public ValueTask<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> CommitLocalAsync(CancellationToken cancellationToken)
+    public ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout> outcome = Finish("COMMIT;")
+        TransactionCommitLocalResult outcome = Finish("COMMIT;")
             ? session.NoOpCommit(Options.Mode)
-            : new RequestTimeout("transaction has finished");
+            : new StorageTimeout("transaction has finished");
         return ValueTask.FromResult(outcome);
     }
 
-    public ValueTask<Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout>> StageAsync(CancellationToken cancellationToken)
+    public ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Result<StagedWrite, SchemaMismatch, StorageBusy, RequestTimeout> outcome;
+        TransactionStageResult outcome;
         lock (_gate)
         {
-            outcome = _finished ? new RequestTimeout("transaction has finished") : session.StageRead(this);
+            outcome = _finished ? new StorageTimeout("transaction has finished") : session.StageRead(this);
         }
 
         _ = Finish("ROLLBACK;");
         return ValueTask.FromResult(outcome);
     }
 
-    public ValueTask<Done> RollbackAsync(CancellationToken cancellationToken)
+    public ValueTask RollbackAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _ = Finish("ROLLBACK;");
-        return ValueTask.FromResult(new Done());
+        return ValueTask.CompletedTask;
     }
 
     public ValueTask DisposeAsync()

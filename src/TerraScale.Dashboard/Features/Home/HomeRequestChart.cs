@@ -51,7 +51,6 @@ namespace TerraScale.Dashboard.Features.Home
             }).ToArray();
             var paths = names.Select((name, index) => new RequestPath(name, names.Length == 1 ? "ts-chart-series-1" : "ts-cat-" + (index % 3 + 1), index < 3 ? "" : 3 * (index / 3 + 1) + " 5",
                 ChartGeometry.Smooth([.. points.Select((point, i) => (X(i), Y(point.Requests.GetValueOrDefault(name))))]))).ToArray();
-            // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.
             var columnWidth = 660d / Math.Max(1, points.Count - 1);
             var columns = new List<RequestColumn>();
             for (var index = 0; index < points.Count; index++)

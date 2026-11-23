@@ -4,9 +4,12 @@ using System.Collections.Frozen;
 using System.Security.Cryptography;
 using System.Text.Json;
 using TerraBase.Configuration;
+using TerraBase.Hosting;
 using TerraScale.Contracts.ControlPlane;
 
 namespace TerraBase.Features.ControlPlane;
+
+internal readonly union SnapshotAcceptance(AcceptedSnapshot, InvalidInput, CredentialRejected, StateConflict, BackendUnavailable);
 
 internal sealed record AcceptedSnapshot(ControlSnapshot Snapshot, bool Changed);
 
@@ -33,35 +36,35 @@ internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider ti
 
     public IReadOnlyList<ControlRegion> Regions => Volatile.Read(ref _index).Snapshot?.Regions ?? [];
 
-    public Result<AcceptedSnapshot, Validation, Unauthorized, Conflict, Unavailable> Accept(ControlSnapshot snapshot, ReadOnlyMemory<byte> body)
+    public SnapshotAcceptance Accept(ControlSnapshot snapshot, ReadOnlyMemory<byte> body)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (options.ControlSnapshotKey is not { } key)
         {
-            return new Unavailable("TERRABASE_CONTROL_KEY_FILE is not configured; control snapshots cannot be verified", "control_key_missing");
+            return new BackendUnavailable("TERRABASE_CONTROL_KEY_FILE is not configured; control snapshots cannot be verified", "control_key_missing");
         }
 
         if (snapshot.Version <= 0 || snapshot.Organizations is null || snapshot.Projects is null || snapshot.Databases is null
             || snapshot.ApiKeys is null || snapshot.Regions is null)
         {
-            return new Validation("the control snapshot is incomplete", "invalid_snapshot");
+            return new InvalidInput("the control snapshot is incomplete", "invalid_snapshot");
         }
 
         if (snapshot.IssuedAtUtc - time.GetUtcNow() > MaxSkew)
         {
-            return new Validation("the control snapshot is issued in the future", "invalid_snapshot");
+            return new InvalidInput("the control snapshot is issued in the future", "invalid_snapshot");
         }
 
         if (!Verify(key, snapshot.Signature, body.Span))
         {
-            return new Unauthorized("the control snapshot signature does not verify", "invalid_signature");
+            return new CredentialRejected("the control snapshot signature does not verify", "invalid_signature");
         }
 
         lock (_gate)
         {
             if (_index.Snapshot is { } current && current.Version > snapshot.Version)
             {
-                return new Conflict("a newer control snapshot is already applied", "stale_snapshot");
+                return new StateConflict("a newer control snapshot is already applied", "stale_snapshot");
             }
 
             var changed = _index.Snapshot?.Version != snapshot.Version;

@@ -1,7 +1,15 @@
 namespace TerraScale.Platform.Features.Functions.Endpoints;
 
+public readonly union ListFunctionSecretsReply(
+    FunctionSecretList,
+    PlatformInvalidRequest,
+    PlatformUnauthorized,
+    PlatformForbidden,
+    PlatformNotFound,
+    PlatformUnavailable);
+
 public sealed class ListFunctionSecretsEndpoint(PlatformAccess access, FunctionService functions)
-    : Endpoint<FunctionRequest, Result<FunctionSecretList, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<FunctionRequest, ListFunctionSecretsReply>
 {
     public override void Configure()
     {
@@ -13,24 +21,31 @@ public sealed class ListFunctionSecretsEndpoint(PlatformAccess access, FunctionS
         AllowAnonymous();
     }
 
-    public override async ValueTask<Result<FunctionSecretList, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<ListFunctionSecretsReply> HandleAsync(
         FunctionRequest request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken) switch
+        var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, request.Project, request.Database, request.Function, Scopes.ReadWrite, cancellationToken);
+        return outcome switch
         {
-            FunctionTarget target => await functions.ListSecretsAsync(target, request.Function, cancellationToken) switch
+            FunctionTarget target => await HandleAuthorizedAsync(target),
+            PlatformInvalidRequest invalid => invalid,
+            PlatformUnauthorized unauthorized => unauthorized,
+            PlatformForbidden forbidden => forbidden,
+            PlatformNotFound missing => missing,
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<ListFunctionSecretsReply> HandleAuthorizedAsync(FunctionTarget target)
+        {
+            var operation = await functions.ListSecretsAsync(target, request.Function, cancellationToken);
+            return operation switch
             {
                 FunctionSecretList secrets => secrets,
-                NotFound missing => missing,
-                Unavailable unavailable => unavailable,
-            },
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+                PlatformNotFound missing => missing,
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
     }
 }

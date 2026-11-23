@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
 
@@ -22,21 +21,21 @@ public sealed class PasskeyRenameEndpoint(PasskeyCredentials passkeys, PlatformA
         var body = await this.BodyAsync(WebAuthnJson.Default.PasskeyRenameRequest, cancellationToken);
         if (body.Name is not { Length: > 0 and <= 64 })
         {
-            return ErrorResults.ToResult(new Validation("The passkey name must be 1 to 64 characters."));
+            return ErrorResults.ToResult(new AuthValidation("The passkey name must be 1 to 64 characters."));
         }
 
         if (this.HttpContext.GetRouteValue("id") is not (string id and { Length: > 0 and <= 1024 }))
         {
-            return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
+            return ErrorResults.ToResult(new AuthNotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
         }
 
         return await passkeys.RenameAsync(caller, id, body.Name, cancellationToken) switch
         {
             PasskeyCredentialEntry entry => TypedResults.Json(new PasskeyItemBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt, entry.LastUsedAt),
                 WebAuthnJson.Default.PasskeyItemBody),
-            Forbidden error => ErrorResults.ToResult(error),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            AuthForbidden error => ErrorResults.ToResult(error),
+            AuthNotFound error => ErrorResults.ToResult(error),
+            AuthConflict error => ErrorResults.ToResult(error),
         };
     }
 }

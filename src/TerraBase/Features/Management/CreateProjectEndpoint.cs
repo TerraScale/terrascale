@@ -5,8 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+internal readonly union CreateProjectResponse(Created<ProjectBody>, InvalidInput, CredentialRejected, ResourceNotFound, StateConflict, BackendUnavailable);
+
 internal sealed class CreateProjectEndpoint(ManagementService management, CatalogStore catalog, TimeProvider time)
-    : Endpoint<NameInput, Result<Created<ProjectBody>, Validation, Unauthorized, NotFound, Conflict, Unavailable>>
+    : Endpoint<NameInput, CreateProjectResponse>
 {
     public override void Configure()
     {
@@ -18,25 +20,26 @@ internal sealed class CreateProjectEndpoint(ManagementService management, Catalo
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<Result<Created<ProjectBody>, Validation, Unauthorized, NotFound, Conflict, Unavailable>> HandleAsync(
+    public override async ValueTask<CreateProjectResponse> HandleAsync(
         NameInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken) switch
+        var outcome = await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken);
+        return outcome switch
         {
             OrganizationRecord organization => ManagementService.DisplayName(request.Name) switch
             {
                 string name => await catalog.CreateProjectAsync(new ProjectRecord(Ulid.NewUlid(time.GetUtcNow()), organization.Id, name, time.GetUtcNow(), null), cancellationToken) switch
                 {
                     ProjectRecord project => new Created<ProjectBody>(string.Concat("/v1/projects/", project.Id.ToString()), ProjectBody.From(project)),
-                    Conflict conflict => conflict,
-                    Unavailable unavailable => unavailable,
+                    StateConflict conflict => conflict,
+                    BackendUnavailable unavailable => unavailable,
                 },
-                Validation invalid => invalid,
+                InvalidInput invalid => invalid,
             },
-            Unauthorized unauthorized => unauthorized,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
+            CredentialRejected unauthorized => unauthorized,
+            ResourceNotFound missing => missing,
+            BackendUnavailable unavailable => unavailable,
         };
     }
 }

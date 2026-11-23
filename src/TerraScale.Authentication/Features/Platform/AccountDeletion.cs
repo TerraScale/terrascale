@@ -1,16 +1,17 @@
 using Dapper;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Storage;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-public readonly union DeletionStatusResult(bool, NotFound, Conflict);
+public readonly union DeletionStatusResult(bool, AuthNotFound, AuthConflict);
 
-public readonly union DeletionHistoryResult(AccountDeletionHistory, NotFound, Conflict);
+public readonly union DeletionHistoryResult(AccountDeletionHistory, AuthNotFound, AuthConflict);
+
+public readonly union DeletionReceiptLookup(AccountDeletionReceipt, AuthNotFound);
 
 public sealed class AccountDeletion(
     PlatformDirectory platform,
@@ -94,7 +95,7 @@ public sealed class AccountDeletion(
     public async Task<DeletionStatusResult> StatusAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken) =>
         await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken) switch
         {
-            NotFound failure => failure,
+            AuthNotFound failure => failure,
             AccountDeletionReceipt found => await this.StatusAsync(found, organizationId, cancellationToken),
         };
 
@@ -126,14 +127,14 @@ public sealed class AccountDeletion(
         {
             true => await this.HistoryOfAsync(receiptHash, organizationId, cancellationToken),
             false => PlatformDirectory.NotFoundFailure(),
-            NotFound failure => failure,
-            Conflict failure => failure,
+            AuthNotFound failure => failure,
+            AuthConflict failure => failure,
         };
 
     private async Task<DeletionHistoryResult> HistoryOfAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken) =>
         await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken) switch
         {
-            NotFound failure => failure,
+            AuthNotFound failure => failure,
             AccountDeletionReceipt found => await this.HistoryOfAsync(found, organizationId, cancellationToken),
         };
 
@@ -149,9 +150,9 @@ public sealed class AccountDeletion(
                 : PlatformDirectory.NotFoundFailure();
     }
 
-    private static Conflict DeletionRefused() => new("No completion proof exists for this closure generation.", "deletion_refused");
+    private static AuthConflict DeletionRefused() => new("No completion proof exists for this closure generation.", "deletion_refused");
 
-    private async Task<Found<AccountDeletionReceipt>> ReadReceiptAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
+    private async Task<DeletionReceiptLookup> ReadReceiptAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
     {
         var platform = PlatformDirectory.Instance;
         var receipt = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AccountDeletionReceipt>(

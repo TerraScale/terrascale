@@ -5,12 +5,9 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // Operator commands sign in with ts-auth's device authorization grant (RFC 8628)
-    // as its public CLI client. The user approves on ts-auth's hosted verification page;
-    // the grant lives only in the command's memory and is revoked when it finishes.
     public sealed partial class TsAuthGateway
     {
-        private const string CliClient = "00000000000000000000000007"; // ts-auth's built-in ts-cli client
+        private const string CliClient = "00000000000000000000000007";
         private const string DeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code";
 
         public async Task<SessionRecord> DeviceSignInAsync(TextWriter output, CancellationToken cancellationToken)
@@ -69,7 +66,6 @@ namespace TerraScale.Dashboard.Features.Auth
             { throw new DeviceSignInException("CLI authorization expired. Start the command again."); }
         }
 
-        // Rotates the CLI grant so platform authority is re-read from a freshly minted access token.
         public async Task<SessionRecord> DeviceRefreshAsync(SessionRecord session, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(session.RefreshToken))
@@ -105,7 +101,6 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             var refresh = tokens.TryGetProperty("refresh_token", out var refreshValue) ? refreshValue.GetString() : null;
-            // The same userinfo check every browser session passes binds the token to one verified identity.
             var user = await UserInfoAsync(Client(), access, cancellationToken);
             var email = user.Email?.Trim().ToLowerInvariant() ?? "";
             if (string.IsNullOrWhiteSpace(user.Subject) || user.EmailVerified != true || email.Length is 0 or > 254 ||

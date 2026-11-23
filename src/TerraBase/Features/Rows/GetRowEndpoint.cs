@@ -24,7 +24,7 @@ internal sealed class GetRowEndpoint(RowsService rows) : Endpoint<RowInput, RowR
         {
             long key => RowsResponses.Single(await rows.RunAsync(HttpContext.Caller, request.Project, request.Database,
                 [new RowCommand(RowAction.Read, request.Table, key, request.Row)], batch: false, cancellationToken)),
-            Validation invalid => invalid,
+            InvalidInput invalid => invalid,
         };
     }
 }
