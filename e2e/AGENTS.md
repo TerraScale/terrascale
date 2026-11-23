@@ -283,11 +283,12 @@ never for a pull request: once after the last release of each commit (the rule i
 - refuses to run when an `E2E_*`, `TERRASCALE_*`, `PW_*`, `PLAYWRIGHT_*`, `NODE_EXTRA_CA_CERTS`, `NODE_OPTIONS`,
   `NODE_TLS_REJECT_UNAUTHORIZED`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE` or proxy variable is set, or when a
   `*.terrascale.tech` name of `env/hostnames` resolves to a loopback address (the namespace of `local.sh`); it sets
-  `E2E_TARGET=production`, the state (`.state/production`, emptied first), the runners (`.state/sdk`) and the system
-  CA bundle itself;
+  `E2E_TARGET=production`, the state (`.state/production`), the runners (`.state/sdk`) and the system CA bundle
+  itself. Linux `flock` takes exclusive ownership before clearing per-run files or reports. Active cooldowns and
+  slot claims survive ownership changes. A competing invocation refuses before modifying them;
 - asks mail.tm for an active domain before the first request to production ("inbox provider … production was not
   contacted" when it cannot), records both `/readyz` answers in `production-report/readyz.txt`, runs the projects of
-  both pull-request shards but the paid flow (179 tests), and records both answers again after the suite. A new
+  both browser shards except the paid flow, runs the account cleanup separately, and records both answers again. A new
   project runs against production only once it is added there; `paid`, `paid-invitation` and `paid-finish` stay
   local because they pay through the Stripe stand-in.
 
@@ -302,62 +303,31 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   specs and SDK preparation in Playwright workers, use `support/inbox-provider.ts` and the same state directory.
   Language runners receive the prepared user; they do not poll mail themselves.
   The scheduler atomically claims shared `inbox-requests` slots 7 s apart, with account creations only every tenth
-  slot (70 s apart). Other requests claim the remaining slots, so a list or body read cannot take an account slot,
-  and the total stays one request per 7 s. A worker that wakes after its slot has ended claims another slot before
-  sending. Each request and response logs its UTC dispatch time, slot, process, spec, worker and response rate
-  headers, without credentials. Preflight uses the same scheduler and logs its source instead of a spec and worker.
-  A 429 publishes one shared cooldown for every request as soon as its headers arrive, before the body is read.
-  `RateLimit-Policy` supplies a window, not a partition, so it does not keep other routes moving. `Retry-After`
+  slot (70 s apart). Those slots are reserved for account creations. A worker that wakes after its slot has ended
+  claims another slot before sending. Each request
+  and response logs its UTC dispatch time, slot, process, spec, worker and response rate headers, without credentials.
+  Preflight uses the same scheduler and logs its source instead of a spec and worker.
+  A 429 publishes a cooldown in `inbox-cooldowns` for every process; workers recheck it after waking. `Retry-After`
   (seconds or HTTP date) and `RateLimit-Reset` (relative seconds, epoch seconds or HTTP date) determine the earliest
   next request. With neither, the response's `RateLimit-Policy` window applies, with a 60-s minimum. Requests continue
   only while a scheduled slot fits inside the original mail deadline; non-poll requests have a 120-s response budget
   after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget, and a response
-  body that stalls or cannot be read fails with the same "inbox provider" error. Account slots stay 70 s apart
-  and every other request stays on the remaining 7 s slots. The admitted mailbox workload is those 50 creates:
-  41 at that cadence, then the finish chain. The chain is the member signup (account, one occupied non-account
-  slot, the token, and the full 120 s poll), the .NET SDK signup only after that poll, three serial account creates
-  with tokens and no poll, then the Go, Python, JavaScript and Rust signups, each with an occupied slot and a full
-  poll. Every start phase from 0 through 69,999 ms is funded by the same allocator. The longest is phase 69,999:
-  the first account waits 69,999 ms, the member poll ends at 3,102,999 ms, the .NET account starts at 3,149,999 ms,
-  the Rust token is at 4,227,999 ms and its poll ends at 4,362,999 ms. A further 60 s retry of that token needs
-  4,425,999 ms and is refused before that poll starts. A request that cannot get a slot before the admitted deadline
-  fails with "has no slot before the run's time limit".
+  body that stalls or cannot be read fails with the same "inbox provider" error. The shell writes an absolute
+  deadline before each phase. The allocator and Playwright use the same deadline. A missing or invalid deadline,
+  infrastructure cutoff, or retry clipped by the shared deadline is marked `[production-envelope]`, so quarantine
+  cannot clear that failure.
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
   Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
-  Playwright's suite limit starts when Playwright starts. The envelope file written at that moment is the admitted
-  deadline for the phase the clock is in, and a missing file fails the call. Time before the first mailbox call spends
-  the mailbox window. The suite invocation then adds the finish work between the last poll and account deletion: one
-  ordinary 180 s test limit for the SDK calls that continue after that poll, four database-deletion tests and five
-  SDK group B tests at that same limit (1,800,000 ms). Account deletion is a second invocation limited to 5 minutes.
-  The suite invocation's limit is 6,162,999 ms. Preflight has its own limits: the first claim within 14 s and the
-  whole preflight within 134 s, including a standalone run. After the claim sleep, a wake later than the cutoff drops
-  the slot and does not send, even while that slot's window is still open. A `Retry-After` is recorded and is not
-  waited out past the deadline. A second run cannot take the state directory from a live owner, and a dead owner's
-  cooldown that is still in the future is kept. The journey step also holds two 15 s shell starts, a 65 s quarantine
-  lookup (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, and the readiness calls.
-  With the mailbox window, the SDK phase and the cleanup invocation those sum to 6,946,999 ms, so the step limit is
-  116 minutes. The job limit is 162 minutes: 2 for the one checkout, 2 to read that tree's budget, 2 for each of the
-  three tool actions, 15 for the install step, the 116-minute journey step, 5 for scrub, 2 for each of the two uploads,
-  2 for runner setup, 2 for runner completion, and 2 for each of the four post actions. The workflow checks out only
-  that SHA. The alert names it as the suite only when the release job selected it. A schedule or manual run does not
-  invent a release. A release-triggered run prints a deploy revision only after the deploy-revision artifact has been
-  read, and a TerraBase release only when the release-only job's pinned-digest step succeeded for that workflow head.
-  Missing evidence is printed as not identified. To dispatch this workflow for an older live deployment, record the
-  serving digest of terrabase (`ghcr.io/terrascale/terrabase`), ts-auth (`ghcr.io/terrascale/ts-auth`) and the dashboard
-  (`ghcr.io/terrascale/terrascale-dashboard`) in each declared region (us-sanjose-1, eu-frankfurt-1 and sa-saopaulo-1).
-  Verify each digest with `gh attestation verify` for owner TerraScale, source ref `refs/heads/main`, and source digest
-  equal to the exact dispatch SHA. TerraBase and ts-auth are signed by `.github/workflows/ci.yml`; the dashboard is
-  signed by `.github/workflows/images-ghcr.yml`. TerraBase `/readyz` publishes the display version and drops the
-  revision suffix, so it is not that comparison. All three services have to match in every declared region before
-  dispatching. Scrub, the
-  report, the uploads and the alert read this one checkout. On GitHub Actions the seven `PRODUCTION_*_MINUTES` values
-  are required before DNS, mail.tm or production. Each must be a positive safe integer.
-  `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set still runs. The public
-  service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Account creates stay at 70 s.
+  The suite envelope is 307 minutes. It includes two minutes for launch, 50 serial account and token pairs
+  (70 s and 14 s for slot alignment, 15 s per response), 60 s per signup before polling, 60 full 120 s polls
+  (one per account plus ten extra), ten minutes of shared retry allowance, and 30 minutes for SDK and finish work.
+  It charges serial time even
+  when workers overlap. Preflight has three minutes and account cleanup has seven. The 325-minute workflow step
+  also covers the bounded quarantine lookup, DNS checks, readiness sweeps and process termination.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
@@ -372,9 +342,10 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 - The browser may reach only the `*.terrascale.tech` names of `env/hostnames`, never Stripe, Cloudflare or the SMTP
   host, with a fresh home and no extra CA.
 - Evidence: no trace, video or screenshot. The run writes `production-report/list.txt` (everything it printed, with
-  the list reporter), `report.json` (JSON reporter) and `readyz.txt`; each audited page adds a `url` annotation and
-  the SDK runners print their output. The suite invocation ends at 6,162,999 ms and the cleanup invocation at 5 minutes
-  (`globalTimeout`, both under the 116-minute step), so a slow run still writes `report.json`. A timeout or a cancel signals only the step's shell, so the
+  the list reporter), `report.json` for the suite, `cleanup.json` for cleanup, `phases.txt` for their separate exit
+  codes and `readyz.txt`. Each audited page adds a `url` annotation and the SDK runners print their output. The
+  cleanup phase still runs if the suite fails and the suite exit code takes precedence. Playwright ends each phase
+  at its deadline so it can write its report. A timeout or a cancel signals only the step's shell, so the
   scrub step first kills every process that carries the job's `RUNNER_TRACKING_ID` (the runner marks with it all a
   job starts, and kills them itself only when the job ends) and every process those started (Chromium overwrites its
   environment), until none is left; then `env/scrub.py` redacts the files, and they upload only when that step
@@ -385,11 +356,38 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 The workflow fetches only `uv` of the pinned tools (`env/tools.sh uv`): production starts no Caddy, no Mailpit and no
 branch action. `env/local.sh` refuses to run when `E2E_TARGET` is set, before it builds anything.
 
+For a manual run against an older deployment, record the fleet-ready digest for TerraBase, ts-auth and the
+dashboard in `us-sanjose-1`, `eu-frankfurt-1` and `sa-saopaulo-1` using the regional rollout observations in
+`docs/dev/ocir-publication.md`. Verify each digest's build provenance with `gh attestation verify` for
+`--repo TerraScale/terrascale --source-ref refs/heads/main`. Use signer workflow
+`TerraScale/terrascale/.github/workflows/ci.yml` for TerraBase and ts-auth and
+`TerraScale/terrascale/.github/workflows/images-ghcr.yml` for dashboard, with `--bundle-from-oci` on the
+digest-pinned OCI reference. Record the `sourceRepositoryDigest` from the verified certificate, independently for
+each image. Use that digest as `signed_source` in the input comparison. The TerraBase readiness display version
+is insufficient to establish this commit.
+
+Choose the exact current `origin/main` SHA as `dispatch_sha`. For each verified regional image, run this
+conservative harness-only check from the repository root. It compares a superset of that service's app, SDK,
+build and rollout inputs. Differences anywhere outside the harness require separate input evidence before dispatch.
+
+```bash
+git merge-base --is-ancestor "$signed_source" "$dispatch_sha" &&
+git diff --quiet "$signed_source" "$dispatch_sha" -- . \
+  ':(exclude)e2e/' ':(exclude).github/workflows/production-journey.yml'
+```
+
+After all images pass, dispatch with `gh workflow run production-journey.yml --ref main -f suite_sha="$dispatch_sha"`.
+The workflow refuses if main moved after verification. It runs the exact dispatch tree. Release-triggered runs
+still use their verified receipt or TerraBase release source, and the issue records that evidence separately
+from the chosen suite commit.
+The workflow retains the established minimum step and job reservations for release checkouts that validate those
+environment values at startup. The current shell records its actual phase budgets in `list.txt`.
+
 A failed run opens the `Production journey failure` issue (found by its exact title in the REST list of open issues)
 with the run link, the trigger and suite commit, both `/readyz` versions, one `Cause:` line when the run knows it
 ("inbox provider" when mail.tm failed first, "not ready" when a `/readyz` failed, "no report" when the run stopped
 before or during the suite, or the suite's own error such as its global timeout), every failed test by name and the first ten with their page and error
-(from `report.json`), or the last lines it printed when there is no `report.json`; the text stops under GitHub's
+(from both JSON reports), or the last lines it printed when neither report exists; the text stops under GitHub's
 65,536 characters. While the issue is open, a failed run replaces its body and comments only when the failed tests
 or the cause changed, naming the tests newly failing and fixed. The next green run closes it. A run during which a
 `/readyz` version changed, because a newer release rolled out under it, neither opens, updates nor closes the issue:
@@ -418,9 +416,9 @@ tests of `pages-mobile`, `hosted`, `interactions` and `invitation` share six wor
 order `playwright.config.ts` lists the projects, so in practice the flows start once every page test has started;
 nothing enforces that order and no test depends on it. The organization audit is read through the tab's own Action
 filter, and its second page is a state of its own (the phone owner's organization holds 12 audit events before
-`finish`; the two pages show 20). `finish`, the teardown of `setup`, starts when all four have ended. The suite
-invocation runs SDK group A, the database deletion through the UI and SDK group B. The rename and the account
-deletion run in a second invocation with its own 5 minute limit. A teardown whose setup failed fails once with "setup did not finish" and runs nothing else.
+`finish`; the two pages show 20). `finish`, the teardown of `setup`, starts when all four have ended and runs its
+tests in order in one worker: SDK group A, the database deletion through the UI, SDK group B, a rename and the account
+deletion. A teardown whose setup failed fails once with "setup did not finish" and runs nothing else.
 
 `interactions/files.spec.ts` (the phone owner, local stack only) creates a bucket, uploads through the upload zone,
 downloads the same bytes, deletes the file and deletes the bucket in the next click: TerraBase erases a bucket's

@@ -8,7 +8,7 @@ The required `native` job still gates `test`. Native maintenance is an explicit
 One maintenance dispatch runs two independent clean builds per real architecture
 and compares their library bytes before preparing an artifact for parent publication; they do not publish images or upload a release.
 
-Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104) (run https://github.com/TerraScale/terrascale/actions/runs/41855905197). Its Turso libraries are rebuilt from the same inputs as `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104` (run https://github.com/TerraScale/terrascale/actions/runs/41767214589): patches 0001-0006 of the 2026-10-29 build (the WAL revision contract, [2026-10-29-wal-revision.md](2026-10-29-wal-revision.md); the interrupt, query timeout and value length exports, patch 0005; the sync client's own CDC table, patch 0006), sync engine local encryption, patch 0007 ([2026-11-03-sync-local-encryption.md](2026-11-03-sync-local-encryption.md)), and the upstream Turso 26dbb464 backport, patch 0008, which keeps a correct CDC before image for UPSERT in `full` mode. It adds TerraBase's SQL router parser, `libterrascale_sql_parser.so` (crate `sql/`, header `sql/ts_sql.h`, exports `ts_sql_abi_version`, `ts_sql_next` and `ts_sql_free`), published as `terrascale-sql-parser-<rid>.so` with its smoke, exports, Cargo.lock, compiler and license receipts prefixed `sql-parser-<rid>-`. The parser builds from the same pinned Turso archive with `sql/parser-limits.patch` (`scripts/vendor/Dockerfile.router-parser`); each build checks its ELF machine and runs `scripts/vendor/router-parser-smoke.c`. The download installs it next to `libturso_sdk_kit.so` in `runtimes/<rid>/native/`; managed builds copy it beside the app and single-file publishes bundle it as a native library. The earlier releases stay immutable.
+Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-sqlparser1-20261104) (run https://github.com/TerraScale/terrascale/actions/runs/41855905197). Its Turso libraries are rebuilt from the same inputs as `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-localenc1-upsertcdc1-20261104` (run https://github.com/TerraScale/terrascale/actions/runs/41767214589): patches 0001-0006 of the 2026-10-29 build (the WAL revision contract, [2026-10-29-wal-revision.md](2026-10-29-wal-revision.md); the interrupt, query timeout and value length exports, patch 0005; the sync client's own CDC table, patch 0006), sync engine local encryption, patch 0007 ([2026-11-03-sync-local-encryption.md](2026-11-03-sync-local-encryption.md)), and the upstream Turso 26dbb464 backport, patch 0008, which keeps a correct CDC before image for UPSERT in `full` mode. It adds TerraBase's SQL router parser, `libterrascale_sql_parser.so` (crate `sql/`, header `sql/ts_sql.h`, exports `ts_sql_abi_version`, `ts_sql_next` and `ts_sql_free`), published as `terrascale-sql-parser-<rid>.so` with its smoke, exports, Cargo.lock, compiler and license receipts prefixed `sql-parser-<rid>-`. The parser builds from the same pinned Turso archive with `sql/parser-limits.patch` (`src/vendor/Turso.Native/scripts/Dockerfile.router-parser`); each build checks its ELF machine and runs `src/vendor/Turso.Native/scripts/router-parser-smoke.c`. The download installs it next to `libturso_sdk_kit.so` in `runtimes/<rid>/native/`; managed builds copy it beside the app and single-file publishes bundle it as a native library. The earlier releases stay immutable.
 `SHA256SUMS` pins the four qualified libraries (Turso and SQL parser per architecture); downloads and managed builds reject
 missing or mismatched bytes. Never replace or append assets to encryption-only
 `turso-native-v1` or overwrite the combined release.
@@ -27,7 +27,7 @@ library. The historical pure-Rust/softaes release remains immutable.
 - Exact contract1 patch from PR464 head
   `042020beeb0b27b62c2d8e8e77985a52c457589b`, SHA-256
   `eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae`,
-  followed by the reviewed `scripts/vendor/turso-native-budget.patch`.
+  followed by the reviewed `src/vendor/Turso.Native/scripts/turso-native-budget.patch`.
   The build checks the contract patch hash before applying it.
 - `0002-select-runtime-aegis-c-backend.patch` changes sync/sdk-kit's SDK dependency
   to an explicit path with `default-features = false` and `features = ["encryption",
@@ -189,9 +189,9 @@ tag and reviewed pins; the published tag above is immutable.
    library lies beside the single file. No NuGet fallback exists.
 
 For an admitted native dev-host build, the same helper accepts
-`nice -n 19 scripts/vendor/build-turso-native.sh amd64 artifacts/native-x64`
+`nice -n 19 src/vendor/Turso.Native/scripts/build-turso-native.sh amd64 artifacts/native-x64`
 or `arm64` on a real arm64 host. Parent alone coordinates heavy jobs.
-Assembly is `scripts/vendor/prepare-turso-native-release.sh <x64-output>
+Assembly is `src/vendor/Turso.Native/scripts/prepare-turso-native-release.sh <x64-output>
 <arm64-output> <empty-release-directory>`; inputs must pass manifests and both
 smokes, with identical shared source/patch receipts.
 

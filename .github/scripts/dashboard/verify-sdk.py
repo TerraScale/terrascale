@@ -1,0 +1,34 @@
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[3]
+project = ET.parse(root / "src/TerraScale.Dashboard/TerraScale.Dashboard.csproj")
+references = {item.get("Include") for item in project.findall(".//ProjectReference")}
+assert references == {"../TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj",
+                      "../TerraScale.Endpoints/TerraScale.Endpoints.csproj",
+                      "../../sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj"}, \
+    "The dashboard references the shared TerraBase contracts, endpoint infrastructure and the TerraBase EF Core provider"
+assert not project.findall('.//PackageReference[@Include="TerraScale.DotNet"]'), "The dashboard takes the SDK through the EF Core provider project"
+sdk = ET.parse(root / "sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj")
+assert sdk.findtext(".//PackageId") == "TerraScale.DotNet", "The official SDK package identity stays unchanged"
+assert ET.parse(root / "Directory.Build.props").findtext(".//TargetFramework") == "net11.0"
+solution = ET.parse(root / "TerraScale.slnx")
+solution_projects = {item.get("Path") for item in solution.iter("Project")}
+expected = {
+    "sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj",
+    "sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj",
+    "src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj",
+    "src/TerraScale.Dashboard/TerraScale.Dashboard.csproj",
+    "src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj",
+    "src/TerraScale.Endpoints/TerraScale.Endpoints.csproj",
+    "src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj",
+    "src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj",
+}
+assert expected <= solution_projects, "TerraScale.slnx must include the dashboard build closure"
+sources = {path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
+           for path in (root / "src/TerraScale.Dashboard").rglob("*.cs") if not {"bin", "obj"} & set(path.parts)}
+assert sorted(name for name, text in sources.items() if ".ExecuteSqlAsync(" in text) == ["src/TerraScale.Dashboard/Common/Databases/DatabaseBackend.cs"], \
+    "Only customer SQL goes over MagicOnion; dashboard state never does"
+assert sorted(name for name, text in sources.items() if "UseTerraBase(" in text) == ["src/TerraScale.Dashboard/Platform/Persistence/DashboardStorage.cs"], \
+    "DashboardStorage registers the one DashboardDbContext over the dashboard's TerraBase database"
+print("PASS: dashboard stores state through the TerraBase EF Core provider on .NET 11")

@@ -20,10 +20,9 @@ jobs:
       head_sha: ${{ inputs.head_sha || github.sha }}
       deny_paths: |
         .github/**
-        scripts/ci/**
         ops/**
-        aspire/**
         e2e/**
+        src/TerraScale.Aspire/**
         src/TerraBase/**
         src/TerraBase.*/**
         src/TerraScale.Authentication*/**

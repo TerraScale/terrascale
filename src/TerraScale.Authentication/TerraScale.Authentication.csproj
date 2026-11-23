@@ -19,7 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="../TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj" />
     <ProjectReference Include="../TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj" />
-    <ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
     <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
   </ItemGroup>
 

@@ -28,7 +28,7 @@ After a docs PR merges to `main`, the `deploy-docs` job of the `Sites` workflow
 tip of `main`, builds it and publishes it through Cloudflare Workers with
 `npm run deploy:site`; a manual `Sites` dispatch on `main` does the same. The job
 then proves from Cloudflare's records that the version it created serves 100% of
-`ts-docs` and carries that commit as its message (`scripts/ci/prove-worker-deploy.mjs`
+`ts-docs` and carries that commit as its message (`.github/scripts/ci/prove-worker-deploy.mjs`
 at the monorepo root). The build fails when a page of the public page list in
 `scripts/check-public.mjs` is missing. Publication uses the scoped
 `CLOUDFLARE_API_TOKEN` Actions secret and `CLOUDFLARE_ACCOUNT_ID` variable.

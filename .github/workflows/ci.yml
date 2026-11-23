@@ -41,9 +41,6 @@ permissions:
 
 env:
   OCIR_NAMESPACE: ${{ vars.OCIR_NAMESPACE }}
-  # SDK source belongs to the same checked revision as its consumers.
-  TS_DOTNET_DIR: sdk/dotnet
-  TsDotnetRoot: ${{ github.workspace }}/terrascale/sdk/dotnet
   TERRABASE_REVISION: ${{ github.sha }}
   TS_AUTH_REVISION: ${{ github.sha }}
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -66,6 +63,7 @@ jobs:
       landing: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.landing }}
       status: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.status }}
       dashboard: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.dashboard }}
+      aspire: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.aspire }}
       journey: ${{ steps.areas.outputs.journey }}
       shards: ${{ steps.areas.outputs.shards }}
       services: ${{ steps.areas.outputs.services }}
@@ -95,51 +93,50 @@ jobs:
               - .editorconfig
               - BannedSymbols.txt
               - TerraScale.slnx
-              - src/TerraScale.Endpoints*/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
-            # Each area lists only inputs its own projects build.
+              - src/TerraScale.Endpoints*/**/!(AGENTS.md)
+              - src/TerraScale.Logging/**/!(AGENTS.md)
             dotnet-sdk: &dotnet-sdk
               - sdk/dotnet/Directory.*
               - sdk/dotnet/NuGet.config
               - sdk/dotnet/BannedSymbols.txt
               - sdk/dotnet/contracts/auth/error-codes.json
-              - sdk/dotnet/src/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/dotnet/src/**/!(AGENTS.md)
             libs:
               - *shared
-              - libs.slnf
-              - benchmark/dotnet/TerraScale.Endpoints.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
-              - benchmark/dotnet/TerraScale.Logging.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
+              - benchmark/dotnet/TerraScale.Endpoints.Benchmarks/**/!(AGENTS.md)
+              - benchmark/dotnet/TerraScale.Logging.Benchmarks/**/!(AGENTS.md)
             auth:
               - *shared
               - *dotnet-sdk
               - Dockerfile
-              - scripts/ci/image-payloads.sh
-              - auth.slnf
-              - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
-              - docs/auth/*.yaml
-              - scripts/auth/{check-nuget-vulnerabilities{,.lib}.cs,export-openapi.sh,packages.lock.json}
-              - scripts/efcore/check-design-host.py
+              - .github/scripts/ci/image-payloads.sh
+              - src/TerraScale.Authentication*/**/!(AGENTS.md)
+              - src/TerraScale.Authentication/platform-api.openapi.yaml
+              - .github/scripts/auth/{check-nuget-vulnerabilities{,.lib}.cs,export-openapi.sh,packages.lock.json}
+              - .github/scripts/check-design-host.py
             auth-server:
-              - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
-              # TerraBase's RPC surface and the contracts it implements.
-              - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
               - src/vendor/**/!(*.md|*.patch)
-            # What ts-auth runs against TerraBase: its own code and the SDK it calls TerraBase with.
             auth-client:
               - *dotnet-sdk
-              - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Authentication*/**/!(AGENTS.md)
             terrabase: &terrabase
               - *shared
               - .github/actions/**
               - Dockerfile
               - src/vendor/**/!(*.md|*.patch)
-              - scripts/vendor/{download,verify}-turso-native.sh
+              - src/vendor/Turso.Native/scripts/{download,verify}-turso-native.sh
               - benchmark/turso-sync-host/turso-pin.env
-              - terrabase.slnf
-              - scripts/ci/image-payloads.sh
-              - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
+              - .github/scripts/ci/image-payloads.sh
+              - src/TerraBase*/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
               - landing-site/static/pricing.json
+            aspire:
+              - *shared
+              - src/TerraScale.Aspire/**/!(AGENTS.md)
+              - .github/scripts/check-aspire-host.py
+              - .github/scripts/ci/release-only.sh
             journey-shared: &journey-shared
               - .github/workflows/{ci,journey}.yml
               - .github/actions/**
@@ -153,21 +150,20 @@ jobs:
               - .editorconfig
               - BannedSymbols.txt
               - TerraScale.slnx
-              - scripts/terrabase/**
-              - scripts/vendor/{download,verify}-turso-native.sh
+              - src/vendor/Turso.Native/scripts/{download,verify}-turso-native.sh
               - benchmark/turso-sync-host/turso-pin.env
-              - src/TerraScale.Endpoints*/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Endpoints*/**/!(AGENTS.md)
+              - src/TerraScale.Logging/**/!(AGENTS.md)
             journey-server: &journey-server
               - *journey-shared
-              - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase*/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
               - src/vendor/**/!(*.md|*.patch)
             journey-browser: &journey-browser
               - *journey-server
-              - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.Dashboard*/**/!(AGENTS.md|CLAUDE.md)
-              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Authentication*/**/!(AGENTS.md)
+              - src/TerraScale.Dashboard*/**/!(AGENTS.md)
+              - sdk/dotnet/**/!(AGENTS.md)
               - landing-site/static/pricing.json
               - e2e/journey/{setup,close}.spec.ts
               - e2e/pages/inventory.ts
@@ -178,7 +174,7 @@ jobs:
               - e2e/usage/**
               - e2e/billing/**
               - e2e/sdk/**
-              - sdk/{go,js,python,rust}/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/{go,js,python,rust}/**/!(AGENTS.md)
             journey-phone:
               - *journey-browser
               - e2e/pages/**
@@ -187,12 +183,12 @@ jobs:
               - e2e/clock/**
               - e2e/replication/push.mjs
               - e2e/storage/**
-              - status-site/**/!(AGENTS.md|CLAUDE.md)
+              - status-site/**/!(AGENTS.md)
               - e2e/social/**
               - e2e/billing/**
               - e2e/journey/{finish,invitation}.spec.ts
               - e2e/sdk/**
-              - sdk/{go,js,python,rust}/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/{go,js,python,rust}/**/!(AGENTS.md)
             journey-session:
               - *journey-browser
               - e2e/placement/{support,fleet}.ts
@@ -211,9 +207,9 @@ jobs:
               - e2e/fault/**
             engine:
               - *journey-shared
-              - src/TerraBase/Engine/**/!(AGENTS.md|CLAUDE.md)
-              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Backup/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Engine/**/!(AGENTS.md)
+              - src/vendor/**/!(AGENTS.md)
+              - src/TerraBase/Features/Backup/**/!(AGENTS.md)
               - src/TerraBase/Hosting/Shutdown.cs
               - src/TerraBase/Hosting/ApplicationRunCompletion.cs
               - src/TerraBase/Hosting/DatabaseRoute.cs
@@ -265,50 +261,49 @@ jobs:
               - e2e/keyring/**
               - e2e/interactions/keyring.spec.ts
             sdk-dotnet:
-              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/dotnet/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-go:
-              - sdk/go/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/go/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-js:
-              - sdk/js/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/js/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-python:
-              - sdk/python/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/python/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-rust:
-              - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/rust/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             docs:
-              - docs-site/**/!(AGENTS.md|CLAUDE.md)
+              - docs-site/**/!(AGENTS.md)
               - landing-site/static/{pricing,regions}.json
               - Makefile
               - .github/workflows/ci.yml
             landing:
-              - landing-site/**/!(AGENTS.md|CLAUDE.md)
+              - landing-site/**/!(AGENTS.md)
               - .github/workflows/ci.yml
             status:
-              - status-site/**/!(AGENTS.md|CLAUDE.md)
+              - status-site/**/!(AGENTS.md)
               - .github/workflows/ci.yml
             dashboard:
-              - src/TerraScale.Dashboard*/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.Endpoints/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/dashboard/{Makefile,TerraScale.Dashboard.slnx,check-simple-ui.py,check-stripe-dependency.py,verify-sdk.py}
-              - scripts/dashboard/ci/format.sh
-              - scripts/efcore/check-design-host.py
-              - scripts/ci/release-only.sh
+              - src/TerraScale.Dashboard*/**/!(AGENTS.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
+              - src/TerraScale.Endpoints/**/!(AGENTS.md)
+              - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md)
+              - .github/scripts/dashboard/{check-simple-ui.py,check-stripe-dependency.py,verify-sdk.py,format.sh}
+              - .github/scripts/check-design-host.py
+              - .github/scripts/ci/release-only.sh
               - *dotnet-sdk
               - Directory.*
               - .editorconfig
@@ -371,7 +366,7 @@ jobs:
       - name: Start the legacy scan
         run: |
           (status=0
-            python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 || status=$?
+            python3 .github/scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 || status=$?
             echo "$status" > legacy-scan.exit.tmp && mv legacy-scan.exit.tmp legacy-scan.exit) > /dev/null 2>&1 &
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         id: workflow-linter
@@ -410,10 +405,10 @@ jobs:
           version: 1.3.6
       - name: Prove OCI fallback publication and release ordering
         if: github.event_name == 'pull_request' || inputs.pr_gate
-        run: bash scripts/ci/prove-image-transport.sh
+        run: bash .github/scripts/ci/prove-image-transport.sh
       - name: Merged EF Core migrations stay unchanged
         if: github.event_name == 'pull_request' || inputs.pr_gate
-        run: python3 scripts/ci/migrations-frozen.py HEAD^1
+        run: python3 .github/scripts/ci/migrations-frozen.py HEAD^1
       - name: No test file outside the journey
         if: github.event_name == 'pull_request' || inputs.pr_gate
         run: |
@@ -432,7 +427,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: bash scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"}
+        run: bash .github/scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"}
       - name: Scan for legacy terms (fail)
         if: ${{ !cancelled() }}
         run: |
@@ -476,7 +471,7 @@ jobs:
       - &setup-builder
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build once on the real target architecture and run both native smokes
-        run: scripts/vendor/build-turso-native.sh '${{ matrix.arch }}' native-output
+        run: src/vendor/Turso.Native/scripts/build-turso-native.sh '${{ matrix.arch }}' native-output
       - name: Record this run's native SHA-256
         run: |
           cd native-output
@@ -516,7 +511,7 @@ jobs:
             cmp "native-builds/turso-native-build-$arch-1/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so" \
                 "native-builds/turso-native-build-$arch-2/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so"
           done
-          scripts/vendor/prepare-turso-native-release.sh native-builds/turso-native-build-amd64-1 native-builds/turso-native-build-arm64-1 native-release
+          src/vendor/Turso.Native/scripts/prepare-turso-native-release.sh native-builds/turso-native-build-amd64-1 native-builds/turso-native-build-arm64-1 native-release
           for arch in amd64 arm64; do
             case "$arch" in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; esac
             cp "native-builds/turso-native-build-$arch-2/release/$rid-build-receipt.txt" "native-release/$rid-independent-build-receipt.txt"
@@ -548,13 +543,13 @@ jobs:
           global-json-file: terrascale/global.json
       - name: Locked restore
         working-directory: terrascale
-        run: make restore SOLUTION=libs.slnf
+        run: make libs-restore
       - name: Checked build, whitespace and style
         working-directory: terrascale
         run: |
-          make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
-          make -o restore -o libs-build libs-check CONFIGURATION=Release
-          scripts/ci/release-only.sh
+          make -o libs-restore libs-fmt-check libs-build CONFIGURATION=Release
+          make -o libs-restore -o libs-build libs-check CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
 
   auth:
     needs: changes
@@ -566,13 +561,13 @@ jobs:
       - *setup-dotnet
       - name: Locked restore
         working-directory: terrascale
-        run: make restore SOLUTION=auth.slnf
+        run: make auth-restore
       - name: Checked build, whitespace, NuGet audit and OpenAPI contract
         working-directory: terrascale
         run: |
-          make -o restore fmt-check SOLUTION=auth.slnf CONFIGURATION=Release
-          make -o restore -o auth-restore auth-check CONFIGURATION=Release
-          scripts/ci/release-only.sh
+          make -o auth-restore auth-fmt-check CONFIGURATION=Release
+          make -o auth-restore auth-check CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
 
   terrabase:
     needs: changes
@@ -588,15 +583,32 @@ jobs:
           dir: terrascale
       - name: Locked restore and pinned native libraries
         working-directory: terrascale
-        run: make restore turso-native SOLUTION=terrabase.slnf
+        run: make terrabase-restore turso-native
       - name: Whitespace
         working-directory: terrascale
-        run: make -o restore fmt-check SOLUTION=terrabase.slnf CONFIGURATION=Release
+        run: make -o terrabase-restore terrabase-fmt-check CONFIGURATION=Release
       - name: Checked release publish keeps the natives inside the single file
         working-directory: terrascale
         run: |
           make -o turso-native terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
-          scripts/ci/release-only.sh
+          .github/scripts/ci/release-only.sh
+
+  aspire:
+    needs: changes
+    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.aspire == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - *checkout
+      - *setup-dotnet
+      - name: Locked restore
+        working-directory: terrascale
+        run: make aspire-restore
+      - name: Checked build and whitespace
+        working-directory: terrascale
+        run: |
+          make -o aspire-restore aspire-fmt-check aspire-build CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
 
   main:
     needs: [changes, terrabase, test, journey]
@@ -648,8 +660,8 @@ jobs:
         run: |
           docker buildx create --use --driver docker-container --bootstrap > "$RUNNER_TEMP/builder.log" 2>&1 &
           builder=$!
-          bash scripts/ci/image-payloads.sh publish "$AREA"
-          bash scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
+          bash .github/scripts/ci/image-payloads.sh publish "$AREA"
+          bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
           wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -727,7 +739,7 @@ jobs:
           SOURCE: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash scripts/ci/prove-image-publication.sh "$SOURCE" "$PROVENANCE" "$SBOM"
+        run: bash .github/scripts/ci/prove-image-publication.sh "$SOURCE" "$PROVENANCE" "$SBOM"
       - name: Authenticate to OCIR with GitHub OIDC
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@0142407115eb66e6487764644b97ab1ec859a79d
         with:
@@ -745,7 +757,7 @@ jobs:
         run: |
           tags=$GITHUB_SHA
           if [[ $PUBLICATION != build-only ]]; then tags+=,main; fi
-          bash scripts/ci/publish-ocir.sh "$SOURCE" "$tags" "$PROVENANCE" "$SBOM"
+          bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "$tags" "$PROVENANCE" "$SBOM"
 
   main-build-only:
     needs: [changes, terrabase, test]
@@ -790,7 +802,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
-            scripts/ci
+            .github/scripts/ci
             .github/actions/qualified-main
       - uses: ./.github/actions/qualified-main
         with:
@@ -824,12 +836,12 @@ jobs:
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --bundle-from-oci
-          bash scripts/ci/release-app.sh terrabase "$image"
+          bash .github/scripts/ci/release-app.sh terrabase "$image"
       - name: Wait for rollout
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ inputs.terrabase_arm64 }}
-        run: bash scripts/ci/wait-app-rollout.sh terrabase "ghcr.io/terrascale/terrabase@${ARM64}"
+        run: bash .github/scripts/ci/wait-app-rollout.sh terrabase "ghcr.io/terrascale/terrabase@${ARM64}"
 
   main-auth:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && !inputs.pr_gate))
@@ -854,7 +866,7 @@ jobs:
           filter: blob:none
       - id: probe
         name: Validate live ts-auth readiness response
-        run: node scripts/ci/site-deploy-gate.mjs auth --probe
+        run: node .github/scripts/ci/site-deploy-gate.mjs auth --probe
       - name: Report live ts-auth readiness HTTP 503
         if: steps.probe.outputs.unavailable == 'true'
         run: |
@@ -865,7 +877,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           AUTH_LIVE_REVISION: ${{ steps.probe.outputs.revision }}
-        run: node scripts/ci/site-deploy-gate.mjs auth --reconcile
+        run: node .github/scripts/ci/site-deploy-gate.mjs auth --reconcile
       - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
         if: steps.live.outputs.deploy == 'true'
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -877,7 +889,7 @@ jobs:
       - id: cached
         name: Inspect the immutable target image
         if: steps.live.outputs.deploy == 'true'
-        run: bash scripts/ci/inspect-app-image.sh auth
+        run: bash .github/scripts/ci/inspect-app-image.sh auth
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         with:
@@ -888,7 +900,7 @@ jobs:
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
       - name: Build or reuse the target image and publish its main tag
         if: steps.live.outputs.deploy == 'true'
-        run: bash scripts/ci/reconcile-image.sh auth
+        run: bash .github/scripts/ci/reconcile-image.sh auth
       - id: authdigest
         name: Extract the released arm64 child digest
         if: steps.live.outputs.deploy == 'true'
@@ -943,20 +955,20 @@ jobs:
         env:
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash scripts/ci/app-image-regions.sh publish "$IMAGE" "$PROVENANCE" "$SBOM"
+        run: bash .github/scripts/ci/app-image-regions.sh publish "$IMAGE" "$PROVENANCE" "$SBOM"
       - name: Select the signed release
         if: steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/ci/release-app.sh ts-auth "$IMAGE"
+        run: bash .github/scripts/ci/release-app.sh ts-auth "$IMAGE"
       - name: Wait for rollout
         if: steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/ci/wait-app-rollout.sh ts-auth "$IMAGE"
+        run: bash .github/scripts/ci/wait-app-rollout.sh ts-auth "$IMAGE"
       - name: Prove the live revision
         if: steps.live.outputs.deploy == 'true'
-        run: node scripts/ci/site-deploy-gate.mjs auth --prove
+        run: node .github/scripts/ci/site-deploy-gate.mjs auth --prove
       - name: Record the released source for the production journey
         if: steps.live.outputs.deploy == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -968,12 +980,12 @@ jobs:
           retention-days: 1
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, checks, libs, auth, terrabase, dashboard, sdk]
+    needs: [changes, checks, libs, auth, terrabase, dashboard, aspire, sdk]
     if: >-
       ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate)
       && (needs.changes.result != 'success' || needs.checks.result != 'success'
       || needs.changes.outputs.dotnet != '[]' || needs.changes.outputs.sdks != '[]' || needs.dashboard.result != 'skipped'
-      || needs.changes.outputs.main != '[]') }}
+      || needs.aspire.result != 'skipped' || needs.changes.outputs.main != '[]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -1123,7 +1135,7 @@ jobs:
   all-green:
     name: all-green
     if: always()
-    needs: [changes, checks, libs, auth, terrabase, dashboard, sdk, docs, landing, status, journey, test]
+    needs: [changes, checks, libs, auth, terrabase, dashboard, aspire, sdk, docs, landing, status, journey, test]
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:

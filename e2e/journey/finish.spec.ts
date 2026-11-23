@@ -9,7 +9,7 @@ import { prepareAuthManagement, closeAuthManagement } from '../support/auth-mana
 import { deleteProjectOwner } from '../support/project-owner';
 import { checkPasswordFairness } from '../support/password-fairness';
 import { shell } from '../support/shell';
-import { auth, onLocalStack } from '../support/stack';
+import { auth, onLocalStack, production } from '../support/stack';
 import { keyId } from '../support/api-key';
 import { journey, saveSecret, setupFinished } from '../support/state';
 
@@ -309,7 +309,7 @@ test.describe('SDK group B', () => {
   }
 });
 
-test.describe('teardown', () => {
+test.describe('teardown', production ? { tag: '@production-cleanup' } : {}, () => {
   test('a new display name shows in the shell', async ({ page, audit }) => {
     const current = journey();
     const name = `Renamed ${current.runId}`;

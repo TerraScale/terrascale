@@ -42,7 +42,7 @@ jobs:
         name: Reconcile qualified main with the live dashboard
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/ci/site-deploy-gate.mjs dashboard
+        run: node .github/scripts/ci/site-deploy-gate.mjs dashboard
       - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
         if: steps.live.outputs.deploy == 'true'
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -54,7 +54,7 @@ jobs:
       - id: cached
         name: Inspect the immutable target image
         if: steps.live.outputs.deploy == 'true'
-        run: bash scripts/ci/inspect-app-image.sh dashboard
+        run: bash .github/scripts/ci/inspect-app-image.sh dashboard
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         with:
@@ -69,7 +69,7 @@ jobs:
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
       - name: Build or reuse the target image and publish its main tag
         if: steps.live.outputs.deploy == 'true'
-        run: bash scripts/ci/reconcile-image.sh dashboard
+        run: bash .github/scripts/ci/reconcile-image.sh dashboard
       - id: dashboarddigest
         name: Extract the released arm64 child digest
         if: steps.live.outputs.deploy == 'true'
@@ -127,20 +127,20 @@ jobs:
         env:
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash scripts/ci/app-image-regions.sh publish "$IMAGE" "$PROVENANCE" "$SBOM"
+        run: bash .github/scripts/ci/app-image-regions.sh publish "$IMAGE" "$PROVENANCE" "$SBOM"
       - name: Select the signed release
         if: steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/ci/release-app.sh ts-dashboard "$IMAGE"
+        run: bash .github/scripts/ci/release-app.sh ts-dashboard "$IMAGE"
       - name: Wait for rollout
         if: steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/ci/wait-app-rollout.sh ts-dashboard "$IMAGE"
+        run: bash .github/scripts/ci/wait-app-rollout.sh ts-dashboard "$IMAGE"
       - name: Prove the live revision
         if: steps.live.outputs.deploy == 'true'
-        run: node scripts/ci/site-deploy-gate.mjs dashboard --prove
+        run: node .github/scripts/ci/site-deploy-gate.mjs dashboard --prove
       - name: Record the released source for the production journey
         if: steps.live.outputs.deploy == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -25,17 +25,22 @@
     <PropertyGroup>
       <_DesignHostStripe Condition="'@(_DashboardStripePackage)' != ''">Stripe.net</_DesignHostStripe>
     </PropertyGroup>
-    <!-- Human approval 2026-10-29: only the official Stripe SDK's transitive Newtonsoft.Json dependency in dashboard projects. -->
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/dashboard/check-stripe-dependency.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="'@(_DashboardStripePackage)' != '' and !$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory).github/scripts/dashboard/check-stripe-dependency.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="'@(_DashboardStripePackage)' != '' and !$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
     <ItemGroup Condition="'@(_DashboardStripePackage)' != ''">
       <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
     </ItemGroup>
     <Error Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign')) and ('$(IsPackable)' != 'false' or '$(IsPublishable)' != 'false')" Text="An Entity Framework Core design host is never packed or published: set IsPackable and IsPublishable to false." />
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/efcore/check-design-host.py&quot; &quot;$(ProjectAssetsFile)&quot; $(_DesignHostStripe)" Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory).github/scripts/check-design-host.py&quot; &quot;$(ProjectAssetsFile)&quot; $(_DesignHostStripe)" Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
     <ItemGroup Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))">
       <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
     </ItemGroup>
     <Error Condition="'@(ProjectReference)' != '' and $([System.String]::Copy('@(ProjectReference)').Contains('.EntityFrameworkDesign.csproj'))" Text="Entity Framework Core design hosts carry design-time tooling; no project references one." />
+    <Error Condition="'$(MSBuildProjectName)' == 'TerraScale.Aspire' and ('$(IsPackable)' != 'false' or '$(IsPublishable)' != 'false')" Text="TerraScale.Aspire is a local development host and is never packed or published: set IsPackable and IsPublishable to false." />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory).github/scripts/check-aspire-host.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="'$(MSBuildProjectName)' == 'TerraScale.Aspire'" />
+    <ItemGroup Condition="'$(MSBuildProjectName)' == 'TerraScale.Aspire'">
+      <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
+    </ItemGroup>
+    <Error Condition="'@(ProjectReference)' != '' and $([System.String]::Copy('@(ProjectReference)').Contains('TerraScale.Aspire.csproj'))" Text="TerraScale.Aspire is a local development host; no project references it." />
     <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
   </Target>
 

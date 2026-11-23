@@ -22,10 +22,8 @@ __pycache__/
 /bench/.member-*/
 /bench/**/.bdn/
 
-# Fleet builder worktrees (never tracked).
 /.worktrees/
-/.claude/*
-!/.claude/skills/
+/.claude/
 .codex-worktrees/
 .codex/
 
