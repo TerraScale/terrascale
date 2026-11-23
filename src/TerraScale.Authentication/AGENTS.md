@@ -1,16 +1,16 @@
 # ts-auth
 
-Read the root [AGENTS.md](../../AGENTS.md).
+Read the root [AGENTS.md](../../AGENTS.md). Load the `csharp` skill before writing C#.
 
-ts-auth is the hosted identity provider. Prioritize security, tenant isolation, correctness and interoperability over convenience or performance. Platform contract: `src/TerraScale.Authentication/platform-api.openapi.yaml`.
+`ts-auth` is the hosted identity provider. Prioritize security, tenant isolation, correctness and interoperability over convenience or performance. Platform contract: `src/TerraScale.Authentication/platform-api.openapi.yaml`.
 
 ## Ownership and stack
 
 - Own identity/access: users, credentials, sessions, MFA, SSO/federation, OAuth/OIDC clients, signing keys/JWKS, organizations, projects, memberships, roles, invitations, ownership transfers, audits, API client credentials and authentication email branding.
 - Keep the platform tenant `terrascale` isolated from each customer project's end-user tenant. Preserve project-bound issuers and all tenant boundaries.
-- Persist state only in relational tables through `AuthDbContext` (`src/TerraScale.Authentication/Storage`) on the TerraBase EF Core provider. Schema changes are EF Core migrations generated with the `src/TerraScale.Authentication.EntityFrameworkDesign` host and committed; encode invariants (uniqueness, ownership) as constraints. Hot paths save in one request without explicit transactions. Never embed/import the TerraBase server or bypass the SDK. Reach TerraBase with the peer credential, never an auth token signed by ts-auth. Do not copy other products' data; call their SDKs.
-- C#/ASP.NET Core on .NET 11; single-file self-contained Linux x64/arm64 releases. Razor Slices renders HTML; business logic stays out of templates. Datastar drives server updates through `Assets/admin/datastar.js`; no .NET Datastar SDK is currently referenced. Add no other backend runtime or frontend framework.
-- Use Geralt/libsodium for Argon2id, Microsoft.IdentityModel for JWTs and OpenIddict for OAuth/OIDC. No custom cryptography or token-signing algorithms.
+- Persist state only in relational tables through `AuthDbContext` (`src/TerraScale.Authentication/Storage`) on the TerraBase EF Core provider. Generate schema changes with `src/TerraScale.Authentication.EntityFrameworkDesign` and commit migrations; encode invariants (uniqueness, ownership) as constraints. Hot paths save in one request without explicit transactions. Never embed/import the TerraBase server or bypass the SDK; reach TerraBase with the peer credential, never an auth token signed by `ts-auth`. Do not copy other products' data; call their SDKs.
+- C#/ASP.NET Core on .NET 11; single-file self-contained Linux x64/arm64 releases. Razor Slices renders HTML (keep business logic out of templates); Datastar drives server updates through `Assets/admin/datastar.js` (no .NET Datastar SDK referenced). Add no other backend runtime or frontend framework.
+- Use Geralt/libsodium for Argon2id, `Microsoft.IdentityModel` for JWTs and OpenIddict for OAuth/OIDC. No custom cryptography or token-signing algorithms.
 - Build: `make auth-build`; checks: `make auth-check`, `make auth-audit`, `make auth-openapi-check`; local stack: `make dev`.
 
 ## Architecture and security
@@ -19,25 +19,19 @@ ts-auth is the hosted identity provider. Prioritize security, tenant isolation, 
 - Caches cannot override authorization, expiry or revocation. Document and test staleness limits, revocation and failure handling. Single-use challenges, credential updates, token rotation and identity uniqueness must survive races; no unprotected read-then-write security operations. Missing guarantees require an explicit coordination design, never weaker security.
 - Keep signing and encryption material out of public configuration. Generate signing keys and store them encrypted in TerraBase under the master key. Never add an authentication bypass.
 - Group code by feature, with boundaries between handlers, application logic, persistence and presentation. Share API/UI authentication and authorization. Keep billing, other product logic and TerraBase internals out.
-- Passwords use Argon2id, unique salts and explicit production parameters. Never store plaintext/reversibly encrypted passwords. Use cryptographically secure challenges/tokens. Hash opaque bearer secrets used only for verification; encrypt recoverable ones.
+- Passwords use Argon2id, unique salts and explicit production parameters. Never store plaintext or reversibly encrypted passwords. Use cryptographically secure challenges/tokens. Hash opaque bearer secrets used only for verification; encrypt recoverable ones.
 - Recovery, verification and authorization codes expire and are single-use. Reauthenticate sensitive account/credential changes.
 - Authenticate and authorize protected operations on the server. Deny by default, grant minimum permissions and fail closed. Validate tenant/client/user/resource relationships; a submitted ID proves nothing. Isolate tenants in queries, caches, tokens, UI and background work.
 - Rate-limit auth, recovery, verification and token endpoints. Avoid account enumeration in bodies, status and timing.
-- Require production HTTPS. Cookies use Secure, HttpOnly and explicit flow-appropriate SameSite. Protect cookie mutations from CSRF. Use explicit origin/redirect allowlists. Rotate session IDs after authentication/privilege changes; enforce expiry and revocation server-side.
+- Require production HTTPS. Cookies use `Secure`, `HttpOnly` and explicit flow-appropriate `SameSite`. Protect cookie mutations from CSRF. Use explicit origin/redirect allowlists. Rotate session IDs after authentication/privilege changes; enforce expiry and revocation server-side.
 - Never store bearer credentials in browser storage or expose server secrets in HTML, signals or bundles. Never log passwords, tokens, auth headers, cookies or recovery secrets.
-- Follow OAuth/OIDC specifications and current guidance. Interactive authorization uses Authorization Code with PKCE; no implicit or password grants. Validate registered redirects and client/PKCE/state/nonce bindings. Trust explicit issuers, never untrusted headers. Validate signature, algorithm, issuer, audience, expiry and intended use. ID tokens are not API access tokens. Prevent refresh replay; document rotation, expiry and revocation. Rotate signing keys safely. Prove interoperability with an independent client.
+- Follow OAuth/OIDC specifications and current guidance (RFC 9700, OpenID Connect Core, OWASP). Interactive authorization uses Authorization Code with PKCE; no implicit or password grants. Validate registered redirects and client/PKCE/state/nonce bindings. Trust explicit issuers, never untrusted headers. Validate signature, algorithm, issuer, audience, expiry and intended use. ID tokens are not API access tokens. Prevent refresh replay; document rotation, expiry and revocation. Rotate signing keys safely. Prove interoperability with an independent client.
+- Surface confirmed security defects immediately.
 
 ## Contracts and UI
 
 - One canonical OpenAPI document covers implemented methods, paths, parameters, bodies, responses, errors, authentication and permissions. Use unique stable operation IDs and shared/generated schemas. Security declarations match enforcement.
 - Change implementation, OpenAPI and examples together. Preserve standards-required content types and errors. Scalar loads the same contract checked by `make auth-openapi-check`.
 - Examples use synthetic data. Document internal/admin APIs without publishing them. Never preload credentials, persist documentation authorization or send authenticated doc requests through third-party proxies. Self-host pinned documentation assets.
-- `make auth-openapi-check` exports the served OpenAPI document and lints it with the platform contract.
-- Render on the backend; use Datastar for incremental interaction, SSE when appropriate. Keep identity and permissions server-side. Browser signals are untrusted; send only necessary fields. Escape values and keep untrusted input out of executable expressions. Never echo credentials into HTML or streams.
+- Render on the backend; use Datastar for incremental interaction and SSE when appropriate. Keep identity and permissions server-side. Browser signals are untrusted; send only necessary fields. Escape values and keep untrusted input out of executable expressions. Never echo credentials into HTML or streams.
 - Keep CSP-compatible configuration and security headers. Provide accessible forms, keyboard navigation, visible focus and clear validation. Preserve behavior across repeated updates, reconnects and navigation. Reuse brand assets.
-
-## Tests
-
-- The journey in `e2e/` is the only test: it signs up, reads the code from Mailpit, onboards and uses the hosted pages of the ts-auth built from the commit under test. A behaviour that matters becomes a journey step (`e2e/AGENTS.md`); delivery and federation use sandboxes, never real users.
-- Surface confirmed security defects immediately.
-- Consult installed-version documentation for .NET, ASP.NET Core, OpenIddict, Datastar/CSP, OpenAPI, Scalar, OWASP auth/password/session/authorization guidance, RFC 9700 and OpenID Connect Core.

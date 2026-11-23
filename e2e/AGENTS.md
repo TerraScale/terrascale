@@ -1,5 +1,7 @@
 # Journey suite (`e2e/`)
 
+Read the root [AGENTS.md](../AGENTS.md).
+
 Playwright Test (TypeScript) that drives the real services built from the commit under test: TerraBase, ts-auth
 and the dashboard behind an edge that serves the production host names (Caddy for HTTPS, a PostgreSQL TLS edge for
 `pg.terrascale.tech`), a per-run CA, Mailpit as the SMTP server, a Cloudflare send-API sink that must stay empty, a
@@ -109,7 +111,8 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `journey/invitation.spec.ts` | 1 | 20/hour |
 | `journey/finish.spec.ts` | 1 | 20/hour |
 | `hosted/signup-address-limit.spec.ts` | 20 admitted, attempt 21 refused | 20/hour |
-| `placement/session-limits.spec.ts` | 3 | 20/hour |\n| Each other spec's own address | 0 | 20/hour |
+| `placement/session-limits.spec.ts` | 3 | 20/hour |
+| Each other spec's own address | 0 | 20/hour |
 
 Teardown prints `signup address <address> <spec>: <stored count>/20 per hour`, reading the limiter's persisted
 counts with the same keyed subject derivation. Ordinary addresses spend at most 7 of 20 slots. Each invocation
@@ -630,6 +633,7 @@ local key-removal refusal after restoration, key material changes, record-store
 refusal, reverse credential compatibility and row reads from every persisted database.
 Intermediate states are reconstructed from real detached/published files after a process kill;
 the journey does not claim to inject power failure at every individual system call. The extra lane runs alongside the normal shards.
+
 ## SQL session lost replies
 
 The SQL sessions case of `journey/finish.spec.ts` runs each SDK's public session through a loopback network proxy
