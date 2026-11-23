@@ -19,10 +19,11 @@ else
   echo 'Docker or Podman is required to build the pinned native core' >&2
   exit 1
 fi
+native_root="$root/src/vendor/Turso.Native"
 "$builder" buildx build --platform "linux/$arch" --no-cache --target native \
-  --file "$root/src/vendor/Turso.Native/scripts/Dockerfile.turso-native" \
-  --output "type=local,dest=$output" "$root"
+  --file "$native_root/scripts/Dockerfile.turso-native" \
+  --output "type=local,dest=$output" "$native_root"
 (cd "$output" && sha256sum --check SHA256SUMS-*)
 "$builder" buildx build --platform "linux/$arch" --no-cache --target native \
-  --file "$root/src/vendor/Turso.Native/scripts/Dockerfile.router-parser" \
-  --output "type=local,dest=$output" "$root"
+  --file "$native_root/scripts/Dockerfile.router-parser" \
+  --output "type=local,dest=$output" "$native_root"

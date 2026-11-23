@@ -109,7 +109,7 @@ jobs:
             auth:
               - *shared
               - *dotnet-sdk
-              - Dockerfile
+              - .github/docker/ts-auth.Dockerfile
               - .github/scripts/ci/image-payloads.sh
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
               - src/TerraScale.Authentication/platform-api.openapi.yaml
@@ -126,7 +126,7 @@ jobs:
             terrabase: &terrabase
               - *shared
               - .github/actions/**
-              - Dockerfile
+              - .github/docker/terrabase.Dockerfile
               - src/vendor/**/!(*.md|*.patch)
               - src/vendor/Turso.Native/scripts/{download,verify}-turso-native.sh
               - src/vendor/Turso.Native/turso-pin.env
@@ -301,6 +301,7 @@ jobs:
               - .github/workflows/ci.yml
             dashboard:
               - src/TerraScale.Dashboard*/**/!(AGENTS.md)
+              - .github/docker/dashboard.Dockerfile
               - src/TerraScale.Analyzers/**/!(AGENTS.md)
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - src/TerraScale.Endpoints/**/!(AGENTS.md)

@@ -19,7 +19,7 @@ case ${1:-} in
     test "$(od -An -tx1 -j18 -N2 "$output/$binary" | tr -d ' \n')" = b700
     ;;
   runtime-dockerfile)
-    sed -n "/ AS $binary\$/,/^FROM /p" Dockerfile | sed '1!{/^FROM /d;}'
+    cat ".github/docker/$binary.Dockerfile"
     ;;
-  *) echo 'Expected publish | runtime-dockerfile <auth|terrabase>' >&2; exit 2 ;;
+  *) echo 'Expected publish | runtime-dockerfile <auth|terrabase|dashboard>' >&2; exit 2 ;;
 esac
