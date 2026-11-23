@@ -3,7 +3,6 @@ set -euo pipefail
 
 projects=(
   src/TerraScale.Dashboard/TerraScale.Dashboard.csproj
-  src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj
 )
 
 if [ -n "${BASE_SHA:-}" ] && git cat-file -e "$BASE_SHA^{commit}" &&

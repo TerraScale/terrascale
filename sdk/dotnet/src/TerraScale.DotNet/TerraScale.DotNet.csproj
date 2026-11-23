@@ -22,7 +22,7 @@
     <None Include="../../contracts/auth/**/*" Pack="true" PackagePath="contracts/auth/%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="../../contracts/terrabase/**/*" Pack="true" PackagePath="contracts/terrabase/%(RecursiveDir)%(Filename)%(Extension)" />
     <PackageReference Include="Microsoft.Extensions.Http" />
-    <PackageReference Include="NUlid" />
+    <PackageReference Include="Ulid" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
   </ItemGroup>
 </Project>

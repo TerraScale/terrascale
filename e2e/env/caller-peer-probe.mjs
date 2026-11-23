@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { readMetrics } from './caller-metrics.mjs';
-import { rpc } from './caller-rpc.mjs';
+import { h2 } from './caller-rpc.mjs';
 import { port } from './ports.mjs';
 
 const state = process.argv[2];
@@ -13,22 +13,15 @@ const metrics = 'http://127.0.0.1:' + port('metrics') + '/metrics';
 const count = text => text.split('\n')
   .filter(line => line.startsWith('terrabase_internal_authentication_requests_total{') && line.includes('credential="peer"') && line.includes('caller="peer"'))
   .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);
-const body = Buffer.from(JSON.stringify({ statements: [{ sql: 'SELECT 29 AS caller_value' }] }));
-const message = Buffer.concat([Buffer.from([0x93, 0xba]), Buffer.from('00000000000000000000000002'),
-  Buffer.from([0xa7]), Buffer.from('ts-auth'), Buffer.from([0xc4, body.length]), body]);
-const frame = Buffer.alloc(5);
-frame.writeUInt32BE(message.length, 1);
+const body = JSON.stringify({ statements: [{ sql: 'SELECT 29 AS caller_value' }] });
 try {
   const before = await readMetrics(metrics);
-  const result = await rpc(session, '/IManagementService/ExecuteSqlAsync',
-    { 'X-TerraBase-Peer-Credential': peer }, Buffer.concat([frame, message]));
-  assert.equal(result.status, 200);
-  assert.equal(result.grpc, '0');
-  const packed = result.body.subarray(5);
-  const offset = packed[0] === 0xc4 ? 2 : packed[0] === 0xc5 ? 3 : 5;
-  assert.deepEqual(JSON.parse(packed.subarray(offset).toString()).results[0].rows, [[29]]);
-  assert.equal(count(await readMetrics(metrics)) - count(before), 1, 'gRPC peer SQL counted once');
-  console.log('gRPC peer SQL counted once: HTTP 200 grpc-status=0 rows=[[29]] counted once before other services start');
+  const result = await h2(session, '/v1/internal/databases/00000000000000000000000003/sql/execute',
+    { 'X-TerraBase-Peer-Credential': peer }, body);
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(JSON.parse(result.text).results[0].rows, [[29]]);
+  assert.equal(count(await readMetrics(metrics)) - count(before), 1, 'internal peer SQL counted once');
+  console.log('internal peer SQL counted once: HTTP/2 200 rows=[[29]] counted once before other services start');
 } finally {
   session.close();
 }

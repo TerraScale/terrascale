@@ -7,7 +7,7 @@ import { expect } from '@playwright/test';
 import { test as base } from '../support/audit';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { localPort, production, stateDir } from '../support/stack';
-import { authenticatedCells, home, project, name, json, removeDatabase, type Cells } from './support';
+import { authenticatedCells, gru, project, name, json, removeDatabase, type Cells } from './support';
 
 base.skip(production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '1',
   'one node in each of two regions');
@@ -30,7 +30,7 @@ base.describe('database functions', () => {
   for (const region of ['gru', 'fra']) for (const surface of ['REST', 'WebSocket', 'Postgres']) {
     test(`SQL functions through ${region} ${surface}`, async ({ cells }) => {
       const current = owner.current;
-      const created = await json<{ id: string }>(await cells.post(home + project(current.projectId) + '/databases', {
+      const created = await json<{ id: string }>(await cells.post(gru + project(current.projectId) + '/databases', {
         data: { name: name('db-functions'), regions: ['gru', 'fra'] },
       }), 201);
       try {
@@ -42,7 +42,7 @@ base.describe('database functions', () => {
   }
   test('SQL functions through management, recovery and replication', async ({ cells }) => {
     const current = owner.current;
-    const created = await json<{ id: string }>(await cells.post(home + project(current.projectId) + '/databases', {
+    const created = await json<{ id: string }>(await cells.post(gru + project(current.projectId) + '/databases', {
       data: { name: name('db-management'), regions: ['gru', 'fra'] },
     }), 201);
     try {

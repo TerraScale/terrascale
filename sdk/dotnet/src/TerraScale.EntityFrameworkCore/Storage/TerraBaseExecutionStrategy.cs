@@ -8,7 +8,7 @@ internal sealed class TerraBaseExecutionStrategy(ExecutionStrategyDependencies d
     : ExecutionStrategy(dependencies, DefaultMaxRetryCount, DefaultMaxDelay)
 {
     protected override bool ShouldRetryOn(Exception exception) =>
-        exception is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SerializationConflict } or TerraBaseMigrationConflictException;
+        exception is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.SchemaMismatch } or TerraBaseMigrationConflictException;
 }
 
 internal sealed class TerraBaseExecutionStrategyFactory(ExecutionStrategyDependencies dependencies) : RelationalExecutionStrategyFactory(dependencies)

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Text;
 using System.Collections.Frozen;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -12,9 +13,17 @@ using TerraBase.Features.Rules;
 
 namespace TerraBase.Features.UserAuth;
 
-internal sealed class TokenVerifier
+internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory http, TimeProvider time) : IDisposable
 {
     public const string HttpClientName = "ts-auth";
+
+    private const string EndUserKind = "end_user";
+
+    private const string ProjectDataPath = "/v1/projects/";
+
+    private const int MaxProjectIssuers = 1024;
+
+    private static readonly TimeSpan ProjectIssuerIdle = TimeSpan.FromHours(1);
 
     private static readonly JsonWebTokenHandler Tokens = new() { MaximumTokenSizeInBytes = 16 * 1024 };
 
@@ -27,50 +36,39 @@ internal sealed class TokenVerifier
 
     private static readonly string[] Types = ["at+jwt", "application/at+jwt", "JWT"];
 
-    private readonly TerraBaseOptions _options;
-    private readonly TimeProvider _time;
-    private readonly ConfigurationManager<OpenIdConnectConfiguration>? _configuration;
+    private readonly ConfigurationManager<OpenIdConnectConfiguration>? _platform = options.AuthIssuer is { } issuer ? Manager(http, issuer) : null;
 
-    public TokenVerifier(TerraBaseOptions options, IHttpClientFactory http, TimeProvider time)
-    {
-        _options = options;
-        _time = time;
-        if (options.AuthIssuer is { } issuer)
-        {
-            var metadata = string.Concat(issuer.TrimEnd('/'), "/.well-known/openid-configuration");
-            _configuration = new ConfigurationManager<OpenIdConnectConfiguration>(
-                metadata, new OpenIdConnectConfigurationRetriever(), new HttpDocumentRetriever(http.CreateClient(HttpClientName)) { RequireHttps = true })
-            {
-                AutomaticRefreshInterval = TimeSpan.FromHours(1),
-                RefreshInterval = TimeSpan.FromSeconds(30),
-            };
-        }
-    }
+    private readonly MemoryCache _projects = new(new MemoryCacheOptions { SizeLimit = MaxProjectIssuers });
 
     public async ValueTask<Result<Caller, Unauthorized, Unavailable>> VerifyAsync(string token, CancellationToken cancellationToken)
     {
-        if (_configuration is null || _options.AuthIssuer is not { } issuer)
+        if (_platform is null || options.AuthIssuer is not { } platformIssuer)
         {
             return new Unauthorized("bearer tokens need TERRABASE_AUTH_ISSUER", "invalid_token");
         }
 
-        if (!Tokens.CanReadToken(token))
+        if (!Tokens.CanReadToken(token) || Read(token) is not { } unverified)
         {
             return new Unauthorized("the bearer token is malformed", "invalid_token");
         }
 
-        if (await ConfigurationAsync(_configuration, cancellationToken) is not { } configuration)
+        if (Trust(unverified, platformIssuer) is not { } trusted)
+        {
+            return new Unauthorized("the bearer token's issuer is not trusted", "invalid_token");
+        }
+
+        if (await ConfigurationAsync(trusted.Manager, cancellationToken) is not { } configuration)
         {
             return new Unavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
         }
 
-        var validated = await Tokens.ValidateTokenAsync(token, Parameters(issuer, configuration.SigningKeys));
+        var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, configuration.SigningKeys));
         if (!validated.IsValid && validated.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            _configuration.RequestRefresh();
-            if (await ConfigurationAsync(_configuration, cancellationToken) is { } refreshed)
+            trusted.Manager.RequestRefresh();
+            if (await ConfigurationAsync(trusted.Manager, cancellationToken) is { } refreshed)
             {
-                validated = await Tokens.ValidateTokenAsync(token, Parameters(issuer, refreshed.SigningKeys));
+                validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, refreshed.SigningKeys));
             }
         }
 
@@ -79,10 +77,71 @@ internal sealed class TokenVerifier
             return new Unauthorized("the bearer token is invalid or expired", "invalid_token");
         }
 
-        return Classify(jwt);
+        return Classify(jwt, trusted.EndUser);
     }
 
-    private static Result<Caller, Unauthorized, Unavailable> Classify(JsonWebToken jwt)
+    public void Dispose() => _projects.Dispose();
+
+    private TrustedIssuer? Trust(JsonWebToken token, string platformIssuer)
+    {
+        if (string.Equals(token.Issuer, platformIssuer, StringComparison.Ordinal) && _platform is { } platform)
+        {
+            return new TrustedIssuer(platformIssuer, platform, options.AuthAudiences, EndUser: false);
+        }
+
+        if (!token.TryGetPayloadValue<string>("token_kind", out var kind) || kind != EndUserKind
+            || !token.TryGetPayloadValue<string>("project_id", out var project) || !IsCanonicalUlid(project))
+        {
+            return null;
+        }
+
+        var projectIssuer = new Uri(new Uri(platformIssuer), project).AbsoluteUri;
+        if (!string.Equals(token.Issuer, projectIssuer, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, project)).ToArray();
+        return new TrustedIssuer(projectIssuer, ProjectManager(projectIssuer), audiences, EndUser: true);
+    }
+
+    private ConfigurationManager<OpenIdConnectConfiguration> ProjectManager(string issuer)
+    {
+        if (_projects.TryGetValue(issuer, out ConfigurationManager<OpenIdConnectConfiguration>? cached) && cached is { } existing)
+        {
+            return existing;
+        }
+
+        var created = Manager(http, issuer);
+        _projects.Set(issuer, created, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = ProjectIssuerIdle });
+        return created;
+    }
+
+    private static ConfigurationManager<OpenIdConnectConfiguration> Manager(IHttpClientFactory http, string issuer) => new(
+        string.Concat(issuer.TrimEnd('/'), "/.well-known/openid-configuration"),
+        new OpenIdConnectConfigurationRetriever(),
+        new HttpDocumentRetriever(http.CreateClient(HttpClientName)) { RequireHttps = new Uri(issuer).Scheme == Uri.UriSchemeHttps })
+    {
+        AutomaticRefreshInterval = TimeSpan.FromHours(1),
+        RefreshInterval = TimeSpan.FromSeconds(30),
+    };
+
+    private static bool IsCanonicalUlid(string value) =>
+        value.Length == 26 && Ulid.TryParse(value, out var parsed) && string.Equals(parsed.ToString(), value, StringComparison.Ordinal);
+
+    private static JsonWebToken? Read(string token)
+    {
+        try
+        {
+            return Tokens.ReadJsonWebToken(token);
+        }
+        catch (Exception error) when (error is SecurityTokenMalformedException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static Result<Caller, Unauthorized, Unavailable> Classify(JsonWebToken jwt, bool endUser)
     {
         var invalid = new Unauthorized("the bearer token's claims are invalid", "invalid_token");
         if (!jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || string.IsNullOrWhiteSpace(subject) || subject.Length > 128)
@@ -98,7 +157,13 @@ internal sealed class TokenVerifier
             return invalid;
         }
 
-        if (jwt.TryGetPayloadValue<string>("token_kind", out var kind) && kind == "end_user")
+        var endUserKind = jwt.TryGetPayloadValue<string>("token_kind", out var kind) && kind == EndUserKind;
+        if (endUserKind != endUser)
+        {
+            return invalid;
+        }
+
+        if (endUser)
         {
             if (projectUlid is not { } endUserProject || Payload(jwt) is not { } payload)
             {
@@ -143,11 +208,11 @@ internal sealed class TokenVerifier
         }
     }
 
-    private TokenValidationParameters Parameters(string issuer, IEnumerable<SecurityKey> keys) => new()
+    private TokenValidationParameters Parameters(TrustedIssuer trusted, IEnumerable<SecurityKey> keys) => new()
     {
-        ValidIssuer = issuer,
-        ValidAudiences = _options.AuthAudiences,
-        ValidateAudience = _options.AuthAudiences.Count > 0,
+        ValidIssuer = trusted.Issuer,
+        ValidAudiences = trusted.Audiences,
+        ValidateAudience = trusted.Audiences.Count > 0,
         IssuerSigningKeys = keys,
         ValidAlgorithms = Algorithms,
         ValidTypes = Types,
@@ -156,7 +221,7 @@ internal sealed class TokenVerifier
         ClockSkew = TimeSpan.FromSeconds(30),
         LifetimeValidator = (notBefore, expires, _, _) =>
         {
-            var now = _time.GetUtcNow().UtcDateTime;
+            var now = time.GetUtcNow().UtcDateTime;
             return expires is { } until && until >= now.AddSeconds(-30) && (notBefore is null || notBefore.Value <= now.AddSeconds(30));
         },
     };
@@ -174,3 +239,5 @@ internal sealed class TokenVerifier
         }
     }
 }
+
+internal sealed record TrustedIssuer(string Issuer, ConfigurationManager<OpenIdConnectConfiguration> Manager, IReadOnlyList<string> Audiences, bool EndUser);

@@ -13,7 +13,6 @@ from urllib.parse import urlsplit
 import httpx
 from terrascale import AsyncTerraScale, Statement, TerraScale, is_valid_id, new_id
 from terrascale.auth_organizations import OrganizationInvitationRequest, OrganizationRequest
-from terrascale.errors import ServiceUnavailableError
 from terrascale.models import CreateProjectUser, ImportProjectUser, UpdateProjectUser
 
 if os.environ.get("E2E_SESSION_FAULT"):
@@ -514,38 +513,32 @@ def placement_create(op):
 
 
 def placement_set(op):
+    placed = TerraScale(base_url="https://fra.api.terrascale.tech", issuer="https://auth.terrascale.tech/terrascale")
     created = client.create_database(f"e2e-python-{run}-move", regions=["gru"])
-    placed = client
     try:
-        client.database(created.id).execute("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)")
-        client.database(created.id).execute("INSERT INTO placement_rows VALUES (1)")
+        home = client.database(created.id)
+        peer = placed.database(created.id)
+        home.execute("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)")
+        home.execute("INSERT INTO placement_rows VALUES (1)")
         added = client.set_database_placement(created.id, regions=["gru", "fra"])
         same(added.regions, ["fra", "gru"], "added region")
         same(added.placement_version > created.placement_version, True, "membership raises placement version")
-        progress = client.database(created.id).regions()
-        same([row.region for row in progress.regions], ["fra", "gru"], "status regions")
-        same(next(row.role for row in progress.regions if row.region == "gru"), "writer", "writer role")
-        deadline = time.monotonic() + 90
-        while True:
-            try:
-                updated = client.set_database_placement(created.id, regions=["fra"])
-                break
-            except ServiceUnavailableError as error:
-                if error.code != "replica_not_ready" or time.monotonic() >= deadline:
-                    raise
-                time.sleep(1)
-        placed = TerraScale(base_url="https://fra.api.terrascale.tech", issuer="https://auth.terrascale.tech/terrascale")
-        same(updated.regions, ["fra"], "dropped writer")
-        same(updated.placement_version > added.placement_version, True, "writer change raises placement version")
-        after = placed.database(created.id).regions()
-        same([(row.region, row.role) for row in after.regions], [("fra", "writer")], "moved status")
-        proxied = client.database(created.id).regions()
-        same([row.region for row in proxied.regions], ["fra"], "proxied nonmember endpoint")
-        same(cells(client.database(created.id).query("SELECT value FROM placement_rows")), [[1]], "data survived placement")
-        client.database(created.id).execute("INSERT INTO placement_rows VALUES (2)")
-        same(cells(placed.database(created.id).query("SELECT value FROM placement_rows ORDER BY value")),
-             [[1], [2]], "acknowledged proxied write retained")
-        print("python placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]")
+        progress = home.regions()
+        same([(row.region, row.healthy) for row in progress.regions], [("fra", True), ("gru", True)],
+             "every active-active region healthy")
+        same(all(row.applied_bookmark for row in progress.regions), True, "every region reports an applied bookmark")
+        same(cells(peer.query("SELECT value FROM placement_rows ORDER BY value", bookmark=home.bookmark)), [[1]],
+             "fra reads the gru write with its bookmark")
+        peer.execute("INSERT INTO placement_rows VALUES (2)")
+        same(cells(home.query("SELECT value FROM placement_rows ORDER BY value", bookmark=peer.bookmark)), [[1], [2]],
+             "gru reads the fra write with its bookmark")
+        updated = placed.set_database_placement(created.id, regions=["fra"])
+        same(updated.regions, ["fra"], "removed region")
+        same(updated.placement_version > added.placement_version, True, "membership change raises placement version")
+        after = peer.regions()
+        same([(row.region, row.healthy) for row in after.regions], [("fra", True)], "remaining region status")
+        same(cells(peer.query("SELECT value FROM placement_rows ORDER BY value")), [[1], [2]], "data survived placement")
+        print("python placement: fra and gru healthy active-active peers; bookmark reads crossed both ways; rows [[1],[2]]")
     finally:
         placed.delete_database(created.id)
 

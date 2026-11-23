@@ -47,6 +47,15 @@ public static class TerraBaseSqlErrorCodes
     /// <summary>A concurrent writer won; the request rolled back and may be sent again (40001, HTTP 409).</summary>
     public const string SerializationConflict = "serialization_conflict";
 
+    /// <summary>The schema changed while the request ran; it rolled back and may be sent again (40001, HTTP 412 or 409).</summary>
+    public const string SchemaMismatch = "schema_mismatch";
+
+    /// <summary><c>TerraScale-Bookmark</c> or a frame's <c>bookmark</c> is not a bookmark TerraScale returned (22023, HTTP 400).</summary>
+    public const string InvalidBookmark = "invalid_bookmark";
+
+    /// <summary><c>TerraScale-Consistency</c> or a frame's <c>consistency</c> is not <c>fast</c> or <c>strong</c> (22023, HTTP 400).</summary>
+    public const string InvalidConsistency = "invalid_consistency";
+
     /// <summary>A <c>terrascale_expect_changes</c> row guard saw a different number of changed rows; the request rolled back (P0001, HTTP 409).</summary>
     public const string RowConflict = "row_conflict";
 
@@ -85,10 +94,17 @@ public static class TerraBaseSqlErrorCodes
 
     /// <summary>An unexpected server failure (XX000, HTTP 500).</summary>
     public const string InternalError = "internal_error";
+
+    internal static string? ConsistencySqlState(string code) => code switch
+    {
+        SerializationConflict or SchemaMismatch => "40001",
+        InvalidBookmark or InvalidConsistency => "22023",
+        _ => null,
+    };
 }
 
 /// <summary>
-/// A refused SQL statement: <c>{"code","message","statement","sqlstate"}</c> from REST or a WebSocket error frame. The
+/// A refused SQL statement: <c>{"code","message","statement","sqlState"}</c> (or <c>sqlstate</c>) from REST or a WebSocket error frame. The
 /// failing request rolled back unless the code is <c>write_outcome_unknown</c> (08007). <see cref="Code"/> is one of <see cref="TerraBaseSqlErrorCodes"/>. Over the WebSocket
 /// <see cref="HttpRequestException.StatusCode"/> is null.
 /// </summary>
@@ -111,6 +127,9 @@ public sealed class TerraBaseSqlException : TerraBaseException
     /// <summary>The PostgreSQL SQLSTATE of <see cref="Code"/>, such as <c>23505</c>.</summary>
     public string Sqlstate { get; }
 
-    /// <summary>Whether sending the same request again can succeed: <see cref="TerraBaseSqlErrorCodes.SerializationConflict"/> or <see cref="TerraBaseSqlErrorCodes.TenantBusy"/>.</summary>
-    public bool IsTransient => Code is TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy;
+    /// <summary>
+    /// Whether sending the same request again can succeed: <see cref="TerraBaseSqlErrorCodes.SerializationConflict"/>,
+    /// <see cref="TerraBaseSqlErrorCodes.SchemaMismatch"/> or <see cref="TerraBaseSqlErrorCodes.TenantBusy"/>.
+    /// </summary>
+    public bool IsTransient => Code is TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.SchemaMismatch or TerraBaseSqlErrorCodes.TenantBusy;
 }

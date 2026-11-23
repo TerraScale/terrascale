@@ -12,10 +12,6 @@ on:
         description: Reconcile ts-auth with the newest journey-qualified main commit
         type: boolean
         default: false
-      native_artifacts:
-        description: 'Maintenance: prepare combined native release assets only (no builds, images or publication)'
-        type: boolean
-        default: false
       publication:
         description: 'release (default), build-only (TerraBase images, no release) or release-only (needs terrabase_arm64)'
         type: choice
@@ -115,11 +111,11 @@ jobs:
               - src/TerraScale.Authentication/platform-api.openapi.yaml
               - .github/scripts/auth/export-openapi.sh
               - sdk/dotnet/scripts/{check-nuget-vulnerabilities{,.lib}.cs,packages.lock.json}
-              - .github/scripts/check-design-host.py
             auth-server:
-              - src/TerraBase/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
-              - src/vendor/**/!(*.md|*.patch)
+              - src/TerraBase*/**/!(AGENTS.md)
+              - src/TerraScale.QuicRpc/**/!(AGENTS.md)
+              - src/TerraScale.Platform/**/!(AGENTS.md)
+              - native/{build-native.sh,native-pin.env}
             auth-client:
               - *dotnet-sdk
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
@@ -127,12 +123,11 @@ jobs:
               - *shared
               - .github/actions/**
               - .github/docker/terrabase.Dockerfile
-              - src/vendor/**/!(*.md|*.patch)
-              - src/vendor/Turso.Native/scripts/{download,verify}-turso-native.sh
-              - src/vendor/Turso.Native/turso-pin.env
               - .github/scripts/ci/image-payloads.sh
-              - src/TerraBase/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
+              - src/TerraBase*/**/!(AGENTS.md)
+              - src/TerraScale.QuicRpc/**/!(AGENTS.md)
+              - src/TerraScale.Platform/**/!(AGENTS.md)
+              - native/{build-native.sh,native-pin.env}
               - sites/landing/static/pricing.json
             aspire:
               - *shared
@@ -152,16 +147,15 @@ jobs:
               - .editorconfig
               - BannedSymbols.txt
               - TerraScale.slnx
-              - src/vendor/Turso.Native/scripts/{download,verify}-turso-native.sh
-              - src/vendor/Turso.Native/turso-pin.env
+              - native/{build-native.sh,native-pin.env}
               - src/TerraScale.Endpoints*/**/!(AGENTS.md)
               - src/TerraScale.Logging/**/!(AGENTS.md)
               - src/TerraScale.Contracts/**/!(AGENTS.md)
             journey-server: &journey-server
               - *journey-shared
-              - src/TerraBase/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
-              - src/vendor/**/!(*.md|*.patch)
+              - src/TerraBase*/**/!(AGENTS.md)
+              - src/TerraScale.QuicRpc/**/!(AGENTS.md)
+              - src/TerraScale.Platform/**/!(AGENTS.md)
             journey-browser: &journey-browser
               - *journey-server
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
@@ -211,51 +205,19 @@ jobs:
             engine:
               - *journey-shared
               - src/TerraBase/Engine/**/!(AGENTS.md)
-              - src/vendor/**/!(AGENTS.md)
+              - src/TerraBase.Storage/**/!(AGENTS.md)
+              - src/TerraBase.Cluster/**/!(AGENTS.md)
+              - src/TerraBase.Continuity/**/!(AGENTS.md)
               - src/TerraBase/Features/Backup/**/!(AGENTS.md)
-              - src/TerraBase/Hosting/Shutdown.cs
               - src/TerraBase/Hosting/ApplicationRunCompletion.cs
-              - src/TerraBase/Hosting/DatabaseRoute.cs
-              - src/TerraBase/Hosting/DatabaseLifecycleCheckpoint.cs
-              - src/TerraBase/Hosting/BadRequests.cs
               - src/TerraBase/Hosting/Listeners.cs
-              - src/TerraBase/Features/Health/NodeReadiness.cs
               - src/TerraBase/Features/Health/ReadyzEndpoint.cs
               - src/TerraBase/Configuration/TerraBaseOptions.cs
-              - src/TerraBase/Features/Memory/MemoryBudget.cs
-              - src/TerraBase/Features/Memory/IMemoryBudget.cs
               - src/TerraBase/Features/Qos/QosAdmission.cs
-              - src/TerraBase/Features/Qos/IQosAdmission.cs
-              - src/TerraBase/Features/Qos/QosContext.cs
-              - src/TerraBase/Features/Qos/QosPolicy.cs
-              - src/TerraBase/Features/Qos/QosRequestLease.cs
-              - src/TerraBase/Features/Qos/QosMemoryException.cs
-              - src/TerraBase/Tenancy/TenantContext.cs
-              - src/TerraBase/Tenancy/PlanTierExtensions.cs
               - src/TerraBase/Program.cs
               - src/TerraBase/TerraBase.csproj
-              - src/TerraBase/Features/Sql/SqlErrors.cs
-              - src/TerraBase/Features/Sql/SqlService.cs
-              - src/TerraBase/Features/Sql/SqlScript.cs
               - src/TerraBase/Features/Sql/SqlSocket.cs
-              - src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs
               - src/TerraBase/Features/Management/CreateDatabaseEndpoint.cs
-              - src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs
-              - src/TerraBase/Features/Management/EngineManagementService.AddPipeline.cs
-              - src/TerraBase/Features/Management/EngineManagementService.DeletePipeline.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Databases.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Recovery.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Orphans.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Tenants.cs
-              - src/TerraBase/Features/Management/Backups/StorageSweep.cs
-              - src/TerraBase/Features/Management/Backups/EngineManagedBackupService.Restores.cs
-              - src/TerraBase/Features/Replicas/HomeMoves.cs
-              - src/TerraBase/Features/Replicas/HomeLeases.cs
-              - src/TerraBase/Features/Replicas/RegionalHandoff.cs
-              - src/TerraBase/Features/Memory/MemoryBudgetExtensions.cs
-              - src/TerraBase/Primitives/DirectorySync.cs
-              - src/TerraBase/Primitives/EntityIds.cs
-              - src/TerraBase/Primitives/StrictJson.cs
             frontier:
               - *journey-server
               - e2e/replication/**
@@ -265,27 +227,27 @@ jobs:
               - e2e/interactions/keyring.spec.ts
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-go:
               - sdk/go/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-js:
               - sdk/js/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-python:
               - sdk/python/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
               - Makefile
               - .github/workflows/ci.yml
             docs:
@@ -303,12 +265,10 @@ jobs:
               - src/TerraScale.Dashboard*/**/!(AGENTS.md)
               - .github/docker/dashboard.Dockerfile
               - src/TerraScale.Contracts/**/!(AGENTS.md)
-              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - src/TerraScale.Endpoints/**/!(AGENTS.md)
               - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md)
               - sites/landing/static/pricing.json
               - .github/scripts/dashboard/{check-simple-ui.py,check-stripe-dependency.py,verify-sdk.py,format.sh}
-              - .github/scripts/check-design-host.py
               - .github/scripts/ci/release-only.sh
               - *dotnet-sdk
               - Directory.*
@@ -329,7 +289,7 @@ jobs:
           ENGINE: ${{ steps.filter.outputs.engine }}
           FRONTIER: ${{ steps.filter.outputs.frontier }}
           KEYRING: ${{ steps.filter.outputs.keyring }}
-          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.pr_gate && '["libs","auth","terrabase","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' || (inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
+          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.pr_gate && '["libs","auth","terrabase","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' || inputs.publication == 'release-only' && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
           {
             echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")"
@@ -411,9 +371,6 @@ jobs:
       - name: Prove OCI fallback publication and release ordering
         if: github.event_name == 'pull_request' || inputs.pr_gate
         run: bash .github/scripts/ci/prove-image-transport.sh
-      - name: Merged EF Core migrations stay unchanged
-        if: github.event_name == 'pull_request' || inputs.pr_gate
-        run: python3 .github/scripts/ci/migrations-frozen.py HEAD^1
       - name: No test file outside the journey
         if: github.event_name == 'pull_request' || inputs.pr_gate
         run: |
@@ -447,88 +404,6 @@ jobs:
           path: |
             legacy-hits.md
             legacy-scan.log
-
-  # Native Rust builds stay in explicit maintenance dispatches; every build verifies the pinned release bytes.
-  native-build:
-    if: github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-            repeat: 1
-          - arch: amd64
-            runner: ubuntu-24.04
-            repeat: 2
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            repeat: 1
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            repeat: 2
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - &setup-builder
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build once on the real target architecture and run both native smokes
-        run: src/vendor/Turso.Native/scripts/build-turso-native.sh '${{ matrix.arch }}' native-output
-      - name: Record this run's native SHA-256
-        run: |
-          cd native-output
-          sha256sum --check SHA256SUMS-*
-          grep 'runtimes/.*libturso_sdk_kit.so$' SHA256SUMS-* >> "$GITHUB_STEP_SUMMARY"
-          (cd router-parser && sha256sum --check linux-*/SHA256SUMS && cat linux-*/SHA256SUMS >> "$GITHUB_STEP_SUMMARY")
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: turso-native-build-${{ matrix.arch }}-${{ matrix.repeat }}
-          path: native-output/
-          if-no-files-found: error
-
-  native-release:
-    needs: native-build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: turso-native-build-*
-          path: native-builds
-      - name: Assemble publication assets and source/patch receipts
-        run: |
-          for arch in amd64 arm64; do
-            case "$arch" in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; esac
-            for repeat in 1 2; do
-              (cd "native-builds/turso-native-build-$arch-$repeat" && sha256sum --check "SHA256SUMS-$rid")
-            done
-            cmp "native-builds/turso-native-build-$arch-1/runtimes/$rid/native/libturso_sdk_kit.so" \
-                "native-builds/turso-native-build-$arch-2/runtimes/$rid/native/libturso_sdk_kit.so"
-            for repeat in 1 2; do
-              (cd "native-builds/turso-native-build-$arch-$repeat/router-parser" && sha256sum --check "$rid/SHA256SUMS")
-            done
-            cmp "native-builds/turso-native-build-$arch-1/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so" \
-                "native-builds/turso-native-build-$arch-2/router-parser/runtimes/$rid/native/libterrascale_sql_parser.so"
-          done
-          src/vendor/Turso.Native/scripts/prepare-turso-native-release.sh native-builds/turso-native-build-amd64-1 native-builds/turso-native-build-arm64-1 native-release
-          for arch in amd64 arm64; do
-            case "$arch" in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; esac
-            cp "native-builds/turso-native-build-$arch-2/release/$rid-build-receipt.txt" "native-release/$rid-independent-build-receipt.txt"
-          done
-          (cd native-release && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > ../native-SHA256SUMS)
-          mv native-SHA256SUMS native-release/SHA256SUMS
-          cat native-release/NATIVE-SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: turso-native-release
-          path: native-release/
-          if-no-files-found: error
 
   libs:
     needs: changes
@@ -582,20 +457,24 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
-      - name: Cached pinned Turso native libraries
-        uses: ./terrascale/.github/actions/turso-native-cache
+      - name: Pinned native libraries
+        uses: ./terrascale/.github/actions/native-libs
         with:
           dir: terrascale
-      - name: Locked restore and pinned native libraries
+          runtimes: linux-arm64
+      - name: Locked restore
         working-directory: terrascale
-        run: make terrabase-restore turso-native
+        run: make terrabase-restore platform-restore
       - name: Whitespace
         working-directory: terrascale
-        run: make -o terrabase-restore terrabase-fmt-check CONFIGURATION=Release
+        run: make -o terrabase-restore -o platform-restore terrabase-fmt-check CONFIGURATION=Release
+      - name: Checked ts-platform build
+        working-directory: terrascale
+        run: make -o platform-restore -o native-libs platform-build CONFIGURATION=Release
       - name: Checked release publish keeps the natives inside the single file
         working-directory: terrascale
         run: |
-          make -o turso-native terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
+          make terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
           .github/scripts/ci/release-only.sh
 
   aspire:
@@ -652,11 +531,11 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
-      # The publish step's make turso-native verifies these cached bytes (or downloads once on a miss).
-      - name: Cached pinned Turso native libraries
-        uses: ./terrascale/.github/actions/turso-native-cache
+      - name: Pinned native libraries
+        uses: ./terrascale/.github/actions/native-libs
         with:
           dir: terrascale
+          runtimes: linux-arm64
       # Production runs linux/arm64 only: publish that runtime once, then wrap it in the image without another build.
       # The publish restores only its own project, locked, from nuget.org (8-12 s cold; the monorepo package cache took
       # 25 s to download plus 7 s to restore). The image builder boots meanwhile.
@@ -813,7 +692,7 @@ jobs:
         with:
           revision: ${{ github.sha }}
           qualification: terrabase-maintenance
-      - *setup-builder
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -984,10 +863,10 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   test:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate && 'native-maintenance-unqualified' || 'test' }}
+    name: test
     needs: [changes, checks, libs, auth, terrabase, dashboard, aspire, sdk]
     if: >-
-      ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate)
+      ${{ !cancelled()
       && (needs.changes.result != 'success' || needs.checks.result != 'success'
       || needs.changes.outputs.dotnet != '[]' || needs.changes.outputs.sdks != '[]' || needs.dashboard.result != 'skipped'
       || needs.aspire.result != 'skipped' || needs.changes.outputs.main != '[]') }}
@@ -1154,7 +1033,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
-      || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
+      || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && inputs.publication == 'release')))
       || (github.event_name == 'workflow_dispatch' && inputs.pr_gate)
     uses: ./.github/workflows/journey.yml
     with:

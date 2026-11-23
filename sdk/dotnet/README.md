@@ -18,7 +18,7 @@ carry their own pins; deployment, scope, plan and live-method qualification rema
 
 `TerraBaseSqlClient` is the SQL surface: SQL over REST (`POST …/sql/execute`,
 [contract](contracts/terrabase/sql-execute.md)) and SQL over WebSocket (`GET …/sql/ws`, subprotocol
-`terrascale.sql.v1`, [contract](contracts/terrabase/sql-websocket.md)). Reads need `sql:read`; writes and
+`terrascale.sql.v2`, [contract](contracts/terrabase/sql-websocket.md)). Reads need `sql:read`; writes and
 schema changes need `sql:write`. The other SDKs copy this shape ([API shape](../SQL-API.md)).
 
 ```csharp
@@ -87,6 +87,32 @@ the same credential as REST (a credential-free client reaches a private listener
 never resent. A lost committing reply throws `write_outcome_unknown` (08007), and every later call throws the
 same error. If no committing request was sent, a lost open transaction throws `transaction_rolled_back` until
 `RollbackAsync` clears it; only then can the next call reconnect.
+
+### Consistency and bookmarks
+
+Every region commits writes. The client tracks the newest `TerraScale-Bookmark` per database, shared by every
+`Database(projectId, name)` handle, `TerraBaseDbConnection` and SQL session of it: each request and WebSocket frame sends
+it, and each answer's bookmark is merged back (per region, the larger sequence wins), so overlapping calls never move it
+backwards and reads observe the client's own writes in whichever region answers. `TerraScale-Consistency` is `fast`
+(the default) or `strong`:
+
+```csharp
+var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = apiKey, Consistency = TerraBaseConsistencyMode.Fast });
+var db = sql.Database(projectId, "app");
+await db.ExecuteAsync("UPDATE accounts SET balance = balance - ? WHERE id = ?", [25, "acct_1"],
+    new TerraBaseSqlRequestOptions { Consistency = TerraBaseConsistencyMode.Strong }, ct);
+string bookmark = db.Bookmark;
+workerDb.ObserveBookmark(bookmark);
+await db.WithConsistency(TerraBaseConsistencyMode.Strong).ExecuteAsync("DELETE FROM holds WHERE expires_at < unixepoch()", cancellationToken: ct);
+await using var session = await db.ConnectAsync(ct);
+await session.BeginStrongAsync(ct);
+```
+
+`TerraBaseSqlRequestOptions.Bookmark` merges a bookmark from another process into one call; `ObserveBookmark` merges it
+into every later call. A strong call that loses a race throws `serialization_conflict` (40001, HTTP 409) and a schema
+change during the request `schema_mismatch`; both rolled back, and REST requests resend them at most twice. A bookmark
+or consistency the server does not accept throws `invalid_bookmark` or `invalid_consistency` (22023).
+`TerraBaseDbConnection.BeginTransactionAsync(IsolationLevel.Serializable)` begins a strong transaction.
 
 ## Entity Framework Core
 
@@ -163,8 +189,10 @@ await client.SetDatabasePlacementAsync(project, db.Id, placement: TerraBaseDatab
 Every region that holds a database is equal. `TerraBaseManagedDatabase` carries `Regions` (every region that holds it,
 sorted by region id; the order has no meaning) and `AllRegions`. `CreateDatabaseAsync` and `SetDatabasePlacementAsync`
 take a `TerraBaseDatabasePlacement` value made with `In` (one to nine distinct regions) or `EveryRegion`. TerraBase picks which region writes and
-moves that on its own when the set changes. `Database(projectId, name).GetRegionsAsync` reads each region's pull
-progress; an entry's `Role` is `writer` for the region that commits writes.
+moves that on its own when the set changes. `Database(projectId, name).GetRegionsAsync` reads each region's
+`AppliedBookmark`, `LagMs` (-1 when unknown) and `Healthy` as the answering region observes them, sampled at
+`ObservedAtUtc`; `Role` is optional. `CreateDatabaseAsync(project, name, defaultConsistency)` and
+`SetDatabaseConsistencyAsync` set the database's `DefaultConsistency`, which `TerraBaseManagedDatabase` reports.
 Tests replay `contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
 (`AllRegions`) holds the database in every serving region, including regions added later
 (`ts db placement ... -all-regions`).
@@ -192,7 +220,7 @@ bool valid = TerraScaleIds.IsValid(id);
 string validated = TerraScaleIds.Validate(id); // ArgumentException for invalid input
 ```
 
-The generator uses NUlid 1.7.3 with cryptographic randomness and instance-owned
+The generator uses Ulid 1.4.1 with cryptographic randomness and instance-owned
 monotonic state. Calls on one instance are thread-safe and strictly increasing,
 including within the same millisecond and during clock rollback. Independent
 instances do not share ordering. IDs are not authentication secrets. Validation
@@ -239,7 +267,7 @@ parsed first by the caller's `new Uri(...)`, which refuses some of these strings
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public HTTPS client listener.
 `TerraBaseSqlClient` runs SQL; see [SQL](#sql). `TerraBaseDatabaseClient` addresses projects and databases:
 `Project(projectId)` creates, lists, reads, renames and deletes databases and reads usage, analytics, saved queries and
-backup destinations; `Database(projectId, name)` reads usage and analytics, selected regions and pull progress (`GetRegionsAsync`), branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
+backup destinations; `Database(projectId, name)` reads usage and analytics, per-region replication (`GetRegionsAsync`), branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
 deploys and invokes functions. `TerraBaseManagementClient` covers the Management API: organizations, the current
 organization, plans, projects (including close and erase), history erasure, members, invitations, ownership transfer,
 audit retention and audit events. Databases and branches are not management operations; they live on

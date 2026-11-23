@@ -90,7 +90,6 @@
   <ItemGroup Label="Performance primitives">
     <PackageVersion Include="NativeCompressions" Version="0.6.1" />
     <PackageVersion Include="Ulid" Version="1.4.1" />
-    <PackageVersion Include="NUlid" Version="1.7.3" />
   </ItemGroup>
   <ItemGroup Label="TerraBase v2">
     <PackageVersion Include="Dapper" Version="2.1.100" />

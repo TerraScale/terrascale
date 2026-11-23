@@ -3,9 +3,10 @@ import { once } from 'node:events';
 import { closeSync, mkdtempSync, openSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { expect } from '@playwright/test';
-import { nodeRequest } from '../fault/support';
 import { holdSync } from '../support/ports';
-import { stateDir } from '../support/stack';
+import { localPort, stateDir } from '../support/stack';
+
+const meshPort = 8443;
 
 export type RegionProcess = { region: string; endpoint: string; metricsPort: number; stop(): Promise<void> };
 
@@ -36,7 +37,7 @@ export async function startRegion(region: string, index: number): Promise<Region
       ...environment, TS_REGION: region, TS_NODE: `journey-extra-${region}`,
       TERRABASE_DATA_DIRECTORY: join(stateDir, 'namespace', `region-data-${region}`),
       TERRABASE_PORT: String(port), TERRABASE_METRICS_PORT: String(held.ports.metrics),
-      TERRABASE_POSTGRES_PORT: String(held.ports.postgres),
+      TERRABASE_POSTGRES_PORT: String(held.ports.postgres), TERRABASE_QUIC_PORT: String(meshPort),
     },
     stdio: ['ignore', output, output],
   });
@@ -69,11 +70,10 @@ export async function startRegion(region: string, index: number): Promise<Region
     await expect.poll(async () => {
       expect(node.exitCode, `${region} stays running`).toBeNull();
       if (!readFileSync(log, 'utf8').includes('Application started.')) return null;
-      const response = await nodeRequest({ name: `journey-extra-${region}`, address }, '/v1/rollout/status');
-      expect(response.status, response.body).toBe(200);
-      return JSON.parse(response.body) as { node: string; owner: string; writer: boolean; ready: boolean };
-    }, { message: `${region} is ready to serve as its regional writer` })
-      .toMatchObject({ node: `journey-extra-${region}`, owner: `journey-extra-${region}`, writer: true, ready: true });
+      const response = await fetch(`${endpoint}/readyz`);
+      return response.status === 200 ? await response.json() as { status: string; region: string } : null;
+    }, { message: `${region} is ready to serve reads and writes as an active-active peer` })
+      .toMatchObject({ status: 'ok', region });
     return { region, endpoint, metricsPort: held.ports.metrics, stop };
   } catch (error) {
     await stop();
@@ -87,7 +87,7 @@ export function extendPeers(regions: string[]): () => void {
   const forwarding = execFileSync('sysctl', ['-n', 'net.ipv4.ip_forward'], { encoding: 'utf8' }).trim();
   const loopback = execFileSync('sysctl', ['-n', 'net.ipv4.conf.all.route_localnet'], { encoding: 'utf8' }).trim();
   execFileSync('sysctl', ['-qw', 'net.ipv4.ip_forward=1', 'net.ipv4.conf.all.route_localnet=1']);
-  writeFileSync(path, original + regions.map((region, index) => `journey-extra-${region} ${region} 10.228.${index}.2\n`).join(''));
+  writeFileSync(path, original + regions.map((region, index) => `journey-extra-${region} ${region} 10.228.${index}.2 ${meshPort} ${localPort('internal', 8081)}\n`).join(''));
   return () => {
     writeFileSync(path, original);
     execFileSync('sysctl', ['-qw', `net.ipv4.ip_forward=${forwarding}`, `net.ipv4.conf.all.route_localnet=${loopback}`]);

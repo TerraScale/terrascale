@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Logs;
@@ -8,7 +8,7 @@ internal static partial class BackgroundJourney
 {
     private static async Task DeletedAsync(IServiceProvider services, BackgroundCommands commands, BackgroundOwner owner, CancellationToken cancellationToken)
     {
-        var storage = services.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
+        var storage = services.GetRequiredService<DashboardDb>();
         var organizations = services.GetRequiredService<OrganizationStore>();
         var jobs = services.GetRequiredService<BackgroundJobs>();
         using var receiver = Receiver();
@@ -44,19 +44,13 @@ internal static partial class BackgroundJourney
                     ?? throw new IOException("The isolated organization is missing.");
                 removed.Organization.Projects[owner.ProjectId].Databases.Remove(owner.DatabaseId);
                 await organizations.ReplaceAsync(removed, cancellationToken);
-                await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-                {
-                    Require(!await db.ProjectDatabases.AnyAsync(row => row.Id == owner.DatabaseId, cancellationToken) &&
-                        !await db.BackgroundJobs.AnyAsync(row => row.Id == id, cancellationToken), "Database removal did not remove its membership and claim.");
-                }
+                Require(!(await storage.ReadAsync(connection => connection.ExecuteScalarAsync<long>("SELECT count(*) FROM project_databases WHERE id = @Id", new { Id = owner.DatabaseId }), cancellationToken) > 0) &&
+                    !await JourneySql.JobExistsAsync(storage, id, cancellationToken), "Database removal did not remove its membership and claim.");
                 pause.Resume.TrySetResult();
                 await worker;
                 Require((await DeliveriesAsync(receiver, route, cancellationToken)).Length == 0, "A prefetched batch was sent after database deletion.");
-                await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-                {
-                    Require(!await db.BackgroundJobs.AnyAsync(row => row.Id == id, cancellationToken) &&
-                        !await db.LogDrainCursors.AnyAsync(row => row.DrainId == drain.Id, cancellationToken), "The stale worker recreated a claim or committed a deleted database cursor.");
-                }
+                Require(!await JourneySql.JobExistsAsync(storage, id, cancellationToken) &&
+                    !(await storage.ReadAsync(connection => connection.ExecuteScalarAsync<long>("SELECT count(*) FROM log_drain_cursors WHERE drain_id = @Id", new { drain.Id }), cancellationToken) > 0), "The stale worker recreated a claim or committed a deleted database cursor.");
                 var restored = await organizations.FindAsync(owner.OrganizationId, cancellationToken)
                     ?? throw new IOException("The isolated organization is missing.");
                 restored.Organization.Projects[owner.ProjectId].Databases[owner.DatabaseId] = original;
@@ -69,8 +63,7 @@ internal static partial class BackgroundJourney
                         invoked = true;
                         return Task.CompletedTask;
                     }, cancellationToken, fence: stale, databaseId: owner.DatabaseId) && !invoked, "A stale checkpoint inserted a fresh claim after its row was deleted.");
-                    await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                    Require(!await db.BackgroundJobs.AnyAsync(row => row.Id == id, cancellationToken), "The stale checkpoint left an orphan claim.");
+                    Require(!await JourneySql.JobExistsAsync(storage, id, cancellationToken), "The stale checkpoint left an orphan claim.");
                 }
             }
             finally

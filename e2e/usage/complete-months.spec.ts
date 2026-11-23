@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { test, expect } from '../support/audit';
 import { saveSecret } from '../support/state';
 
-test('the allowance endpoint reads complete persisted months without inventing zero usage or finality', async () => {
+test('usage is metered per UTC month, persisted under the month it was recorded in, and the published allowance is enforced', async () => {
   const build = process.env.E2E_BUILD;
   if (!build) throw new Error('E2E_BUILD is required for the usage journey');
   const data = await mkdtemp(join(tmpdir(), 'usage-months-'));
@@ -22,12 +22,14 @@ test('the allowance endpoint reads complete persisted months without inventing z
         ...env, DOTNET_ENVIRONMENT: 'Development', TERRABASE_DATA_DIRECTORY: data,
         TERRABASE_MASTER_KEY: master, TERRABASE_PEER_SECRET: peer,
         TERRABASE_PORT: '18620', TERRABASE_INTERNAL_PORT: '18621',
-        TERRABASE_POSTGRES_PORT: '18622', TERRABASE_METRICS_PORT: '18623',
+        TERRABASE_POSTGRES_PORT: '18622', TERRABASE_METRICS_PORT: '18623', TERRABASE_QUIC_PORT: '18624',
       },
       maxBuffer: 1024 * 1024,
     });
-    expect(stdout).toContain('usage complete-month journey: two months back=37, persisted zero=0, absent=null, paging=25+2, current/future=400, UTC boundary and Usage-Final=false passed');
-    expect(stdout).toMatch(/usage function invocations journey: before=\{.*"operations":0,.*"invocations":0\} after=\{.*"invocations":4\} capped=\{.*"operations":50000,.*"writeUnits":49999,"invocations":1\} refusal=429 quota_exceeded/);
+    expect(stdout).toContain('usage complete-month journey: history 2028-01 writes=37, absent month=0, write at boundary-1tick in 2028-02, '
+      + 'read at boundary in 2028-03, invalid month=400, flushed months 2028-01,2028-02,2028-03 passed');
+    expect(stdout).toContain('usage sql metering journey: before=2028-03{requests=0,reads=0,writes=0,rows_read=0,rows_written=0,strong_commits=0} '
+      + 'after=2028-03{requests=4,reads=1,writes=3,rows_read=3,rows_written=4,strong_commits=2} refused=400 allowance hobby=10 refusal=429 database_limit');
   } finally {
     await rm(data, { recursive: true, force: true });
   }

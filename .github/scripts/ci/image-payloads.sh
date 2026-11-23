@@ -10,11 +10,8 @@ esac
 case ${1:-} in
   publish)
     output=$RUNNER_TEMP/image-payloads/arm64
-    native=
-    if [[ $area == terrabase ]]; then make turso-native & native=$!; fi
     dotnet restore "$project" --locked-mode
-    [[ -z $native ]] || wait "$native"
-    make -o turso-native "$area-publish" RUNTIME=linux-arm64 PUBLISH_DIR="$output"
+    make "$area-publish" RUNTIME=linux-arm64 PUBLISH_DIR="$output"
     test -x "$output/$binary"
     test "$(od -An -tx1 -j18 -N2 "$output/$binary" | tr -d ' \n')" = b700
     ;;

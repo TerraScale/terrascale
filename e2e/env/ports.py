@@ -10,8 +10,6 @@ from pathlib import Path
 JOURNEY = {
     "caddy": 443,
     "smtp": 587,
-    "nats": 4222,
-    "nats_http": 8222,
     "postgres_edge": 5432,
     "mailpit": 8025,
     "cloudflare": 8026,
@@ -24,6 +22,7 @@ JOURNEY = {
     "sso": 8033,
     "terrabase": 8080,
     "internal": 8081,
+    "platform": 8082,
     "dashboard": 8085,
     "client_proxy": 8089,
     "auth": 8090,
@@ -32,6 +31,7 @@ JOURNEY = {
     "terrabase_fra2": 8380,
     "metrics": 9091,
     "auth_metrics": 9092,
+    "platform_metrics": 9093,
     "metrics_fra": 9191,
     "metrics_gru2": 9291,
     "metrics_fra2": 9391,
@@ -39,6 +39,10 @@ JOURNEY = {
     "postgres_fra": 6532,
     "postgres_gru2": 6632,
     "postgres_fra2": 6732,
+    "quic": 8443,
+    "quic_fra": 8444,
+    "quic_gru2": 8445,
+    "quic_fra2": 8446,
 }
 
 

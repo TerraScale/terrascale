@@ -11,26 +11,25 @@ using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Http;
 using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 internal static class BackgroundHost
 {
     public static IHost Build(BackgroundOwner? owner = null, BackgroundCommands? commands = null, TimeProvider? clock = null)
     {
-        var builder = Host.CreateApplicationBuilder();
+        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Development });
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
         builder.Services.AddSingleton(clock ?? TimeProvider.System);
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
         builder.Services.AddDashboardStorage();
+        builder.Services.AddSingleton<DashboardDbUpRunner>();
         builder.Services.AddAccountFeatures();
         builder.Services.AddSingleton<TerraBasePlanSync>();
         builder.Services.AddSingleton<BillingSchemaGate>();
         builder.Services.AddSingleton<StripeBilling>();
         builder.Services.AddSingleton<ServiceSloTelemetry>();
-        builder.Services.AddSingleton<TerraBaseRpcClient>();
         builder.Services.AddSingleton<ILogDrainSource, LogDrainSource>();
         builder.Services.AddSingleton<LogDrains>();
         builder.Services.AddSingleton<IAlertSource, AlertSource>();
@@ -50,12 +49,15 @@ internal static class BackgroundHost
     }
 }
 
-internal sealed class BackgroundClock(DateTimeOffset now) : TimeProvider
+internal sealed class BackgroundClock(TimeSpan offset) : TimeProvider
 {
     private readonly Lock gate = new();
     private readonly List<ControlledTimer> timers = [];
     private long elapsed;
-    public override DateTimeOffset GetUtcNow() => now;
+
+    public static BackgroundClock At(DateTimeOffset at) => new(at - TimeProvider.System.GetUtcNow());
+
+    public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + offset;
     public override long GetTimestamp() => TimeProvider.System.GetTimestamp() + Interlocked.Read(ref elapsed);
     public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
 

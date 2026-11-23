@@ -107,11 +107,7 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
       id = databases.find(database => database.name === name || database.name === renamed)?.id ?? '';
     }
     if (!id) return;
-    let removed = await request.delete(origin + path + '/' + id, { headers });
-    if (removed.status() === 421) {
-      expect((await removed.json()).error.code).toBe('wrong_region');
-      removed = await request.delete('https://' + removed.headers()['x-terrabase-database-home'] + '.api.terrascale.tech' + path + '/' + id, { headers });
-    }
+    const removed = await request.delete(origin + path + '/' + id, { headers });
     expect([204, 404], 'the regional API leaves no temporary database').toContain(removed.status());
   }
 

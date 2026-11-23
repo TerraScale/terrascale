@@ -1,13 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:http2';
-import { createConnection, type Socket } from 'node:net';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { expect, test, request as apiRequest, type APIRequestContext } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
 import { keyId } from '../support/api-key';
@@ -25,7 +22,6 @@ export const nodes = [
 export type KeptCopy = { id: string; organizationId: string; projectId: string; databaseId: string; files: string[]; bytes: number };
 export type FencedDatabase = { databaseId: string; reason: string; epoch: number; detail: string };
 export type Unserved = { databaseId: string; region: string; node: string; epoch: number; cause: string };
-export type HomeLease = { organizationId: string; projectId: string; databaseId: string; home: string; node: string; epoch: number; session: string; adopted?: string | null };
 export const node = (name: string) => nodes.find(candidate => candidate.name === name)!;
 
 export type Node = typeof nodes[number];
@@ -125,35 +121,6 @@ export async function nodeStatus(node: Node, region?: string): Promise<NodeStatu
   return JSON.parse(response.body) as NodeStatus;
 }
 
-export async function keptCopies(node: Node, id: string): Promise<KeptCopy[]> {
-  return ((await nodeStatus(node)).kept ?? []).filter(copy => copy.databaseId === id);
-}
-
-export function keptHash(node: Node, copy: KeptCopy): string {
-  const hash = createHash('sha256');
-  for (const file of copy.files) hash.update(readFileSync(join(stateDir, node.service, '.handoff', copy.id, copy.organizationId, copy.projectId, file)));
-  return hash.digest('hex');
-}
-
-export function fileHash(node: Node, lease: { organizationId: string; projectId: string; databaseId: string }): string {
-  return createHash('sha256').update(readFileSync(join(stateDir, node.service, lease.organizationId, lease.projectId, `${lease.databaseId}.db`))).digest('hex');
-}
-
-export function holdsFile(node: Node, lease: { organizationId: string; projectId: string; databaseId: string }): boolean {
-  return existsSync(join(stateDir, node.service, lease.organizationId, lease.projectId, `${lease.databaseId}.db`));
-}
-
-export function promoting(node: Node, id: string): boolean {
-  return existsSync(join(stateDir, node.service, '.fences', 'promoting', id));
-}
-
-export async function counted(node: Node, name: string, labels: Record<string, string> = {}): Promise<number> {
-  const text = await (await fetch(`http://127.0.0.1:${node.metrics}/metrics`)).text();
-  return text.split('\n').filter(line => line.startsWith(name + '{') || line.startsWith(name + ' '))
-    .filter(line => Object.entries(labels).every(([key, value]) => line.includes(`${key}="${value}"`)))
-    .reduce((sum, line) => sum + Number(line.slice(line.lastIndexOf(' ') + 1)), 0);
-}
-
 export async function writerIs(region: string, name: string): Promise<void> {
   await expect.poll(async () => {
     const statuses = await Promise.all(nodes.filter(member => member.region === region).map(member => nodeStatus(member)));
@@ -199,83 +166,6 @@ export async function exchangedToken(request: APIRequestContext, signedIn: strin
   }));
   saveSecret('fault-exchanged-token', grant.access_token);
   return grant.access_token;
-}
-
-export class Kv {
-  private buffer = Buffer.alloc(0);
-  private readonly pending = new Map<string, (value: Record<string, unknown>) => void>();
-  private next = 1;
-  private readonly socket: Socket;
-
-  private constructor(port: number) {
-    this.socket = createConnection({ port, host: '127.0.0.1' });
-    this.socket.on('data', (chunk: Buffer) => {
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-      for (;;) {
-        const end = this.buffer.indexOf('\r\n');
-        if (end < 0) return;
-        const parts = this.buffer.subarray(0, end).toString().split(' ');
-        if (parts[0] === 'MSG' || parts[0] === 'HMSG') {
-          const size = Number(parts.at(-1));
-          if (this.buffer.length < end + 2 + size + 2) return;
-          const headerSize = parts[0] === 'HMSG' ? Number(parts.at(-2)) : 0;
-          const data = this.buffer.subarray(end + 2 + headerSize, end + 2 + size).toString();
-          const handler = this.pending.get(parts[2]);
-          this.pending.delete(parts[2]);
-          handler?.(data.startsWith('{') ? JSON.parse(data) : { raw: data });
-          this.buffer = this.buffer.subarray(end + 2 + size + 2);
-        } else {
-          if (parts[0] === 'PING') this.socket.write('PONG\r\n');
-          this.buffer = this.buffer.subarray(end + 2);
-        }
-      }
-    });
-  }
-
-  static async open(port = 4222, token = readFileSync(join(stateDir, 'nats-token'), 'utf8').trim()): Promise<Kv> {
-    const kv = new Kv(port);
-    await once(kv.socket, 'connect');
-    kv.socket.write('CONNECT ' + JSON.stringify({ auth_token: token, headers: true, verbose: false }) + '\r\n');
-    return kv;
-  }
-
-  private request(subject: string, payload: unknown, headers?: Record<string, string>): Promise<Record<string, unknown>> {
-    const sid = String(this.next++);
-    const inbox = `_INBOX.fault.${sid}`;
-    const data = Buffer.from(JSON.stringify(payload));
-    const answer = new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`NATS request ${subject} got no answer`)), 5000);
-      this.pending.set(sid, value => { clearTimeout(timer); resolve(value); });
-    });
-    const block = headers ? Buffer.from('NATS/1.0\r\n' + Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('') + '\r\n') : Buffer.alloc(0);
-    const publish = headers ? `HPUB ${subject} ${inbox} ${block.length} ${block.length + data.length}` : `PUB ${subject} ${inbox} ${data.length}`;
-    this.socket.write(Buffer.concat([Buffer.from(`SUB ${inbox} ${sid}\r\nUNSUB ${sid} 1\r\n${publish}\r\n`), block, data, Buffer.from('\r\n')]));
-    return answer;
-  }
-
-  async get<T>(bucket: string, key: string): Promise<{ seq: number; value: T } | null> {
-    const stored = await this.request(`$JS.API.STREAM.MSG.GET.KV_${bucket}`, { last_by_subj: `$KV.${bucket}.${key}` }) as { message?: { seq: number; data?: string; hdrs?: string } };
-    if (!stored.message?.data || Buffer.from(stored.message.hdrs ?? '', 'base64').toString().includes('KV-Operation')) return null;
-    return { seq: stored.message.seq, value: JSON.parse(Buffer.from(stored.message.data, 'base64').toString()) as T };
-  }
-
-  async put(bucket: string, key: string, value: unknown, after: number): Promise<void> {
-    const answer = await this.request(`$KV.${bucket}.${key}`, value, { 'Nats-Expected-Last-Subject-Sequence': String(after) });
-    expect(answer.error, JSON.stringify(answer)).toBeUndefined();
-  }
-
-  async publish(subject: string, payload: unknown, headers: Record<string, string>): Promise<Record<string, unknown>> {
-    return this.request(subject, payload, headers);
-  }
-
-  async remove(bucket: string, key: string, after: number): Promise<void> {
-    const answer = await this.request(`$KV.${bucket}.${key}`, {}, { 'KV-Operation': 'DEL', 'Nats-Expected-Last-Subject-Sequence': String(after) });
-    expect(answer.error, JSON.stringify(answer)).toBeUndefined();
-  }
-
-  close(): void {
-    this.socket.destroy();
-  }
 }
 
 export async function cleanUp(failure: unknown, cleanup: () => Promise<void>): Promise<void> {
@@ -572,50 +462,7 @@ export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: st
   }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).toBe(200);
 }
 
-export function nodeBuild(node: Node): string {
-  const pid = Number(readFileSync(join(stateDir, 'pids', `${node.service}.pid`), 'utf8').trim());
-  const command = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
-  expect(command.at(-1), `${node.name} runs a TerraBase build`).toMatch(/terrabase\.dll$/);
-  return command.at(-1)!;
-}
-
-export function ulidAt(at: number): string {
-  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-  let value = BigInt(at) << 80n | BigInt(`0x${randomBytes(10).toString('hex')}`);
-  let text = '';
-  for (let index = 0; index < 26; index++) {
-    text = alphabet[Number(value & 31n)] + text;
-    value >>= 5n;
-  }
-  return text;
-}
-
 export function faultId(): string {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
   return '01' + Array.from(randomBytes(24), value => alphabet[value % 32]).join('');
-}
-
-export async function refuseConnections(node: Node, peers: Node[], delay?: string): Promise<() => Promise<void>> {
-  const pid = readFileSync(join(stateDir, 'pids', `${node.service}.pid`), 'utf8').trim();
-  const inject = `inject=connect:error=ECONNREFUSED${delay ? `:delay_enter=${delay}` : ''}`;
-  const child = spawn('strace', ['--interruptible=1', '-f', '-p', pid, '-e', 'trace=connect', '-e', inject, '-o', '/dev/null'],
-    { stdio: ['ignore', 'ignore', 'pipe'] });
-  const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
-  let stderr = '';
-  await new Promise<void>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', () => reject(new Error(`refusing ${node.name}'s connections ended before attachment: ${stderr}`)));
-    child.stderr.on('data', chunk => {
-      stderr += chunk.toString();
-      if (stderr.includes(' attached')) resolve();
-    });
-  });
-  for (const peer of peers) {
-    await promisify(execFile)('ss', ['-K', 'dst', peer.address, 'dport', '=', ':8081']);
-  }
-  let stopping: Promise<void> | undefined;
-  return () => stopping ??= (async () => {
-    child.kill('SIGINT');
-    await exited;
-  })();
 }

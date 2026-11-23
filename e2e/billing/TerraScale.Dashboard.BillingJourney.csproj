@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>BillingJourney</AssemblyName>
     <IsDashboardArea>true</IsDashboardArea>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Dapper.AOT</InterceptorsNamespaces>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

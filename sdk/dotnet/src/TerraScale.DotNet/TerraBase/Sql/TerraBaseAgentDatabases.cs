@@ -30,6 +30,24 @@ public sealed partial class TerraBaseSqlClient
             new(name, TtlSeconds: ttlSeconds, Regions: placement?.Regions, AllRegions: placement?.AllRegions), cancellationToken);
     }
 
+    /// <summary>
+    /// Creates a database like <see cref="CreateDatabaseAsync(string, string, int?, TerraBaseDatabasePlacement?, CancellationToken)"/> whose SQL
+    /// requests without <c>TerraScale-Consistency</c> run with <paramref name="defaultConsistency"/>. Requires databases:write.
+    /// </summary>
+    public Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string project, string name, TerraBaseConsistencyMode defaultConsistency, int? ttlSeconds = null,
+        TerraBaseDatabasePlacement? placement = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        ValidateDatabaseTtl(ttlSeconds);
+        return SendDatabaseAsync(project, HttpMethod.Post, DatabasesPath(project),
+            new(name, TtlSeconds: ttlSeconds, Regions: placement?.Regions, AllRegions: placement?.AllRegions, DefaultConsistency: defaultConsistency), cancellationToken);
+    }
+
+    /// <summary>Sets the consistency of SQL requests that do not send <c>TerraScale-Consistency</c>. Requires databases:write.</summary>
+    public Task<TerraBaseManagedDatabase> SetDatabaseConsistencyAsync(string project, string database, TerraBaseConsistencyMode defaultConsistency,
+        CancellationToken cancellationToken = default) =>
+        SendDatabaseAsync(project, HttpMethod.Patch, DatabasePath(project, database), new(DefaultConsistency: defaultConsistency), cancellationToken);
+
     /// <summary>Sets the regions that hold the database, or all-regions mode; pass exactly one. Requires databases:write.</summary>
     public Task<TerraBaseManagedDatabase> SetDatabasePlacementAsync(string project, string database, TerraBaseDatabasePlacement placement,
         CancellationToken cancellationToken = default)
@@ -120,6 +138,6 @@ public sealed partial class TerraBaseSqlClient
 }
 
 internal sealed record TerraBaseAgentDatabaseRequest(string? Name = null, DateTimeOffset? PointInTime = null, int? TtlSeconds = null,
-    IReadOnlyList<string>? Regions = null, bool? AllRegions = null);
+    IReadOnlyList<string>? Regions = null, bool? AllRegions = null, TerraBaseConsistencyMode? DefaultConsistency = null);
 
 internal sealed record TerraBaseScopedKeyRequest(string? Project, string Database, string Access, [property: JsonPropertyName("ttl_seconds")] int? TtlSeconds);

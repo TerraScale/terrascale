@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
@@ -1314,46 +1314,41 @@ impl Runner {
         .add_root_ca_pem(self.ca.clone())
         .build()
         .map_err(|error| error.to_string())?;
-        let mut moved = false;
         let result = async {
-            let db = self.client.database(&created.id);
-            db.sql().execute("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)", &[]).await.map_err(|error| error.to_string())?;
-            db.sql().execute("INSERT INTO placement_rows VALUES (1)", &[]).await.map_err(|error| error.to_string())?;
+            let home = self.client.database(&created.id);
+            let peer = regional.database(&created.id);
+            home.sql().execute("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)", &[]).await.map_err(|error| error.to_string())?;
+            home.sql().execute("INSERT INTO placement_rows VALUES (1)", &[]).await.map_err(|error| error.to_string())?;
             let added = self.client.set_database_placement(&created.id,
                 &DatabasePlacement { regions: Some(vec!["gru".into(), "fra".into()]), ..Default::default() }).await.map_err(|error| error.to_string())?;
             same(json!(added.regions), &json!(["fra", "gru"]), "added region")?;
             if added.placement_version <= created.placement_version { return Err("membership did not raise placement version".into()); }
-            let progress = db.get_database_regions().await.map_err(|error| error.to_string())?;
-            same(json!(progress.regions.iter().map(|row| &row.region).collect::<Vec<_>>()), &json!(["fra", "gru"]), "status regions")?;
-            same(json!(progress.regions[1].role), &json!("writer"), "writer role")?;
-            let change = DatabasePlacement { regions: Some(vec!["fra".into()]), ..Default::default() };
-            let updated = tokio::time::timeout(Duration::from_secs(90), async {
-                loop {
-                    match self.client.set_database_placement(&created.id, &change).await {
-                        Ok(updated) => break Ok(updated),
-                        Err(error) if error.code() == Some("replica_not_ready") && error.status() == Some(503) =>
-                            tokio::time::sleep(Duration::from_secs(1)).await,
-                        Err(error) => break Err(error),
-                    }
-                }
-            }).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
-            moved = true;
-            same(json!(updated.regions), &json!(["fra"]), "dropped writer")?;
-            if updated.placement_version <= added.placement_version { return Err("writer did not raise placement version".into()); }
-            let after = regional.database(&created.id).get_database_regions().await.map_err(|error| error.to_string())?;
-            same(json!(after.regions.iter().map(|row| (&row.region, &row.role)).collect::<Vec<_>>()), &json!([["fra", "writer"]]), "moved status")?;
-            let proxied = db.get_database_regions().await.map_err(|error| error.to_string())?;
-            same(json!(proxied.regions.iter().map(|row| &row.region).collect::<Vec<_>>()), &json!(["fra"]), "proxied nonmember endpoint")?;
-            let rows = db.sql().query("SELECT value FROM placement_rows", &[]).await.map_err(|error| error.to_string())?;
-            same(records(&rows), &json!([[1]]), "data survived placement")?;
-            db.sql().execute("INSERT INTO placement_rows VALUES (2)", &[]).await.map_err(|error| error.to_string())?;
-            let retained = regional.database(&created.id).sql().query("SELECT value FROM placement_rows ORDER BY value", &[]).await.map_err(|error| error.to_string())?;
-            same(records(&retained), &json!([[1], [2]]), "acknowledged proxied write retained")?;
-            println!("rust placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]");
+            let progress = home.get_database_regions().await.map_err(|error| error.to_string())?;
+            same(json!(progress.regions.iter().map(|row| (&row.region, row.healthy)).collect::<Vec<_>>()), &json!([["fra", true], ["gru", true]]), "every active-active region healthy")?;
+            if progress.regions.iter().any(|row| row.applied_bookmark.as_deref().is_none_or(str::is_empty)) {
+                return Err(format!("a region reports no applied bookmark: {:?}", progress.regions));
+            }
+            let mut fra_read = peer.sql();
+            if let Some(bookmark) = home.bookmark() { fra_read = fra_read.with_bookmark(bookmark); }
+            let seen = fra_read.query("SELECT value FROM placement_rows ORDER BY value", &[]).await.map_err(|error| error.to_string())?;
+            same(records(&seen), &json!([[1]]), "fra reads the gru write with its bookmark")?;
+            peer.sql().execute("INSERT INTO placement_rows VALUES (2)", &[]).await.map_err(|error| error.to_string())?;
+            let mut gru_read = home.sql();
+            if let Some(bookmark) = peer.bookmark() { gru_read = gru_read.with_bookmark(bookmark); }
+            let both = gru_read.query("SELECT value FROM placement_rows ORDER BY value", &[]).await.map_err(|error| error.to_string())?;
+            same(records(&both), &json!([[1], [2]]), "gru reads the fra write with its bookmark")?;
+            let updated = regional.set_database_placement(&created.id,
+                &DatabasePlacement { regions: Some(vec!["fra".into()]), ..Default::default() }).await.map_err(|error| error.to_string())?;
+            same(json!(updated.regions), &json!(["fra"]), "removed region")?;
+            if updated.placement_version <= added.placement_version { return Err("membership change did not raise placement version".into()); }
+            let after = peer.get_database_regions().await.map_err(|error| error.to_string())?;
+            same(json!(after.regions.iter().map(|row| (&row.region, row.healthy)).collect::<Vec<_>>()), &json!([["fra", true]]), "remaining region status")?;
+            let retained = peer.sql().query("SELECT value FROM placement_rows ORDER BY value", &[]).await.map_err(|error| error.to_string())?;
+            same(records(&retained), &json!([[1], [2]]), "data survived placement")?;
+            println!("rust placement: fra and gru healthy active-active peers; bookmark reads crossed both ways; rows [[1],[2]]");
             Ok(())
         }.await;
-        let placed = if moved { &regional } else { &self.client };
-        placed
+        regional
             .delete_database(&created.id)
             .await
             .map_err(|error| error.to_string())?;

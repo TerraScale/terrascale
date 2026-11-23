@@ -29,6 +29,25 @@ public sealed partial class TerraBaseProjectClient
         return (await connection.SendAsync(HttpMethod.Post, path + "/databases", body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
+    /// <summary>
+    /// Creates a database like <see cref="CreateDatabaseAsync(string, TerraBaseDatabasePlacement?, CancellationToken)"/> whose SQL
+    /// requests without <c>TerraScale-Consistency</c> run with <paramref name="defaultConsistency"/>. Sent once.
+    /// </summary>
+    public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, TerraBaseDatabasePlacement? placement, TerraBaseConsistencyMode defaultConsistency,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        var body = TerraBaseConnection.Json(new TerraBaseCreateDatabaseRequest(name, placement?.Regions, placement?.AllRegions, defaultConsistency), Json.TerraBaseCreateDatabaseRequest);
+        return (await connection.SendAsync(HttpMethod.Post, path + "/databases", body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
+    }
+
+    /// <summary>Sets the consistency of SQL requests that do not send <c>TerraScale-Consistency</c>. Requires databases:write; sent once.</summary>
+    public async Task<TerraBaseManagedDatabase> SetDatabaseConsistencyAsync(string databaseName, TerraBaseConsistencyMode defaultConsistency, CancellationToken cancellationToken = default)
+    {
+        var body = TerraBaseConnection.Json(new TerraBaseAgentDatabaseRequest(DefaultConsistency: defaultConsistency), Json.TerraBaseAgentDatabaseRequest);
+        return (await connection.SendAsync(HttpMethod.Patch, DatabasePath(databaseName), body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
+    }
+
     /// <summary>Lists databases in creation order; limit is 1–100, default 20. Pass Next as after.</summary>
     public async Task<TerraBasePage<TerraBaseManagedDatabase>> ListDatabasesAsync(string? after = null, int? limit = null, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, path + "/databases" + TerraBaseConnection.Query(("after", after), ("limit", TerraBaseConnection.Number(limit))),
@@ -58,7 +77,6 @@ public sealed partial class TerraBaseProjectClient
     private static string? Instant(DateTimeOffset? instant) => instant?.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffffzzz", CultureInfo.InvariantCulture);
 
     private string DatabasePath(string databaseName) => path + "/databases/" + TerraBaseConnection.Segment(databaseName, nameof(databaseName));
-
 }
 
-internal sealed record TerraBaseCreateDatabaseRequest(string Name, IReadOnlyList<string>? Regions, bool? AllRegions);
+internal sealed record TerraBaseCreateDatabaseRequest(string Name, IReadOnlyList<string>? Regions, bool? AllRegions, TerraBaseConsistencyMode? DefaultConsistency = null);

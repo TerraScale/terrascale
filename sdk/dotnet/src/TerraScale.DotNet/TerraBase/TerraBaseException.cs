@@ -79,14 +79,14 @@ public class TerraBaseException : HttpRequestException
                     code = error.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
                     message = error.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
                     machine = error.TryGetProperty("machine", out var host) && host.ValueKind == JsonValueKind.String ? Clean(host.GetString()) : null;
-                    outcomeRegion = error.TryGetProperty("region", out var origin) && origin.ValueKind == JsonValueKind.String && TerraBaseRegion.IsValid(origin.GetString()!) ? origin.GetString() : null;
+                    outcomeRegion = error.TryGetProperty("region", out var origin) && origin.ValueKind == JsonValueKind.String && origin.GetString() is { } named && TerraBaseRegion.IsValid(named) ? named : null;
                     if (error.TryGetProperty("details", out var issues) && issues.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var issue in issues.EnumerateArray().Take(256))
                         {
-                            if (issue.ValueKind == JsonValueKind.Object && issue.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.String
-                                && issue.TryGetProperty("keyword", out var keyword) && keyword.ValueKind == JsonValueKind.String)
-                                details.Add(new(path.GetString()!, keyword.GetString()!));
+                            if (issue.ValueKind == JsonValueKind.Object && issue.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.String && path.GetString() is { } pointer
+                                && issue.TryGetProperty("keyword", out var keyword) && keyword.ValueKind == JsonValueKind.String && keyword.GetString() is { } rule)
+                                details.Add(new(pointer, rule));
                         }
                     }
                     if (code == "invalid_rules" && error.TryGetProperty("details", out var ruleDetails)
@@ -94,21 +94,23 @@ public class TerraBaseException : HttpRequestException
                         problems = diagnostics.Deserialize(TerraBaseRulesJson.Default.IReadOnlyListTerraBaseRulesProblem)
                             ?? throw new JsonException("Rules problems must be an array.");
                     statement = error.TryGetProperty("statement", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var index0) ? index0 : null;
-                    sqlstate = error.TryGetProperty("sqlstate", out var sc) && sc.ValueKind == JsonValueKind.String ? Clean(sc.GetString()) : null;
+                    sqlstate = (error.TryGetProperty("sqlState", out var sc) || error.TryGetProperty("sqlstate", out sc)) && sc.ValueKind == JsonValueKind.String
+                        ? Clean(sc.GetString())
+                        : null;
                     op = error.TryGetProperty("op", out var o) && o.ValueKind == JsonValueKind.Number && o.TryGetInt32(out var index) ? index : null;
                 }
             }
         }
         catch (Exception error) when (error is JsonException or InvalidDataException or HttpRequestException)
         {
-            // An unreadable error body still reports its status.
         }
 
-        // A Management 404 has an empty body that TerraBase fills with the generic unknown_route code.
         var text = Clean(message) ?? $"TerraBase answered HTTP {(int)status}{(code is null ? null : $" ({Clean(code)})")}.";
         TerraBaseException exception = (int)status switch
         {
             _ when code is not null && statement is { } failed && sqlstate is not null => new TerraBaseSqlException(status, text, code, failed, sqlstate, inner),
+            _ when code is { } consistencyCode && TerraBaseSqlErrorCodes.ConsistencySqlState(consistencyCode) is { } consistencyState =>
+                new TerraBaseSqlException(status, text, consistencyCode, statement ?? 0, sqlstate ?? consistencyState, inner),
             400 or 413 or 415 => new TerraBaseValidationException(status, text, code, op, inner),
             401 when code == "key_revoked" => new TerraBaseKeyRevokedException(status, text, code, op, inner),
             401 when code == "key_expired" => new TerraBaseKeyExpiredException(status, text, code, op, inner),
@@ -147,7 +149,6 @@ public class TerraBaseException : HttpRequestException
             ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);
     }
 
-    // A single header value that is a well-formed region id (or, for a list, a comma-separated value), else null.
     internal static string? RegionHeader(HttpResponseMessage response, string name, bool list = false) =>
         response.Headers.TryGetValues(name, out var values) && values.ToArray() is [var value]
             && (list ? value.Length <= 1024 : TerraBaseRegion.IsValid(value)) ? value : null;

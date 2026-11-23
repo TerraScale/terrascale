@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using System.Data.Common;
 using TerraScale.DotNet.TerraBase;
 
 namespace Journey.Social;
@@ -16,40 +16,49 @@ internal static class PlatformSessions
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
         http.DefaultRequestHeaders.Add("X-TerraBase-Peer-Credential", secret);
         var database = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = new Uri("http://127.0.0.1:8081") })
-            .Database("00000000000000000000000002", "00000000000000000000000003");
+            .Database("00000000000000000000000002", "ts-auth");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var contexts = new List<DbContext>();
+        var connections = new List<TerraBaseDbConnection>();
         using var metrics = new HttpClient();
         try
         {
             for (var index = 0; index < 16; index++)
             {
-                contexts.Add(new DbContext(new DbContextOptionsBuilder().UseTerraBase(database).Options));
+                connections.Add(new TerraBaseDbConnection(database));
             }
 
-            await Task.WhenAll(contexts.Select(async context =>
-            {
-                await using var transaction = await context.Database.BeginTransactionAsync(deadline.Token);
-                await context.Database.ExecuteSqlRawAsync("SELECT 42", deadline.Token);
-                var reading = await metrics.GetStringAsync(new Uri("http://127.0.0.1:9091/metrics"), deadline.Token);
-                if (!Empty(reading, "terrabase_qos_active_sessions") || !Empty(reading, "terrabase_qos_preauthentication_sessions"))
-                {
-                    throw new InvalidOperationException("platform EF traffic entered customer session accounting");
-                }
-
-                await transaction.CommitAsync(deadline.Token);
-            }));
-
-            Console.WriteLine("16 platform EF transactions completed");
+            await Task.WhenAll(connections.Select(connection => TransactAsync(connection, metrics, deadline.Token)));
+            Console.WriteLine("16 platform ADO.NET transactions completed");
             await Console.Out.FlushAsync(deadline.Token);
             _ = await Console.In.ReadLineAsync(deadline.Token);
         }
         finally
         {
-            foreach (var context in contexts)
+            foreach (var connection in connections)
             {
-                await context.DisposeAsync();
+                await connection.DisposeAsync();
             }
         }
+    }
+
+    private static async Task TransactAsync(DbConnection connection, HttpClient metrics, CancellationToken cancellationToken)
+    {
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 42";
+        if (await command.ExecuteScalarAsync(cancellationToken) is not 42L)
+        {
+            throw new InvalidOperationException("platform transaction did not read 42");
+        }
+
+        var reading = await metrics.GetStringAsync(new Uri("http://127.0.0.1:9091/metrics"), cancellationToken);
+        if (!Empty(reading, "terrabase_qos_active_sessions") || !Empty(reading, "terrabase_qos_preauthentication_sessions"))
+        {
+            throw new InvalidOperationException("platform transaction traffic entered customer session accounting");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 }

@@ -59,8 +59,7 @@ var dashboardPort = ports.Of(8070);
 var gruInternalUrl = $"http://127.0.0.1:{gru.Internal}";
 var authPublicOrigin = $"http://localhost:{authPort}";
 var platformUrl = $"http://127.0.0.1:{platformPort}";
-var meshAuthIssuer = $"https://localhost:{authPort}/terrascale";
-var platformAuthIssuer = $"{authPublicOrigin}/terrascale";
+var authIssuer = $"{authPublicOrigin}/terrascale";
 var gruQuic = $"{gru.NodeId}.{gru.Region}@127.0.0.1:{gru.Quic}";
 var authListen = $"http://127.0.0.1:{authPort}";
 var authMetricsListen = $"http://127.0.0.1:{authMetricsPort}";
@@ -81,7 +80,7 @@ var terrabase = mesh.Select(node => builder.AddDotnetProject($"terrabase-{node.R
         .WithEnvironment("TERRABASE_QUIC_PORT", DevPorts.Text(node.Quic))
         .WithEnvironment("TERRABASE_PEER_SECRET", peerSecret)
         .WithEnvironment("TERRABASE_MASTER_KEY", terrabaseMasterKey)
-        .WithEnvironment("TERRABASE_AUTH_ISSUER", meshAuthIssuer)
+        .WithEnvironment("TERRABASE_AUTH_ISSUER", authIssuer)
         .WithEnvironment("TERRABASE_AUTH_AUDIENCE", Audience)
         .WithHttpEndpoint(port: node.Http, targetPort: node.Http, name: "http", isProxied: false)
         .WithHttpEndpoint(port: node.Internal, targetPort: node.Internal, name: "internal", isProxied: false)
@@ -101,7 +100,7 @@ var platform = builder.AddDotnetProject("ts-platform", "../TerraScale.Platform/T
     .WithEnvironment("TS_PLATFORM_TERRABASE_QUIC", gruQuic)
     .WithEnvironment("TERRABASE_PEER_SECRET", peerSecret)
     .WithEnvironment("TERRABASE_MASTER_KEY", terrabaseMasterKey)
-    .WithEnvironment("TERRABASE_AUTH_ISSUER", platformAuthIssuer)
+    .WithEnvironment("TERRABASE_AUTH_ISSUER", authIssuer)
     .WithEnvironment("TERRABASE_AUTH_AUDIENCE", Audience)
     .WithHttpEndpoint(port: platformPort, targetPort: platformPort, name: "http", isProxied: false)
     .WithHttpEndpoint(port: platformMetricsPort, targetPort: platformMetricsPort, name: "metrics", isProxied: false)
@@ -135,6 +134,7 @@ var dashboard = builder.AddDotnetProject("dashboard", "../TerraScale.Dashboard/T
     .WithEnvironment("STRIPE_WEBHOOK_SECRET", stripeWebhookSecret)
     .WithEnvironment("TS_DASHBOARD_TERRABASE_URL", gruInternalUrl)
     .WithEnvironment("TS_DASHBOARD_PLATFORM_URL", platformUrl)
+    .WithEnvironment("TS_DASHBOARD_AUTH_ORIGIN", authPublicOrigin)
     .WithHttpEndpoint(port: dashboardPort, targetPort: dashboardPort, name: "http", isProxied: false)
     .WithHttpHealthCheck("/healthz", endpointName: "http")
     .WaitFor(terrabaseGru)

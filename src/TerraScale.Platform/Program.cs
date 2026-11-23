@@ -15,7 +15,7 @@ try
     builder.Logging.ClearProviders().AddTerraScaleLogging("ts-platform");
     builder.WebHost.ConfigureKestrel(kestrel =>
     {
-        kestrel.ListenAnyIP(options.Port, listen => listen.Protocols = HttpProtocols.Http1);
+        kestrel.ListenAnyIP(options.Port, listen => listen.Protocols = HttpProtocols.Http1AndHttp2);
         kestrel.ListenAnyIP(options.MetricsPort, listen => listen.Protocols = HttpProtocols.Http1);
     });
 

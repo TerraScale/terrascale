@@ -792,17 +792,21 @@ func (r *runner) placementCreate() (result error) {
 }
 
 func (r *runner) placementSet() (result error) {
+	placed, err := v1.New(v1.Config{APIKey: os.Getenv("TERRASCALE_API_KEY"), BaseURL: "https://fra.api.terrascale.tech", TSAuthBaseURL: "https://auth.terrascale.tech"})
+	if err != nil {
+		return err
+	}
 	created, err := r.client.CreateDatabase(r.ctx, r.project, "e2e-go-"+r.run+"-move", v1.CreateDatabaseOptions{Regions: []string{"gru"}})
 	if err != nil {
 		return err
 	}
-	placed := r.client
 	defer func() { result = errors.Join(result, placed.DeleteDatabase(r.ctx, r.project, created.ID)) }()
-	db := r.client.Database(r.project, created.ID)
-	if _, err := db.Execute(r.ctx, "CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)"); err != nil {
+	home := r.client.Database(r.project, created.ID)
+	peer := placed.Database(r.project, created.ID)
+	if _, err := home.Execute(r.ctx, "CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)"); err != nil {
 		return err
 	}
-	if _, err := db.Execute(r.ctx, "INSERT INTO placement_rows VALUES (1)"); err != nil {
+	if _, err := home.Execute(r.ctx, "INSERT INTO placement_rows VALUES (1)"); err != nil {
 		return err
 	}
 	added, err := r.client.SetDatabasePlacement(r.ctx, r.project, created.ID, v1.DatabasePlacement{Regions: []string{"gru", "fra"}})
@@ -815,71 +819,65 @@ func (r *runner) placementSet() (result error) {
 	if added.PlacementVersion <= created.PlacementVersion {
 		return errors.New("membership did not raise placement version")
 	}
-	progress, err := db.Regions(r.ctx)
+	progress, err := home.Regions(r.ctx)
 	if err != nil {
 		return err
 	}
-	if len(progress.Regions) != 2 || progress.Regions[0].Region != "fra" || progress.Regions[1].Region != "gru" || progress.Regions[1].Role != "writer" {
-		return fmt.Errorf("wrong status regions: %+v", progress.Regions)
+	if err := same(regionHealth(progress), []string{"fra:true", "gru:true"}, "every active-active region healthy"); err != nil {
+		return err
 	}
-	ctx, cancel := context.WithTimeout(r.ctx, 90*time.Second)
-	defer cancel()
-	var updated *v1.ManagedDatabase
-	for {
-		updated, err = r.client.SetDatabasePlacement(ctx, r.project, created.ID, v1.DatabasePlacement{Regions: []string{"fra"}})
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, v1.ErrReplicaNotReady) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Second):
-		}
+	if slices.ContainsFunc(progress.Regions, func(row v1.ReplicaStatus) bool { return row.AppliedBookmark == "" }) {
+		return fmt.Errorf("a region reports no applied bookmark: %+v", progress.Regions)
 	}
-	placed, err = v1.New(v1.Config{APIKey: os.Getenv("TERRASCALE_API_KEY"), BaseURL: "https://fra.api.terrascale.tech", TSAuthBaseURL: "https://auth.terrascale.tech"})
+	seen, err := peer.Query(v1.WithBookmark(r.ctx, home.Bookmark()), "SELECT value FROM placement_rows ORDER BY value")
 	if err != nil {
 		return err
 	}
-	if err := same(updated.Regions, []string{"fra"}, "dropped writer"); err != nil {
+	if err := same(cells(seen), [][]any{{int64(1)}}, "fra reads the gru write with its bookmark"); err != nil {
+		return err
+	}
+	if _, err := peer.Execute(r.ctx, "INSERT INTO placement_rows VALUES (2)"); err != nil {
+		return err
+	}
+	both, err := home.Query(v1.WithBookmark(r.ctx, peer.Bookmark()), "SELECT value FROM placement_rows ORDER BY value")
+	if err != nil {
+		return err
+	}
+	if err := same(cells(both), [][]any{{int64(1)}, {int64(2)}}, "gru reads the fra write with its bookmark"); err != nil {
+		return err
+	}
+	updated, err := placed.SetDatabasePlacement(r.ctx, r.project, created.ID, v1.DatabasePlacement{Regions: []string{"fra"}})
+	if err != nil {
+		return err
+	}
+	if err := same(updated.Regions, []string{"fra"}, "removed region"); err != nil {
 		return err
 	}
 	if updated.PlacementVersion <= added.PlacementVersion {
-		return errors.New("writer did not raise placement version")
+		return errors.New("membership change did not raise placement version")
 	}
-	after, err := placed.Database(r.project, created.ID).Regions(r.ctx)
+	after, err := peer.Regions(r.ctx)
 	if err != nil {
 		return err
 	}
-	if len(after.Regions) != 1 || after.Regions[0].Region != "fra" || after.Regions[0].Role != "writer" {
-		return errors.New("wrong moved status")
+	if err := same(regionHealth(after), []string{"fra:true"}, "remaining region status"); err != nil {
+		return err
 	}
-	proxied, err := db.Regions(r.ctx)
+	retained, err := peer.Query(r.ctx, "SELECT value FROM placement_rows ORDER BY value")
 	if err != nil {
 		return err
 	}
-	if len(proxied.Regions) != 1 || proxied.Regions[0].Region != "fra" {
-		return errors.New("wrong proxied nonmember placement")
-	}
-	rows, err := db.Query(r.ctx, "SELECT value FROM placement_rows")
-	if err != nil {
+	if err := same(cells(retained), [][]any{{int64(1)}, {int64(2)}}, "data survived placement"); err != nil {
 		return err
 	}
-	if err := same(cells(rows), [][]any{{int64(1)}}, "data survived placement"); err != nil {
-		return err
-	}
-	if _, err := db.Execute(r.ctx, "INSERT INTO placement_rows VALUES (2)"); err != nil {
-		return err
-	}
-	retained, err := placed.Database(r.project, created.ID).Query(r.ctx, "SELECT value FROM placement_rows ORDER BY value")
-	if err != nil {
-		return err
-	}
-	if err := same(cells(retained), [][]any{{int64(1)}, {int64(2)}}, "acknowledged proxied write retained"); err != nil {
-		return err
-	}
-	fmt.Println("go placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]")
+	fmt.Println("go placement: fra and gru healthy active-active peers; bookmark reads crossed both ways; rows [[1],[2]]")
 	return nil
+}
+
+func regionHealth(status *v1.DatabaseRegions) []string {
+	health := make([]string, 0, len(status.Regions))
+	for _, row := range status.Regions {
+		health = append(health, fmt.Sprintf("%s:%t", row.Region, row.Healthy))
+	}
+	return health
 }

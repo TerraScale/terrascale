@@ -84,6 +84,9 @@ public sealed record TerraBaseDatabaseInfo(string Id, string ProjectId, string N
 
     /// <summary>Whether every serving region holds this database.</summary>
     public bool AllRegions { get; init; }
+
+    /// <summary>The consistency of SQL requests that do not send <c>TerraScale-Consistency</c>; null from servers that do not report it.</summary>
+    public TerraBaseConsistencyMode? DefaultConsistency { get; init; }
 }
 
 /// <summary>One TerraBase database. Thread-safe; obtain it from <see cref="TerraBaseDatabaseClient.Database"/>.</summary>
@@ -105,7 +108,7 @@ public sealed partial class TerraBaseDatabase
     /// <summary>
     /// Idempotent database creation (<c>PUT</c>) for a server-accepted API key.
     /// Project access tokens are refused by this producer route; use
-    /// <see cref="TerraBaseProjectClient.CreateDatabaseAsync"/> for canonical project-token creation (<c>POST</c>).
+    /// <see cref="TerraBaseProjectClient.CreateDatabaseAsync(string, TerraBaseDatabasePlacement?, CancellationToken)"/> for canonical project-token creation (<c>POST</c>).
     /// </summary>
     public async Task<TerraBaseDatabaseInfo> CreateAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Put, path, null, Json.TerraBaseDatabaseInfo, null, cancellationToken).ConfigureAwait(false)).Value;
@@ -122,7 +125,7 @@ public sealed partial class TerraBaseDatabase
         (await connection.SendAsync(HttpMethod.Get, path + "/usage" + TerraBaseProjectClient.UsageQuery(granularity, from, to),
             null, Json.TerraBaseDatabaseUsage, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>getDatabaseRegions: reads selected regions and writer-observed pull progress; not application acknowledgements.</summary>
+    /// <summary>getDatabaseReplication: reads each region's applied bookmark, lag and health as the answering region observes them.</summary>
     public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, path + "/regions", null, Json.TerraBaseDatabaseRegions, null, cancellationToken).ConfigureAwait(false)).Value;
 

@@ -198,37 +198,29 @@ const operations = {
     } finally { await client.deleteDatabase(project, created.id); }
   },
   async 'placement.set'() {
+    const placed = createTerraBaseClientFromEnvironment({ baseUrl: 'https://fra.api.terrascale.tech', authBaseUrl: 'https://auth.terrascale.tech' });
     const created = await client.createDatabase(project, `e2e-js-${run}-move`, { regions: ['gru'] });
-    let placed = client;
     try {
-      await client.database(created.id).execute('CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
-      await client.database(created.id).execute('INSERT INTO placement_rows VALUES (1)');
+      const home = client.database(created.id);
+      const peer = placed.database(created.id);
+      await home.execute('CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)');
+      await home.execute('INSERT INTO placement_rows VALUES (1)');
       const added = await client.setDatabasePlacement(project, created.id, { regions: ['gru', 'fra'] });
       same(added.regions, ['fra', 'gru'], 'added region');
       check(added.placementVersion > created.placementVersion, 'membership raises placement version');
-      const progress = await client.database(created.id).regions.regions();
-      same(progress.regions.map(row => row.region), ['fra', 'gru'], 'status regions');
-      same(progress.regions.find(row => row.region === 'gru').role, 'writer', 'writer role');
-      const deadline = Date.now() + 90_000;
-      let updated;
-      for (;;) {
-        try { updated = await client.setDatabasePlacement(project, created.id, { regions: ['fra'] }); break; }
-        catch (error) {
-          if (error.status !== 503 || error.code !== 'replica_not_ready' || Date.now() >= deadline) throw error;
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-      placed = createTerraBaseClientFromEnvironment({ baseUrl: 'https://fra.api.terrascale.tech', authBaseUrl: 'https://auth.terrascale.tech' });
-      same(updated.regions, ['fra'], 'dropped writer');
-      check(updated.placementVersion > added.placementVersion, 'writer change raises placement version');
-      const after = await placed.database(created.id).regions.regions();
-      same(after.regions.map(row => [row.region, row.role]), [['fra', 'writer']], 'moved status');
-      const proxied = await client.database(created.id).regions.regions();
-      same(proxied.regions.map(row => row.region), ['fra'], 'proxied nonmember endpoint');
-      same(cells(await client.database(created.id).query('SELECT value FROM placement_rows')), [[1]], 'data survived placement');
-      await client.database(created.id).execute('INSERT INTO placement_rows VALUES (2)');
-      same(cells(await placed.database(created.id).query('SELECT value FROM placement_rows ORDER BY value')), [[1], [2]], 'acknowledged proxied write retained');
-      console.log('js placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]');
+      const progress = await home.regions.regions();
+      same(progress.regions.map(row => [row.region, row.healthy]), [['fra', true], ['gru', true]], 'every active-active region healthy');
+      check(progress.regions.every(row => typeof row.appliedBookmark === 'string' && row.appliedBookmark.length > 0), 'every region reports an applied bookmark');
+      same(cells(await peer.query('SELECT value FROM placement_rows ORDER BY value', undefined, { bookmark: home.bookmark })), [[1]], 'fra reads the gru write with its bookmark');
+      await peer.execute('INSERT INTO placement_rows VALUES (2)');
+      same(cells(await home.query('SELECT value FROM placement_rows ORDER BY value', undefined, { bookmark: peer.bookmark })), [[1], [2]], 'gru reads the fra write with its bookmark');
+      const updated = await placed.setDatabasePlacement(project, created.id, { regions: ['fra'] });
+      same(updated.regions, ['fra'], 'removed region');
+      check(updated.placementVersion > added.placementVersion, 'membership change raises placement version');
+      const after = await peer.regions.regions();
+      same(after.regions.map(row => [row.region, row.healthy]), [['fra', true]], 'remaining region status');
+      same(cells(await peer.query('SELECT value FROM placement_rows ORDER BY value')), [[1], [2]], 'data survived placement');
+      console.log('js placement: fra and gru healthy active-active peers; bookmark reads crossed both ways; rows [[1],[2]]');
     } finally { await placed.deleteDatabase(project, created.id); }
   },
   async 'sql.execute.positional'(op) {

@@ -18,7 +18,7 @@ export function internal(peer, address, method, path, body, actAs = true) {
     stream.on('end', () => {
       session.close();
       const answer = text ? JSON.parse(text) : null;
-      if (![200, 201, 204].includes(status)) {
+      if (![200, 201, 202, 204].includes(status)) {
         reject(new Error(method + ' ' + path + ': ' + status + ' ' + answer?.error?.code));
       } else resolve(answer);
     });

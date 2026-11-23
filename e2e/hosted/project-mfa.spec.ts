@@ -151,12 +151,12 @@ test.describe('project MFA and session policy', () => {
         .filter(Boolean).map((entry) => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]));
       const legacyLog = openSync(join(stateDir, 'logs', 'ts-auth-upgrade.log'), 'a');
       const legacy = spawn(join(process.env.DOTNET_ROOT!, 'dotnet'), [join(process.env.E2E_BUILD!, 'ts-auth-upgrade', 'ts-auth.dll')], {
-        env: { ...environment, TS_AUTH_LISTEN: 'http://127.0.0.1:8091', TS_AUTH_METRICS_LISTEN: 'http://127.0.0.1:9093' },
+        env: { ...environment, TS_AUTH_LISTEN: 'http://127.0.0.1:8091', TS_AUTH_METRICS_LISTEN: 'http://127.0.0.1:9094' },
         stdio: ['ignore', legacyLog, legacyLog],
       });
       try {
         await expect.poll(async () => {
-          if (legacy.exitCode !== null) throw new Error('Pre-binding auth service exited: ' + legacy.exitCode);
+          if (legacy.exitCode !== null) throw new Error('Second auth instance exited after re-running DbUp: ' + legacy.exitCode);
           return (await first.request.get('http://127.0.0.1:8091/readyz').catch(() => null))?.status();
         }).toBe(200);
         const legacyContext = await browser.newContext();
@@ -165,14 +165,14 @@ test.describe('project MFA and session policy', () => {
           await legacyContext.addCookies([{ name: cookie, value: currentCookie.value, url: 'http://127.0.0.1:8091' }]);
           const old = await tokens(legacyContext, 'http://127.0.0.1:8091/' + project);
           const oldClaims = JSON.parse(Buffer.from(old.access_token.split('.')[1], 'base64url').toString());
-          expect(oldClaims.ts_auth_session).toBeUndefined();
+          expect(oldClaims.ts_auth_session).toBeTruthy();
           const refreshed = await first.request.post(issuer + '/oauth/token', {
             form: { grant_type: 'refresh_token', client_id: client, refresh_token: old.refresh_token },
           });
           expect(refreshed.status()).toBe(200);
           const rotated = await refreshed.json();
-          saveSecret('pre-binding-access-token', rotated.access_token);
-          saveSecret('pre-binding-refresh-token', rotated.refresh_token);
+          saveSecret('second-instance-access-token', rotated.access_token);
+          saveSecret('second-instance-refresh-token', rotated.refresh_token);
         } finally {
           await saveCookies(legacyContext);
           await legacyContext.close();

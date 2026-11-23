@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
@@ -9,17 +10,8 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>
-/// Sends TerraBase requests over a caller-owned <see cref="HttpClient"/> with one bearer secret and a per-request
-/// deadline. Refusals TerraBase answered before execution, and transient read failures, are resent at most twice
-/// within the deadline (see <see cref="Retryable"/>); every other request is sent once.
-/// </summary>
 internal sealed class TerraBaseConnection
 {
-    /// <summary>
-    /// Default bound of one response body. A page holds up to 1 MiB + 8 MiB of stored JSON, and TerraBase's default
-    /// encoder escapes characters such as <c>&lt;</c> (6 bytes) or CJK (6 bytes for 3) on the way out.
-    /// </summary>
     public const int DefaultMaxResponseBytes = 64 * 1024 * 1024;
 
     internal static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
@@ -58,7 +50,6 @@ internal sealed class TerraBaseConnection
                 throw new ArgumentException("Region must be a TerraBase region id: a lowercase letter, then lowercase letters, digits or hyphens, at most 63 characters, not ending in a hyphen (for example gru).", nameof(region));
             }
 
-            // Without an explicit origin the public origin routes the pinned request; with one, the pin still holds the request to it.
             baseAddress = TerraBaseRegion.OriginOrPublic(baseAddress, endpointResolver);
             regionPin = region;
         }
@@ -74,7 +65,6 @@ internal sealed class TerraBaseConnection
             throw new ArgumentException($"Set either {secretName} or AccessTokenProvider, not both.", nameof(accessTokenProvider));
         }
 
-        // Anonymous requests follow the pinned producer's plain-HTTP private-listener contract.
         anonymous = anonymousAllowed && !publicAnonymous && secret is null && accessTokenProvider is null;
         if (accessTokenProvider is null && !anonymous && !publicAnonymous) ValidateSecret(secret, secretName);
         if (anonymous && baseAddress?.Scheme == Uri.UriSchemeHttps) ValidateSecret(secret, secretName);
@@ -96,7 +86,6 @@ internal sealed class TerraBaseConnection
         this.maxResponseBytes = maxResponseBytes;
     }
 
-    /// <summary>Escapes one caller-supplied path segment.</summary>
     public static string Segment(string value, string name)
     {
         ArgumentException.ThrowIfNullOrEmpty(value, name);
@@ -105,7 +94,6 @@ internal sealed class TerraBaseConnection
             : Uri.EscapeDataString(value);
     }
 
-    /// <summary>Builds <c>?after=…&amp;limit=…</c>-style query strings from the parameters that are set.</summary>
     public static string Query(params (string Name, string? Value)[] parameters)
     {
         var set = parameters.Where(parameter => parameter.Value is not null).Select(parameter => $"{parameter.Name}={Uri.EscapeDataString(parameter.Value!)}");
@@ -122,14 +110,14 @@ internal sealed class TerraBaseConnection
         return content;
     }
 
-    /// <summary>Sends a request and reads its JSON answer.</summary>
     public async Task<(T Value, HttpStatusCode Status)> SendAsync<T>(
         HttpMethod method, string path, HttpContent? content, JsonTypeInfo<T> typeInfo, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken,
-        TimeSpan? requestTimeout = null)
+        TimeSpan? requestTimeout = null, Action<HttpResponseMessage>? observe = null)
     {
         T? value = default;
         var status = await SendAsync(method, path, content, headers, async (response, token) =>
         {
+            observe?.Invoke(response);
             using var body = new BoundedHttpBodyStream(
                 maxResponseBytes, () => new TerraBaseException(response.StatusCode, "TerraBase returned a response larger than the supported response bound.", "invalid_response", null), token);
             await response.Content.CopyToAsync(body, token).ConfigureAwait(false);
@@ -151,7 +139,6 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    /// <summary>Sends a request whose success has no body (<c>204</c>).</summary>
     public Task SendAsync(HttpMethod method, string path, HttpContent? content, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken) =>
         SendAsync(method, path, content, headers, static (_, _) => Task.CompletedTask, cancellationToken);
 
@@ -169,7 +156,6 @@ internal sealed class TerraBaseConnection
             }
             finally
             {
-                // Cancellation takes precedence even when synchronous response parsing fails.
                 opened.Token.ThrowIfCancellationRequested();
             }
             return opened.Response.StatusCode;
@@ -185,21 +171,14 @@ internal sealed class TerraBaseConnection
         }
         finally
         {
-            // Caller cancellation takes precedence over parsing failures.
             cancellationToken.ThrowIfCancellationRequested();
         }
     }
 
-    /// <summary>
-    /// Sends a GET and lets <paramref name="read"/> handle every status, including redirects and errors, within the
-    /// request deadline. <paramref name="origin"/> pins the request to a previously validated origin instead of
-    /// resolving one.
-    /// </summary>
     internal Task<T> ExchangeAsync<T>(string path, Uri? origin, Action<HttpRequestHeaders>? headers,
         Func<OpenResponse, Task<T>> read, CancellationToken cancellationToken) =>
         ExchangeAsync(HttpMethod.Get, path, null, origin, headers, read, cancellationToken);
 
-    /// <summary>Sends once and handles every status with the existing deadline, bounds and response ownership.</summary>
     internal async Task<T> ExchangeAsync<T>(HttpMethod method, string path, HttpContent? content, Uri? origin,
         Action<HttpRequestHeaders>? headers, Func<OpenResponse, Task<T>> read, CancellationToken cancellationToken)
     {
@@ -230,7 +209,6 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    /// <summary>Opens a streaming GET within the request deadline and returns its body; reading the stream owns the response, and disposal closes it.</summary>
     internal async Task<Stream> OpenStreamAsync(string path, string accept, CancellationToken cancellationToken)
     {
         var opened = await OpenAsync(HttpMethod.Get, path, null, null, accept, streaming: true, cancellationToken).ConfigureAwait(false);
@@ -246,7 +224,6 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    /// <summary>Reads a response body bounded by the connection's response limit.</summary>
     internal async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         using var body = new BoundedHttpBodyStream(
@@ -286,7 +263,6 @@ internal sealed class TerraBaseConnection
             }
             await AuthorizeAsync(request, deadline.Token).ConfigureAwait(false);
             request.RequestUri = new Uri(origin, path);
-            // Null request headers do not suppress HttpClient's inherited defaults.
             if (publicAnonymous && (http.DefaultRequestHeaders.Contains("Authorization") || http.DefaultRequestHeaders.Contains("Cookie")))
                 throw new InvalidOperationException("Anonymous TerraBase requests require an HttpClient without default Authorization or Cookie headers; use a separate credential-free HttpClient with TerraBaseHttp.CreateHandler().");
             var started = timeProvider.GetTimestamp();
@@ -301,7 +277,6 @@ internal sealed class TerraBaseConnection
                 }
                 catch (HttpRequestException error) when (read && attempt < MaxRetries && !deadline.IsCancellationRequested)
                 {
-                    // A read that lost its connection is resent; a mutation's outcome would be unknown.
                     lost = ExceptionDispatchInfo.Capture(error);
                 }
                 if (response is not null)
@@ -311,7 +286,6 @@ internal sealed class TerraBaseConnection
                     if (attempt >= MaxRetries || !Retryable(method, request.Content, refusal)) throw refusal;
                 }
                 var delay = RetryDelay(refusal?.RetryAfter, attempt);
-                // A wait the deadline cannot cover reports TerraBase's answer now instead of a bare timeout later.
                 if (delay >= timeout - timeProvider.GetElapsedTime(started))
                 {
                     lost?.Throw();
@@ -325,13 +299,10 @@ internal sealed class TerraBaseConnection
                 request.Dispose();
                 request = retry;
                 await Task.Delay(delay, timeProvider, deadline.Token).ConfigureAwait(false);
-                // Each attempt asks the provider again, so a token it replaced meanwhile is not resent.
                 await AuthorizeAsync(request, deadline.Token).ConfigureAwait(false);
             }
-            // Stream lifetime belongs to enumeration, not the ordinary JSON request timeout.
             if (streaming) expiry.CancelAfter(Timeout.InfiniteTimeSpan);
             deadline.Token.ThrowIfCancellationRequested();
-            // An already-running expiry callback may still fire; acquired streams belong only to caller cancellation.
             return new OpenResponse(request, response, deadline, expiry, streaming ? cancellationToken : deadline.Token);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
@@ -363,7 +334,8 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    internal async Task<ClientWebSocket> ConnectWebSocketAsync(string path, string subprotocol, CancellationToken cancellationToken)
+    internal async Task<ClientWebSocket> ConnectWebSocketAsync(string path, string subprotocol, CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? requestHeaders = null)
     {
         using var expiry = new CancellationTokenSource(timeout, timeProvider);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
@@ -393,6 +365,7 @@ internal sealed class TerraBaseConnection
 
                 if (bearer is not null) socket.Options.SetRequestHeader("Authorization", "Bearer " + bearer);
                 if (regionPin is not null) socket.Options.SetRequestHeader(TerraBaseRegion.PinHeader, regionPin);
+                foreach (var (name, value) in requestHeaders ?? FrozenDictionary<string, string>.Empty) socket.Options.SetRequestHeader(name, value);
                 var target = new UriBuilder(new Uri(origin, path)) { Scheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
                 try
                 {
@@ -437,13 +410,6 @@ internal sealed class TerraBaseConnection
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
-    /// <summary>
-    /// TerraBase refuses <c>remote_region_unavailable</c>, <c>confirmation_busy</c> and <c>catalog_stale</c> before it
-    /// executes the request and answers them with Retry-After, so any buffered request may be resent. Reads (GET and
-    /// HEAD) also resend <c>429 tenant_busy</c>, the transient 503s <c>auth_unavailable</c>, <c>storage_busy</c> and
-    /// <c>capacity</c>, and gateway 502 and 504 answers. Every other failure, including <c>write_outcome_unknown</c>,
-    /// is sent once. A SQL request refused with <c>409 serialization_conflict</c> rolled back entirely and is resent.
-    /// </summary>
     internal static bool Retryable(HttpMethod method, HttpContent? content, TerraBaseException error)
     {
         var read = method == HttpMethod.Get || method == HttpMethod.Head;
@@ -457,13 +423,12 @@ internal sealed class TerraBaseConnection
             },
             429 => read && error.ErrorCode == "tenant_busy",
             409 => error is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SerializationConflict } && content is ByteArrayContent,
+            412 => error is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SchemaMismatch } && content is ByteArrayContent,
             502 or 504 => read,
             _ => false,
         };
     }
 
-    // Retry-After plus up to a quarter second, so clients refused together do not return together; otherwise full
-    // jitter over an exponential bound of 250 ms, 500 ms.
     private static TimeSpan RetryDelay(TimeSpan? retryAfter, int attempt) => retryAfter is { } delay
         ? delay + TimeSpan.FromMilliseconds(Random.Shared.Next(250))
         : TimeSpan.FromMilliseconds(1 + Random.Shared.Next(250 << attempt));
@@ -483,7 +448,6 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    /// <summary>A response body stream that releases the request and response resources it owns when it is disposed.</summary>
     private sealed class OwnedResponseBodyStream(OpenResponse opened, Stream body) : Stream
     {
         public override bool CanRead => body.CanRead;

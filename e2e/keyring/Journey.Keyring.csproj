@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>TerraBase.LiveRestoreDrill</AssemblyName>
     <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="$(KeyringServiceDirectory)/*.dll" Exclude="$(KeyringServiceDirectory)/TerraBase.LiveRestoreDrill.dll" />
@@ -12,5 +13,6 @@
   </ItemGroup>
   <Target Name="RequireKeyringService" BeforeTargets="ResolveReferences">
     <Error Condition="!Exists('$(KeyringServiceDirectory)/terrabase.dll')" Text="Build the service and pass KeyringServiceDirectory." />
+    <Error Condition="!Exists('$(KeyringServiceDirectory)/runtimes/linux-x64/native/libsqlite3mc.so')" Text="The service build lacks runtimes/linux-x64/native/libsqlite3mc.so." />
   </Target>
 </Project>

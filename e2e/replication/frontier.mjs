@@ -1,29 +1,21 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { Nats, putKey as putSealedKey, seal } from './push.mjs';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFileSync, cpSync, existsSync, openSync, closeSync, readFileSync, readdirSync, mkdirSync, renameSync, writeFileSync, writeSync, watch, rmSync } from 'node:fs';
-import { connect as http2 } from 'node:http2';
-import { createConnection, createServer } from 'node:net';
+import { appendFileSync, closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:http2';
 import { setPriority } from 'node:os';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { holdSync, port } from '../env/ports.mjs';
+import { holdSync } from '../env/ports.mjs';
 
 const journeyState = process.env.E2E_STATE;
 assert(journeyState, 'E2E_STATE names the isolated local journey namespace');
-const writeUnavailable = (value) => {
-  const path = journeyState + '/r2-unavailable-keys';
-  writeFileSync(path + '.next', JSON.stringify(value), { mode: 0o600 });
-  renameSync(path + '.next', path);
-};
 assert(process.env.E2E_BUILD, 'E2E_BUILD holds the TerraBase build');
-assert(process.env.E2E_TOOLS, 'E2E_TOOLS holds nats-server');
 assert(process.env.DOTNET_ROOT, 'DOTNET_ROOT holds the .NET runtime');
 assert.equal(process.env.E2E_REGIONS, '2');
+
 const P = holdSync({
-  nats: 4222, relay: 4223, relayFra: 4224, internal: 8081, gru: 8080, fra: 8180, extra: 8280,
+  internal: 8081, quic: 8443, gru: 8080, fra: 8180, extra: 8280,
   metrics: 9091, metricsFra: 9191, metricsExtra: 9291, pg: 6432, pgFra: 6532, pgExtra: 6632,
 }, 'block').ports;
 const state = resolve(journeyState, 'replication-' + randomBytes(6).toString('hex'));
@@ -31,14 +23,20 @@ mkdirSync(state + '/logs', { recursive: true, mode: 0o700 });
 console.log('local state: ' + state);
 const peer = randomBytes(32).toString('hex');
 const master = randomBytes(32);
-const access = randomBytes(16).toString('hex');
-const secret = randomBytes(32).toString('hex');
-const token = randomBytes(24).toString('hex');
-appendFileSync(journeyState + '/secrets', [peer, master.toString('base64'), access, secret, token].join('\n') + '\n', { mode: 0o600 });
-const processes = new Set();
+appendFileSync(journeyState + '/secrets', [peer, master.toString('base64')].join('\n') + '\n', { mode: 0o600 });
+
+const nodes = {
+  gru: { name: 'journey-1', region: 'gru', host: '127.0.0.1', port: P.gru, metrics: P.metrics, pg: P.pg },
+  fra: { name: 'journey-2', region: 'fra', host: '127.0.0.2', port: P.fra, metrics: P.metricsFra, pg: P.pgFra },
+  gru2: { name: 'journey-3', region: 'gru', host: '127.0.0.3', port: P.extra, metrics: P.metricsExtra, pg: P.pgExtra },
+};
+const all = Object.values(nodes);
+writeFileSync(state + '/peers', all.map(node => [node.name, node.region, node.host, P.quic, P.internal].join(' ') + '\n').join(''));
+
+const processes = new Map();
 const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-function id(at = Date.now()) {
-  let value = BigInt(at) << 80n | BigInt('0x' + randomBytes(10).toString('hex'));
+function id() {
+  let value = BigInt(Date.now()) << 80n | BigInt('0x' + randomBytes(10).toString('hex'));
   let encoded = '';
   for (let i = 0; i < 26; i++) {
     encoded = alphabet[Number(value & 31n)] + encoded;
@@ -46,1187 +44,193 @@ function id(at = Date.now()) {
   }
   return encoded;
 }
-function start(name, command, args, extra = {}) {
-  const log = openSync(resolve(state, 'logs', name + '.log'), 'a', 0o600);
-  const child = spawn(command, args, { env: { ...process.env, DOTNET_PROCESSOR_COUNT: '4', ...extra }, stdio: ['ignore', log, log] });
+
+function start(node) {
+  const log = openSync(resolve(state, 'logs', node.name + '.log'), 'a', 0o600);
+  const child = spawn(resolve(process.env.DOTNET_ROOT, 'dotnet'), [resolve(process.env.E2E_BUILD, 'terrabase/terrabase.dll')], {
+    env: {
+      ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(TS_|TERRABASE_|AWS_|BUCKET_NAME)/.test(name))),
+      DOTNET_ENVIRONMENT: 'Production', DOTNET_PROCESSOR_COUNT: '4',
+      TS_REGION: node.region, TS_NODE: node.name, TS_PEERS_FILE: state + '/peers',
+      TERRABASE_DATA_DIRECTORY: state + '/' + node.name, TERRABASE_PORT: String(node.port), TERRABASE_INTERNAL_PORT: String(P.internal),
+      TERRABASE_QUIC_PORT: String(P.quic), TERRABASE_METRICS_PORT: String(node.metrics), TERRABASE_POSTGRES_PORT: String(node.pg),
+      TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
+      TERRABASE_PEER_SECRET: peer, TERRABASE_MASTER_KEY: master.toString('base64'),
+    },
+    stdio: ['ignore', log, log],
+  });
   closeSync(log);
   setPriority(child.pid, 19);
-  child.log = resolve(state, 'logs', name + '.log');
   child.finished = once(child, 'exit');
-  processes.add(child);
-  return child;
+  processes.set(node, child);
 }
-async function stop(child, signal = 'SIGINT') {
-  child.kill(signal);
+
+async function stop(node) {
+  const child = processes.get(node);
+  processes.delete(node);
+  child.kill('SIGTERM');
   await child.finished;
-  processes.delete(child);
 }
-async function request(address, path, body, user, method = 'POST', expected = 200) {
-  const session = http2(address);
+
+async function call(node, method, path, { body, user, headers = {} } = {}) {
+  const session = connect('http://' + node.host + ':' + P.internal);
+  session.on('error', () => {});
   const payload = body === undefined ? undefined : JSON.stringify(body);
   try {
-    const response = session.request({
-      ':method': method, ':path': path, 'content-type': 'application/json',
-      'x-terrabase-peer-credential': peer, ...(payload ? { 'content-length': Buffer.byteLength(payload) } : {}), ...(user ? { 'x-terrabase-user-id': user } : {}),
+    const stream = session.request({
+      ':method': method, ':path': path, 'x-terrabase-peer-credential': peer, ...headers,
+      ...(payload === undefined ? {} : { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }),
+      ...(user ? { 'x-terrabase-user-id': user } : {}),
     });
+    const response = once(stream, 'response');
     const chunks = [];
-    response.on('data', data => chunks.push(data));
-    const headers = once(response, 'response');
-    response.end(payload);
-    await once(response, 'end');
-    const status = (await headers)[0][':status'];
+    stream.on('data', chunk => chunks.push(chunk));
+    stream.end(payload);
+    const [answered] = await response;
+    await once(stream, 'end');
     const text = Buffer.concat(chunks).toString();
-    assert((Array.isArray(expected) ? expected : [expected]).includes(status), method + ' ' + path + ': status=' + status + ' ' + text);
-    return text ? JSON.parse(text) : null;
+    return { status: Number(answered[':status']), headers: answered, body: text ? JSON.parse(text) : null };
   } finally {
     session.close();
   }
 }
-function logged(child, text, fields = {}, after = 0) {
-  return new Promise((resolveEvent, reject) => {
-    const deadline = setTimeout(() => finish(new Error('Missing log event: ' + text)), 90_000);
-    const watcher = watch(child.log, check);
-    function finish(error) {
-      clearTimeout(deadline);
-      watcher.close();
-      error ? reject(error) : resolveEvent();
+
+async function expectStatus(node, method, path, expected, options) {
+  const answer = await call(node, method, path, options);
+  assert.equal(answer.status, expected, method + ' ' + path + ' on ' + node.name + ': ' + JSON.stringify(answer.body));
+  return answer.body;
+}
+
+async function until(label, probe, timeout = 90_000) {
+  const deadline = Date.now() + timeout;
+  let last;
+  while (Date.now() < deadline) {
+    last = await probe().catch(error => ({ done: false, seen: error.message }));
+    if (last.done) return last.value;
+    await new Promise(resolveWait => setTimeout(resolveWait, 250));
+  }
+  assert.fail(label + ' did not happen within ' + timeout + ' ms; last seen ' + JSON.stringify(last?.seen));
+}
+
+const ready = node => until(node.name + ' ready', async () => {
+  const answer = await call(node, 'GET', '/readyz');
+  return { done: answer.status === 200 && answer.body.region === node.region, seen: answer.body };
+});
+
+let sqlPath;
+const sql = (node, statements, headers = {}) => call(node, 'POST', sqlPath, { body: { statements: statements.map(text => ({ sql: text })) }, headers });
+
+async function committed(node, statements, headers = {}) {
+  const answer = await sql(node, statements, headers);
+  assert.equal(answer.status, 200, node.name + ': ' + JSON.stringify(answer.body));
+  assert.equal(answer.headers['terrascale-bookmark'], answer.body.bookmark, 'the bookmark header matches the body');
+  assert.equal(answer.headers['terrascale-consistency'], answer.body.consistency, 'the consistency header matches the body');
+  assert.equal(answer.body.consistency, headers['terrascale-consistency'] ?? 'fast');
+  return answer.body;
+}
+
+const rows = async (node, query) => (await committed(node, [query])).results[0].rows;
+
+async function readable(node, query) {
+  const answer = await sql(node, [query]);
+  if (answer.status === 200) return { done: true, value: answer.body.results[0].rows };
+  assert(answer.status === 404 || answer.body?.error?.code === 'undefined_table', node.name + ': ' + JSON.stringify(answer.body));
+  return { done: false, seen: answer.body };
+}
+
+async function converged(label, query, accept) {
+  return until(label, async () => {
+    const seen = [];
+    for (const node of all) {
+      const read = await readable(node, query);
+      if (!read.done) return { done: false, seen: node.name + ' ' + JSON.stringify(read.seen) };
+      seen.push(read.value);
     }
-    function check() {
-      const matched = readFileSync(child.log, 'utf8').slice(after).split('\n').some(line => {
-        if (!line.includes(text)) return false;
-        if (!Object.keys(fields).length) return true;
-        try {
-          const record = JSON.parse(line.replace(/^<\d+>/, ''));
-          return Object.entries(fields).every(([key, value]) => record[key] === value);
-        } catch { return false; }
-      });
-      if (matched) finish();
-    }
-    check();
+    const same = seen.every(value => JSON.stringify(value) === JSON.stringify(seen[0]));
+    return { done: same && accept(seen[0]), value: seen[0], seen };
   });
 }
-class Relay {
-  links = new Set();
-  trap = null;
-  swallow = null;
-  constructor(port) {
-    this.port = port;
-    this.server = createServer(client => {
-      const upstream = createConnection({ port: P.nats, host: '127.0.0.1' });
-      const link = { client, upstream, held: Buffer.alloc(0), down: Buffer.alloc(0) };
-      this.links.add(link);
-      const close = () => {
-        this.links.delete(link);
-        client.destroy();
-        upstream.destroy();
-      };
-      for (const socket of [client, upstream]) {
-        socket.on('error', close);
-        socket.on('close', close);
-      }
-      upstream.on('data', data => {
-        link.down = Buffer.concat([link.down, data]);
-        while (true) {
-          const end = link.down.indexOf('\r\n');
-          if (end < 0) return;
-          const [op, subject, ...rest] = link.down.subarray(0, end).toString('latin1').split(' ');
-          const payload = op === 'MSG' || op === 'HMSG' ? Number(rest.at(-1)) + 2 : 0;
-          const size = end + 2 + payload;
-          if (link.down.length < size) return;
-          const frame = link.down.subarray(0, size);
-          link.down = link.down.subarray(size);
-          if (!(payload && this.swallow && subject.startsWith(this.swallow))) client.write(frame);
-        }
-      });
-      client.on('data', data => {
-        const buffered = Buffer.concat([link.held, data]);
-        const text = buffered.toString('latin1');
-        const at = this.trap ? text.indexOf(this.trap.subject) : -1;
-        if (at < 0) {
-          const cut = text.lastIndexOf('\r\n');
-          const end = cut < 0 ? 0 : cut + 2;
-          upstream.write(buffered.subarray(0, end));
-          link.held = buffered.subarray(end);
-          return;
-        }
-        const line = text.lastIndexOf('\r\n', at);
-        const trap = this.trap;
-        this.trap = null;
-        upstream.end(buffered.subarray(0, line < 0 ? 0 : line + 2), close);
-        trap.resolve();
-      });
-    });
-  }
-  async listen() {
-    this.server.listen(this.port, '127.0.0.1');
-    await once(this.server, 'listening');
-  }
-  drop(subject) {
-    return new Promise(resolveDrop => { this.trap = { subject, resolve: resolveDrop }; });
-  }
-  close() {
-    for (const link of this.links) {
-      link.client.destroy();
-      link.upstream.destroy();
-    }
-    this.server.close();
-  }
-}
-const home = 'http://127.0.0.1:' + P.internal;
-function cell(region, second = false) {
-  const gru = region === 'gru';
-  return start('frontier-' + region + (second ? '-b' : ''), resolve(process.env.DOTNET_ROOT, 'dotnet'), [resolve(process.env.E2E_BUILD, 'terrabase/terrabase.dll')], {
-    DOTNET_ENVIRONMENT: 'Production', TS_REGION: region, TS_NODE: second ? 'journey-3' : gru ? 'journey-1' : 'journey-2', TS_PEERS_FILE: state + '/peers',
-    TERRABASE_DATA_DIRECTORY: state + '/frontier-' + region + (second ? '-b' : ''), TERRABASE_PORT: String(second ? P.extra : gru ? P.gru : P.fra),
-    TERRABASE_INTERNAL_PORT: String(P.internal), TERRABASE_METRICS_PORT: String(second ? P.metricsExtra : gru ? P.metrics : P.metricsFra), TERRABASE_POSTGRES_PORT: String(second ? P.pgExtra : gru ? P.pg : P.pgFra),
-    TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
-    TERRABASE_PEER_SECRET: peer, TERRABASE_MASTER_KEY: master.toString('base64'),
-    AWS_ENDPOINT_URL_S3: 'https://journey.backups.terrascale.tech/', AWS_REGION: 'auto', BUCKET_NAME: 'journey-backups',
-    AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret,
-    TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: randomBytes(24).toString('hex'),
-    TS_NATS_URL: 'nats://127.0.0.1:' + (second ? P.nats : gru ? P.relay : P.relayFra), TERRABASE_NATS_TOKEN: token,
-    ...(!second ? {
-      ENGINE_INTEGRITY_PROXY: resolve(state, 'integrity.so'),
-      ENGINE_INTEGRITY_CONTROL: resolve(state, gru ? 'integrity-control' : 'integrity-control-fra'),
-      DOTNET_STARTUP_HOOKS: resolve(state, 'integrity-hook.dll'),
-    } : {}),
-  });
-}
-async function trusted(port) {
-  const deadline = Date.now() + 90_000;
-  while (true) {
-    const text = await fetch('http://127.0.0.1:' + port + '/metrics').then(response => response.text(), () => '');
-    if (text.split('\n').some(line => line.startsWith('terrabase_clock_local_writes_allowed') && line.endsWith(' 1'))) return;
-    assert(Date.now() < deadline, 'the node on metrics port ' + port + ' never trusted its clock');
-    await new Promise(resolveWait => setTimeout(resolveWait, 100));
-  }
-}
-let nats;
-const relay = new Relay(P.relay);
-const relayFra = new Relay(P.relayFra);
-const holds = new Map();
-const repo = fileURLToPath(new URL('../..', import.meta.url));
-function compileIntegrity() {
-  const build = resolve(process.env.E2E_BUILD, 'terrabase');
-  execFileSync('cc', ['-shared', '-fPIC', resolve(repo, 'e2e/env/engine-crash-integrity.c'), '-o', resolve(state, 'integrity.so'),
-    '-Wl,--no-as-needed', resolve(build, 'libturso_sdk_kit.so'), '-Wl,-rpath,' + build, '-ldl', '-pthread'], { stdio: 'inherit' });
-  const references = new Map();
-  for (const pack of ['Microsoft.NETCore.App.Ref', 'Microsoft.AspNetCore.App.Ref']) {
-    const dir = resolve(process.env.DOTNET_ROOT, 'packs', pack, '11.0.0/ref/net11.0');
-    for (const file of readdirSync(dir)) if (file.endsWith('.dll')) references.set(file, resolve(dir, file));
-  }
-  for (const file of readdirSync(build)) if (file.endsWith('.dll') && !references.has(file)) references.set(file, resolve(build, file));
-  const rsp = resolve(state, 'integrity.rsp');
-  writeFileSync(rsp, ['-nologo', '-target:library', '-nullable:enable', '-langversion:preview', '-out:' + resolve(state, 'integrity-hook.dll'),
-    ...[...references.values()].map(file => '-r:' + file), resolve(repo, 'e2e/replication/integrity-hook.cs')].join('\n'));
-  execFileSync(resolve(process.env.DOTNET_ROOT, 'dotnet'), [resolve(process.env.DOTNET_ROOT, 'sdk/11.0.100/Roslyn/bincore/csc.dll'), '@' + rsp], { stdio: 'inherit' });
-}
+
 try {
-  compileIntegrity();
-  writeFileSync(journeyState + '/r2', access + '\n' + secret + '\n', { mode: 0o600 });
-  writeFileSync(state + '/peers', 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\njourney-3 gru 127.0.0.3\n');
-  writeFileSync(state + '/nats.conf', JSON.stringify({ host: '127.0.0.1', port: P.nats, authorization: { token }, jetstream: { store_dir: state + '/nats' } }), { mode: 0o600 });
-  let broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
-  await logged(broker, 'Server is ready');
-  await relay.listen();
-  await relayFra.listen();
-  nats = new Nats(token, P.nats);
-  await nats.connect();
-  const previousLayout = await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_PARK_GRU', { name: 'TERRABASE_PUSH_PARK_GRU', subjects: ['terrabase.push-park.gru.>'],
-    storage: 'file', retention: 'limits', discard: 'new', max_bytes: 1 << 30, duplicate_window: 600_000_000_000, num_replicas: 1 });
-  assert(!previousLayout.error, JSON.stringify(previousLayout));
-  const previousPayload = randomBytes(64);
-  assert(!(await nats.request('terrabase.push-park.gru.fra.' + id() + '.' + id() + '.' + id() + '.7', previousPayload)).error);
-  const gruStarted = Date.now();
-  const consuming = nats.event('$JS.EVENT.ADVISORY.CONSUMER.CREATED.TERRABASE_PUSH_FRA.*', created => created.consumer?.startsWith('home-gru-epoch-'));
-  let gru = cell('gru');
-  let fra = cell('fra');
-  await consuming;
-  await logged(gru, 'Application started');
-  await logged(gru, 'This node holds a new home lease session');
-  await trusted(P.metrics);
+  for (const node of all) start(node);
+  await Promise.all(all.map(ready));
+
   const user = id();
-  const org = await request(home, '/v1/management/organizations', { name: 'Frontier' }, user, 'POST', 201);
-  await request(home, '/v1/management/organizations/' + org.id + '/plan', { plan: 'pro' }, user, 'PUT');
-  const project = await request(home, '/v1/management/organizations/' + org.id + '/projects', { name: 'Frontier' }, user, 'POST', 201);
-  const create = name => request(home, '/v1/projects/' + project.id + '/databases', { name, regions: ['gru', 'fra'] }, user, 'POST', 201);
-  const first = await create('frontier');
-  const other = await create('independent');
-  const sql = (db, statement, expected = 200) => request(home, '/v1/projects/' + project.id + '/databases/' + db.id + '/sql/execute', { statements: [{ sql: statement }] }, undefined, 'POST', expected);
-  const internal = { 'journey-1': home, 'journey-3': 'http://127.0.0.3:' + P.internal };
-  const owned = async () => {
-    const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
-    return JSON.parse(Buffer.from(stored.message.data, 'base64'));
-  };
-  let lastSource = null;
-  const restarted = async node => {
-    const previous = node === 'journey-1' ? gru : b;
-    const from = readFileSync(previous.log, 'utf8').length;
-    await stop(previous);
-    const fresh = node === 'journey-1' ? gru = cell('gru') : b = cell('gru', true);
-    await logged(fresh, 'Platform databases are seeded', {}, from);
-    await trusted(node === 'journey-1' ? P.metrics : P.metricsExtra);
-  };
-  const handOff = async (node, seen = () => {}) => {
-    const owner = await owned();
-    assert.notEqual(owner.node, node);
-    if (lastSource) {
-      await restarted(lastSource);
-      await request(internal[lastSource], '/v1/rollout/prime?source=' + owner.node, undefined, undefined, 'POST', 204);
-    }
-    const epoch = owner.epoch + 1;
-    const observed = seen(epoch);
-    await request(internal[owner.node], '/v1/rollout/drain?target=' + node, undefined, undefined, 'POST', 204);
-    assert.deepEqual(await owned().then(changed => [changed.node, changed.epoch]), [node, epoch]);
-    await observed;
-    lastSource = owner.node;
-    return epoch;
-  };
-  for (const db of [first, other]) {
-    await sql(db, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
-    await sql(db, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
-    await sql(db, 'INSERT INTO items VALUES (1, 0)');
-  }
-  const dataKey = randomBytes(32);
-  const keyMinted = Date.now();
-  const keyId = id(keyMinted);
-  for (const db of [first, other]) await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + db.id, keyId, dataKey);
-  const transaction = changes => ({ id: id(), region: 'fra', hlc: { physicalMilliseconds: Date.now(), logical: 0, nodeId: 'journey-2' }, changes });
-  const effect = value => ({ op: 'update', table: 'items', key: { id: 1 }, values: { value } });
-  const send = async (db, tx, encryptionId = keyId, addressed = 'gru') => {
-    const scope = org.id + '/' + project.id + '/' + db.id;
-    const ack = await nats.request('terrabase.push.fra.' + addressed + '.' + scope.replaceAll('/', '.'), seal(tx, scope, encryptionId, dataKey));
-    assert(!ack.error, JSON.stringify(ack));
-    return { tx, seq: ack.seq };
-  };
-  const value = async db => {
-    const result = await sql(db, 'SELECT value FROM items WHERE id = 1', [200, 503]);
-    if (result.error) {
-      assert.equal(result.error.code, 'unavailable');
-      return null;
-    }
-    return result.results[0].rows[0][0];
-  };
-  const notice = (db, tx) => nats.event('terrabase.applied.fra.' + org.id + '.' + project.id + '.' + db.id, result => result.id === tx.id);
-  const applied = async (db, tx) => {
-    const observed = notice(db, tx);
-    const sent = await send(db, tx);
-    assert.equal((await observed).state, 'confirmed');
-    return sent;
-  };
-  const warm = await applied(first, transaction([effect(1)]));
-  assert.equal(await value(first), 1);
-  await sql(first, 'UPDATE items SET value = 9 WHERE id = 1');
-  const replayed = notice(first, warm.tx);
-  await stop(gru);
-  gru = cell('gru');
-  await replayed;
-  assert.equal(await value(first), 9);
-  console.log('restart: retained entry returns its recorded result without repeating effects');
-  const expired = { ...transaction([{ op: 'insert', table: 'items', values: { id: 1, value: 5 } }]), id: id(Date.now() - 8 * 86_400_000) };
-  const rejected = notice(first, expired);
-  await send(first, expired);
-  assert.equal((await rejected).state, 'reverted');
-  let unknownOutcome = null;
-  const unknownNotice = notice(first, expired).then(result => { unknownOutcome = result; }, () => {});
-  await stop(gru);
-  gru = cell('gru');
-  await logged(gru, 'Application started');
-  await trusted(P.metrics);
-  await applied(first, transaction([effect(9)]));
-  assert.equal(unknownOutcome, null);
-  console.log('expired reverted result: its redelivery publishes no notice and the next message applies');
+  const org = await expectStatus(nodes.gru, 'POST', '/v1/management/organizations', 201, { body: { name: 'Frontier' }, user });
+  await expectStatus(nodes.gru, 'PUT', '/v1/management/organizations/' + org.id + '/plan', 200, { body: { plan: 'pro' } });
+  const project = await expectStatus(nodes.gru, 'POST', '/v1/management/organizations/' + org.id + '/projects', 201, { body: { name: 'Frontier' }, user });
+  const database = await expectStatus(nodes.gru, 'POST', '/v1/projects/' + project.id + '/databases', 201, { body: { name: 'frontier', regions: ['gru', 'fra'] }, user });
+  assert.deepEqual(database.regions, ['fra', 'gru']);
+  sqlPath = '/v1/projects/' + project.id + '/databases/' + database.id + '/sql';
 
-  let b = cell('gru', true);
-  await logged(b, 'Application started');
-  await logged(b, 'This node holds a new home lease session');
-  await logged(b, 'Platform databases are seeded');
-  const heldKey = id(Date.now() - 60_000);
-  await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + first.id, heldKey, dataKey);
-  writeUnavailable({ ['v1/keys/' + org.id + '/' + project.id + '/' + first.id + '/' + heldKey]: 503 });
-  const progress = (sent, count, consumer = () => true) => {
-    let seen = 0;
-    return nats.event('$JS.ACK.>', reply => {
-      const tokens = reply.subject.split('.');
-      const at = tokens[2] === 'TERRABASE_PUSH_FRA' ? 3 : 5;
-      return ['+WPI', '+ACK'].includes(reply.raw) && consumer(tokens[at]) && tokens[at + 2] === String(sent.seq) && ++seen >= count;
-    });
-  };
-  const rounds = (db, sent, count) => {
-    let seen = 0;
-    return nats.event('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA', read => read.next_by_subj?.endsWith('.' + db.id) && read.seq <= sent.seq && ++seen >= count);
-  };
-  const held = async (db, pending, count = 2) => {
-    const sent = await pending;
-    await rounds(db, sent, count);
-    return sent;
-  };
-  const late = transaction([{ op: 'insert', table: 'items', values: { id: 2, value: 17 } }]);
-  const lateNotice = notice(first, late);
-  const lateSent = await held(first, send(first, late, heldKey));
-  const changeWriter = node => handOff(node, epoch => progress(lateSent, 1, consumer => consumer === 'home-gru-epoch-' + epoch));
-  await changeWriter('journey-3');
-  await changeWriter('journey-1');
-  const successor = transaction([effect(6)]);
-  const successorNotice = notice(first, successor);
-  await send(first, successor);
-  rmSync(journeyState + '/r2-unavailable-keys');
-  assert.equal((await lateNotice).state, 'confirmed');
-  assert.equal((await successorNotice).state, 'confirmed');
-  assert.equal((await sql(first, 'SELECT value FROM items WHERE id = 2')).results[0].rows[0][0], 17);
-  console.log('writer handed off twice through planned drains with a retrying head: both effects are present');
-  const stream = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
-  assert((await nats.request('$JS.API.STREAM.DELETE.TERRABASE_PUSH_FRA')).success);
-  assert(!(await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_FRA', stream.config)).error);
-  const recreated = await applied(first, transaction([effect(8)]));
-  assert.equal(recreated.seq, 1);
-  assert.equal(await value(first), 8);
-  console.log('recreated origin stream: sequence 1 applies under its new identity');
-  const scope = db => org.id + '/' + project.id + '/' + db.id;
-  const blocked = {};
-  const block = (db, key) => {
-    blocked['v1/keys/' + scope(db) + '/' + key] = 403;
-    writeUnavailable(blocked);
-  };
-  const unblock = () => {
-    for (const key of Object.keys(blocked)) delete blocked[key];
-    rmSync(journeyState + '/r2-unavailable-keys', { force: true });
-  };
-  const refusedKey = async db => {
-    const key = id(keyMinted - 60_000);
-    await putSealedKey({ master, access, secret }, scope(db), key, dataKey);
-    block(db, key);
-    return key;
-  };
-  const scrape = async (pattern, port = P.metrics) => {
-    const lines = (await (await fetch('http://127.0.0.1:' + port + '/metrics')).text()).split('\n').filter(line => pattern.test(line));
-    return lines.reduce((sum, line) => sum + Number(line.split(' ').at(-1)), 0);
-  };
-  const heldGauge = () => scrape(/^terrabase_push_held[ {]/);
-  const ageGauge = () => scrape(/^terrabase_push_held_age(_seconds)?[ {]/);
-  const rows = async (db, statement) => (await sql(db, statement)).results[0].rows;
-  const offset = () => readFileSync(gru.log, 'utf8').length;
+  const peers = await until('every peer region healthy', async () => {
+    const status = await call(nodes.gru, 'GET', '/v1/projects/' + project.id + '/databases/' + database.id + '/regions', { user });
+    return { done: status.status === 200 && status.body.regions.every(row => row.healthy), value: status.body.regions, seen: status.body };
+  });
+  assert.deepEqual(peers.map(row => row.region), ['fra', 'gru']);
+  console.log('regions: fra and gru are healthy active-active peers of the database');
 
-  const engineRetry = await create('engine-retry');
-  await sql(engineRetry, 'CREATE TABLE engine_retry (id INTEGER PRIMARY KEY, value INTEGER)');
-  await sql(engineRetry, 'INSERT INTO engine_retry VALUES (1, 0)');
-  await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + engineRetry.id, keyId, dataKey);
-  const retriesBefore = await scrape(/^terrabase_push_apply_retries_total\{.*reason="engine"/);
-  const revertsBefore = await scrape(/^terrabase_push_reverts_total/);
-  const engineMark = readFileSync(gru.log, 'utf8').length;
-  writeFileSync(resolve(state, 'integrity-control'), 'apply ' + engineRetry.id + '\n', { mode: 0o600 });
-  const engineTx = transaction([{ op: 'update', table: 'engine_retry', key: { id: 1 }, values: { value: 7 } }]);
-  const engineNotice = notice(engineRetry, engineTx);
-  await send(engineRetry, engineTx);
-  assert.equal((await engineNotice).state, 'confirmed');
-  assert.equal((await sql(engineRetry, 'SELECT value FROM engine_retry WHERE id = 1')).results[0].rows[0][0], 7);
-  const retriesAfter = await scrape(/^terrabase_push_apply_retries_total\{.*reason="engine"/);
-  assert(retriesAfter > retriesBefore, 'engine apply retries ' + retriesBefore + ' -> ' + retriesAfter);
-  assert.equal(await scrape(/^terrabase_push_reverts_total/), revertsBefore);
-  assert(readFileSync(gru.log, 'utf8').slice(engineMark).includes('injected apply engine failure'));
-  assert.equal(existsSync(resolve(state, 'integrity-control')), false);
-  console.log('one storage failure inside home apply: retried reason=engine (' + retriesBefore + ' -> ' + retriesAfter + '), no revert, next attempt confirmed value 7');
+  await committed(nodes.gru, ['CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT NOT NULL)', "INSERT INTO items VALUES (100, 'seed')"]);
+  await committed(nodes.gru, ['CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)', 'INSERT INTO counter VALUES (1, 0)']);
+  await converged('the schema reaches every node', 'SELECT id, value FROM items ORDER BY id', value => value.length === 1);
+  await converged('the counter reaches every node', 'SELECT value FROM counter', value => value.length === 1);
 
-  const insert = transaction([{ op: 'insert', table: 'items', values: { id: 30, value: 1 } }]);
-  const update = transaction([{ op: 'update', table: 'items', key: { id: 30 }, values: { value: 2 } }]);
-  update.hlc = { ...insert.hlc, logical: 1 };
-  const insertKey = await refusedKey(first);
-  const insertNotice = notice(first, insert);
-  const updateNotice = notice(first, update);
-  const sentInsert = await held(first, send(first, insert, insertKey));
-  const attempts = rounds(first, sentInsert, 5);
-  await send(first, update);
-  const firstAge = await ageGauge();
-  assert.equal(await heldGauge(), 1);
-  for (const amount of [100, 101, 102]) await applied(other, transaction([effect(amount)]));
-  await attempts;
-  assert.deepEqual(await rows(first, 'SELECT count(*) FROM items WHERE id = 30'), [[0]]);
-  await applied(other, transaction([effect(103)]));
-  assert.equal(await value(other), 103);
-  const laterAge = await ageGauge();
-  assert.equal(await heldGauge(), 1);
-  assert(laterAge > firstAge, laterAge + ' > ' + firstAge);
-  console.log('held insert: at least 6 failed attempts, its update not applied and not reverted, the other database applied 4 effects; held=1, oldest age ' + firstAge.toFixed(1) + 's -> ' + laterAge.toFixed(1) + 's');
-  unblock();
-  assert.equal((await insertNotice).state, 'confirmed');
-  assert.equal((await updateNotice).state, 'confirmed');
-  assert.deepEqual(await rows(first, 'SELECT value FROM items WHERE id = 30'), [[2]]);
-  console.log('released: insert then update applied in order, both confirmed, final value 2');
+  const written = ['gru', 'fra', 'gru2'];
+  const started = Date.now();
+  await Promise.all([
+    ...Array.from({ length: 10 }, (_, index) => committed(nodes.gru, [`INSERT INTO items VALUES (${index + 1}, 'gru')`])),
+    ...Array.from({ length: 10 }, (_, index) => committed(nodes.fra, [`INSERT INTO items VALUES (${index + 11}, 'fra')`])),
+    ...written.map(key => committed(nodes[key], [`UPDATE items SET value = '${key}' WHERE id = 100`])),
+  ]);
+  const merged = await converged('concurrent gru and fra writes converge on every node', 'SELECT id, value FROM items ORDER BY id', value => value.length === 21);
+  assert.deepEqual(merged.slice(0, 20), Array.from({ length: 20 }, (_, index) => [index + 1, index < 10 ? 'gru' : 'fra']));
+  assert(written.includes(merged[20][1]), 'the same-row winner is one of the concurrent writes: ' + merged[20][1]);
+  console.log('(a) 20 distinct-key writes and 3 same-key updates from gru, fra and gru2 converged on all 3 nodes in '
+    + (Date.now() - started) + ' ms; row 100 = ' + merged[20][1]);
 
-  const database = async name => {
-    const db = await create(name);
-    await sql(db, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
-    await sql(db, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
-    await sql(db, 'INSERT INTO items VALUES (1, -1)');
-    await putSealedKey({ master, access, secret }, scope(db), keyId, dataKey);
-    return db;
-  };
-  const audited = tx => ({ ...tx, changes: [...tx.changes, { op: 'insert', table: 'applications', values: { tx: tx.id, value: 0 } }] });
-  const applications = async (db, from = 0, on = rows) => (await on(db, 'SELECT rowid, tx FROM applications WHERE rowid > ' + from + ' ORDER BY rowid')).map(([, tx]) => tx);
-  const lastApplication = async db => (await rows(db, 'SELECT coalesce(max(rowid), 0) FROM applications'))[0][0];
-  const series = count => {
-    const at = Date.now();
-    return Array.from({ length: count }, (_, n) => audited({ ...transaction([effect(n)]), hlc: { physicalMilliseconds: at, logical: n, nodeId: 'journey-2' } }));
-  };
-  const collect = (db, txs) => {
-    const order = [];
-    const states = new Map();
-    const notices = new Map();
-    const ids = new Set(txs.map(tx => tx.id));
-    return nats.event('terrabase.applied.fra.' + org.id + '.' + project.id + '.' + db.id, result => {
-      if (ids.has(result.id)) {
-        notices.set(result.id, (notices.get(result.id) ?? 0) + 1);
-        if (!states.has(result.id)) {
-          order.push(result.id);
-          states.set(result.id, result.state);
-        }
+  const write = await committed(nodes.fra, ["INSERT INTO items VALUES (200, 'read your writes')"]);
+  assert(write.bookmark.length > 0, 'a write returns a non-empty bookmark');
+  const read = await committed(nodes.gru2, ['SELECT value FROM items WHERE id = 200'], { 'terrascale-bookmark': write.bookmark });
+  assert.deepEqual(read.results[0].rows, [['read your writes']]);
+  console.log('(b) a write on fra read on gru2 with its TerraScale-Bookmark at once');
+
+  const strong = { 'terrascale-consistency': 'strong' };
+  const increment = 'UPDATE counter SET value = value + 1 WHERE id = 1';
+  let commits = 0;
+  let conflicts = 0;
+  for (let round = 0; round < 20 && conflicts === 0; round++) {
+    const answers = await Promise.all([sql(nodes.gru, [increment], strong), sql(nodes.fra, [increment], strong)]);
+    for (const answer of answers) {
+      if (answer.status === 200) {
+        assert.equal(answer.body.consistency, 'strong');
+        commits++;
+        continue;
       }
-      return result.id === txs.at(-1).id;
-    }).then(() => ({ order, states, repeated: [...notices.values()].reduce((sum, count) => sum + count - 1, 0) }));
-  };
-  const inOrder = async (db, txs, seen, from = 0) => {
-    const { order, states, repeated } = await seen;
-    assert.deepEqual(order, txs.map(tx => tx.id));
-    assert([...states.values()].every(state => state === 'confirmed'), JSON.stringify([...states.values()]));
-    assert.deepEqual(await applications(db, from), txs.map(tx => tx.id));
-    assert.equal(await value(db), txs.length - 1);
-    return repeated;
-  };
-  const release = (db, key) => {
-    delete blocked['v1/keys/' + scope(db) + '/' + key];
-    writeUnavailable(blocked);
-  };
-  const moved = await database('moved');
-  const movedInsert = audited(transaction([{ op: 'insert', table: 'items', values: { id: 40, value: 1 } }]));
-  const movedUpdate = audited(transaction([{ op: 'update', table: 'items', key: { id: 40 }, values: { value: 2 } }]));
-  movedUpdate.hlc = { ...movedInsert.hlc, logical: 1 };
-  const movedKey = await refusedKey(moved);
-  let movedEarly = false;
-  const movedInsertNotice = notice(moved, movedInsert);
-  const movedUpdateNotice = notice(moved, movedUpdate).then(result => { movedEarly = true; return result; });
-  const movedAttempts = held(moved, send(moved, movedInsert, movedKey, 'fra'), 4);
-  await send(moved, movedUpdate, keyId, 'gru');
-  await applied(other, transaction([effect(108)]));
-  await movedAttempts;
-  assert(!movedEarly);
-  assert.deepEqual(await rows(moved, 'SELECT count(*) FROM items WHERE id = 40'), [[0]]);
-  assert.deepEqual(await applications(moved), []);
-  unblock();
-  assert.equal((await movedInsertNotice).state, 'confirmed');
-  assert.equal((await movedUpdateNotice).state, 'confirmed');
-  assert.deepEqual(await rows(moved, 'SELECT value FROM items WHERE id = 40'), [[2]]);
-  assert.deepEqual(await applications(moved), [movedInsert.id, movedUpdate.id]);
-  console.log('home moved under a held message: the insert addressed to the former home fra held the update addressed to the current home gru in the same queue; after release both applied in stream order, final value 2');
-
-  await sql(first, 'CREATE TABLE parents (id INTEGER PRIMARY KEY)');
-  await sql(first, 'CREATE TABLE children (id INTEGER PRIMARY KEY, parent INTEGER NOT NULL REFERENCES parents (id))');
-  const parent = transaction([{ op: 'insert', table: 'parents', values: { id: 1 } }]);
-  const child = transaction([{ op: 'insert', table: 'children', values: { id: 1, parent: 1 } }]);
-  child.hlc = { ...parent.hlc, logical: 1 };
-  const parentKey = await refusedKey(first);
-  const parentNotice = notice(first, parent);
-  const childNotice = notice(first, child);
-  const parentAttempts = held(first, send(first, parent, parentKey), 6);
-  await send(first, child);
-  await applied(other, transaction([effect(104)]));
-  await parentAttempts;
-  assert.deepEqual(await rows(first, 'SELECT count(*) FROM children'), [[0]]);
-  unblock();
-  assert.equal((await parentNotice).state, 'confirmed');
-  assert.equal((await childNotice).state, 'confirmed');
-  assert.deepEqual(await rows(first, 'SELECT children.id, parents.id FROM children JOIN parents ON parents.id = children.parent'), [[1, 1]]);
-  assert.equal(await heldGauge(), 0);
-  assert.equal(await ageGauge(), 0);
-  console.log('held parent insert: the child insert waited behind it and both applied in order; held=0, age 0');
-
-  const consumers = async () => ((await nats.request('$JS.API.CONSUMER.NAMES.TERRABASE_PUSH_FRA')).consumers ?? []).filter(name => name.startsWith('home-gru-epoch-'));
-  const bulk = await create('bulk');
-  await sql(bulk, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
-  await sql(bulk, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
-  await sql(bulk, 'INSERT INTO items VALUES (1, 0)');
-  await putSealedKey({ master, access, secret }, scope(bulk), keyId, dataKey);
-  const bulkKey = await refusedKey(bulk);
-  const head = audited(transaction([effect(0)]));
-  await held(bulk, send(bulk, head, bulkKey));
-  const window = 4096;
-  const later = [];
-  for (let n = 1; n <= window + 64; n++) {
-    const next = audited({ ...transaction([effect(n)]), hlc: { ...head.hlc, physicalMilliseconds: head.hlc.physicalMilliseconds + 1, logical: n } });
-    later.push(next);
-    await send(bulk, next);
+      assert.equal(answer.status, 409, JSON.stringify(answer.body));
+      assert.equal(answer.body.error.code, 'serialization_conflict');
+      assert.equal(answer.body.error.sqlState, '40001');
+      conflicts++;
+    }
+    assert(answers.some(answer => answer.status === 200), 'one of two conflicting strong writes commits');
   }
-  await applied(other, transaction([effect(105)]));
-  const consumer = await nats.request('$JS.API.CONSUMER.INFO.TERRABASE_PUSH_FRA.' + (await consumers())[0]);
-  assert(consumer.num_ack_pending <= 32, JSON.stringify(consumer));
-  assert.equal(await heldGauge(), 1);
-  console.log('held database with ' + (window + 65) + ' messages: the other database applied after all of them; consumer ack pending ' + consumer.num_ack_pending + ' (bound 32)');
-  const order = [];
-  const states = new Map();
-  let firstNoticeAt = 0;
-  const drained = nats.event('terrabase.applied.fra.' + org.id + '.' + project.id + '.' + bulk.id, result => {
-    firstNoticeAt ||= Date.now();
-    if (!states.has(result.id)) {
-      order.push(result.id);
-      states.set(result.id, result.state);
-    }
-    return result.id === later.at(-1).id;
-  });
-  const releasedAt = Date.now();
-  unblock();
-  await drained;
-  const drainSeconds = (Date.now() - releasedAt) / 1000;
-  const applySeconds = (Date.now() - firstNoticeAt) / 1000;
-  assert.deepEqual(order, [head.id, ...later.map(tx => tx.id)]);
-  assert([...states.values()].every(state => state === 'confirmed'));
-  assert.equal(await value(bulk), window + 64);
-  assert.deepEqual(await applications(bulk), [head.id, ...later.map(tx => tx.id)]);
-  console.log('released: ' + order.length + ' messages applied in stream order, all confirmed, final value ' + (window + 64) + '; ' + drainSeconds.toFixed(1) + ' s from release to the last notice, ' + applySeconds.toFixed(1) + ' s from the first notice to the last, ' + Math.round(order.length / applySeconds) + ' messages/s');
+  assert(conflicts > 0, 'concurrent conflicting strong writes from gru and fra produced a serialization conflict');
+  await converged('every strong commit is applied once on every node', 'SELECT value FROM counter', value => value[0][0] === commits);
+  console.log('(c) strong OCC: ' + commits + ' commits, ' + conflicts + ' answered 409 serialization_conflict 40001; counter = ' + commits + ' everywhere');
 
-  const relocated = await create('relocated');
-  await sql(relocated, 'CREATE TABLE pairs (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)');
-  await sql(relocated, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
-  await sql(relocated, 'INSERT INTO pairs VALUES (1, 0, 0)');
-  await putSealedKey({ master, access, secret }, scope(relocated), keyId, dataKey);
-  const onFra = async statement => (await request('http://127.0.0.2:' + P.internal, '/v1/projects/' + project.id + '/databases/' + relocated.id + '/sql/execute', { statements: [{ sql: statement }] })).results[0].rows;
-  const columnA = audited(transaction([{ op: 'update', table: 'pairs', key: { id: 1 }, values: { a: 1 } }]));
-  const columnB = audited(transaction([{ op: 'update', table: 'pairs', key: { id: 1 }, values: { b: 2 } }]));
-  columnB.hlc = { ...columnA.hlc, logical: 1 };
-  const relocatedKey = await refusedKey(relocated);
-  const fraAcks = new Set();
-  let skipTarget = null;
-  const skipped = nats.event('$JS.ACK.>', reply => {
-    const tokens = reply.subject.split('.');
-    const at = tokens[2] === 'TERRABASE_PUSH_FRA' ? 3 : 5;
-    if (tokens[at]?.startsWith('home-fra-epoch-') && reply.raw === '+ACK') fraAcks.add(tokens[at + 2]);
-    return skipTarget !== null && fraAcks.has(skipTarget);
-  });
-  const sentA = await send(relocated, columnA, relocatedKey);
-  skipTarget = String(sentA.seq);
-  await rounds(relocated, sentA, 2);
-  await skipped;
-  const moveStarted = Date.now();
-  const fraMark = readFileSync(fra.log, 'utf8').length;
-  const relocatedPath = '/v1/projects/' + project.id + '/databases/' + relocated.id;
-  const forwarded = await request(home, relocatedPath, { regions: ['fra'] }, user, 'PATCH', [200, 401]);
-  assert(forwarded.homeRegion === 'fra' || forwarded.error?.code === 'invalid_key', JSON.stringify(forwarded));
-  const relocatedBody = await request(home, relocatedPath, undefined, user, 'GET');
-  assert.equal(relocatedBody.homeRegion, 'fra', JSON.stringify(relocatedBody));
-  const moveSeconds = (Date.now() - moveStarted) / 1000;
-  const fraHolds = readFileSync(fra.log, 'utf8').slice(fraMark).split('\n').some(line => line.includes('A pushed database is held') && line.includes('"Database":"' + relocated.id + '"')
-    && line.includes('"Origin":"fra"') && line.includes('"Kind":"object_store"'));
-  assert(fraHolds, 'precondition: fra, the new home, started the sequencer of origin fra for ' + relocated.id + ' from its frontier during the move and holds it on sequence ' + sentA.seq + ' (refused data key)');
-  const fraAcked = new Set();
-  const fraWaiting = new Map();
-  const unwatchFra = nats.watch('$JS.ACK.>', reply => {
-    const tokens = reply.subject.split('.');
-    const at = tokens[2] === 'TERRABASE_PUSH_FRA' ? 3 : 5;
-    if (!['+WPI', '+ACK'].includes(reply.raw) || !tokens[at]?.startsWith('home-fra-epoch-')) return;
-    fraAcked.add(tokens[at + 2]);
-    fraWaiting.get(tokens[at + 2])?.();
-  });
-  const ackedByFra = sent => fraAcked.has(String(sent.seq)) ? Promise.resolve() : new Promise((resolveAck, reject) => {
-    const deadline = setTimeout(() => reject(new Error('fra\'s consumer never acknowledged sequence ' + sent.seq)), 90_000);
-    fraWaiting.set(String(sent.seq), () => { clearTimeout(deadline); resolveAck(); });
-  });
-  const sentB = await send(relocated, columnB, keyId, 'fra');
-  await ackedByFra(sentB);
-  unwatchFra();
-  assert.deepEqual(await onFra('SELECT a, b FROM pairs WHERE id = 1'), [[0, 0]]);
-  assert.deepEqual(await onFra('SELECT count(*) FROM applications'), [[0]]);
-  const aNotice = notice(relocated, columnA);
-  const bNotice = notice(relocated, columnB);
-  unblock();
-  assert.equal((await aNotice).state, 'confirmed');
-  assert.equal((await bNotice).state, 'confirmed');
-  assert.deepEqual(await onFra('SELECT a, b FROM pairs WHERE id = 1'), [[1, 2]]);
-  assert.deepEqual((await onFra('SELECT tx FROM applications ORDER BY rowid')).map(([tx]) => tx), [columnA.id, columnB.id]);
-  console.log('home moved to fra through the regions API (' + moveSeconds.toFixed(1) + ' s) while sequence ' + sentA.seq + ' (column a) was held at gru and acknowledged unapplied by fra\'s consumer; sequence ' + sentB.seq + ' (column b), addressed to fra after the move, waited behind it; both applied once at fra in stream order (application log), a=1 b=2');
+  await stop(nodes.fra);
+  for (let index = 0; index < 10; index++) await committed(nodes.gru, [`INSERT INTO items VALUES (${300 + index}, 'while fra was down')`]);
+  start(nodes.fra);
+  await ready(nodes.fra);
+  const caught = await converged('fra catches up through anti-entropy after a restart', 'SELECT COUNT(*) FROM items', value => value[0][0] === 32);
+  assert.deepEqual(caught, [[32]]);
+  assert.deepEqual(await rows(nodes.fra, "SELECT COUNT(*) FROM items WHERE value = 'while fra was down'"), [[10]]);
+  console.log('(d) 10 writes on gru while fra was stopped reached fra after its restart');
 
-  const unknownId = id();
-  const unknownHeld = logged(gru, 'A pushed database is held', { Database: unknownId, Kind: 'unknown_database' }, offset());
-  assert(!(await nats.request('terrabase.push.fra.gru.' + org.id + '.' + project.id + '.' + unknownId, Buffer.from('catalog-missing'))).error);
-  await unknownHeld;
-  await applied(other, transaction([effect(106)]));
-  const doomed = await create('doomed');
-  await request(home, '/v1/projects/' + project.id + '/databases/' + doomed.id, undefined, user, 'DELETE', 204);
-  const parkedDeleted = nats.event('terrabase.push-parked.gru.deleted_database.>');
-  const deletedPayload = Buffer.from('owed-to-nobody');
-  const deletedAck = await nats.request('terrabase.push.fra.gru.' + scope(doomed).replaceAll('/', '.'), deletedPayload);
-  await parkedDeleted;
-  const parkedEmpty = nats.event('terrabase.push-parked.gru.empty.>');
-  await nats.request('terrabase.push.fra.gru.' + scope(other).replaceAll('/', '.'), Buffer.alloc(0));
-  await parkedEmpty;
-  await applied(other, transaction([effect(107)]));
-  assert.equal(await value(other), 107);
-  const parked = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_PARKED_GRU', { subjects_filter: '>' });
-  const parkedSubjects = Object.keys(parked.state.subjects);
-  assert.equal(parked.state.messages, 2);
-  assert(parkedSubjects.some(subject => subject.includes('.deleted_database.')));
-  assert(parkedSubjects.some(subject => subject.includes('.empty.')));
-  assert(!parkedSubjects.some(subject => subject.includes('.unknown_database.')));
-  const stored = await nats.request('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_PARKED_GRU', { last_by_subj: parkedSubjects.find(subject => subject.includes('.deleted_database.')) });
-  const record = JSON.parse(Buffer.from(stored.message.data, 'base64'));
-  assert.equal(record.sequence, deletedAck.seq);
-  assert.equal(record.database, scope(doomed));
-  assert.equal(Buffer.from(record.payload, 'base64').toString(), deletedPayload.toString());
-  const replacement = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
-  assert.equal(Date.parse(record.source.split('/')[1]), Date.parse(replacement.created));
-  const metrics = (await (await fetch('http://127.0.0.1:' + P.metrics + '/metrics')).text()).split('\n');
-  for (const reason of ['deleted_database', 'empty']) {
-    assert(metrics.some(line => line.startsWith('terrabase_push_parked_total{') && line.includes('reason="' + reason + '"') && line.endsWith(' 1')));
-  }
-  assert(metrics.some(line => line.startsWith('terrabase_push_apply_retries_total{') && line.includes('reason="unknown_database"')));
-  assert(metrics.some(line => line.startsWith('terrabase_push_parked_records{') && line.includes('reason="previous_layout"') && line.endsWith(' 1')));
-  assert.equal(parked.config.max_age, 0);
-  assert.equal(parked.config.discard, 'new');
-  const kept = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_PARK_GRU');
-  assert.equal(kept.state.messages, 1);
-  assert.deepEqual([kept.config.max_age, kept.config.discard, kept.config.max_msgs, kept.config.subjects], [0, 'new', -1, ['terrabase.push-park.gru.>']]);
-  const keptRecord = await nats.request('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_PARK_GRU', { seq: 1 });
-  assert.equal(Buffer.from(keptRecord.message.data, 'base64').toString('hex'), previousPayload.toString('hex'));
-  assert.equal(await heldGauge(), 1);
-  console.log('unknown database: held and retried, not parked, other databases applied; deleted database and empty payload: parked with durable records in a stream without expiry; the previous layout\'s record, created ' + Math.round((Date.now() - gruStarted) / 1000) + 's ago, is kept unchanged and counted');
-
-  const lapse = async (stopped = () => {}) => {
-    gru.kill('SIGSTOP');
-    await new Promise(resolveStop => setTimeout(resolveStop, 8000));
-    stopped();
-    let renewals = 0;
-    const renewed = nats.event('$KV.terrabase-region-writers.gru', () => ++renewals >= 3);
-    gru.kill('SIGCONT');
-    await renewed;
-    await trusted(P.metrics);
-  };
-  const advisory = (kind, name) => nats.event('$JS.EVENT.ADVISORY.CONSUMER.' + kind + '.TERRABASE_PUSH_FRA.' + name, event => event.consumer?.startsWith('home-gru-epoch-'));
-
-  const dropped = await database('dropped');
-  const droppedKey = await refusedKey(dropped);
-  const droppedTxs = series(42);
-  const droppedSeen = collect(dropped, droppedTxs);
-  await held(dropped, send(dropped, droppedTxs[0], droppedKey));
-  for (const tx of droppedTxs.slice(1, 41)) await send(dropped, tx);
-  await applied(other, transaction([effect(200)]));
-  const readBack = relay.drop('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA');
-  unblock();
-  await readBack;
-  await send(dropped, droppedTxs[41]);
-  const droppedRepeats = await inOrder(dropped, droppedTxs, droppedSeen);
-  console.log('read-back dropped: the broker connection closed on the held database\'s read-back call; all ' + droppedTxs.length + ' messages applied exactly once in stream order (application log), all confirmed, final value ' + (droppedTxs.length - 1) + '; ' + droppedRepeats + ' repeated notices of recorded results');
-
-  const lapsed = await database('lapsed');
-  const headKey = await refusedKey(lapsed);
-  const rereadKey = await refusedKey(lapsed);
-  const lapsedTxs = series(72);
-  const lapsedSeen = collect(lapsed, lapsedTxs);
-  await held(lapsed, send(lapsed, lapsedTxs[0], headKey));
-  for (const tx of lapsedTxs.slice(1, 32)) await send(lapsed, tx);
-  const rereadHead = await send(lapsed, lapsedTxs[32], rereadKey);
-  for (const tx of lapsedTxs.slice(33, 71)) await send(lapsed, tx);
-  await applied(other, transaction([effect(201)]));
-  const rereadHeld = logged(gru, 'A pushed database is held', { Database: lapsed.id, Sequence: String(rereadHead.seq) }, offset());
-  release(lapsed, headKey);
-  await rereadHeld;
-  const reopened = advisory('CREATED', '*');
-  await lapse(() => release(lapsed, rereadKey));
-  await send(lapsed, lapsedTxs[71]);
-  const lapsedRepeats = await inOrder(lapsed, lapsedTxs, lapsedSeen);
-  await reopened;
-  console.log('writer lease lapsed and renewed on the same node while a read-back head was held: the consumer was recreated and all ' + lapsedTxs.length + ' messages applied exactly once in stream order (application log), all confirmed; ' + lapsedRepeats + ' repeated notices of recorded results');
-
-  const flipped = await database('flipped');
-  const [previous] = await consumers();
-  const flippedTxs = series(300);
-  const removed = advisory('DELETED', previous);
-  const stopped = logged(gru, 'ended its consumer run at writer epoch', {}, offset());
-  const createdB = advisory('CREATED', '*');
-  const toB = await handOff('journey-3');
-  await stopped;
-  const appliesBefore = await scrape(/^terrabase_push_applies_total[ {]/);
-  assert.equal((await createdB).consumer, 'home-gru-epoch-' + toB);
-  await removed;
-  const flippedSeen = collect(first, flippedTxs);
-  for (const tx of flippedTxs) await send(first, tx);
-  const { order: flippedOrder, states: flippedStates, repeated: flippedRepeats } = await flippedSeen;
-  assert.deepEqual(flippedOrder, flippedTxs.map(tx => tx.id));
-  assert.equal(flippedRepeats, 0);
-  const flippedCounts = Object.groupBy([...flippedStates.values()], state => state);
-  assert.equal(flippedStates.size, flippedTxs.length);
-  assert(!flippedCounts.provisional, JSON.stringify(flippedCounts));
-  assert.equal(await scrape(/^terrabase_push_applies_total[ {]/), appliesBefore);
-  assert.deepEqual(await consumers(), ['home-gru-epoch-' + toB]);
-  const fresh = await nats.request('$JS.API.CONSUMER.INFO.TERRABASE_PUSH_FRA.home-gru-epoch-' + toB);
-  assert.equal(fresh.num_redelivered, 0, JSON.stringify(fresh));
-  console.log('writer change with a pull outstanding: ' + previous + ' deleted, home-gru-epoch-' + toB + ' created; the new writer decided ' + flippedTxs.length + ' messages once each in stream order (' + Object.entries(flippedCounts).map(([state, list]) => state + '=' + list.length).join(', ') + ' against its own copy, which this proof does not prepare), the old writer applied none after the change, redelivered 0');
-
-  const newer = 'home-gru-epoch-' + (toB + 5);
-  const fake = await nats.request('$JS.API.CONSUMER.CREATE.TERRABASE_PUSH_FRA.' + newer, { stream_name: 'TERRABASE_PUSH_FRA',
-    config: { name: newer, durable_name: newer, ack_policy: 'explicit', deliver_policy: 'all', filter_subject: 'terrabase.push.fra.>' } });
-  assert(!fake.error, JSON.stringify(fake));
-  const staleWaits = logged(gru, 'a consumer of a newer writer epoch', {}, offset());
-  const toA = await handOff('journey-1');
-  await staleWaits;
-  const pending = series(1);
-  let early = false;
-  const pendingNotice = notice(flipped, pending[0]).then(result => { early = true; return result; });
-  await send(flipped, pending[0]);
-  await logged(gru, 'a consumer of a newer writer epoch', {}, offset());
-  assert(!early);
-  const waitingNames = await consumers();
-  assert(waitingNames.includes(newer), JSON.stringify(waitingNames));
-  assert(!waitingNames.includes('home-gru-epoch-' + toA), JSON.stringify(waitingNames));
-  const createdA = advisory('CREATED', 'home-gru-epoch-' + toA);
-  assert((await nats.request('$JS.API.CONSUMER.DELETE.TERRABASE_PUSH_FRA.' + newer)).success);
-  await createdA;
-  assert.equal((await pendingNotice).state, 'confirmed');
-  assert.deepEqual(await consumers(), ['home-gru-epoch-' + toA]);
-  console.log('stale epoch ' + toA + ' beside consumer ' + newer + ': neither deleted nor read it and applied nothing; after it was removed, home-gru-epoch-' + toA + ' applied the waiting message');
-
-  const quiet = await database('replayed');
-  const quietTxs = series(20);
-  const quietSeen = collect(quiet, quietTxs);
-  for (const tx of quietTxs) await send(quiet, tx);
-  await inOrder(quiet, quietTxs, quietSeen);
-  const walFrames = () => {
-    const wal = readFileSync(resolve(state, 'frontier-gru', org.id, project.id, quiet.id + '.db-wal'));
-    const page = wal.readUInt32BE(8) === 1 ? 65536 : wal.readUInt32BE(8);
-    const salt = wal.readUInt32BE(16) + ':' + wal.readUInt32BE(20);
-    const pages = [];
-    for (let at = 32; at + 24 + page <= wal.length && wal.readUInt32BE(at + 8) + ':' + wal.readUInt32BE(at + 12) === salt; at += 24 + page) pages.push(wal.readUInt32BE(at));
-    return { salt, pages };
-  };
-  const written = (from, to) => {
-    assert.equal(to.salt, from.salt);
-    const counts = new Map();
-    for (const number of to.pages.slice(from.pages.length)) counts.set(number, (counts.get(number) ?? 0) + 1);
-    return counts;
-  };
-  const beforeReplay = walFrames();
-  const replayedLast = notice(quiet, quietTxs.at(-1));
-  await lapse();
-  assert.equal((await replayedLast).state, 'confirmed');
-  const afterReplay = walFrames();
-  const replayWrites = written(beforeReplay, afterReplay);
-  assert.deepEqual(await applications(quiet), quietTxs.map(tx => tx.id));
-  const replayedFrom = await lastApplication(quiet);
-  const controlTxs = series(quietTxs.length);
-  const controlSeen = collect(quiet, controlTxs);
-  for (const tx of controlTxs) await send(quiet, tx);
-  await inOrder(quiet, controlTxs, controlSeen, replayedFrom);
-  const controlWrites = written(afterReplay, walFrames());
-  const perMessage = [...controlWrites].filter(([, count]) => count >= controlTxs.length).map(([number]) => number);
-  assert(perMessage.length > 0, JSON.stringify([...controlWrites]));
-  assert(perMessage.every(number => !replayWrites.has(number)), JSON.stringify({ perMessage, replay: [...replayWrites] }));
-  console.log('replay of ' + quietTxs.length + ' applied messages after a same-node reopen: the pages every new apply writes (' + perMessage.join(', ') + ') were written 0 times by the replay (' + [...replayWrites.values()].reduce((sum, count) => sum + count, 0) + ' frames of other pages by storage bookkeeping); ' + controlTxs.length + ' new messages wrote each of them at least ' + controlTxs.length + ' times');
-
-
-  const finished = await database('finished');
-  const finishedKey = await refusedKey(finished);
-  const finishedTxs = series(2);
-  const finishedSeen = collect(finished, finishedTxs);
-  await held(finished, send(finished, finishedTxs[0], finishedKey));
-  const finishedLater = await send(finished, finishedTxs[1]);
-  const applyPath = '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + finished.id + '/apply';
-  const positioned = await request(home, applyPath + '?position=' + finishedLater.seq, finishedTxs[1], undefined, 'POST', 503);
-  const unpositioned = await request(home, applyPath, finishedTxs[1], undefined, 'POST', 503);
-  assert.equal(positioned.error.code, 'unavailable');
-  assert.equal(unpositioned.error.code, 'unavailable');
-  assert.deepEqual(await applications(finished), []);
-  release(finished, finishedKey);
-  await inOrder(finished, finishedTxs, finishedSeen);
-  assert.equal((await request(home, applyPath + '?position=' + finishedLater.seq, finishedTxs[1])).state, 'confirmed');
-  assert.equal((await request(home, applyPath, finishedTxs[1])).state, 'confirmed');
-  console.log('a partner finishing a lost node\'s held transaction at sequence ' + finishedLater.seq + ' while the earlier position was held: 503 with and without its position, nothing applied; after release both applied in stream order and both request shapes answer confirmed');
-
-  const gapped = await database('gapped');
-  const gappedKey = await refusedKey(gapped);
-  const [gapHead, gapTail] = series(2);
-  const gapSent = await held(gapped, send(gapped, gapHead, gappedKey));
-  const gapHeld = logged(gru, 'A pushed database is held', { Database: gapped.id, Kind: 'purged' }, offset());
-  const build = await nats.request('terrabase.push-state.fra.build.journey-2', Buffer.from('markers'));
-  assert(!build.error, JSON.stringify(build));
-  const marker = await nats.request('terrabase.push-state.fra.purged.' + scope(gapped).replaceAll('/', '.'), Buffer.from(String(gapSent.seq)));
-  assert(!marker.error, JSON.stringify(marker));
-  const purged = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(gapped).replaceAll('/', '.'), seq: gapSent.seq + 1 });
-  assert(purged.success, JSON.stringify(purged));
-  let gapApplied = null;
-  const gapNotice = notice(gapped, gapTail).then(result => { gapApplied = result; }, () => {});
-  await send(gapped, gapTail);
-  release(gapped, gappedKey);
-  await gapHeld;
-  await applied(other, transaction([effect(300)]));
-  assert.equal(gapApplied, null);
-  assert.deepEqual(await applications(gapped), []);
-  assert.equal(await scrape(/^terrabase_push_held\{.*reason="purged"/), 1);
-  console.log('purge marker at sequence ' + gapSent.seq + ' ahead of the frontier of a database whose head was purged unapplied: held with reason purged, the later message not applied, the other database applied');
-
-  const homeFile = (region, db) => 'frontier-' + region + '/' + org.id + '/' + project.id + '/' + db.id + '.db';
-  const armHold = (control, region, db, needle) => {
-    rmSync(control + '.held', { force: true });
-    if (!holds.has(control)) {
-      execFileSync('mkfifo', ['-m', '600', control + '.release']);
-      holds.set(control, openSync(control + '.release', 'r+'));
-    }
-    writeFileSync(control, 'hold ' + homeFile(region, db) + ' ' + needle + '\n', { mode: 0o600 });
-  };
-  const statementHeld = control => new Promise((resolveHeld, reject) => {
-    const deadline = setTimeout(() => finish(new Error('the hooked statement was never held: ' + control)), 90_000);
-    const watcher = watch(state, check);
-    function finish(error) {
-      clearTimeout(deadline);
-      watcher.close();
-      error ? reject(error) : resolveHeld();
-    }
-    function check() {
-      if (existsSync(control + '.held')) finish();
-    }
-    check();
-  });
-  const releaseHold = control => writeSync(holds.get(control), 'g');
-  const purgeOnly = async (db, sent) => {
-    const marker = await nats.request('terrabase.push-state.fra.purged.' + scope(db).replaceAll('/', '.'), Buffer.from(String(sent.seq)));
-    assert(!marker.error, JSON.stringify(marker));
-    const removed = await nats.request('$JS.API.STREAM.MSG.DELETE.TERRABASE_PUSH_FRA', { seq: sent.seq, no_erase: true });
-    assert(removed.success, JSON.stringify(removed));
-  };
-
-  const raced = await database('raced');
-  await sql(raced, 'CREATE TABLE hold_gate (id INTEGER PRIMARY KEY)');
-  const racedKey = await refusedKey(raced);
-  const racedHeadSent = await held(raced, send(raced, transaction([{ op: 'insert', table: 'hold_gate', values: { id: 1 } }]), racedKey));
-  const racedChained = nats.event('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA', read => read.next_by_subj?.endsWith('.' + raced.id) && read.seq === racedHeadSent.seq + 1);
-  const racedNextSent = await send(raced, transaction([effect(51)]));
-  await racedChained;
-  const gruControl = resolve(state, 'integrity-control');
-  armHold(gruControl, 'gru', raced, 'hold_gate');
-  const racedApplying = statementHeld(gruControl);
-  release(raced, racedKey);
-  await racedApplying;
-  const racedCovered = logged(gru, 'covers pushes of', { Database: raced.id, Origin: 'fra', Through: String(racedNextSent.seq), Sequence: String(racedHeadSent.seq) }, offset());
-  await purgeOnly(raced, racedNextSent);
-  await racedCovered;
-  const racedHeld = logged(gru, 'A pushed database is held', { Database: raced.id, Kind: 'purged', Sequence: String(racedNextSent.seq) }, offset());
-  releaseHold(gruControl);
-  await racedHeld;
-  assert.deepEqual(await rows(raced, 'SELECT id FROM hold_gate'), [[1]]);
-  assert.equal(await value(raced), -1);
-  console.log('purge of sequence ' + racedNextSent.seq + ' while the home applied sequence ' + racedHeadSent.seq + ' from the same checked batch (the sequencer read sequence ' + (racedHeadSent.seq + 1) + ' after it): the earlier one applied, the purged one never applied and the home holds it with reason purged');
-
-  const fraStream = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
-  assert((await nats.request('$JS.API.STREAM.DELETE.TERRABASE_PUSH_FRA')).success);
-  assert(!(await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_FRA', fraStream.config)).error);
-  const mixed = await database('mixed');
-  const [mixedFirst, mixedRemoved, mixedLater] = series(3);
-  await applied(mixed, mixedFirst);
-  const mixedKey = await refusedKey(mixed);
-  const mixedSent = await held(mixed, send(mixed, mixedRemoved, mixedKey));
-  const mixedHeld = logged(gru, 'A pushed database is held', { Database: mixed.id, Kind: 'origin_previous_build' }, offset());
-  const mixedPurge = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(mixed).replaceAll('/', '.'), seq: mixedSent.seq + 1 });
-  assert(mixedPurge.success, JSON.stringify(mixedPurge));
-  let mixedApplied = null;
-  const mixedNotice = notice(mixed, mixedLater).then(result => { mixedApplied = result; return result; });
-  await send(mixed, mixedLater);
-  release(mixed, mixedKey);
-  await mixedHeld;
-  assert.equal(mixedApplied, null);
-  assert.deepEqual(await applications(mixed), [mixedFirst.id]);
-  const heldWatch = () => {
-    const heldRevisions = new Map();
-    const heldWaiters = new Set();
-    const stop = nats.watch('terrabase.held.gru.*', notice => {
-      const held = notice.region + '/' + notice.databaseId;
-      heldRevisions.set(held, [...(heldRevisions.get(held) ?? []), notice.revision]);
-      for (const waiter of heldWaiters) waiter();
-    });
-    const on = (db, accepted = () => true, region = 'gru') => new Promise((resolveHeld, reject) => {
-      const deadline = setTimeout(() => {
-        heldWaiters.delete(check);
-        reject(new Error('no ' + region + ' replica published a held revision of ' + db.id + ' that the step expects'));
-      }, 90_000);
-      const check = () => {
-        const revision = (heldRevisions.get(region + '/' + db.id) ?? []).findLast(accepted);
-        if (!revision) return;
-        clearTimeout(deadline);
-        heldWaiters.delete(check);
-        resolveHeld(revision);
-      };
-      heldWaiters.add(check);
-      check();
-    });
-    return { on, stop };
-  };
-  const withheldHeld = heldWatch();
-  const withheld = await database('withheld');
-  const [withheldTx] = series(1);
-  const withheldKey = id(Date.now() - 60_000);
-  await putSealedKey({ master, access, secret }, scope(withheld), withheldKey, dataKey);
-  const withheldAtGru = logged(gru, 'A pushed database is held', { Database: withheld.id, Kind: 'origin_previous_build' }, offset());
-  const withheldSent = await send(withheld, withheldTx, withheldKey);
-  await withheldAtGru;
-  const keyHold = 'http://127.0.0.1:' + port('r2') + '/fault/key-hold?key=' + encodeURIComponent('v1/keys/' + scope(withheld) + '/' + withheldKey);
-  assert.equal((await fetch(keyHold, { method: 'POST' })).status, 204);
-  const withheldFraMark = readFileSync(fra.log, 'utf8').length;
-  const drainRefusals = await scrape(/^terrabase_home_refusals_total\{.*reason="drain_failed"/, P.metricsFra);
-  const withheldPath = '/v1/projects/' + project.id + '/databases/' + withheld.id;
-  await withheldHeld.on(withheld, () => true, 'fra');
-  withheldHeld.stop();
-  const withheldGruMark = offset();
-  const withheldMove = request(home, withheldPath, { regions: ['fra'] }, user, 'PATCH', 503);
-  assert.equal((await fetch(keyHold, { signal: AbortSignal.timeout(90_000) })).status, 204);
-  const withheldMarker = await nats.request('terrabase.push-state.fra.purged.' + scope(withheld).replaceAll('/', '.'), Buffer.from(String(withheldSent.seq)));
-  assert(!withheldMarker.error, JSON.stringify(withheldMarker));
-  const withheldPurge = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(withheld).replaceAll('/', '.'), seq: withheldSent.seq + 1 });
-  assert(withheldPurge.success, JSON.stringify(withheldPurge));
-  assert.equal((await fetch(keyHold, { method: 'DELETE' })).status, 204);
-  assert.equal((await withheldMove).error.code, 'replica_not_ready');
-  await logged(gru, 'Home move to', { Target: 'fra', Outcome: 'refused' }, withheldGruMark);
-  await logged(fra, 'holds the pushes from', { Database: withheld.id, Origin: 'fra', Kind: 'purged' }, withheldFraMark);
-  assert.equal(await scrape(/^terrabase_home_refusals_total\{.*reason="drain_failed"/, P.metricsFra), drainRefusals + 1);
-  assert.equal((await request(home, withheldPath, undefined, user, 'GET')).homeRegion, 'gru');
-  assert.deepEqual(await applications(withheld), []);
-  assert.equal(await value(withheld), -1);
-  console.log('promotion drain with its data-key read outstanding while sequence ' + withheldSent.seq + ' was removed under a purge marker: fra held the origin for proof (purged), fra refused the promotion (drain_failed) and gru answered the regions change with replica_not_ready, gru is still the home and nothing was applied');
-  const upgraded = await nats.request('terrabase.push-state.fra.build.journey-2', Buffer.from('markers'));
-  assert(!upgraded.error, JSON.stringify(upgraded));
-  assert.equal((await mixedNotice).state, 'confirmed');
-  assert.deepEqual(await applications(mixed), [mixedFirst.id, mixedLater.id]);
-  console.log('previous-build origin (no build record) removed a database\'s messages through sequence ' + mixedSent.seq + ' without a marker: the new-build home held it with reason origin_previous_build and applied nothing past the removal; once the origin node wrote its build record the later message applied');
-
-  const promotedHeld = heldWatch();
-  const promoted = await database('promoted');
-  await sql(promoted, 'CREATE TABLE hold_gate (id INTEGER PRIMARY KEY)');
-  const promotedWarm = await applied(promoted, transaction([effect(60)]));
-  await promotedHeld.on(promoted, () => true, 'fra');
-  promotedHeld.stop();
-  const fraControl = resolve(state, 'integrity-control-fra');
-  armHold(fraControl, 'fra', promoted, 'FROM _ts_frontier');
-  const promotedOpened = statementHeld(fraControl);
-  const promotedFraMark = readFileSync(fra.log, 'utf8').length;
-  const promotedRefusals = await scrape(/^terrabase_home_refusals_total\{.*reason="drain_failed"/, P.metricsFra);
-  const promotedPath = '/v1/projects/' + project.id + '/databases/' + promoted.id;
-  const promotedGruHeld = logged(gru, 'A pushed database is held', { Database: promoted.id, Kind: 'purged' }, offset());
-  const promotedMove = request(home, promotedPath, { regions: ['fra'] }, user, 'PATCH', 503);
-  await promotedOpened;
-  const promotedHeadSent = await send(promoted, transaction([{ op: 'insert', table: 'hold_gate', values: { id: 1 } }]));
-  const promotedNextSent = await send(promoted, transaction([effect(61)]));
-  armHold(fraControl, 'fra', promoted, 'hold_gate');
-  const promotedApplying = statementHeld(fraControl);
-  releaseHold(fraControl);
-  await promotedApplying;
-  await purgeOnly(promoted, promotedNextSent);
-  releaseHold(fraControl);
-  assert.equal((await promotedMove).error.code, 'replica_not_ready');
-  await logged(fra, 'holds the pushes from', { Database: promoted.id, Origin: 'fra', Kind: 'purged' }, promotedFraMark);
-  assert.equal(await scrape(/^terrabase_home_refusals_total\{.*reason="drain_failed"/, P.metricsFra), promotedRefusals + 1);
-  assert.equal((await request(home, promotedPath, undefined, user, 'GET')).homeRegion, 'gru');
-  await promotedGruHeld;
-  assert.equal(await value(promoted), 60);
-  console.log('purge of sequence ' + promotedNextSent.seq + ' while fra\'s promotion drain applied sequence ' + promotedHeadSent.seq + ' from the same checked batch (both sent after gru paused, after sequence ' + promotedWarm.seq + '): fra held the origin for proof (purged) and refused the promotion; gru is still the home, checked the stream again after its pause lifted, holds the database with reason purged and its value is unchanged');
-
-  const retriedHeld = heldWatch();
-  const retried = await database('retried');
-  await sql(retried, 'CREATE TABLE hold_gate (id INTEGER PRIMARY KEY)');
-  const retriedWarm = await applied(retried, transaction([effect(60)]));
-  await retriedHeld.on(retried, () => true, 'fra');
-  retriedHeld.stop();
-  armHold(fraControl, 'fra', retried, 'FROM _ts_frontier');
-  const retriedOpened = statementHeld(fraControl);
-  const retriedFraMark = readFileSync(fra.log, 'utf8').length;
-  const retriedRefusals = await scrape(/^terrabase_home_refusals_total\{.*reason="drain_failed"/, P.metricsFra);
-  const retriedPath = '/v1/projects/' + project.id + '/databases/' + retried.id;
-  const retriedGruHeld = logged(gru, 'A pushed database is held', { Database: retried.id, Kind: 'purged' }, offset());
-  const retriedMove = request(home, retriedPath, { regions: ['fra'] }, user, 'PATCH', 503);
-  await retriedOpened;
-  const retriedHeadSent = await send(retried, transaction([{ op: 'insert', table: 'hold_gate', values: { id: 1 } }]));
-  const retriedNextSent = await send(retried, transaction([effect(61)]));
-  armHold(fraControl, 'fra', retried, 'hold_gate');
-  const retriedApplying = statementHeld(fraControl);
-  releaseHold(fraControl);
-  await retriedApplying;
-  relayFra.swallow = 'terrabase.push-state.fra.purged.';
-  await purgeOnly(retried, retriedNextSent);
-  void relayFra.drop('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
-  releaseHold(fraControl);
-  assert.equal((await retriedMove).error.code, 'replica_not_ready');
-  relayFra.trap = null;
-  relayFra.swallow = null;
-  await logged(fra, 'holds the pushes from', { Database: retried.id, Origin: 'fra', Kind: 'purged' }, retriedFraMark);
-  assert.equal(await scrape(/^terrabase_home_refusals_total\{.*reason="drain_failed"/, P.metricsFra), retriedRefusals + 1);
-  assert.equal((await request(home, retriedPath, undefined, user, 'GET')).homeRegion, 'gru');
-  await retriedGruHeld;
-  assert.equal(await value(retried), 60);
-  console.log('purge of sequence ' + retriedNextSent.seq + ' while fra\'s promotion drain applied sequence ' + retriedHeadSent.seq + ' (both after sequence ' + retriedWarm.seq + '), with fra\'s copy of the purge marker withheld and its broker connection closed at its next stream read: whether the drain stopped at the removed message or applied it and was retried against the copy it changed, fra found the marker beyond its import frontier, held the origin for proof (purged) and refused the promotion; gru is still the home, holds the database with reason purged and its value is unchanged');
-
-  const recordOf = async node => !(await nats.request('$JS.API.STREAM.MSG.GET.TERRABASE_PUSH_FRA', { last_by_subj: 'terrabase.push-state.fra.build.' + node })).error;
-  const peersBefore = readFileSync(state + '/peers', 'utf8');
-  const decommissionStream = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
-  assert((await nats.request('$JS.API.STREAM.DELETE.TERRABASE_PUSH_FRA')).success);
-  assert(!(await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_FRA', decommissionStream.config)).error);
-  const retired = await database('retired');
-  const [retiredFirst, retiredRemoved, retiredLater] = series(3);
-  await applied(retired, retiredFirst);
-  const retiredKey = await refusedKey(retired);
-  const retiredSent = await held(retired, send(retired, retiredRemoved, retiredKey));
-  const retiredHeld = logged(gru, 'A pushed database is held', { Database: retired.id, Kind: 'origin_previous_build' }, offset());
-  const retiredPurge = await nats.request('$JS.API.STREAM.PURGE.TERRABASE_PUSH_FRA', { filter: 'terrabase.push.fra.*.' + scope(retired).replaceAll('/', '.'), seq: retiredSent.seq + 1 });
-  assert(retiredPurge.success, JSON.stringify(retiredPurge));
-  let retiredApplied = null;
-  const retiredNotice = notice(retired, retiredLater).then(result => { retiredApplied = result; return result; });
-  await send(retired, retiredLater);
-  release(retired, retiredKey);
-  await retiredHeld;
-  assert.equal(retiredApplied, null);
-  assert.equal(await recordOf('journey-2'), false);
-  const retiredStopped = Date.now();
-  await stop(fra);
-  assert.equal((await retiredNotice).state, 'confirmed');
-  assert.deepEqual(await applications(retired), [retiredFirst.id, retiredLater.id]);
-  assert.equal(await recordOf('journey-2'), false);
-  assert.equal(readFileSync(state + '/peers', 'utf8'), peersBefore);
-  const retiredSeconds = (Date.now() - retiredStopped) / 1000;
-  const recorded = nats.event('terrabase.push-state.fra.build.journey-2');
-  fra = cell('fra');
-  await recorded;
-  assert.equal(await recordOf('journey-2'), true);
-  console.log('a running origin node without a build record held the home (origin_previous_build); once it stopped, still listed in the peers file and without a record, the later message applied ' + retiredSeconds.toFixed(1) + ' s after the stop with no file edited; restarted on this build it wrote its record at its first open of the stream');
-
-  const strays = Array.from({ length: 130 }, () => id());
-  const strayStarted = Date.now();
-  for (const stray of strays) {
-    for (let n = 0; n < 32; n++) {
-      const ack = await nats.request('terrabase.push.fra.gru.' + org.id + '.' + project.id + '.' + stray, Buffer.from('catalog-missing'));
-      assert(!ack.error, JSON.stringify(ack));
-    }
-  }
-  await applied(other, transaction([effect(301)]));
-  assert.equal(await value(other), 301);
-  const strayConsumer = await nats.request('$JS.API.CONSUMER.INFO.TERRABASE_PUSH_FRA.' + (await consumers())[0]);
-  assert(strayConsumer.num_ack_pending < 4096, JSON.stringify(strayConsumer));
-  console.log('130 unknown databases with 32 messages each (' + strays.length * 32 + ' messages) held on one origin: the healthy database applied after them in ' + ((Date.now() - strayStarted) / 1000).toFixed(1) + ' s; consumer ack pending ' + strayConsumer.num_ack_pending + ', unknown_database holds ' + await scrape(/^terrabase_push_held\{.*reason="unknown_database"/));
-
-  const behind = await database('behind');
-  const [behindFirst, behindSecond, behindThird, behindLate] = series(4);
-  await applied(behind, behindFirst);
-  const streams = state + '/nats/jetstream/$G/streams';
-  const restartBroker = async () => {
-    nats.close();
-    await stop(broker);
-    return async () => {
-      const mark = readFileSync(broker.log, 'utf8').length;
-      broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
-      await logged(broker, 'Server is ready', {}, mark);
-      nats = new Nats(token, P.nats);
-      await nats.connect();
-    };
-  };
-  const behindIdentity = (await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA')).created;
-  let resume = await restartBroker();
-  rmSync(state + '/fra-snapshot', { recursive: true, force: true });
-  cpSync(streams + '/TERRABASE_PUSH_FRA', state + '/fra-snapshot', { recursive: true });
-  await resume();
-  const snapshotLast = (await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA')).state.last_seq;
-  await applied(behind, behindSecond);
-  await applied(behind, behindThird);
-  const frontierBefore = (await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA')).state.last_seq;
-  resume = await restartBroker();
-  rmSync(streams + '/TERRABASE_PUSH_FRA', { recursive: true });
-  cpSync(state + '/fra-snapshot', streams + '/TERRABASE_PUSH_FRA', { recursive: true });
-  const behindHeld = logged(gru, 'A pushed database is held', { Database: behind.id, Origin: 'fra', Kind: 'stream_behind' }, offset());
-  await resume();
-  const restored = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
-  assert.equal(restored.state.last_seq, snapshotLast);
-  assert.equal(restored.created, behindIdentity);
-  let behindApplied = null;
-  notice(behind, behindLate).then(result => { behindApplied = result; }, () => {});
-  const behindSent = await send(behind, behindLate);
-  assert(behindSent.seq <= frontierBefore, JSON.stringify({ behindSent: behindSent.seq, frontierBefore }));
-  await behindHeld;
-  await applied(other, transaction([effect(302)]));
-  assert.equal(behindApplied, null);
-  assert.deepEqual(await applications(behind), [behindFirst.id, behindSecond.id, behindThird.id]);
-  console.log('origin stream restored from a snapshot under the same identity (last sequence ' + snapshotLast + ' below the frontier ' + frontierBefore + '): held with reason stream_behind, the new message at sequence ' + behindSent.seq + ' not applied');
-  const replicaHeld = heldWatch();
-  const lineage = await create('lineage');
-  await sql(lineage, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
-  await sql(lineage, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
-  await sql(lineage, 'INSERT INTO items VALUES (1, 40)');
-  await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + lineage.id, keyId, dataKey);
-  const takeOver = async node => {
-    const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
-    const owner = JSON.parse(Buffer.from(stored.message.data, 'base64'));
-    const certified = await nats.request('$KV.terrabase-region-owners.prepared.gru.' + node, { source: owner.node, target: node, epoch: owner.epoch, operation: null });
-    assert(!certified.error, JSON.stringify(certified));
-    const changed = { ...owner, node, epoch: owner.epoch + 1, previous: owner.node, activated: true, transfer: null,
-      prepared: { source: owner.node, target: node, epoch: owner.epoch } };
-    const ack = await nats.request('$KV.terrabase-region-owners.gru', changed, { 'Nats-Expected-Last-Subject-Sequence': String(stored.message.seq) });
-    assert(!ack.error, JSON.stringify(ack));
-    return changed.epoch;
-  };
-  const lineageOf = revision => revision.split(':')[1];
-  const peerPull = (from, path) => new Promise((resolvePull, reject) => {
-    const session = http2(home, { localAddress: from });
-    session.on('error', reject);
-    const pull = session.request({ ':method': 'POST', ':path': path, 'content-type': 'application/protobuf', 'x-terrabase-peer-credential': peer });
-    const chunks = [];
-    let status = 0;
-    pull.on('response', headers => { status = headers[':status']; });
-    pull.on('data', chunk => chunks.push(chunk));
-    pull.on('error', reject);
-    pull.on('end', () => {
-      session.close();
-      const body = Buffer.concat(chunks).toString('latin1');
-      resolvePull({ status, revision: body.match(/ts1:[0-9A-Z]{26}:\d+:\d+/)?.[0] ?? null, body: body.slice(0, 300) });
-    });
-    pull.end(Buffer.from([8, 0]));
-  });
-  const bMark = readFileSync(b.log, 'utf8').length;
-  const gruMark = readFileSync(gru.log, 'utf8').length;
-  await sql(first, 'UPDATE items SET value = 800 WHERE id = 1');
-  const firstChecksums = '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + first.id + '/checksums?revision=ts1:00000000000000000000000000:1:0';
-  const newest = (await request(home, firstChecksums, undefined, undefined, 'GET')).revision;
-  await replicaHeld.on(first, revision => {
-    const [, incarnation, generation, frame] = revision.split(':');
-    const [, wanted, wantedGeneration, wantedFrame] = newest.split(':');
-    return incarnation === wanted && (+generation > +wantedGeneration || +generation === +wantedGeneration && +frame >= +wantedFrame);
-  });
-  await request(internal['journey-3'], firstChecksums, undefined, undefined, 'GET', 503);
-  const lineagePush = transaction([effect(41)]);
-  const lineageNotice = notice(lineage, lineagePush);
-  await request(home, '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + lineage.id + '/held', undefined, undefined, 'GET', 404);
-  const originalRevision = await replicaHeld.on(lineage);
-  replicaHeld.stop();
-  const original = lineageOf(originalRevision);
-  const checksumPath = '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + lineage.id + '/checksums?revision=' + encodeURIComponent(originalRevision);
-  await request(internal['journey-3'], checksumPath, undefined, undefined, 'GET', 503);
-  const lineagePrimary = state + '/frontier-gru-b/' + org.id + '/' + project.id + '/' + lineage.id + '.db';
-  const primaryBefore = existsSync(lineagePrimary);
-  await takeOver('journey-3');
-  await logged(b, 'Database fenced at regional writer epoch', {}, bMark);
-  await send(lineage, lineagePush);
-  await logged(b, 'A pushed database is held', { Database: lineage.id }, bMark);
-  assert.equal(existsSync(lineagePrimary), primaryBefore, 'the held push created no primary file on the fenced writer');
-  const sourceChecksum = await request(home, checksumPath, undefined, undefined, 'GET');
-  assert.equal(lineageOf(sourceChecksum.revision), original, 'the retired activated writer remains a source of its proven lineage');
-  const retiredPull = await peerPull('127.0.0.2', '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + lineage.id + '/pull-updates');
-  assert.equal(retiredPull.status, 200, 'the retired activated writer serves a pull from the admitted fra peer: ' + retiredPull.body);
-  assert.equal(lineageOf(retiredPull.revision), original, 'the pull from the admitted fra peer streams the proven lineage');
-  await request(internal['journey-3'], checksumPath, undefined, undefined, 'GET', 503);
-  const demotedReplica = await request(home, '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + lineage.id + '/held', undefined, undefined, 'GET', [200, 404]);
-  assert(!demotedReplica.revision || lineageOf(demotedReplica.revision) === original,
-    'the demoted writer must not import an unproved primary from the fenced candidate');
-  await takeOver('journey-1');
-  assert.equal((await lineageNotice).state, 'confirmed');
-  assert.equal(await value(lineage), 41);
-  const fencedLineage = readFileSync(gru.log, 'utf8').slice(gruMark).split('\n').filter(line => line.includes('Database fenced') && line.includes(lineage.id));
-  assert.deepEqual(fencedLineage, []);
-  console.log('unplanned takeover by journey-3 (a primary file of ' + lineage.id + ' before it: ' + primaryBefore + '): fenced, it held the push without creating a file or exporting an unproved primary; back on journey-1 nothing was fenced, the held push applied once and the earlier rows are intact');
+  const malformed = await sql(nodes.gru, ['SELECT 1'], { 'terrascale-bookmark': 'not a bookmark!' });
+  assert.equal(malformed.status, 400, JSON.stringify(malformed.body));
+  assert.equal(malformed.body.error.code, 'invalid_bookmark');
+  console.log('(e) a malformed TerraScale-Bookmark answers 400 invalid_bookmark');
+  console.log('replication frontier proof passed');
 } finally {
-  for (const [control, release] of holds) {
-    rmSync(control, { force: true });
-    writeSync(release, 'g');
-  }
-  rmSync(journeyState + '/r2-unavailable-keys', { force: true });
-  nats?.close();
-  relay.close();
-  relayFra.close();
-  await Promise.all([...processes].map(child => stop(child)));
+  await Promise.all([...processes.keys()].map(stop));
 }

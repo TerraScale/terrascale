@@ -313,7 +313,7 @@
         "dependencies": {
           "Microsoft.Extensions.Http": "[10.0.11, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )",
-          "NUlid": "[1.7.3, )"
+          "Ulid": "[1.4.1, )"
         }
       },
       "terrascale.entityframeworkcore": {
@@ -381,11 +381,11 @@
           "Microsoft.IdentityModel.Tokens": "8.23.0"
         }
       },
-      "NUlid": {
+      "Ulid": {
         "type": "CentralTransitive",
-        "requested": "[1.7.3, )",
-        "resolved": "1.7.3",
-        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
+        "requested": "[1.4.1, )",
+        "resolved": "1.4.1",
+        "contentHash": "V6crLJ8a29raWeNwxYGfH9RTKA3H0nR0D9LAGzN3KtEsbiiaWkUjDor6OT5Oz7pxCK+NaY2hu2FLoYEOa8oCkA=="
       }
     },
     "net11.0/linux-arm64": {

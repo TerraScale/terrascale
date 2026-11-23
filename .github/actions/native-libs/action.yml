@@ -1,0 +1,40 @@
+name: Pinned native libraries
+description: >-
+  Restore or build the pinned libsqlite3mc.so and libmsquic.so.2 under native/runtimes for the given
+  runtimes, keyed by native/native-pin.env and native/build-native.sh. A miss runs make native-libs,
+  which verifies every SHA-256, ELF machine and exported symbol before the cache is saved.
+
+inputs:
+  dir:
+    description: The repository's checkout directory inside the workspace.
+    required: false
+    default: "."
+  runtimes:
+    description: Space-separated runtime identifiers (linux-x64, linux-arm64).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ inputs.dir }}/native/runtimes
+        key: native-libs-${{ runner.os }}-${{ runner.arch }}-${{ inputs.runtimes }}-${{ hashFiles(format('{0}/native/native-pin.env', inputs.dir), format('{0}/native/build-native.sh', inputs.dir)) }}
+    - if: steps.cache.outputs.cache-hit != 'true' && contains(inputs.runtimes, 'linux-arm64') && runner.arch != 'ARM64'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu
+        echo CC_linux_arm64=aarch64-linux-gnu-gcc >> "$GITHUB_ENV"
+    - if: steps.cache.outputs.cache-hit != 'true' && contains(inputs.runtimes, 'linux-x64') && runner.arch != 'X64'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends gcc-x86-64-linux-gnu
+        echo CC_linux_x64=x86_64-linux-gnu-gcc >> "$GITHUB_ENV"
+    - shell: bash
+      working-directory: ${{ inputs.dir }}
+      env:
+        RUNTIMES: ${{ inputs.runtimes }}
+      run: make native-libs NATIVE_RUNTIMES="$RUNTIMES"

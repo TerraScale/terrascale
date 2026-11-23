@@ -12,17 +12,26 @@ public sealed class TerraBaseDbTransaction : DbTransaction
     private readonly TerraBaseSqlSession session;
     private bool finished;
 
-    internal TerraBaseDbTransaction(TerraBaseDbConnection connection, TerraBaseSqlSession session)
+    internal TerraBaseDbTransaction(TerraBaseDbConnection connection, TerraBaseSqlSession session, TerraBaseConsistencyMode? consistency)
     {
         this.connection = connection;
         this.session = session;
+        Consistency = consistency;
     }
 
     /// <summary>The connection this transaction runs on.</summary>
     protected override DbConnection DbConnection => connection;
 
-    /// <summary>Always <see cref="System.Data.IsolationLevel.Serializable"/>: transactions run at the database's strongest isolation.</summary>
-    public override IsolationLevel IsolationLevel => IsolationLevel.Serializable;
+    /// <summary>
+    /// The consistency the transaction began with; null when the database's <c>defaultConsistency</c> chose it.
+    /// </summary>
+    public TerraBaseConsistencyMode? Consistency { get; }
+
+    /// <summary>
+    /// <see cref="System.Data.IsolationLevel.Serializable"/> for a strong transaction, which runs serializable across regions;
+    /// otherwise <see cref="System.Data.IsolationLevel.Unspecified"/>.
+    /// </summary>
+    public override IsolationLevel IsolationLevel => Consistency == TerraBaseConsistencyMode.Strong ? IsolationLevel.Serializable : IsolationLevel.Unspecified;
 
     internal TerraBaseSqlSession Session => session;
 

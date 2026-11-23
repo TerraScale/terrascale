@@ -2,22 +2,23 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>Selected regions and writer-observed pull progress of one database.</summary>
+/// <summary>Per-region replication state of one database. Every region is equal and accepts writes.</summary>
 /// <param name="DatabaseId">Database ULID, distinct from its route name.</param>
-/// <param name="ObservedAt">UTC sample time.</param>
-/// <param name="Regions">Every selected region in region-id order; order carries no meaning.</param>
-public sealed record TerraBaseDatabaseRegions(string DatabaseId, DateTimeOffset ObservedAt,
+/// <param name="ObservedAtUtc">UTC time the answering region sampled the state.</param>
+/// <param name="Regions">Every region of the database in region-id order; order carries no meaning.</param>
+public sealed record TerraBaseDatabaseRegions(string DatabaseId, DateTimeOffset ObservedAtUtc,
     IReadOnlyList<TerraBaseReplicaStatus> Regions) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Regions);
 }
 
-/// <summary>Pull progress of one region; unknown observations are null.</summary>
+/// <summary>Replication state of one region as the answering region observes it.</summary>
 /// <param name="Region">Region id.</param>
-/// <param name="LagMs">Age of the oldest known commit missing from the last served revision; null without sufficient observations.</param>
-/// <param name="LastPulledAt">When a complete pull was served; null before the first pull.</param>
-/// <param name="LastVerified">Last checksum verification result; null until verification reports.</param>
-/// <param name="Revision">Revision served by the last complete pull; null before the first pull.</param>
-/// <param name="Role">"writer" for the region that commits writes, or null.</param>
-public sealed record TerraBaseReplicaStatus(string Region, double? LagMs = null, DateTimeOffset? LastPulledAt = null,
-    DateTimeOffset? LastVerified = null, string? Revision = null, string? Role = null);
+/// <param name="AppliedBookmark">
+/// The <c>TerraScale-Bookmark</c> of the writes applied as observed by the answering region; pass it to
+/// <see cref="TerraBaseSqlDatabase.ObserveBookmark"/> to read at least that state elsewhere.
+/// </param>
+/// <param name="LagMs">Round-trip time to the region in milliseconds, 0 for the answering region and -1 when unknown.</param>
+/// <param name="Healthy">Whether the answering region reaches the region.</param>
+/// <param name="Role">An optional role label of the region; null when the server names none.</param>
+public sealed record TerraBaseReplicaStatus(string Region, string AppliedBookmark, long LagMs, bool Healthy, string? Role = null);

@@ -56,7 +56,7 @@
         "dependencies": {
           "Microsoft.Extensions.Http": "[10.0.11, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )",
-          "NUlid": "[1.7.3, )"
+          "Ulid": "[1.4.1, )"
         }
       },
       "Microsoft.Extensions.Configuration": {
@@ -116,12 +116,6 @@
         "dependencies": {
           "Microsoft.IdentityModel.Tokens": "8.23.0"
         }
-      },
-      "NUlid": {
-        "type": "CentralTransitive",
-        "requested": "[1.7.3, )",
-        "resolved": "1.7.3",
-        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
       },
       "Ulid": {
         "type": "CentralTransitive",

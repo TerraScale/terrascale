@@ -1,350 +1,210 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { request as httpRequest } from 'node:http';
-import { createServer } from 'node:https';
-import { holdSync } from '../env/ports.mjs';
-import { join, resolve } from 'node:path';
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { setInterval } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
+import { holdSync } from '../env/ports.mjs';
 import { internal, project } from './operations.mjs';
 
-const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const profile = process.env.E2E_STATE;
-const proxyHold = holdSync({ proxy: 443 }, 'exact');
-const keyringHold = holdSync({ client: 18380, internal: 18381, postgres: 18382, metrics: 18383, r2: 8028 }, 'block');
-const keyringPorts = keyringHold.ports;
-writeFileSync(join(profile, 'ports.json'), JSON.stringify({ ...keyringPorts, proxy: proxyHold.ports.proxy }), { mode: 0o600 });
-const baseline = resolve(process.env.E2E_KEYRING_BASELINE);
-const candidate = join(process.env.E2E_BUILD, 'terrabase', 'terrabase.dll');
+const service = join(process.env.E2E_BUILD, 'terrabase');
+const driver = process.env.E2E_KEYRING_DRIVER;
+const ports = holdSync({ client: 18380, internal: 18381, postgres: 18382, metrics: 18383, quic: 18384 }, 'block').ports;
+const address = 'http://127.0.0.1:' + ports.internal;
 const data = join(profile, 'data');
-const master = randomBytes(32).toString('base64');
-const next = randomBytes(32).toString('base64');
 const peer = randomBytes(32).toString('hex');
-const access = randomBytes(16).toString('hex');
-const secret = randomBytes(32).toString('hex');
-writeFileSync(join(profile, 'r2'), `${access}\n${secret}\n`, { mode: 0o600 });
-writeFileSync(join(profile, 'secrets'), `${master}\n${next}\n${peer}\n${access}\n${secret}\n`, { mode: 0o600 });
+const k0 = randomBytes(32).toString('base64');
+const k1 = randomBytes(32).toString('base64');
+const forged = randomBytes(32).toString('base64');
+writeFileSync(join(profile, 'secrets'), `${peer}\n${k0}\n${k1}\n${forged}\n`, { mode: 0o600 });
+const rings = {
+  single: { active: 'k0', keys: { k0 } },
+  rotated: { active: 'k1', keys: { k0, k1 } },
+  retired: { active: 'k1', keys: { k1 } },
+  forged: { active: 'k1', keys: { k0: forged, k1 } },
+};
 const clean = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
   !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
-const disabledBackups = { AWS_ENDPOINT_URL_S3: undefined, AWS_REGION: undefined, BUCKET_NAME: undefined,
-  AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_ACCESS_KEY_ID: undefined,
-  TERRABASE_SHAPES_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_CDN_API_TOKEN: undefined };
 const children = new Set();
-function startProcess(binary, args, name, environment) {
-  const output = openSync(join(profile, `${name}.log`), 'w', 0o600);
-  const child = spawn(binary, args, { env: environment, stdio: ['ignore', output, output] });
+let sequence = 0;
+
+function environment(ring) {
+  const file = join(profile, 'ring-' + ring + '.json');
+  writeFileSync(file, JSON.stringify(rings[ring]), { mode: 0o600 });
+  return {
+    ...clean, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Development', TERRABASE_MASTER_KEYS_FILE: file,
+    TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data, TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
+    TERRABASE_PORT: String(ports.client), TERRABASE_INTERNAL_PORT: String(ports.internal), TERRABASE_POSTGRES_PORT: String(ports.postgres),
+    TERRABASE_METRICS_PORT: String(ports.metrics), TERRABASE_QUIC_PORT: String(ports.quic),
+  };
+}
+
+function start(name, args, ring) {
+  const log = join(profile, `${++sequence}-${name}.log`);
+  const output = openSync(log, 'w', 0o600);
+  const child = spawn('dotnet', args, { env: environment(ring), stdio: ['ignore', output, output] });
   closeSync(output);
   children.add(child);
-  return child;
+  return { child, log };
 }
+
 async function stop(child) {
   if (child.exitCode === null && child.signalCode === null) {
     const exited = once(child, 'exit');
     child.kill('SIGTERM');
-    await exited;
+    const [code, signal] = await exited;
+    assert.equal(code, 0, 'node stopped cleanly after SIGTERM, not ' + (signal ?? code));
   }
   children.delete(child);
 }
-let standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store', {
-  ...clean, E2E_REGIONS: '2', E2E_STATE: profile, E2E_PORTS_FILE: join(profile, 'ports.json'),
-});
-const requests = [];
-let stalledUploads = false;
-let refusedUploads = 0;
-const proxy = createServer({ key: readFileSync(join(profile, 'tls.key')), cert: readFileSync(join(profile, 'tls.pem')) }, (request, response) => {
-  requests.push({ method: request.method, path: request.url, range: request.headers.range, match: request.headers['if-match'], absent: request.headers['if-none-match'] });
-  if (stalledUploads && request.method === 'PUT' && /\/(snapshots|wal)\//.test(request.url)) {
-    refusedUploads++;
-    request.resume();
-    response.writeHead(503, { 'content-type': 'application/xml' });
-    response.end('<Error><Code>ServiceUnavailable</Code></Error>');
-    return;
-  }
-  const upstream = httpRequest({ hostname: '127.0.0.1', port: keyringPorts.r2, method: request.method, path: request.url, headers: request.headers }, answer => {
-    response.writeHead(answer.statusCode, answer.headers);
-    answer.pipe(response);
-  });
-  upstream.on('error', () => { response.writeHead(502); response.end(); });
-  request.pipe(upstream);
-});
-proxy.listen(proxyHold.ports.proxy, '0.0.0.0');
-await once(proxy, 'listening');
-const sha = body => createHash('sha256').update(body).digest('hex');
-const hmac = (key, value) => createHmac('sha256', key).update(value).digest();
-async function object(method, bucket, path, query = '', body, conditions = {}) {
-  const host = bucket === 'journey-backups' ? 'journey.backups.terrascale.tech' : '6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com';
-  const target = `/${bucket}/${path}`;
-  const date = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
-  const scope = `${date.slice(0, 8)}/auto/s3/aws4_request`;
-  const payload = sha(body ?? '');
-  const headers = 'host;x-amz-content-sha256;x-amz-date';
-  const canonical = [method, target, query, `host:${host}\nx-amz-content-sha256:${payload}\nx-amz-date:${date}\n`, headers, payload].join('\n');
-  const key = scope.split('/').reduce((key, part) => hmac(key, part), `AWS4${secret}`);
-  const signature = hmac(key, ['AWS4-HMAC-SHA256', date, scope, sha(canonical)].join('\n')).toString('hex');
-  return fetch(`https://${host}${target}${query ? `?${query}` : ''}`, { method, body, headers: {
-    ...conditions,
-    'x-amz-date': date, 'x-amz-content-sha256': payload,
-    authorization: `AWS4-HMAC-SHA256 Credential=${access}/${scope}, SignedHeaders=${headers}, Signature=${signature}`,
-  } });
-}
-async function objects(bucket, prefix) {
-  const response = await object('GET', bucket, '', `list-type=2&prefix=${encodeURIComponent(prefix)}`);
-  assert.equal(response.status, 200);
-  const text = await response.text();
-  return [...text.matchAll(/<Key>([^<]+)<\/Key>/g)].map(match => match[1]);
-}
-const files = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
-  entry.isDirectory() ? files(join(directory, entry.name)) : entry.name.endsWith('.key') ? [join(directory, entry.name)] : []);
-let sequence = 0;
-function node(binary, active, extra = {}, arguments_ = []) {
-  const ring = join(profile, 'ring-' + sequence + '.json');
-  writeFileSync(ring, JSON.stringify({ active, keys: active === 'k0' ? { k0: master } : { k0: master, k1: next } }), { mode: 0o600 });
-  const command = binary === process.env.E2E_KEYRING_DRIVER
-    ? ['exec', '--depsfile', join(process.env.E2E_BUILD, 'terrabase/terrabase.deps.json'),
-      '--runtimeconfig', join(process.env.E2E_BUILD, 'terrabase/terrabase.runtimeconfig.json'), binary, ...arguments_]
-    : [binary, ...arguments_];
-  return startProcess('dotnet', command, `node-${++sequence}`, {
-    ...clean, DOTNET_ROOT: process.env.DOTNET_ROOT, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Development',
-    TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
-    ...(binary === baseline ? { TERRABASE_MASTER_KEY: master } : { TERRABASE_MASTER_KEYS_FILE: ring }),
-    TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data, TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
-    TERRABASE_PORT: String(keyringPorts.client), TERRABASE_INTERNAL_PORT: String(keyringPorts.internal), TERRABASE_POSTGRES_PORT: String(keyringPorts.postgres), TERRABASE_METRICS_PORT: String(keyringPorts.metrics),
-    E2E_KEYRING_METRICS_URL: 'http://127.0.0.1:' + keyringPorts.metrics,
-    AWS_ENDPOINT_URL_S3: 'https://journey.backups.terrascale.tech', AWS_REGION: 'auto', BUCKET_NAME: 'journey-backups',
-    AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret,
-    TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: peer,
-    ...extra,
-  });
-}
-async function records(operation, active, output = join(profile, operation + '.json')) {
-  const child = node(process.env.E2E_KEYRING_DRIVER, active, disabledBackups, [operation, output]);
-  const [code] = await once(child, 'exit');
-  children.delete(child);
-  assert.equal(code, 0, operation + ' driver completed');
-  return operation === 'credentials' ? JSON.parse(readFileSync(output, 'utf8')) : undefined;
-}
-async function until(name, child, condition) {
+
+async function until(name, condition) {
   const deadline = Date.now() + 30_000;
   for await (const tick of setInterval(200)) {
     void tick;
-    assert.equal(child.exitCode, null, `${name}: node remains running`);
     if (await condition()) return;
     assert.ok(Date.now() < deadline, `${name}: condition did not hold`);
   }
 }
-async function ready(child) {
-  await until('readiness', child, async () => {
-    try { return (await fetch('http://127.0.0.1:' + keyringPorts.client + '/readyz')).status === 200; } catch { return false; }
-  });
-}
-const metrics = async () => (await fetch('http://127.0.0.1:' + keyringPorts.metrics + '/metrics')).text();
-const value = (text, name, label = '') => {
-  assert.ok(text.split('\n').some(line => line.startsWith('# TYPE ' + name) && /^[_ ]/.test(line.slice(7 + name.length))), 'metric instrument exists: ' + name);
-  const sample = text.split('\n').find(line => line.startsWith(name) && (!label || line.includes(label)));
-  assert.ok(sample, 'metric sample exists: ' + name + ' ' + label);
-  const result = Number(sample.split(' ').at(-1));
-  assert.ok(Number.isFinite(result), 'metric sample is numeric: ' + name);
-  return result;
-};
-try {
-  let child = node(baseline, 'k0');
-  await until('object store', standin, async () => {
-    try { return (await fetch('http://127.0.0.1:' + keyringPorts.r2 + '/log')).status === 200; } catch { return false; }
-  });
-  await ready(child);
-  await until('origin custody and snapshots', child, async () =>
-    (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).length > 0 && (await objects('journey-backups', 'v1/')).some(key => key.includes('/snapshots/')));
-  const scope = await project(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'keyring-proof');
-  const projectPath = '/v1/projects/' + scope.project;
-  const database = await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', projectPath + '/databases', { name: 'keyring-delete' });
-  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'PUT', projectPath + '/backup-destination', {
-    endpoint: 'https://journey.backups.terrascale.tech', region: 'auto', bucket: 'journey-backups',
-    accessKeyId: access, secretKey: secret, mode: 'both',
-  });
-  await stop(child);
-  await records('seed-rows', 'k0');
-  const originalCredentials = await records('credentials', 'k0', join(profile, 'original-credentials.json'));
-  assert.equal(originalCredentials.length, 2, 'both current and historical credential records opened');
-  const keyFiles = new Map(files(data).map(path => [path, sha(readFileSync(path))]));
-  const custody = new Map();
-  for (const path of await objects('ts-terrabase-shapes-prod', 'v1/keys/')) {
-    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
-    assert.equal(response.status, 200);
-    custody.set(path, sha(Buffer.from(await response.arrayBuffer())));
-  }
-  console.log(`origin/main created ${keyFiles.size} key files and ${custody.size} custody objects`);
-  const readsBefore = requests.length;
-  child = node(candidate, 'k0');
-  await ready(child);
-  const skipped = await metrics();
-  assert.equal(value(skipped, 'terrabase_keys_last_complete'), 0);
-  assert.equal(value(skipped, 'terrabase_keys_wrapped', 'key_id="k0"'), -1);
-  const passRequests = requests.slice(readsBefore);
-  const rootListings = passRequests.filter(request => {
-    const query = new URL(request.path, 'https://standin').searchParams;
-    return request.method === 'GET' && query.get('prefix') === 'v1/keys/' && !query.has('start-after');
-  });
-  const snapshotReads = passRequests.filter(request => request.method === 'GET' && request.range === 'bytes=0-2097151');
-  assert.equal(rootListings.length, 1, 'only the independent shred sweep lists the custody root');
-  assert.equal(snapshotReads.length, 0, 'single-key inventory made no snapshot reads');
-  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'pro' });
-  const created = await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', projectPath + '/databases', { name: 'created-by-upgrade' });
-  const createdKey = join(data, scope.organization, scope.project, created.id + '.db.key');
-  const createdBytes = readFileSync(createdKey);
-  assert.equal(createdBytes.toString('ascii').split('\n')[0], 'TERRABASE-DB-KEY-1');
-  assert.equal(Buffer.from(createdBytes.toString('ascii').split('\n')[1], 'base64').length, 60);
-  const sqlPath = projectPath + '/databases/' + created.id + '/sql/execute';
-  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', sqlPath, { statements: [{ sql: 'CREATE TABLE compatibility(value INTEGER)' }, { sql: 'INSERT INTO compatibility VALUES(42)' }, { sql: 'CREATE TABLE keyring_startup(value INTEGER)' }, { sql: 'INSERT INTO keyring_startup VALUES(42)' }] }, false);
-  await until('new custody wrapper', child, async () =>
-    (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).some(path => path.includes('/' + created.id + '/')));
-  const createdCustody = (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).filter(path => path.includes('/' + created.id + '/'));
-  const createdObjects = new Map();
-  for (const path of createdCustody) {
-    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
-    const bytes = Buffer.from(await response.arrayBuffer());
-    assert.equal(bytes.length, 80);
-    assert.equal(Buffer.from(bytes.toString('ascii'), 'base64').length, 60);
-    createdObjects.set(path, sha(bytes));
-  }
-  for (const [path, hash] of keyFiles) assert.equal(sha(readFileSync(path)), hash, 'key file byte identity');
-  await stop(child);
-  for (const [path, hash] of custody) {
-    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
-    assert.equal(response.status, 200);
-    assert.equal(sha(Buffer.from(await response.arrayBuffer())), hash, 'custody byte identity');
-  }
-  console.log('one key: maintenance skipped; extra custody root listings=0 (shred sweep=1), snapshot range reads=0; maintenance wrapped=-1 last_complete=0; existing wrappers byte-identical');
-  child = node(baseline, 'k0');
-  await ready(child);
-  const opened = await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', sqlPath, { statements: [{ sql: 'SELECT value FROM compatibility' }] }, false);
-  assert.deepEqual(opened.results[0].rows, [[42]]);
-  await stop(child);
-  assert.equal(readFileSync(createdKey).equals(createdBytes), true, "new single-key sidecar byte identity");
-  for (const [path, hash] of createdObjects) {
-    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
-    assert.equal(sha(Buffer.from(await response.arrayBuffer())), hash);
-  }
-  const credentialFile = join(profile, 'new-credentials.json');
-  await records('new-credentials', 'k0', credentialFile);
-  const newCredential = JSON.parse(readFileSync(credentialFile, 'utf8'));
-  const previousInput = join(profile, 'previous.json');
-  const previousWrappers = [];
-  for (const path of createdCustody) {
-    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
-    previousWrappers.push(await response.text());
-  }
-  writeFileSync(previousInput, JSON.stringify({ baseline, master, wrappers: previousWrappers, credential: newCredential }), { mode: 0o600 });
-  const previous = startProcess('dotnet', [process.env.E2E_KEYRING_DRIVER, 'previous', previousInput], 'previous-wrapper-reader', clean);
-  const [previousCode] = await once(previous, 'exit');
-  children.delete(previous);
-  assert.equal(previousCode, 0, 'origin/main opened new custody wrappers and credential plaintext');
-  console.log('one key creation: origin/main opened new database sidecar and custody wrappers unchanged; SQL row=42');
-  console.log('rollback: origin/main opened the same directory after the single-key upgrade');
-  const leftover = join(data, '_system.db.key.rewrapping');
-  writeFileSync(leftover, readFileSync(join(data, '_system.db.key')), { mode: 0o600 });
-  stalledUploads = true;
-  child = node(process.env.E2E_KEYRING_DRIVER, 'k1', {}, ['inventory-retained-existing']);
-  await ready(child);
-  await until('retained credential setup', child, async () =>
-    readFileSync(join(profile, `node-${sequence}.log`), 'utf8').includes('keyring-driver:retained-existing'));
-  await until('rotation and local inventory', child, async () => {
-    const current = await metrics();
-    return value(current, 'terrabase_keys_last_complete') > 0 && value(current, 'terrabase_keys_wrapped', 'key_id="k0"') === 0;
-  });
-  await until('backup acknowledgement stalled', child, async () => refusedUploads > 0);
-  const stalled = value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"');
-  assert.notEqual(stalled, 0, 'stalled backup retained an old-key dependency');
-  console.log('retained images: upload outage old_key=' + stalled + ' (opaque staging is unknown)');
-  await stop(child);
-  child = node(candidate, 'k1', disabledBackups);
-  await ready(child);
-  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'team' });
-  const retained = value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"');
-  assert.ok(retained > 0, 'disabled backups retain unshipped old-key images across a catalog write: old_key=' + retained);
-  console.log('retained images: backups disabled old_key=' + retained);
-  await stop(child);
-  stalledUploads = false;
-  child = node(candidate, 'k1');
-  await ready(child);
-  await until('backup acknowledgement trims old images', child, async () =>
-    value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"') === 0);
-  console.log('retained images: upload resumed, acknowledged and trimmed old_key=0');
-  const current = await metrics();
-  assert.equal(value(current, 'terrabase_keys_wrapped', 'status="unreadable"'), 0);
-  assert.equal(existsSync(leftover), true);
-  for (const path of files(data)) {
-    const wrapped = readFileSync(path, 'ascii').trim().split('\n')[1];
-    assert.ok(wrapped.startsWith('v2.k1.'));
-    const body = Buffer.from(wrapped.split('.')[2], 'base64');
-    const cipher = createDecipheriv('aes-256-gcm', Buffer.from(next, 'base64'), body.subarray(0, 12));
-    cipher.setAAD(Buffer.from('v2.k1'));
-    cipher.setAuthTag(body.subarray(-16));
-    assert.equal(Buffer.concat([cipher.update(body.subarray(12, -16)), cipher.final()]).length, 32);
-  }
-  for (const path of custody.keys()) {
-    const response = await object('GET', 'ts-terrabase-shapes-prod', path);
-    const wrapped = await response.text();
-    assert.ok(wrapped.startsWith('v2.k1.'));
-    const body = Buffer.from(wrapped.split('.')[2], 'base64');
-    const cipher = createDecipheriv('aes-256-gcm', Buffer.from(next, 'base64'), body.subarray(0, 12));
-    cipher.setAAD(Buffer.from('v2.k1'));
-    cipher.setAuthTag(body.subarray(-16));
-    assert.equal(Buffer.concat([cipher.update(body.subarray(12, -16)), cipher.final()]).length, 32);
-  }
 
-  const databaseKey = join(data, scope.organization, scope.project, database.id + '.db.key');
-  assert.equal(existsSync(databaseKey), true);
-  writeFileSync(databaseKey + '.rewrapping', readFileSync(databaseKey), { mode: 0o600 });
-  const promoteKey = databaseKey.replace('.db.key', '.promote.db.key');
-  writeFileSync(promoteKey, readFileSync(databaseKey), { mode: 0o600 });
-  const unrelatedPromote = createdKey.replace('.db.key', '.promote.db.key');
-  writeFileSync(unrelatedPromote, readFileSync(createdKey), { mode: 0o600 });
-  const deletedKey = readFileSync(databaseKey);
-  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'DELETE', projectPath + '/databases/' + database.id);
-  assert.equal(existsSync(databaseKey), false);
-  assert.equal(existsSync(databaseKey + '.rewrapping'), false);
-  assert.equal(existsSync(promoteKey), false);
-  const keyDirectory = join(data, scope.organization, scope.project);
-  const preservedKeys = readdirSync(keyDirectory).filter(name => name.startsWith('.' + database.id + '.') && name.endsWith('.retained-key'));
-  assert.equal(preservedKeys.length, 3, 'database deletion retains all three key records');
-  for (const name of preservedKeys) assert.deepEqual(readFileSync(join(keyDirectory, name)), deletedKey, 'retained key bytes are unchanged');
-  assert.equal(existsSync(unrelatedPromote), true, 'deletion retained another database detached key');
-  rmSync(unrelatedPromote);
-  console.log('two keys: local files, custody and current/historical credentials rewrapped and authenticated; local reference inventory');
-  console.log('leftovers: multi-key pass retained and rewrapped .rewrapping; database deletion retained its three key records and preserved the unrelated detached key');
-  await stop(child);
-  await records('rows', 'k1');
-  const rotatedCredentials = await records('credentials', 'k1', join(profile, 'rotated-credentials.json'));
-  assert.equal(rotatedCredentials.length, originalCredentials.length);
-  for (const original of originalCredentials) {
-    const rotated = rotatedCredentials.find(record => record.Id === original.Id);
-    assert.deepEqual(rotated, { ...original, KeyId: 'k1' }, 'reopened credential plaintext and ciphertext match for ' + original.Id);
-  }
-  console.log('startup read row=42 from every database; reopened both current and historical credentials, compared plaintext and unchanged ciphertext');
-  const firstLog = await (await fetch('http://127.0.0.1:' + keyringPorts.r2 + '/log')).json();
-  assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');
-  await stop(standin);
-  standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store-promotion', { ...clean, E2E_REGIONS: '2' });
-  mkdirSync(join(profile, 'journey'), { recursive: true });
-  writeFileSync(join(profile, 'journey', 'r2'), readFileSync(join(profile, 'r2')), { mode: 0o600 });
-  const config = join(profile, 'playwright.config.ts');
-  writeFileSync(config, 'import { defineConfig } from ' + JSON.stringify(join(root, 'e2e/node_modules/@playwright/test'))
-    + '; import { quarantineGrep } from ' + JSON.stringify(join(root, 'e2e/support/quarantine.mjs'))
-    + '; export default defineConfig({grepInvert: quarantineGrep(), ...' + JSON.stringify({ testDir: join(root, 'e2e'), testMatch: ['interactions/keyring.spec.ts', 'keyring/promotion.spec.ts'],
-      timeout: 90000, expect: { timeout: 20000 }, retries: 0, workers: 1, reporter: [['list'], [join(root, 'e2e/support/quarantine-reporter.ts')]], outputDir: join(profile, 'journey-results') }) + '});');
-  const journey = spawn(process.execPath, [join(root, 'e2e/support/quarantine-run.mjs'), '--config', config], {
-    env: { ...clean, E2E_STATE: join(profile, 'journey'), E2E_KEYRING_BASELINE: baseline, E2E_KEYRING_DRIVER: process.env.E2E_KEYRING_DRIVER }, stdio: 'inherit',
+async function readyz() {
+  try { return (await fetch('http://127.0.0.1:' + ports.client + '/readyz')).status; } catch { return 0; }
+}
+
+async function serve(ring) {
+  const node = start('node-' + ring, [join(service, 'terrabase.dll')], ring);
+  await until('readiness under ' + ring, async () => {
+    assert.equal(node.child.exitCode, null, `node under ${ring} exited: ${readFileSync(node.log, 'utf8').slice(-2000)}`);
+    return await readyz() === 200;
   });
-  children.add(journey);
-  const [code] = await once(journey, 'exit');
-  children.delete(journey);
-  assert.equal(code, 0, 'rotation journey');
-  const log = await (await fetch('http://127.0.0.1:' + keyringPorts.r2 + '/log')).json();
-  assert.deepEqual(log.unexpected, [], 'object-store stand-in rejected no unexpected calls');
+  return node.child;
+}
+
+const files = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
+  entry.isDirectory() ? files(join(directory, entry.name)) : [join(directory, entry.name)]);
+const fingerprint = () => new Map(files(data).map(path => [relative(data, path), createHash('sha256').update(readFileSync(path)).digest('hex')]));
+const holds = marker => files(data).filter(path => readFileSync(path).includes(Buffer.from(marker)));
+
+async function drive(ring, args) {
+  const before = fingerprint();
+  const run = start('driver-' + args[0], ['exec', '--depsfile', join(service, 'terrabase.deps.json'),
+    '--runtimeconfig', join(service, 'terrabase.runtimeconfig.json'), driver, ...args], ring);
+  const [code, signal] = await once(run.child, 'exit');
+  children.delete(run.child);
+  const output = readFileSync(run.log, 'utf8');
+  assert.equal(code, 0, `keyring driver ${args[0]} ended with ${signal ?? code}: ${output}`);
+  assert.deepEqual(fingerprint(), before, `keyring driver ${args[0]} left every data byte unchanged`);
+  const line = output.split('\n').find(text => text.startsWith('keyring-driver:'));
+  assert.ok(line, `keyring driver ${args[0]} reported its proof`);
+  console.log(line);
+  return line;
+}
+
+async function inventory(ring) {
+  const output = join(profile, `inventory-${sequence + 1}.json`);
+  await drive(ring, ['inventory', output]);
+  const read = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(read.active, rings[ring].active);
+  return { system: read.systemKeyId, keys: new Map(read.databases.map(entry => [entry.id, entry.keyId])) };
+}
+
+async function evidence(ring, database, keyId, marker) {
+  const request = join(profile, `evidence-${sequence + 1}.json`);
+  writeFileSync(request, JSON.stringify({ database, keyId, marker }), { mode: 0o600 });
+  const line = await drive(ring, ['evidence', request]);
+  assert.ok(line.includes(`database=${database} key=${keyId} `) && line.endsWith(' plaintext=absent header=encrypted other-keys=refused row=42'));
+}
+
+async function refused(ring, reason) {
+  const before = fingerprint();
+  const node = start('refused-' + ring, [join(service, 'terrabase.dll')], ring);
+  await until('refusal under ' + ring, async () => {
+    assert.notEqual(await readyz(), 200, `node served under the ${ring} keyring`);
+    return node.child.exitCode !== null || node.child.signalCode !== null;
+  });
+  children.delete(node.child);
+  assert.notEqual(node.child.exitCode, 0, `node under the ${ring} keyring refused to start`);
+  const output = readFileSync(node.log, 'utf8');
+  assert.ok(output.includes('could not open its system catalog') && output.includes(reason), `node under the ${ring} keyring named its refusal: ${output.slice(-2000)}`);
+  assert.deepEqual(fingerprint(), before, `refused start under the ${ring} keyring left every data byte unchanged`);
+  return node.child.signalCode ?? node.child.exitCode;
+}
+
+try {
+  const markers = Object.fromEntries(['before', 'after', 'shredded'].map(name => [name, `keyring-${name}-${randomBytes(16).toString('hex')}`]));
+  let child = await serve('single');
+  const scope = await project(peer, address, 'keyring-proof');
+  const projectPath = '/v1/projects/' + scope.project;
+  const sql = (database, statements) => internal(peer, address, 'POST', `${projectPath}/databases/${database}/sql/execute`,
+    { statements: statements.map(text => ({ sql: text })) }, false);
+  const rows = async database => (await sql(database, ['SELECT value, marker FROM keyring_rows'])).results[0].rows;
+  const seeded = async (name, marker) => {
+    const created = await internal(peer, address, 'POST', projectPath + '/databases', { name });
+    await sql(created.id, ['CREATE TABLE keyring_rows(id INTEGER PRIMARY KEY, value INTEGER NOT NULL, marker TEXT NOT NULL)',
+      `INSERT INTO keyring_rows(id, value, marker) VALUES(1, 42, '${marker}')`]);
+    assert.deepEqual(await rows(created.id), [[42, marker]]);
+    return created.id;
+  };
+  const before = await seeded('before-rotation', markers.before);
+  await stop(child);
+  const single = await inventory('single');
+  assert.equal(single.system, 'k0');
+  assert.equal(single.keys.get(before), 'k0');
+  assert.deepEqual([...new Set(single.keys.values())], ['k0'], 'one configured key holds every database');
+  await evidence('single', before, 'k0', markers.before);
+  console.log('one key: every database file opens under k0 alone; row 42 is ciphertext at rest');
+
+  child = await serve('rotated');
+  assert.deepEqual(await rows(before), [[42, markers.before]], 'a k0 database serves after k1 becomes active');
+  const after = await seeded('after-rotation', markers.after);
+  const branch = await internal(peer, address, 'POST', `${projectPath}/databases/${before}/branches`, { name: 'branch-rotation' });
+  assert.equal(branch.branchedFrom, before);
+  assert.deepEqual(await rows(branch.id), [[42, markers.before]], 'a branch of a k0 database reads its rows');
+  const restore = await internal(peer, address, 'POST', `${projectPath}/databases/${before}/point-in-time/restore`,
+    { name: 'restored-rotation', target: { pointInTime: new Date().toISOString() } });
+  assert.equal(restore.sourceDatabaseId, before);
+  let operation = restore;
+  await until('restore under k1', async () => {
+    operation = await internal(peer, address, 'GET', `${projectPath}/databases/${before}/restores/${restore.operationId}`);
+    assert.notEqual(operation.state, 'failed', 'restore failed: ' + operation.failureMessage);
+    return operation.state === 'succeeded';
+  });
+  const restored = operation.targetDatabaseId;
+  assert.deepEqual(await rows(restored), [[42, markers.before]], 'a restore of a k0 database reads its rows');
+  const shredded = await seeded('shredded', markers.shredded);
+  await internal(peer, address, 'DELETE', `${projectPath}/databases/${shredded}`);
+  await stop(child);
+  const rotated = await inventory('rotated');
+  assert.equal(rotated.system, 'k0', 'rotation leaves the system database under its creation key');
+  assert.equal(rotated.keys.get(before), 'k0', 'rotation leaves existing databases under their creation key');
+  for (const database of [after, branch.id, restored]) assert.equal(rotated.keys.get(database), 'k1', `new database ${database} is under the active key`);
+  assert.equal(rotated.keys.has(shredded), false, 'a deleted database leaves the inventory');
+  assert.equal(existsSync(join(data, 'databases', shredded)), false, 'a deleted database leaves no local files');
+  assert.deepEqual(holds(markers.shredded), [], 'no file holds a deleted database row');
+  await evidence('rotated', after, 'k1', markers.after);
+  await evidence('rotated', branch.id, 'k1', markers.before);
+  await evidence('rotated', restored, 'k1', markers.before);
+  console.log('two keys: k0 files keep k0, branch and restore re-encrypt under k1, deletion erased the files; no plaintext at rest');
+
+  const retired = await refused('retired', "the database's master key is not configured on this node");
+  const changed = await refused('forged', 'the system database could not be opened');
+  console.log(`key removal and key material change: node refused to start (${retired}, ${changed}) and left every data byte unchanged`);
+
+  child = await serve('rotated');
+  for (const database of [before, branch.id, restored]) assert.deepEqual(await rows(database), [[42, markers.before]]);
+  assert.deepEqual(await rows(after), [[42, markers.after]]);
+  await stop(child);
+  const recovered = await inventory('rotated');
+  assert.deepEqual(recovered, rotated, 'restoring the keyring serves the same inventory');
+  console.log('restored keyring: every database reads row 42 under its recorded key');
 } finally {
-  for (const child of children) await stop(child);
-  await new Promise(resolve => proxy.close(resolve));
+  for (const running of children) {
+    if (running.exitCode === null && running.signalCode === null) {
+      const exited = once(running, 'exit');
+      running.kill('SIGKILL');
+      await exited;
+    }
+  }
 }

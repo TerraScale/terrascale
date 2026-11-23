@@ -7,7 +7,7 @@ namespace TerraScale.EntityFrameworkCore.Storage;
 internal sealed class TerraBaseDataSources : IDisposable
 {
     private const int Capacity = 64;
-    private static readonly string[] Keys = ["Endpoint", "Region", "Project", "Database", "ApiKey", "AuthEndpoint"];
+    private static readonly string[] Keys = ["Endpoint", "Region", "Project", "Database", "ApiKey", "AuthEndpoint", "Consistency"];
     private readonly Lock gate = new();
     private readonly SocketsHttpHandler handler = TerraBaseHttp.CreateHandler();
     private readonly OrderedDictionary<string, TerraBaseSqlDatabase> databases = new(StringComparer.Ordinal);
@@ -55,6 +55,12 @@ internal sealed class TerraBaseDataSources : IDisposable
             Region = Value(settings, "Region"),
             ApiKey = Value(settings, "ApiKey") ?? throw Missing("ApiKey"),
             AuthAddress = Address(settings, "AuthEndpoint", "https://auth.terrascale.tech"),
+            Consistency = Value(settings, "Consistency") switch
+            {
+                null => null,
+                var text when TerraBaseConsistencyNames.TryParse(text, out var consistency) => consistency,
+                _ => throw new ArgumentException("The TerraBase connection string's Consistency must be fast or strong.", "connectionString"),
+            },
         };
         return new TerraBaseSqlClient(new HttpClient(handler, disposeHandler: false), options)
             .Database(Value(settings, "Project") ?? throw Missing("Project"), Value(settings, "Database") ?? throw Missing("Database"));

@@ -4,7 +4,10 @@ using System.Data.Common;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>One ADO.NET command: autocommit statement execution over SQL REST.</summary>
+/// <summary>
+/// One ADO.NET command: autocommit statement execution over SQL REST with the connection's
+/// <see cref="TerraBaseDbConnection.Consistency"/>, or a statement inside the connection's open transaction.
+/// </summary>
 public sealed class TerraBaseDbCommand : DbCommand
 {
     private readonly TerraBaseDbParameterCollection parameters = [];
@@ -132,7 +135,7 @@ public sealed class TerraBaseDbCommand : DbCommand
         {
             return open is { } transaction
                 ? await transaction.Session.BatchAsync(statements, deadline.Token).ConfigureAwait(false)
-                : await connection.SqlDatabase.BatchAsync(statements, deadline.Token).ConfigureAwait(false);
+                : await connection.SqlDatabase.BatchAsync(statements, new TerraBaseSqlRequestOptions { Consistency = connection.Consistency }, deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
         {

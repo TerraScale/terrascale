@@ -9,6 +9,24 @@
 	tls {$E2E_EDGE_CERT} {$E2E_EDGE_KEY}
 }
 
+(api) {
+	import edge
+	@platform path_regexp ^/v1/projects/[^/]+/(buckets(/.*)?|databases/[^/]+/(functions(/.*)?|tables/[^/]+/shape(/.*)?))$
+	@platformRow {
+		method GET HEAD
+		path_regexp ^/v1/projects/[^/]+/databases/[^/]+/tables/[^/]+/rows/[^/]+$
+	}
+	reverse_proxy @platform 127.0.0.1:{$E2E_PORT_platform} {
+		flush_interval -1
+	}
+	reverse_proxy @platformRow 127.0.0.1:{$E2E_PORT_platform} {
+		flush_interval -1
+	}
+	reverse_proxy 127.0.0.1:{args[0]} {
+		flush_interval -1
+	}
+}
+
 https://dash.terrascale.tech, https://mcp.terrascale.tech, https://platform.terrascale.tech {
 	import edge
 	reverse_proxy 127.0.0.1:{$E2E_PORT_dashboard} {
@@ -32,10 +50,7 @@ https://auth.terrascale.tech {
 }
 
 https://api.terrascale.tech, https://gru.api.terrascale.tech {
-	import edge
-	reverse_proxy 127.0.0.1:{$E2E_PORT_terrabase} {
-		flush_interval -1
-	}
+	import api {$E2E_PORT_terrabase}
 }
 
 https://api.cloudflare.com {
@@ -59,10 +74,7 @@ https://api.stripe.com, https://checkout.stripe.com, https://billing.stripe.com 
 }
 
 https://fra.api.terrascale.tech {
-	import edge
-	reverse_proxy 127.0.0.1:{$E2E_PORT_terrabase_fra} {
-		flush_interval -1
-	}
+	import api {$E2E_PORT_terrabase_fra}
 }
 
 https://journey.backups.terrascale.tech, https://6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com, https://shapes-ts-terrabase-shapes-prod.terrascale.tech {

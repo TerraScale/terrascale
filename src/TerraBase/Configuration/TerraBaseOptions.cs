@@ -205,10 +205,11 @@ public sealed record TerraBaseOptions
         }
 
         if (issuer.Any(static character => char.IsWhiteSpace(character) || char.IsControl(character))
-            || !Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+            || !Uri.TryCreate(issuer, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && (uri.Scheme != Uri.UriSchemeHttp || !uri.IsLoopback))
             || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
         {
-            values.Fail("auth-issuer must be an absolute https URL without whitespace, user information, query or fragment");
+            values.Fail("auth-issuer must be an absolute https URL, or http on loopback, without whitespace, user information, query or fragment");
             return (null, []);
         }
 

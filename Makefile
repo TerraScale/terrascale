@@ -9,22 +9,28 @@ NPM ?= npm
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
-VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src src/vendor/SqlParserCS/SqlParser
-TURSO_NATIVE_DIR := src/vendor/Turso.Data.Sqlite/native
+HOST_RUNTIME := $(if $(filter aarch64 arm64,$(shell uname -m)),linux-arm64,linux-x64)
+NATIVE_RUNTIMES ?= $(HOST_RUNTIME)
+NATIVE_INPUTS := native/native-pin.env native/build-native.sh
 
 AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-auth.dll
-AUTH_PROJECT := src/TerraScale.Authentication.EntityFrameworkDesign/TerraScale.Authentication.EntityFrameworkDesign.csproj
+AUTH_PROJECT := src/TerraScale.Authentication/TerraScale.Authentication.csproj
 AUTH_FORMAT_PROJECTS := src/TerraScale.Authentication/TerraScale.Authentication.csproj \
 	src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj \
-	src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj \
-	src/TerraScale.Authentication.EntityFrameworkDesign/TerraScale.Authentication.EntityFrameworkDesign.csproj
+	src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj
 
 TERRABASE_PROJECT := src/TerraBase/TerraBase.csproj
+PLATFORM_PROJECT := src/TerraScale.Platform/TerraScale.Platform.csproj
 TERRABASE_FORMAT_PROJECTS := src/TerraBase/TerraBase.csproj \
-	src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj \
-	src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj
+	src/TerraBase.Storage/TerraBase.Storage.csproj \
+	src/TerraBase.Postgres/TerraBase.Postgres.csproj \
+	src/TerraBase.Cluster/TerraBase.Cluster.csproj \
+	src/TerraBase.Continuity/TerraBase.Continuity.csproj \
+	src/TerraScale.Contracts/TerraScale.Contracts.csproj \
+	src/TerraScale.QuicRpc/TerraScale.QuicRpc.csproj \
+	src/TerraScale.Platform/TerraScale.Platform.csproj
 
-DASHBOARD_PROJECT := src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj
+DASHBOARD_PROJECT := src/TerraScale.Dashboard/TerraScale.Dashboard.csproj
 DASHBOARD_HOST_DLL := src/TerraScale.Dashboard/bin/$(CONFIGURATION)/net11.0/TerraScale.Dashboard.dll
 DASHBOARD_WEB := src/TerraScale.Dashboard/web
 
@@ -48,10 +54,11 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
-.PHONY: restore turso-native build fmt fmt-check lint check clean dev \
+.PHONY: restore native-libs build fmt fmt-check lint check clean dev \
 	libs-restore libs-fmt-check libs-build libs-check libs-nativeaot-check \
 	auth-restore auth-fmt-check auth-build auth-audit auth-openapi-check auth-check auth-publish \
 	terrabase-restore terrabase-fmt-check terrabase-build terrabase-run terrabase-publish \
+	platform-restore platform-build platform-publish \
 	dashboard-restore dashboard-build dashboard-lint dashboard-security dashboard-check dashboard-css dashboard-check-css dashboard-js \
 	aspire-restore aspire-fmt-check aspire-build \
 	benchmark-build benchmark-fmt-check benchmark-check bench \
@@ -61,17 +68,23 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 restore:
 	$(DOTNET) restore $(SOLUTION) --locked-mode
 
-turso-native:
-	src/vendor/Turso.Native/scripts/verify-turso-native.sh $(TURSO_NATIVE_DIR) >/dev/null 2>&1 || src/vendor/Turso.Native/scripts/download-turso-native.sh $(TURSO_NATIVE_DIR)
+native-libs:
+	set -e; inputs=$$(cat $(NATIVE_INPUTS) | sha256sum | cut -d' ' -f1); \
+	for runtime in $(NATIVE_RUNTIMES); do \
+		out=native/runtimes/$$runtime; \
+		if [ -f $$out/native/libsqlite3mc.so ] && [ -f $$out/native/libmsquic.so.2 ] && [ "$$(cat $$out/inputs.sha256 2>/dev/null)" = "$$inputs" ]; then continue; fi; \
+		bash native/build-native.sh $$runtime; \
+		echo "$$inputs" > $$out/inputs.sha256; \
+	done
 
-build: restore turso-native
+build: restore native-libs
 	$(DOTNET) build $(SOLUTION) --configuration $(CONFIGURATION) --no-restore
 
 fmt:
-	$(DOTNET) format $(SOLUTION) --exclude $(VENDORED_UPSTREAM)
+	$(DOTNET) format $(SOLUTION)
 
 fmt-check: restore
-	Configuration=$(CONFIGURATION) $(DOTNET) format whitespace $(SOLUTION) --verify-no-changes --no-restore --exclude $(VENDORED_UPSTREAM)
+	Configuration=$(CONFIGURATION) $(DOTNET) format whitespace $(SOLUTION) --verify-no-changes --no-restore
 
 lint: fmt-check build
 
@@ -81,7 +94,7 @@ clean:
 	$(DOTNET) clean $(SOLUTION) --configuration $(CONFIGURATION)
 	rm -rf artifacts
 
-dev: turso-native
+dev: native-libs
 	$(DOTNET) tool restore
 	$(DOTNET) aspire run --project $(ASPIRE_PROJECT)
 
@@ -125,19 +138,36 @@ auth-publish:
 terrabase-restore:
 	$(DOTNET) restore $(TERRABASE_PROJECT) --locked-mode
 
-terrabase-fmt-check: terrabase-restore
+terrabase-fmt-check: terrabase-restore platform-restore
 	set -e; for p in $(TERRABASE_FORMAT_PROJECTS); do Configuration=$(CONFIGURATION) $(DOTNET) format whitespace $$p --verify-no-changes --no-restore; done
 
-terrabase-build: terrabase-restore turso-native
+terrabase-build: terrabase-restore native-libs
 	$(DOTNET) build $(TERRABASE_PROJECT) --configuration $(CONFIGURATION) --no-restore
 
-terrabase-run: turso-native
+terrabase-run: native-libs
 	$(DOTNET) run --project src/TerraBase --configuration $(CONFIGURATION)
 
-terrabase-publish: turso-native
+terrabase-publish platform-publish: NATIVE_RUNTIMES = $(RUNTIME)
+
+terrabase-publish: native-libs
 	$(DOTNET) publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
-	test ! -e "$(PUBLISH_DIR)/libturso_sdk_kit.so"
-	test ! -e "$(PUBLISH_DIR)/libterrascale_sql_parser.so"
+	test -x "$(PUBLISH_DIR)/terrabase"
+	test ! -e "$(PUBLISH_DIR)/libsqlite3mc.so"
+	test ! -e "$(PUBLISH_DIR)/libmsquic.so.2"
+	grep -qa libsqlite3mc.so "$(PUBLISH_DIR)/terrabase"
+	grep -qa libmsquic.so.2 "$(PUBLISH_DIR)/terrabase"
+
+platform-restore:
+	$(DOTNET) restore $(PLATFORM_PROJECT) --locked-mode
+
+platform-build: platform-restore native-libs
+	$(DOTNET) build $(PLATFORM_PROJECT) --configuration $(CONFIGURATION) --no-restore
+
+platform-publish: native-libs
+	$(DOTNET) publish src/TerraScale.Platform --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
+	test -x "$(PUBLISH_DIR)/ts-platform"
+	test ! -e "$(PUBLISH_DIR)/libmsquic.so.2"
+	grep -qa libmsquic.so.2 "$(PUBLISH_DIR)/ts-platform"
 
 dashboard-restore:
 	$(DOTNET) restore $(DASHBOARD_PROJECT) --locked-mode

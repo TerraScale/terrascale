@@ -1,60 +1,15 @@
 import { once } from 'node:events';
-import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
-import { expect, type Page } from '@playwright/test';
-import { extendPeers, startRegion, type RegionProcess } from './fleet';
+import { expect } from '@playwright/test';
 import { auth, localPort, production, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { signInToken } from '../support/auth-management';
-import { ulid } from '../support/status-worker';
-import { Nats, putKey, seal } from '../replication/push.mjs';
-import { test, home, replica, project, database, name, json, sql, removeDatabase, type Cells } from './support';
+import { test, gru, fra, project, database, name, json, answer, converged, type Cells, type Database } from './support';
 
 test.skip(production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '1',
-  'one node in each of two regions, with port 8380 free for sjc');
-
-test('a newly recorded conflict appears without reloading or replacing draft filters', async ({ cells, page }) => {
-  const current = journey();
-  const source = await json<{ id: string }>(await cells.post(`${home}${project()}/databases`, {
-    data: { name: name('live-conflicts'), regions: ['gru', 'fra'] },
-  }), 201);
-  const nats = new Nats(readFileSync(join(stateDir, 'nats-token'), 'utf8'), localPort('nats', 4222));
-  try {
-    await sql(cells, home, source.id, 'CREATE TABLE live_conflicts (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await sql(cells, home, source.id, "INSERT INTO live_conflicts VALUES (1, 'winning')");
-    await page.context().addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
-    await page.goto(`/databases/${source.id}/conflicts?organizationId=${current.organizationId}&projectId=${current.projectId}`);
-    const url = page.url();
-    await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'live-conflicts'));
-    await page.locator('#conflict-table').fill('draft_table');
-    const scope = `${current.organizationId}/${current.projectId}/${source.id}`;
-    const secrets = readFileSync(join(stateDir, 'secrets'), 'utf8').trim().split('\n');
-    const encryptionId = ulid();
-    const key = randomBytes(32);
-    saveSecret('live-conflict-key', key.toString('base64'));
-    await putKey({ master: Buffer.from(secrets[1], 'base64'), access: secrets[12], secret: secrets[13] }, scope, encryptionId, key);
-    await nats.connect();
-    const transaction = {
-      id: ulid(), region: 'fra', hlc: { physicalMilliseconds: Date.now() - 60_000, logical: 0, nodeId: 'journey-2' },
-      changes: [{ op: 'update', table: 'live_conflicts', key: { id: 1 }, values: { value: 'losing' } }],
-    };
-    const applied = nats.event(`terrabase.applied.fra.${scope.replaceAll('/', '.')}`, (result: { id?: string }) => result.id === transaction.id);
-    expect((await nats.request(`terrabase.push.fra.gru.${scope.replaceAll('/', '.')}`, seal(transaction, scope, encryptionId, key))).error).toBeUndefined();
-    expect(await applied).toMatchObject({ state: 'confirmed', conflicts: [{ kind: 'superseded' }] });
-    await expect(page.locator('#conflict-results tbody')).toContainText('losing');
-    await expect(page.locator('#conflict-results tbody')).toContainText('winning');
-    await expect(page.locator('#conflict-table')).toHaveValue('draft_table');
-    await expect(page.locator('html')).toHaveAttribute('data-in-place', 'live-conflicts');
-    await expect(page).toHaveURL(url);
-  } finally {
-    nats.close();
-    await removeDatabase(cells, source.id);
-  }
-  await expect(page.locator('#conflict-results')).toContainText('We can’t find that page.');
-  await expect(page.locator('#conflict-results[data-init]')).toHaveCount(0);
-});
+  'one node in each of two regions');
 
 test('notification inbox, dialog and both shell counts reflect an API change and another tab marking read', async ({ page }) => {
   const current = journey();
@@ -107,201 +62,69 @@ test('notification inbox, dialog and both shell counts reflect an API change and
   }
 });
 
-test('snapshot and point-in-time restore run in fra', async ({ cells, page }) => {
+test('bookmark and point-in-time restores run in fra and gru reads the copies', async ({ cells }) => {
   await publish('pro');
-  const otherProject = await liveWorkspace(page);
-  await restorePair(cells, replica, 'fra', page, '', otherProject);
-});
-
-test('snapshot and point-in-time restore run in sjc', async ({ cells, page }) => {
-  const restorePeers = extendPeers(['sjc']);
-  let node: RegionProcess | undefined;
-  try {
-    node = await startRegion('sjc', 0);
-    const metrics = `http://${new URL(node.endpoint).hostname}:${node.metricsPort}/metrics`;
-    await expect.poll(async () => {
-      const response = await cells.get(metrics);
-      expect(response.status(), await response.text()).toBe(200);
-      return (await response.text()).split('\n').find(line => line.startsWith('terrabase_clock_local_writes_allowed{'));
-    }, { message: 'sjc trusts its clock before the source database accepts writes' }).toMatch(/ 1$/);
-    await publish('pro');
-    await restorePair(cells, node.endpoint, 'sjc', page, node.endpoint);
-  } finally {
-    if (node) await node.stop();
-    restorePeers();
-  }
-});
-
-async function liveWorkspace(page: Page): Promise<string> {
-  await page.context().addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
-  await page.goto('/organization?tab=billing');
-  await page.locator('article.ts-plan', { has: page.locator('#plan-pro') }).getByRole('button', { name: 'Upgrade to Pro', exact: true }).click();
-  await page.waitForURL(url => url.origin === 'https://checkout.stripe.com');
-  await page.getByRole('button', { name: 'Subscribe', exact: true }).click();
-  await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Pro');
-  const csrf = await page.locator('input[name="_csrf"]').first().inputValue();
-  expect((await page.request.post('/api/v1/dashboard/organization/projects', {
-    form: { _csrf: csrf, name: name('other-workspace'), regions: 'gru' }, maxRedirects: 0,
-  })).status()).toBe(303);
-  await page.goto('/organization?tab=projects');
-  const other = await page.locator('[data-project-option]').evaluateAll((options, current) =>
-    options.map(option => option.getAttribute('data-project-option')).find(id => id !== current), journey().projectId);
-  expect(other).toBeTruthy();
-  return other!;
-}
-
-async function restorePair(cells: Cells, endpoint: string, region: string, page: Page, removeEndpoint = '', otherProject = '') {
-  const sourceName = name('backup-' + region);
-  const streams: string[] = [];
-  page.on('request', request => {
-    if (new URL(request.url()).pathname.endsWith('/backups/live')) streams.push(request.url());
-  });
-  const source = await json<{ id: string }>(await cells.post(`${endpoint}${project()}/databases`, {
-    data: { name: sourceName, regions: [region, 'gru'] },
+  const source = await json<Database>(await cells.post(`${fra}${project()}/databases`, {
+    data: { name: name('backup-fra'), regions: ['fra', 'gru'] },
   }), 201);
   const copies: string[] = [];
   try {
-    await sql(cells, endpoint, source.id, 'CREATE TABLE rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await sql(cells, endpoint, source.id, "INSERT INTO rows (id, value) VALUES (1, 'snapshot')");
-    await served(cells, source.id, [[1, 'snapshot']]);
-    const rules = { tables: { rows: { read: 'TRUE', columns: ['id', 'value'] } } };
-    const misplaced = await cells.put(`${home}${database(source.id)}/rules`, { headers: { 'if-none-match': '*' }, data: rules });
-    expect(misplaced.status(), await misplaced.text()).toBe(421);
-    expect((await misplaced.json()).error.code).toBe('wrong_region');
-    expect(misplaced.headers()['x-terrabase-database-home']).toBe(region);
-    const deployed = await json<{ version: string }>(await cells.put(`${endpoint}${database(source.id)}/rules`, {
-      headers: { 'if-none-match': '*' }, data: rules,
-    }), 200);
-    expect(deployed.version).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    const current = journey();
-    await page.context().addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
-    await page.goto(`/databases/${source.id}/backups?organizationId=${current.organizationId}&projectId=${current.projectId}`);
-    const viewUrl = page.url();
-    await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'live-backups'));
-    const backup = await json<{ id: string; status: string }>(await cells.post(`${endpoint}${database(source.id)}/backups`), 201);
-    expect(backup.status).toBe('ready');
-    await expect(page.locator(`#restore-points-list button[command="show-modal"][commandfor="restore-${backup.id}"]`)).toBeVisible();
-    await expect(page).toHaveURL(viewUrl);
-    await expect(page.locator('html')).toHaveAttribute('data-in-place', 'live-backups');
-    if (otherProject) {
-      const csrf = await page.locator('input[name="_csrf"]').first().inputValue();
-      expect((await page.request.post('/api/v1/dashboard/switch-project', {
-        form: { _csrf: csrf, projectId: otherProject }, maxRedirects: 0,
-      })).status()).toBe(303);
-      expect((await (await page.request.get('/api/v1/auth/me')).json()).projectId).toBe(otherProject);
-    }
-    await page.locator(`button[command="show-modal"][commandfor="restore-${backup.id}"]`).click();
-    await page.locator(`#restore-${backup.id}-name`).fill(sourceName);
-    await page.locator(`#restore-${backup.id}`).getByRole('button', { name: 'Restore as new database', exact: true }).click();
-    const validation = page.locator(`#restore-${backup.id}-error`);
-    await expect(validation).toBeVisible();
-    const message = await validation.innerText();
-    await page.locator(`#restore-${backup.id}`).getByRole('button', { name: 'Cancel', exact: true }).click();
-    for (let index = 0; index < 10; index++)
-      await json(await cells.post(`${endpoint}${database(source.id)}/backups`), 201);
-    await expect(page.getByRole('button', { name: 'Show older restore points', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Show older restore points', exact: true }).click();
-    await expect(page.locator(`button[command="show-modal"][commandfor="restore-${backup.id}"]`)).toBeVisible();
-    const expanded = await json<{ id: string }>(await cells.post(`${endpoint}${database(source.id)}/backups`), 201);
-    await expect(page.locator(`button[command="show-modal"][commandfor="restore-${expanded.id}"]`)).toBeVisible();
-    await expect(page.locator(`button[command="show-modal"][commandfor="restore-${backup.id}"]`)).toBeVisible();
-    await expect(validation).toHaveText(message);
-    await expect(page.locator(`#restore-${backup.id}-name`)).toHaveValue(sourceName);
-    const live = new URL(streams.at(-1)!);
-    expect(live.searchParams.get('organizationId')).toBe(current.organizationId);
-    expect(live.searchParams.get('projectId')).toBe(current.projectId);
-    const stopped = page.waitForEvent('requestfailed', request => request.url() === live.href);
-    await page.locator('#restore-points').evaluate(el => el.remove());
-    await stopped;
-    const unavailableRestore = new URL(viewUrl);
-    unavailableRestore.searchParams.set('restore', 'unavailable');
-    await page.goto(unavailableRestore.href);
-    await expect(page.locator('#restore-status [role="alert"]')).toHaveText('That restore is no longer available.');
-    await expect(page.locator('#restore-status[data-init]')).toHaveCount(0);
-    if (otherProject) {
-      const csrf = await page.locator('input[name="_csrf"]').first().inputValue();
-      expect((await page.request.post('/api/v1/dashboard/switch-project', {
-        form: { _csrf: csrf, projectId: current.projectId }, maxRedirects: 0,
-      })).status()).toBe(303);
-    }
-    const elsewhere = await cells.post(`${home}${database(source.id)}/backups/${backup.id}/restore`, {
-      data: { name: name('snapshot-' + region) },
-    });
-    expect(elsewhere.status(), await elsewhere.text()).toBe(421);
-    expect(elsewhere.headers()['ts-replay']).toBe('region=' + region);
-    const snapshot = await json<{ id: string }>(await cells.post(`${endpoint}${database(source.id)}/backups/${backup.id}/restore`, {
-      data: { name: name('snapshot-copy-' + region) },
+    await answer(cells, fra, source.id, ['CREATE TABLE rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)']);
+    const snapshot = await answer(cells, fra, source.id, ["INSERT INTO rows (id, value) VALUES (1, 'snapshot')"]);
+    await converged(cells, gru, source.id, 'SELECT 1', rows => rows.length === 1);
+    expect((await answer(cells, gru, source.id, ['SELECT id, value FROM rows ORDER BY id'], { bookmark: snapshot.bookmark })).results[0].rows,
+      'gru reads the fra write with its bookmark').toEqual([[1, 'snapshot']]);
+    const archived = await json<{ databaseId: string; latestRestorePointUtc: string }>(await cells.post(`${fra}${database(source.id)}/backups`));
+    expect(archived.databaseId).toBe(source.id);
+    const bookmarked = await json<{ operationId: string }>(await cells.post(`${fra}${database(source.id)}/point-in-time/restore`, {
+      data: { bookmark: snapshot.bookmark, name: name('snapshot-copy-fra') },
     }), 202);
-    copies.push(await completed(cells, endpoint, source.id, snapshot.id));
-    expect(await rows(cells, endpoint, copies[0])).toEqual([[1, 'snapshot']]);
+    copies.push(await completed(cells, source.id, bookmarked.operationId));
+    expect((await answer(cells, fra, copies[0], ['SELECT id, value FROM rows ORDER BY id'])).results[0].rows).toEqual([[1, 'snapshot']]);
 
-    await sql(cells, endpoint, source.id, "INSERT INTO rows (id, value) VALUES (2, 'later')");
+    await answer(cells, fra, source.id, ["INSERT INTO rows (id, value) VALUES (2, 'later')"]);
     const acked = Date.now();
-    await served(cells, source.id, [[1, 'snapshot'], [2, 'later']]);
     let at = 0;
     await expect.poll(async () => {
-      const window = await cells.get(`${endpoint}${database(source.id)}/point-in-time`);
+      const window = await cells.get(`${fra}${database(source.id)}/point-in-time`);
       if (window.status() !== 200) return 0;
-      at = Date.parse((await window.json() as { latest: string }).latest);
+      at = Date.parse((await window.json() as { latestRestorePointUtc: string }).latestRestorePointUtc);
       return at;
-    }, { message: region + ' proves the later write' }).toBeGreaterThanOrEqual(acked);
+    }, { message: 'fra proves the later write' }).toBeGreaterThanOrEqual(acked);
     const when = new Date(at).toISOString();
-    const missed = await cells.post(`${home}${database(source.id)}/point-in-time/restore`, {
-      data: { pointInTime: when, name: name('time-' + region) },
-    });
-    expect(missed.status(), await missed.text()).toBe(421);
-    expect(missed.headers()['ts-replay']).toBe('region=' + region);
-    const timed = await json<{ id: string }>(await cells.post(`${endpoint}${database(source.id)}/point-in-time/restore`, {
-      data: { pointInTime: when, name: name('time-copy-' + region) },
+    const timed = await json<{ operationId: string }>(await cells.post(`${fra}${database(source.id)}/point-in-time/restore`, {
+      data: { pointInTime: when, name: name('time-copy-fra') },
     }), 202);
-    copies.push(await completed(cells, endpoint, source.id, timed.id));
-    expect(await rows(cells, endpoint, copies[1])).toEqual([[1, 'snapshot'], [2, 'later']]);
-    console.log(`${region}: snapshot ${backup.id} and point-in-time ${when} restored on that region; gru answered 421 region=${region}`);
+    copies.push(await completed(cells, source.id, timed.operationId));
+    expect((await answer(cells, fra, copies[1], ['SELECT id, value FROM rows ORDER BY id'])).results[0].rows).toEqual([[1, 'snapshot'], [2, 'later']]);
+    await converged(cells, gru, copies[0], 'SELECT id, value FROM rows ORDER BY id', rows => JSON.stringify(rows) === JSON.stringify([[1, 'snapshot']]));
+    await converged(cells, gru, copies[1], 'SELECT id, value FROM rows ORDER BY id', rows => JSON.stringify(rows) === JSON.stringify([[1, 'snapshot'], [2, 'later']]));
+    console.log(`fra: bookmark ${snapshot.bookmark} and point-in-time ${when} restored in fra; gru reads both copies`);
   } finally {
-    for (const id of copies) await remove(cells, removeEndpoint || home, id, !removeEndpoint);
-    await remove(cells, removeEndpoint || home, source.id, !removeEndpoint);
-    await expect(page.locator('#restore-points')).toContainText('We can’t find that page.');
-    await expect(page.locator('#restore-points[data-init]')).toHaveCount(0);
+    for (const id of copies) await discard(cells, id);
+    await discard(cells, source.id);
   }
-}
+});
 
-async function served(cells: Cells, id: string, expected: (number | string)[][]) {
-  await expect.poll(async () => {
-    const response = await cells.post(`${home}${database(id)}/sql/execute`, {
-      data: { statements: [{ sql: 'SELECT id, value FROM rows ORDER BY id' }] },
-    });
-    if (response.status() !== 200 || response.headers()['x-terrabase-region'] !== 'gru') return null;
-    return (await response.json() as { results: { rows: (number | string)[][] }[] }).results[0].rows;
-  }, { message: 'gru holds the placed copy' }).toEqual(expected);
-}
-
-async function completed(cells: Cells, endpoint: string, source: string, operation: string) {
+async function completed(cells: Cells, source: string, operation: string) {
   let copy = '';
   await expect.poll(async () => {
-    const state = await json<{ status: string; database: string; errorCode?: string }>(
-      await cells.get(`${endpoint}${database(source)}/restores/${operation}`));
-    expect(state.status, state.errorCode).not.toBe('failed');
-    if (state.status === 'completed') copy = state.database;
-    return state.status;
-  }, { message: 'the restore completes' }).toBe('completed');
+    const state = await json<{ state: string; targetDatabaseId: string; failureMessage: string | null }>(
+      await cells.get(`${fra}${database(source)}/restores/${operation}`));
+    expect(state.state, state.failureMessage ?? '').not.toBe('failed');
+    if (state.state === 'succeeded') copy = state.targetDatabaseId;
+    return state.state;
+  }, { message: 'the restore succeeds' }).toBe('succeeded');
   return copy;
 }
 
-async function rows(cells: Cells, endpoint: string, id: string) {
-  return (await sql(cells, endpoint, id, 'SELECT id, value FROM rows ORDER BY id')).results[0].rows;
-}
-
-async function remove(cells: Cells, endpoint: string, id: string, followHome: boolean) {
-  if (followHome) {
-    await removeDatabase(cells, id);
-    return;
-  }
+async function discard(cells: Cells, id: string) {
   await expect.poll(async () => {
-    const response = await cells.delete(`${endpoint}${database(id)}`);
-    if (response.status() === 409 || response.status() === 429) return false;
+    const response = await cells.delete(`${fra}${database(id)}`);
+    if (response.status() === 429) return false;
     expect(response.status(), await response.text()).toBe(204);
     return true;
-  }, { message: 'delete the database on its home' }).toBe(true);
+  }, { message: 'delete the database in fra once the organization budget refills' }).toBe(true);
 }
 
 async function publish(plan: string) {

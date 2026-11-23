@@ -15,7 +15,7 @@ if [[ ${IMAGE_CACHED:?} == false ]]; then
     context=$RUNNER_TEMP/image-payloads
     dockerfile=$context/Dockerfile
   else
-    dotnet restore src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj --locked-mode
+    dotnet restore src/TerraScale.Dashboard/TerraScale.Dashboard.csproj --locked-mode
     npm ci --prefix src/TerraScale.Dashboard/web
     context=$RUNNER_TEMP/dashboard-publish
     dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore --runtime linux-arm64 --self-contained false \

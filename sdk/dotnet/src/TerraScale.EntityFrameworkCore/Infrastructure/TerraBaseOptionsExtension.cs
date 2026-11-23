@@ -1,13 +1,14 @@
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.DotNet.TerraBase;
+using TerraScale.EntityFrameworkCore.Storage;
 
 namespace TerraScale.EntityFrameworkCore.Infrastructure;
 
 /// <summary>
 /// The TerraBase provider's options in a context's <see cref="IDbContextOptions"/>: the database as a
-/// <see cref="TerraBaseSqlDatabase"/> or a connection string, plus EF Core's relational options. Set it with
-/// <c>UseTerraBase</c>.
+/// <see cref="TerraBaseSqlDatabase"/> or a connection string, its <see cref="TerraBaseConsistencyMode"/>, plus EF Core's
+/// relational options. Set it with <c>UseTerraBase</c>.
 /// </summary>
 public sealed class TerraBaseOptionsExtension : RelationalOptionsExtension
 {
@@ -19,10 +20,20 @@ public sealed class TerraBaseOptionsExtension : RelationalOptionsExtension
     }
 
     private TerraBaseOptionsExtension(TerraBaseOptionsExtension copyFrom)
-        : base(copyFrom) => Database = copyFrom.Database;
+        : base(copyFrom)
+    {
+        Database = copyFrom.Database;
+        Consistency = copyFrom.Consistency;
+    }
 
     /// <summary>The database every context with these options uses, or null when a connection string names it.</summary>
     public TerraBaseSqlDatabase? Database { get; private set; }
+
+    /// <summary>
+    /// The consistency of the context's commands and <see cref="System.Data.IsolationLevel.Unspecified"/> transactions, or
+    /// null to keep the database handle's.
+    /// </summary>
+    public TerraBaseConsistencyMode? Consistency { get; private set; }
 
     /// <summary>Describes the options to EF Core's logging and service-provider caching.</summary>
     public override DbContextOptionsExtensionInfo Info => info ??= new ExtensionInfo(this);
@@ -34,6 +45,16 @@ public sealed class TerraBaseOptionsExtension : RelationalOptionsExtension
     {
         var clone = (TerraBaseOptionsExtension)Clone();
         clone.Database = database;
+        return clone;
+    }
+
+    /// <summary>Returns a copy of these options whose commands and transactions use <paramref name="consistency"/>.</summary>
+    /// <param name="consistency">The consistency mode.</param>
+    /// <returns>The new options.</returns>
+    public TerraBaseOptionsExtension WithConsistency(TerraBaseConsistencyMode consistency)
+    {
+        var clone = (TerraBaseOptionsExtension)Clone();
+        clone.Consistency = consistency;
         return clone;
     }
 
@@ -60,8 +81,13 @@ public sealed class TerraBaseOptionsExtension : RelationalOptionsExtension
     {
         public override bool IsDatabaseProvider => true;
 
-        public override string LogFragment => "using TerraBase " + base.LogFragment;
+        public override string LogFragment => "using TerraBase " + base.LogFragment
+            + (extension.Consistency is { } consistency ? "Consistency=" + TerraBaseConsistencyNames.Format(consistency) + " " : "");
 
-        public override void PopulateDebugInfo(IDictionary<string, string> debugInfo) => debugInfo["TerraBase"] = "1";
+        public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
+        {
+            debugInfo["TerraBase"] = "1";
+            debugInfo["TerraBase:Consistency"] = extension.Consistency is { } consistency ? TerraBaseConsistencyNames.Format(consistency) : "default";
+        }
     }
 }

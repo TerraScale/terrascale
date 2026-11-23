@@ -417,12 +417,11 @@ jobs:
           pattern: services-*
           merge-multiple: true
           path: ${{ runner.temp }}/services
-      - name: Install the journey tools and the proof's broker
+      - name: Install the journey tools
         run: |
           sudo apt-get update
           sudo apt-get install --yes gcc
           bash e2e/env/tools.sh
-          bash e2e/env/tools.sh nats-server
       - id: namespace
         name: Enter a network namespace with only loopback, the production names pinned and the run CA trusted
         timeout-minutes: 2
@@ -506,7 +505,7 @@ jobs:
         id: keyring-baseline
         with:
           path: ${{ runner.temp }}/services/keyring-baseline
-          key: keyring-baseline-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/keyring/build.sh', 'global.json', 'src/vendor/Turso.Native/turso-pin.env') }}
+          key: keyring-baseline-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/keyring/build.sh', 'global.json', 'native/native-pin.env', 'native/build-native.sh') }}
       - name: Build the single-key baseline
         if: steps.keyring-baseline.outputs.cache-hit != 'true'
         run: bash e2e/keyring/build.sh

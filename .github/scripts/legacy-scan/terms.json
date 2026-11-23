@@ -36,7 +36,7 @@
   },
   {
     "id": "libsql",
-    "pattern": "(?i)/?libsql",
+    "pattern": "(?i)/?libsql(?!ite)",
     "owner": "E4/E7"
   },
   {

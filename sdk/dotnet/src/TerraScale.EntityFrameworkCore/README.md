@@ -37,6 +37,7 @@ options.UseTerraBase("Endpoint=https://api.terrascale.tech;Project=01JA…;Datab
 | `Project` | The project ULID. Required. |
 | `Database` | The database name or ULID. Required. |
 | `ApiKey` | An API key with `sql:read` and `sql:write`. Required. |
+| `Consistency` | `fast` or `strong`: the consistency of every command and `Unspecified` transaction. Without it the database's `defaultConsistency` applies. |
 | `AuthEndpoint` | Origin of the ts-auth that exchanges the API key. Defaults to `https://auth.terrascale.tech` only when requests go to `https://api.terrascale.tech` (no `Endpoint`, `Region`, or that `Endpoint`); any other `Endpoint` needs it, so the key never goes to production by accident. |
 
 All connection strings share one connection pool. The provider keeps the SQL client of the 64 most recently used
@@ -61,7 +62,10 @@ Databases are created and deleted through the TerraBase database API (`TerraBase
 
 `UseTerraBase(database, terraBase => …)` exposes EF Core's relational options: `MigrationsAssembly`,
 `MigrationsHistoryTable`, `CommandTimeout`, `MaxBatchSize` (at most 256, the statements one request carries),
-`UseQuerySplittingBehavior` and `ExecutionStrategy`. `CommandTimeout` bounds each command in seconds and throws
+`UseQuerySplittingBehavior` and `ExecutionStrategy`, plus `Consistency(TerraBaseConsistencyMode.Fast | Strong)`, which
+sets `TerraScale-Consistency` on every command and on transactions begun without an isolation level; without it the
+`TerraBaseSqlDatabase`'s consistency, else the database's `defaultConsistency` (fast unless changed), applies.
+`CommandTimeout` bounds each command in seconds and throws
 `TimeoutException` when it runs out; without it, the SDK's 30-second request deadline applies, and it also caps longer
 timeouts.
 
@@ -99,7 +103,7 @@ contains one together with other changes runs inside a WebSocket transaction.
 
 ## Transactions and retries
 
-The default execution strategy retries the whole operation when TerraBase answers `serialization_conflict`, with
+The default execution strategy retries the whole operation when TerraBase answers `serialization_conflict` or `schema_mismatch`, with
 EF Core's exponential backoff (6 attempts). Like every retrying EF Core strategy, it requires explicit transactions
 to run inside it:
 
@@ -113,7 +117,9 @@ await context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
 });
 ```
 
-`BeginTransactionAsync` opens a SQL WebSocket session and begins a Serializable transaction on it. A transaction lasts
+`BeginTransactionAsync` opens a SQL WebSocket session and begins a transaction on it with the context's consistency;
+`BeginTransactionAsync(IsolationLevel.Serializable)` begins a strong one (`BEGIN STRONG`), serializable across regions,
+whose commit may answer `serialization_conflict`. A transaction lasts
 at most 5 seconds. After a failed statement, including a concurrency conflict, the transaction is aborted: roll it
 back and retry the unit of work. Disposing the transaction without committing rolls it back: `DisposeAsync` waits up to
 5 seconds for the rollback, and a synchronous `Dispose` (a `using var` declaration) closes the session at once, which
@@ -129,17 +135,13 @@ left it. When the writer was sent the request and did not answer, the region ans
 `503 write_outcome_unknown` instead (`TerraBaseException.ErrorCode`, the writer's region in `OutcomeRegion`): the write
 may have committed, so nothing resends it. Read what it would have written before you run it again.
 
-## Writers and replicas
+## Consistency and bookmarks
 
-- A database has one writer at a time. A save that fits one request holds it only while TerraBase runs that request.
-  An explicit transaction, a split save and each migration hold it from their first write until they end, up to
-  5 seconds, and every other write to the database waits for them. Keep hot paths to saves that fit one request, and
-  keep explicit transactions short.
-- In a region that holds a replica of the database, reads outside a transaction run on the local replica, so a read
-  right after a write made through another region can miss it. Writes, and reads inside an explicit transaction, run
-  at the region that orders the database's writes. To read your own writes everywhere, add `TerraScale-Write: home` to every request with a
-  `DelegatingHandler` on the `HttpClient` you build the `TerraBaseSqlDatabase` with; the provider has no per-query
-  switch for it.
+Every region that holds the database commits writes. Each save and query sends the newest `TerraScale-Bookmark` the
+`TerraBaseSqlDatabase` observed and merges the one TerraBase answers, so every context and connection of that database
+reads the writes the others saved, in whichever region answers. Contexts built from the same connection string share
+one tracked bookmark. To carry it to another process, read `context.Database.GetTerraBaseBookmark()` and pass it to
+that process's `context.Database.ObserveTerraBaseBookmark(bookmark)`.
 
 ## Migrations
 

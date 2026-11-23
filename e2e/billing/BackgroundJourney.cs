@@ -1,13 +1,13 @@
+using System.Data;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Dapper;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using NUlid;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
@@ -20,7 +20,7 @@ internal static partial class BackgroundJourney
     public static async Task WorkAsync(string kind, DateTimeOffset at, string path, string id, CancellationToken cancellationToken)
     {
         var owner = await OwnerAsync(path, cancellationToken);
-        using var application = BackgroundHost.Build(owner, clock: new BackgroundClock(at));
+        using var application = BackgroundHost.Build(owner, clock: BackgroundClock.At(at));
         switch (kind)
         {
             case "drain":
@@ -50,11 +50,11 @@ internal static partial class BackgroundJourney
                         {
                             claim.State.Cursor = "stale";
                             try { await claim.SaveAsync(token); }
-                            catch (DbUpdateConcurrencyException) { fenced = true; throw; }
+                            catch (DBConcurrencyException) { fenced = true; throw; }
                         }
                     }, cancellationToken);
                 }
-                catch (DbUpdateConcurrencyException) when (kind == "stale" && fenced) { Console.WriteLine("stale save fenced"); }
+                catch (DBConcurrencyException) when (kind == "stale" && fenced) { Console.WriteLine("stale save fenced"); }
                 if (kind == "stale") { Require(fenced, "A real stale Claim.SaveAsync must fail its owner/checkpoint fence."); }
                 break;
             default:
@@ -66,7 +66,7 @@ internal static partial class BackgroundJourney
     {
         var owner = await OwnerAsync(path, cancellationToken);
         var commands = new BackgroundCommands();
-        var clock = new BackgroundClock(TimeProvider.System.GetUtcNow());
+        var clock = new BackgroundClock(TimeSpan.Zero);
         using var application = BackgroundHost.Build(owner, commands, clock);
         var services = application.Services;
         if (kind == "source")
@@ -89,8 +89,7 @@ internal static partial class BackgroundJourney
             Console.WriteLine(await QuietReadyAsync(services, path, cancellationToken) ? "ready" : "pending");
             return;
         }
-        var storage = services.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
-        await using (var schema = await storage.CreateDbContextAsync(cancellationToken)) { await schema.Database.MigrateAsync(cancellationToken); }
+        await services.GetRequiredService<DashboardDbUpRunner>().UpgradeAsync(cancellationToken);
         var organizations = services.GetRequiredService<OrganizationStore>();
         if (await organizations.FindAsync(owner.OrganizationId, cancellationToken) is null)
         {
@@ -122,7 +121,7 @@ internal static partial class BackgroundJourney
 
     private static async Task CrashAsync(IServiceProvider services, BackgroundOwner owner, string path, CancellationToken cancellationToken)
     {
-        var storage = services.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
+        var storage = services.GetRequiredService<DashboardDb>();
         using var receiver = Receiver();
         var drain = await DrainAsync(storage, owner, cancellationToken);
         var drainPath = new Uri(drain.Url).AbsolutePath;
@@ -132,33 +131,30 @@ internal static partial class BackgroundJourney
         try
         {
             await ReceivedAsync(receiver, drainPath, crashed, cancellationToken);
-            BackgroundJobRow pending;
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            var (pending, databaseNow) = await JourneySql.LiveJobAsync(storage, jobId, cancellationToken);
+            if (pending is not { Payload: { } payload, DeliveryId: { } deliveryId, NextCursor: { } nextCursor })
             {
-                pending = await db.BackgroundJobs.AsNoTracking().SingleAsync(row => row.Id == jobId, cancellationToken);
-                Require(pending.Payload is not null && pending.DeliveryId is not null && pending.NextCursor is not null, "The worker must persist source payload, delivery identity and next cursor before sending.");
-                Require(Records(pending.Payload!).GetArrayLength() >= 2, "The worker must read real SQL activity from the production log source.");
-                var databaseNow = await db.BackgroundJobs.Where(row => row.Id == jobId).Select(_ => DateTime.UtcNow).SingleAsync(cancellationToken);
-                Require(pending.LeaseUntil > databaseNow && pending.LeaseUntil <= databaseNow.AddMinutes(2), "A forward-skewed worker extended its lease beyond database time.");
-                Require(!await db.LogDrainCursors.AnyAsync(row => row.DrainId == drain.Id && row.DatabaseId == owner.DatabaseId, cancellationToken), "The cursor advanced before receiver acceptance.");
+                throw new InvalidOperationException("The worker must persist source payload, delivery identity and next cursor before sending.");
             }
+            Require(Records(payload).GetArrayLength() >= 2, "The worker must read real SQL activity from the production log source.");
+            Require(pending.LeaseUntil > databaseNow && pending.LeaseUntil <= databaseNow.AddMinutes(2), "A forward-skewed worker extended its lease beyond database time.");
+            Require(!await CursorExistsAsync(storage, drain.Id, owner.DatabaseId, cancellationToken), "The cursor advanced before receiver acceptance.");
             await services.GetRequiredService<LogDrains>().RunOnceAsync(cancellationToken);
             Require((await DeliveriesAsync(receiver, drainPath, cancellationToken)).Length == 1, "A second live dashboard sent an already claimed log batch.");
             crashed.Kill(entireProcessTree: true);
             await crashed.WaitForExitAsync(cancellationToken);
             await ExpireAsync(storage, jobId, cancellationToken);
             await ConfigureAsync(receiver, drainPath, false, cancellationToken);
-            using var recovered = BackgroundHost.Build(owner, clock: new BackgroundClock(TimeProvider.System.GetUtcNow().AddDays(-1)));
+            using var recovered = BackgroundHost.Build(owner, clock: BackgroundClock.At(TimeProvider.System.GetUtcNow().AddDays(-1)));
             await recovered.Services.GetRequiredService<LogDrains>().RunOnceAsync(cancellationToken);
             var attempts = await DeliveriesAsync(receiver, drainPath, cancellationToken);
-            Require(attempts.Length == 2 && attempts.All(row => row.GetProperty("id").GetString() == pending.DeliveryId && row.GetProperty("valid").GetBoolean()), "Crash recovery must resend the identical delivery key and bytes exactly once.");
+            Require(attempts.Length == 2 && attempts.All(row => row.GetProperty("id").GetString() == deliveryId && row.GetProperty("valid").GetBoolean()), "Crash recovery must resend the identical delivery key and bytes exactly once.");
             var effects = await JsonAsync(receiver, "/dashboard-effects?path=" + Uri.EscapeDataString(drainPath), cancellationToken);
             Require(effects.GetArrayLength() == 1, "The replay created another receiver effect.");
-            Require(effects[0].GetProperty("event").GetProperty("resourceLogs")[0].GetProperty("scopeLogs")[0].GetProperty("logRecords").GetRawText() == Records(pending.Payload!).GetRawText(), "The recovered worker changed the claimed source events.");
-            await using var saved = await storage.CreateDbContextAsync(cancellationToken);
-            var cursor = await saved.LogDrainCursors.AsNoTracking().SingleAsync(row => row.DrainId == drain.Id && row.DatabaseId == owner.DatabaseId, cancellationToken);
-            var completed = await saved.BackgroundJobs.AsNoTracking().SingleAsync(row => row.Id == jobId, cancellationToken);
-            Require(cursor.Cursor == pending.NextCursor && completed.Payload is null && completed.DeliveryId is null, "The cursor and completion must commit together.");
+            Require(effects[0].GetProperty("event").GetProperty("resourceLogs")[0].GetProperty("scopeLogs")[0].GetProperty("logRecords").GetRawText() == Records(payload).GetRawText(), "The recovered worker changed the claimed source events.");
+            var cursor = await CursorAsync(storage, drain.Id, owner.DatabaseId, cancellationToken) ?? throw new InvalidOperationException("The recovered delivery committed no cursor.");
+            var completed = await JourneySql.JobAsync(storage, jobId, cancellationToken) ?? throw new InvalidOperationException("The recovered delivery lost its job.");
+            Require(cursor.Cursor == nextCursor && completed.Payload is null && completed.DeliveryId is null, "The cursor and completion must commit together.");
         }
         finally
         {
@@ -169,7 +165,7 @@ internal static partial class BackgroundJourney
 
     private static async Task AlertAsync(IServiceProvider services, BackgroundOwner owner, string path, CancellationToken cancellationToken)
     {
-        var storage = services.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
+        var storage = services.GetRequiredService<DashboardDb>();
         var identity = await services.GetRequiredService<IDashboardIdentity>().ReadAsync(cancellationToken);
         var now = TimeProvider.System.GetUtcNow();
         using var receiver = Receiver();
@@ -183,9 +179,9 @@ internal static partial class BackgroundJourney
         await File.WriteAllTextAsync(Path.Combine(state, "secrets.d", "background-" + run), secret, cancellationToken);
         var sealedSecret = SealedSecret.Seal(secret, identity.SessionEncryptionKey, "alert-webhook/" + owner.ProjectId + "/" + ruleId);
         await ConfigureAsync(receiver, alertPath, true, cancellationToken);
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await storage.WriteAsync(async (connection, transaction) =>
         {
-            db.AlertRules.Add(new()
+            await connection.ExecuteAsync(JourneySql.InsertAlertRule, new AlertRuleRow
             {
                 Id = ruleId,
                 OrganizationId = owner.OrganizationId,
@@ -202,8 +198,8 @@ internal static partial class BackgroundJourney
                 WebhookNonce = sealedSecret.Nonce,
                 WebhookCiphertext = sealedSecret.Ciphertext,
                 WebhookTag = sealedSecret.Tag
-            });
-            db.AlertEvents.Add(new()
+            }, transaction);
+            await connection.ExecuteAsync(JourneySql.InsertAlertEvent, new AlertEventRow
             {
                 Id = AccountService.NewId(),
                 RuleId = ruleId,
@@ -214,9 +210,8 @@ internal static partial class BackgroundJourney
                 EmailStatus = "pending",
                 WebhookStatus = "pending",
                 WebhookAttempts = 0
-            });
-            await db.SaveChangesAsync(cancellationToken);
-        }
+            }, transaction);
+        }, cancellationToken);
         using var sending = Start("alert", now, path);
         try
         {
@@ -229,15 +224,10 @@ internal static partial class BackgroundJourney
             var messages = await JsonAsync(mail, "/api/v1/messages?limit=1000", cancellationToken);
             Require(messages.GetProperty("messages").EnumerateArray().Count(row => row.GetProperty("Subject").GetString()?.Contains(name, StringComparison.Ordinal) == true) == 1,
                 "One alert transition must send one owner notification.");
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-            {
-                Require(!await db.AlertEvents.AnyAsync(row => row.RuleId == ruleId, cancellationToken), "A delivered alert must leave the pending queue.");
-            }
+            Require(!(await storage.ReadAsync(connection => connection.ExecuteScalarAsync<long>("SELECT count(*) FROM alert_events WHERE rule_id = @RuleId", new { RuleId = ruleId }), cancellationToken) > 0), "A delivered alert must leave the pending queue.");
         }
         finally { await StopAsync(sending); }
-        await using var cleanup = await storage.CreateDbContextAsync(CancellationToken.None);
-        await cleanup.AlertRules.Where(row => row.Id == ruleId).ExecuteDeleteAsync(CancellationToken.None);
-        await cleanup.BackgroundJobs.Where(row => row.Id == "alerts/" + owner.ProjectId).ExecuteDeleteAsync(CancellationToken.None);
+        await storage.ReadAsync(connection => connection.ExecuteAsync("DELETE FROM alert_events WHERE rule_id = @RuleId; DELETE FROM alert_rules WHERE id = @RuleId; DELETE FROM background_jobs WHERE id = @JobId", new { RuleId = ruleId, JobId = "alerts/" + owner.ProjectId }), CancellationToken.None);
     }
 
     private static async Task<BackgroundOwner> OwnerAsync(string path, CancellationToken cancellationToken) =>
@@ -251,9 +241,8 @@ internal static partial class BackgroundJourney
         return json.RootElement.GetProperty("resourceLogs")[0].GetProperty("scopeLogs")[0].GetProperty("logRecords").Clone();
     }
 
-    private static async Task<LogDrainRow> DrainAsync(IDbContextFactory<DashboardDbContext> storage, BackgroundOwner owner, CancellationToken cancellationToken)
+    private static async Task<LogDrainRow> DrainAsync(DashboardDb storage, BackgroundOwner owner, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
         var drain = new LogDrainRow
         {
             Id = AccountService.NewId(),
@@ -263,17 +252,28 @@ internal static partial class BackgroundJourney
             Url = "https://hooks.journey.terrascale.tech/dashboard-drain/" + AccountService.NewId(),
             CreatedAt = Ulid.Parse(owner.DatabaseId).Time.UtcDateTime
         };
-        db.LogDrains.Add(drain);
-        await db.SaveChangesAsync(cancellationToken);
+        await storage.ReadAsync(connection => connection.ExecuteAsync(JourneySql.InsertDrain, drain), cancellationToken);
         return drain;
     }
 
-    private static async Task DeleteDrainAsync(IDbContextFactory<DashboardDbContext> storage, LogDrainRow drain, CancellationToken cancellationToken)
+    private static async Task<LogDrainRow> StoredDrainAsync(DashboardDb storage, string id, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        await db.LogDrains.Where(row => row.Id == drain.Id).ExecuteDeleteAsync(cancellationToken);
-        await db.BackgroundJobs.Where(row => row.Id.StartsWith("log-drain/" + drain.ProjectId + "/" + drain.Revision + "/")).ExecuteDeleteAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.QuerySingleAsync<LogDrainRow>(JourneySql.Drains + " WHERE id = @Id", new { Id = id });
     }
+
+    private static async Task<LogDrainCursorRow?> CursorAsync(DashboardDb storage, string drainId, string databaseId, CancellationToken cancellationToken)
+    {
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<LogDrainCursorRow>(JourneySql.Cursors + " WHERE drain_id = @DrainId AND database_id = @DatabaseId", new { DrainId = drainId, DatabaseId = databaseId });
+    }
+
+    private static async Task<bool> CursorExistsAsync(DashboardDb storage, string drainId, string databaseId, CancellationToken cancellationToken) =>
+        await storage.ReadAsync(connection => connection.ExecuteScalarAsync<long>("SELECT count(*) FROM log_drain_cursors WHERE drain_id = @DrainId AND database_id = @DatabaseId",
+            new { DrainId = drainId, DatabaseId = databaseId }), cancellationToken) > 0;
+
+    private static async Task DeleteDrainAsync(DashboardDb storage, LogDrainRow drain, CancellationToken cancellationToken) =>
+        await storage.ReadAsync(connection => connection.ExecuteAsync("DELETE FROM log_drain_cursors WHERE drain_id = @Id; DELETE FROM log_drains WHERE id = @Id; DELETE FROM background_jobs WHERE id LIKE @Prefix || '%'", new { drain.Id, Prefix = "log-drain/" + drain.ProjectId + "/" + drain.Revision + "/" }), cancellationToken);
 
     private static Process Start(string kind, DateTimeOffset at, string path, string id = "")
     {

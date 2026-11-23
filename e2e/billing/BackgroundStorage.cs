@@ -1,6 +1,4 @@
-using System.Data.Common;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -9,17 +7,27 @@ using TerraScale.DotNet.TerraBase;
 
 internal sealed class BackgroundStorage(BackgroundOwner owner, BackgroundCommands commands) : IDisposable
 {
-    private readonly HttpClient client = new(new RenewalTransport(commands) { InnerHandler = TerraBaseHttp.CreateHandler() });
+    private readonly HttpClient client = new(new SqlTransport(commands) { InnerHandler = TerraBaseHttp.CreateHandler() });
     public TerraBaseSqlDatabase Database => new TerraBaseSqlClient(client, new() { ApiKey = owner.ApiKey, Region = owner.DatabaseRegion.ToLowerInvariant() }).Database(owner.ProjectId, owner.SecondDatabaseName);
     public void Dispose() => client.Dispose();
 
-    private sealed class RenewalTransport(BackgroundCommands commands) : DelegatingHandler
+    private sealed class SqlTransport(BackgroundCommands commands) : DelegatingHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var drop = request.Content is not null && commands.DropRenewal(await request.Content.ReadAsStringAsync(cancellationToken));
+            if (request.RequestUri is not { } target) { return await base.SendAsync(request, cancellationToken); }
+            if (target.AbsolutePath.EndsWith("/sql/ws", StringComparison.Ordinal))
+            {
+                commands.ObserveTransaction();
+                return await base.SendAsync(request, cancellationToken);
+            }
+            if (!target.AbsolutePath.EndsWith("/sql/execute", StringComparison.Ordinal) || request.Content is null) { return await base.SendAsync(request, cancellationToken); }
+            var statements = BackgroundCommands.Statements(await request.Content.ReadAsStringAsync(cancellationToken));
+            commands.Observe(statements);
+            await commands.PauseAsync(statements, false, cancellationToken);
             var response = await base.SendAsync(request, cancellationToken);
-            if (!drop) { return response; }
+            await commands.PauseAsync(statements, true, cancellationToken);
+            if (!commands.DropRenewal(statements)) { return response; }
             response.Dispose();
             throw new HttpRequestException("The journey discarded a real TerraBase lease-renewal reply.");
         }
@@ -28,15 +36,17 @@ internal sealed class BackgroundStorage(BackgroundOwner owner, BackgroundCommand
     public static void Configure(IServiceCollection services, BackgroundOwner owner, BackgroundCommands commands)
     {
         services.AddSingleton(_ => new BackgroundStorage(owner, commands));
-        services.RemoveAll<TerraBaseSqlDatabase>();
-        services.AddSingleton(provider => provider.GetRequiredService<BackgroundStorage>().Database);
-        services.AddPooledDbContextFactory<DashboardDbContext>((_, options) => options.AddInterceptors(commands));
+        services.RemoveAll<DashboardDb>();
+        services.AddSingleton(provider => new DashboardDb(provider.GetRequiredService<BackgroundStorage>().Database));
         services.AddSingleton<ILoggerProvider>(commands);
     }
 }
 
-internal sealed class BackgroundCommands : DbCommandInterceptor, ILoggerProvider
+internal sealed record BackgroundStatement(string Sql, IReadOnlyList<string> Values);
+
+internal sealed class BackgroundCommands : ILoggerProvider
 {
+    private const string Transaction = "transaction over a SQL session";
     private int calls;
     private int writes;
     private int refuseRenewal;
@@ -46,51 +56,52 @@ internal sealed class BackgroundCommands : DbCommandInterceptor, ILoggerProvider
     public (int Calls, int Writes) Counts => (Volatile.Read(ref calls), Volatile.Read(ref writes));
     public void Reset() { Interlocked.Exchange(ref calls, 0); Interlocked.Exchange(ref writes, 0); LastWrite = null; }
     public void RefuseRenewal() => Interlocked.Exchange(ref refuseRenewal, 1);
-    public BackgroundClaimPause PauseClaim(string id, bool afterWrite) => pausedClaim = new(id, afterWrite);
+    public BackgroundClaimPause PauseClaim(string id, bool afterWrite)
+    {
+        var pause = new BackgroundClaimPause(id, afterWrite);
+        Volatile.Write(ref pausedClaim, pause);
+        return pause;
+    }
 
-    private void Observe(DbCommand command)
+    public static IReadOnlyList<BackgroundStatement> Statements(string body)
+    {
+        using var json = JsonDocument.Parse(body);
+        return [.. json.RootElement.GetProperty("statements").EnumerateArray().Select(statement => new BackgroundStatement(
+            statement.GetProperty("sql").GetString() ?? throw new InvalidOperationException("A SQL statement has no text."),
+            [.. Values(statement, "args"), .. Values(statement, "named")]))];
+    }
+
+    private static string[] Values(JsonElement statement, string name) =>
+        !statement.TryGetProperty(name, out var values) ? []
+        : (values.ValueKind == JsonValueKind.Array ? values.EnumerateArray() : values.EnumerateObject().Select(property => property.Value))
+            .Where(value => value.ValueKind == JsonValueKind.String).Select(value => value.GetString()).OfType<string>().ToArray();
+
+    public void Observe(IReadOnlyList<BackgroundStatement> statements)
     {
         Interlocked.Increment(ref calls);
-        if (!command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)) { Interlocked.Increment(ref writes); LastWrite = command.CommandText; }
-
+        if (statements.FirstOrDefault(statement => !statement.Sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)) is not { } write) { return; }
+        Interlocked.Increment(ref writes);
+        LastWrite = write.Sql;
     }
 
-    public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+    public void ObserveTransaction()
     {
-        Observe(command);
-        await PauseAsync(command, false, cancellationToken);
-        return result;
+        Interlocked.Increment(ref calls);
+        Interlocked.Increment(ref writes);
+        LastWrite = Transaction;
     }
 
-    public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+    public async Task PauseAsync(IReadOnlyList<BackgroundStatement> statements, bool afterWrite, CancellationToken cancellationToken)
     {
-        await PauseAsync(command, true, cancellationToken);
-        return result;
-    }
-
-    private async Task PauseAsync(DbCommand command, bool afterWrite, CancellationToken cancellationToken)
-    {
-        if (pausedClaim is not { } pause || pause.AfterWrite != afterWrite ||
-            !command.CommandText.TrimStart().StartsWith("INSERT INTO background_jobs", StringComparison.Ordinal) ||
-            !command.Parameters.Cast<DbParameter>().Any(parameter => parameter.Value is string value && value == pause.Id)) { return; }
-        pausedClaim = null;
+        if (Volatile.Read(ref pausedClaim) is not { } pause || pause.AfterWrite != afterWrite ||
+            !statements.Any(statement => statement.Sql.TrimStart().StartsWith("INSERT INTO background_jobs", StringComparison.Ordinal) && statement.Values.Contains(pause.Id, StringComparer.Ordinal)) ||
+            Interlocked.CompareExchange(ref pausedClaim, null, pause) != pause) { return; }
         pause.Prefetched.TrySetResult();
         await pause.Resume.Task.WaitAsync(cancellationToken);
     }
 
-    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
-    {
-        Observe(command);
-        return ValueTask.FromResult(result);
-    }
-
-    public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<object> result, CancellationToken cancellationToken = default)
-    {
-        Observe(command);
-        return ValueTask.FromResult(result);
-    }
-
-    public bool DropRenewal(string request) => request.Contains("SET lease_until = strftime", StringComparison.Ordinal) && Interlocked.Exchange(ref refuseRenewal, 0) == 1;
+    public bool DropRenewal(IReadOnlyList<BackgroundStatement> statements) =>
+        statements.Any(statement => statement.Sql.Contains("SET lease_until = strftime", StringComparison.Ordinal)) && Interlocked.Exchange(ref refuseRenewal, 0) == 1;
 
     public ILogger CreateLogger(string categoryName) => new RenewalLogger(categoryName, RenewalObserved);
     public void Dispose() { }

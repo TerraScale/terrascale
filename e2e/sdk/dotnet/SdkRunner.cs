@@ -607,7 +607,6 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
 
     private async Task PlacementSetAsync(CancellationToken cancellationToken)
     {
-        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-move", placement: TerraBaseDatabasePlacement.In("gru"), cancellationToken: cancellationToken);
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
         var regional = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions
         {
@@ -615,49 +614,36 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
             BaseAddress = new Uri("https://fra.api.terrascale.tech"),
             AuthAddress = new Uri("https://auth.terrascale.tech"),
         });
-        var placed = client;
+        var created = await client.CreateDatabaseAsync(project, $"e2e-dotnet-{run}-move", placement: TerraBaseDatabasePlacement.In("gru"), cancellationToken: cancellationToken);
         try
         {
-            await client.Database(project, created.Id).ExecuteAsync("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)", cancellationToken: cancellationToken);
-            await client.Database(project, created.Id).ExecuteAsync("INSERT INTO placement_rows VALUES (1)", cancellationToken: cancellationToken);
+            var home = client.Database(project, created.Id);
+            var peer = regional.Database(project, created.Id);
+            await home.ExecuteAsync("CREATE TABLE placement_rows (value INTEGER PRIMARY KEY)", cancellationToken: cancellationToken);
+            await home.ExecuteAsync("INSERT INTO placement_rows VALUES (1)", cancellationToken: cancellationToken);
             var added = await client.SetDatabasePlacementAsync(project, created.Id, placement: TerraBaseDatabasePlacement.In("gru", "fra"), cancellationToken: cancellationToken);
             Same(string.Join(",", added.Regions), "fra,gru", "added region");
             if (added.PlacementVersion <= created.PlacementVersion) throw new InvalidOperationException("Membership did not raise placement version.");
-            var progress = await client.Database(project, created.Id).GetRegionsAsync(cancellationToken);
-            Same(string.Join(",", progress.Regions.Select(row => row.Region)), "fra,gru", "status regions");
-            Same(progress.Regions.Single(row => row.Region == "gru").Role ?? "", "writer", "writer role");
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(TimeSpan.FromSeconds(90));
-            TerraBaseManagedDatabase updated;
-            for (; ; )
-            {
-                try
-                {
-                    updated = await client.SetDatabasePlacementAsync(project, created.Id, placement: TerraBaseDatabasePlacement.In("fra"), cancellationToken: deadline.Token);
-                    break;
-                }
-                catch (TerraBaseUnavailableException error) when (error.ErrorCode == "replica_not_ready")
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
-                }
-            }
-            placed = regional;
-            Same(string.Join(",", updated.Regions), "fra", "dropped writer");
-            if (updated.PlacementVersion <= added.PlacementVersion) throw new InvalidOperationException("Writer did not raise placement version.");
-            var after = await regional.Database(project, created.Id).GetRegionsAsync(cancellationToken);
-            Same(string.Join(",", after.Regions.Select(row => $"{row.Region}:{row.Role}")), "fra:writer", "moved status");
-            var proxied = await client.Database(project, created.Id).GetRegionsAsync(cancellationToken);
-            Same(string.Join(",", proxied.Regions.Select(row => row.Region)), "fra", "proxied nonmember endpoint");
-            var rows = await client.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows", cancellationToken: cancellationToken);
-            if (rows.Count != 1 || rows[0].GetInt64(0) != 1) throw new InvalidOperationException("Data did not survive placement.");
-            await client.Database(project, created.Id).ExecuteAsync("INSERT INTO placement_rows VALUES (2)", cancellationToken: cancellationToken);
-            var retained = await regional.Database(project, created.Id).QueryAsync("SELECT value FROM placement_rows ORDER BY value", cancellationToken: cancellationToken);
-            if (retained.Count != 2 || retained[1].GetInt64(0) != 2) throw new InvalidOperationException($"An acknowledged proxied write was lost: [{string.Join(",", retained.Select(row => row.GetInt64(0)))}].");
-            Console.WriteLine("dotnet placement: SDK keeps its original region; proxied write acknowledged 1, found 1; rows [[1],[2]]");
+            var progress = await home.GetRegionsAsync(cancellationToken);
+            Same(string.Join(",", progress.Regions.Select(row => $"{row.Region}:{row.Healthy}")), "fra:True,gru:True", "every active-active region healthy");
+            if (progress.Regions.Any(row => string.IsNullOrEmpty(row.AppliedBookmark))) throw new InvalidOperationException("A region reports no applied bookmark.");
+            var seen = await peer.QueryAsync("SELECT value FROM placement_rows ORDER BY value", null, new TerraBaseSqlRequestOptions { Bookmark = home.Bookmark }, cancellationToken);
+            Same(string.Join(",", seen.Select(row => row.GetInt64(0))), "1", "fra reads the gru write with its bookmark");
+            await peer.ExecuteAsync("INSERT INTO placement_rows VALUES (2)", cancellationToken: cancellationToken);
+            var both = await home.QueryAsync("SELECT value FROM placement_rows ORDER BY value", null, new TerraBaseSqlRequestOptions { Bookmark = peer.Bookmark }, cancellationToken);
+            Same(string.Join(",", both.Select(row => row.GetInt64(0))), "1,2", "gru reads the fra write with its bookmark");
+            var updated = await regional.SetDatabasePlacementAsync(project, created.Id, placement: TerraBaseDatabasePlacement.In("fra"), cancellationToken: cancellationToken);
+            Same(string.Join(",", updated.Regions), "fra", "removed region");
+            if (updated.PlacementVersion <= added.PlacementVersion) throw new InvalidOperationException("Membership change did not raise placement version.");
+            var after = await peer.GetRegionsAsync(cancellationToken);
+            Same(string.Join(",", after.Regions.Select(row => $"{row.Region}:{row.Healthy}")), "fra:True", "remaining region status");
+            var retained = await peer.QueryAsync("SELECT value FROM placement_rows ORDER BY value", cancellationToken: cancellationToken);
+            Same(string.Join(",", retained.Select(row => row.GetInt64(0))), "1,2", "data survived placement");
+            Console.WriteLine("dotnet placement: fra and gru healthy active-active peers; bookmark reads crossed both ways; rows [[1],[2]]");
         }
         finally
         {
-            await placed.DeleteDatabaseAsync(project, created.Id, cancellationToken);
+            await regional.DeleteDatabaseAsync(project, created.Id, cancellationToken);
         }
     }
 

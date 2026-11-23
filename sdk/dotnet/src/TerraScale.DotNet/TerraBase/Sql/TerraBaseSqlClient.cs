@@ -44,13 +44,22 @@ public sealed record TerraBaseSqlClientOptions
     /// <summary>Supplies the current bearer credential per request or connection. Set this or ApiKey, exclusively.</summary>
     public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
 
+    /// <summary>
+    /// The consistency every SQL request and session of this client asks for with <c>TerraScale-Consistency</c>; null, the
+    /// default, leaves it to each database's <c>defaultConsistency</c>. <see cref="TerraBaseSqlDatabase.WithConsistency"/> and
+    /// <see cref="TerraBaseSqlRequestOptions.Consistency"/> override it.
+    /// </summary>
+    public TerraBaseConsistencyMode? Consistency { get; init; }
+
     /// <inheritdoc />
     public override string ToString() => $"TerraBase SQL client options for {BaseAddress?.ToString() ?? Region}";
 }
 
 /// <summary>
 /// The TerraBase SQL client: SQL over REST (<c>…/sql/execute</c>) and over the WebSocket (<c>…/sql/ws</c>). Built over
-/// a caller-owned <see cref="HttpClient"/> that it never disposes. Thread-safe.
+/// a caller-owned <see cref="HttpClient"/> that it never disposes. The client tracks the newest <c>TerraScale-Bookmark</c>
+/// per database, shared by every handle <see cref="Database"/> returns for it, so reads observe the client's own writes
+/// in whichever region answers. Thread-safe.
 /// </summary>
 public sealed partial class TerraBaseSqlClient
 {
@@ -58,6 +67,8 @@ public sealed partial class TerraBaseSqlClient
     private readonly TerraScaleApiKeyTokens? apiKeyTokens;
     private readonly ConcurrentDictionary<string, TerraBaseConnection>? projectConnections;
     private readonly TerraBaseConnection? connection;
+    private readonly ConcurrentDictionary<string, TerraBaseBookmarkTracker> bookmarks = new(StringComparer.Ordinal);
+    private readonly TerraBaseConsistencyMode? consistency;
 
     /// <summary>
     /// Creates a client and validates <paramref name="options"/>. The HttpClient must disable automatic redirects; use
@@ -66,6 +77,7 @@ public sealed partial class TerraBaseSqlClient
     public TerraBaseSqlClient(HttpClient httpClient, TerraBaseSqlClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        consistency = options.Consistency;
         if (options.ApiKey is null)
         {
             if (options.AuthAddress is not null) throw new ArgumentException("AuthAddress exchanges an ApiKey; set ApiKey or remove AuthAddress.", nameof(options));
@@ -85,7 +97,7 @@ public sealed partial class TerraBaseSqlClient
             : options.BaseAddress;
         connect = provider => new TerraBaseConnection(httpClient, baseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
             TerraBaseConnection.DefaultMaxResponseBytes, provider, region: options.Region);
-        _ = connect(static _ => ValueTask.FromResult(string.Empty)); // validates the endpoint options now
+        _ = connect(static _ => ValueTask.FromResult(string.Empty));
         apiKeyTokens = new TerraScaleApiKeyTokens(httpClient, AuthOrigin(options), options.ApiKey, nameof(options.ApiKey), TimeProvider.System);
         projectConnections = new(StringComparer.Ordinal);
     }
@@ -130,30 +142,62 @@ public sealed partial class TerraBaseSqlClient
     public TerraBaseSqlDatabase Database(string projectId, string database)
     {
         var path = $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(database, nameof(database))}";
-        return new(ProjectConnection(projectId), path);
+        return new(ProjectConnection(projectId), path, bookmarks.GetOrAdd(path, static _ => new TerraBaseBookmarkTracker()), consistency);
     }
 }
 
 /// <summary>
 /// One database over SQL REST. Every call is one request and one transaction, all or nothing. A request refused with
-/// <see cref="TerraBaseSqlErrorCodes.SerializationConflict"/> rolled back and is resent at most twice; every other
-/// refusal throws <see cref="TerraBaseSqlException"/> at once. Thread-safe.
+/// <see cref="TerraBaseSqlErrorCodes.SerializationConflict"/> or <see cref="TerraBaseSqlErrorCodes.SchemaMismatch"/> rolled
+/// back and is resent at most twice; every other refusal throws <see cref="TerraBaseSqlException"/> at once. Every request
+/// sends the newest <c>TerraScale-Bookmark</c> this database's handles observed and merges the one each answer returns, so
+/// overlapping calls never move it backwards. Thread-safe.
 /// </summary>
 public sealed class TerraBaseSqlDatabase
 {
+    private static readonly TerraBaseSqlRequestOptions NoOptions = new();
+
     private readonly TerraBaseConnection connection;
     private readonly string path;
+    private readonly TerraBaseBookmarkTracker bookmarks;
 
-    internal TerraBaseSqlDatabase(TerraBaseConnection connection, string path)
+    internal TerraBaseSqlDatabase(TerraBaseConnection connection, string path, TerraBaseBookmarkTracker bookmarks, TerraBaseConsistencyMode? consistency)
     {
         this.connection = connection;
         this.path = path;
+        this.bookmarks = bookmarks;
+        Consistency = consistency;
     }
+
+    /// <summary>
+    /// The consistency this handle's requests and sessions ask for; null leaves it to the database's
+    /// <c>defaultConsistency</c>.
+    /// </summary>
+    public TerraBaseConsistencyMode? Consistency { get; }
+
+    /// <summary>
+    /// The newest <c>TerraScale-Bookmark</c> observed for this database, or empty before the first answer. Pass it to another
+    /// process, which hands it to <see cref="ObserveBookmark"/> or <see cref="TerraBaseSqlRequestOptions.Bookmark"/> to read
+    /// this process's writes.
+    /// </summary>
+    public string Bookmark => bookmarks.Current;
+
+    /// <summary>
+    /// Merges a <c>TerraScale-Bookmark</c> from another process into this database's tracked bookmark; every later request
+    /// observes it. Throws <see cref="ArgumentException"/> when <paramref name="bookmark"/> is not one TerraScale returned.
+    /// </summary>
+    public void ObserveBookmark(string bookmark) => bookmarks.Observe(bookmark, nameof(bookmark));
+
+    /// <summary>
+    /// Returns a handle to the same database, sharing its tracked bookmark, whose requests and sessions ask for
+    /// <paramref name="consistency"/>; null leaves it to the database's <c>defaultConsistency</c>.
+    /// </summary>
+    public TerraBaseSqlDatabase WithConsistency(TerraBaseConsistencyMode? consistency) => new(connection, path, bookmarks, consistency);
 
     /// <summary>Creates a live table view; each WatchAsync enumeration owns its connection and row set.</summary>
     public LiveShape Shape(string table, ShapeOptions? options = null) => new(connection, path, table, options ?? new());
 
-    /// <summary>Reads selected regions and writer-observed pull progress; a pull is not an application acknowledgement.</summary>
+    /// <summary>Reads each region's applied bookmark, lag and health as the answering region observes them; every region accepts writes.</summary>
     public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, path + "/regions", null,
             TerraBaseJsonContext.Wire.TerraBaseDatabaseRegions, null, cancellationToken).ConfigureAwait(false)).Value;
@@ -166,13 +210,27 @@ public sealed class TerraBaseSqlDatabase
     public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyDictionary<string, TerraBaseSqlValue> named, CancellationToken cancellationToken = default) =>
         ExecuteAsync(new TerraBaseSqlStatement(sql, Named: named), cancellationToken);
 
+    /// <summary>Runs one statement with positional arguments and per-call consistency or bookmark.</summary>
+    public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args, TerraBaseSqlRequestOptions options,
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(new TerraBaseSqlStatement(sql, args), options, cancellationToken);
+
     /// <summary>Runs one statement.</summary>
     public async Task<TerraBaseSqlStatementResult> ExecuteAsync(TerraBaseSqlStatement statement, CancellationToken cancellationToken = default) =>
         (await BatchAsync([statement], cancellationToken).ConfigureAwait(false))[0];
 
+    /// <summary>Runs one statement with per-call consistency or bookmark.</summary>
+    public async Task<TerraBaseSqlStatementResult> ExecuteAsync(TerraBaseSqlStatement statement, TerraBaseSqlRequestOptions options, CancellationToken cancellationToken = default) =>
+        (await BatchAsync([statement], options, cancellationToken).ConfigureAwait(false))[0];
+
     /// <summary>Runs one statement and returns its rows.</summary>
     public async Task<IReadOnlyList<TerraBaseSqlRecord>> QueryAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args = null, CancellationToken cancellationToken = default) =>
         (await ExecuteAsync(sql, args, cancellationToken).ConfigureAwait(false)).Rows;
+
+    /// <summary>Runs one statement with per-call consistency or bookmark and returns its rows.</summary>
+    public async Task<IReadOnlyList<TerraBaseSqlRecord>> QueryAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args, TerraBaseSqlRequestOptions options,
+        CancellationToken cancellationToken = default) =>
+        (await ExecuteAsync(sql, args, options, cancellationToken).ConfigureAwait(false)).Rows;
 
     /// <summary>Runs one statement with named arguments and returns its rows.</summary>
     public async Task<IReadOnlyList<TerraBaseSqlRecord>> QueryAsync(string sql, IReadOnlyDictionary<string, TerraBaseSqlValue> named, CancellationToken cancellationToken = default) =>
@@ -191,12 +249,31 @@ public sealed class TerraBaseSqlDatabase
     /// per statement in order. A refused statement rolls everything back; <see cref="TerraBaseSqlException.Statement"/>
     /// names it.
     /// </summary>
-    public async Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, CancellationToken cancellationToken = default) =>
+        BatchAsync(statements, NoOptions, cancellationToken);
+
+    /// <summary>
+    /// Runs 1 to 256 statements as one transaction like <see cref="BatchAsync(IReadOnlyList{TerraBaseSqlStatement}, CancellationToken)"/>,
+    /// with the consistency and bookmark of <paramref name="options"/>. A strong batch runs as one serializable 2-of-3
+    /// quorum transaction.
+    /// </summary>
+    public async Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, TerraBaseSqlRequestOptions options,
+        CancellationToken cancellationToken = default)
     {
         TerraBaseSqlStatement.Validate(statements);
+        ArgumentNullException.ThrowIfNull(options);
+        var bookmark = bookmarks.Outgoing(options.Bookmark);
+        var mode = TerraBaseConsistency.Format(options.Consistency ?? Consistency);
         var json = TerraBaseSqlJsonContext.Wire;
         var (response, status) = await connection.SendAsync(HttpMethod.Post, path + "/sql/execute",
-            TerraBaseConnection.Json(new TerraBaseSqlExecuteRequest(statements), json.TerraBaseSqlExecuteRequest), json.TerraBaseSqlExecuteResponse, null, cancellationToken).ConfigureAwait(false);
+            TerraBaseConnection.Json(new TerraBaseSqlExecuteRequest(statements), json.TerraBaseSqlExecuteRequest), json.TerraBaseSqlExecuteResponse,
+            headers =>
+            {
+                if (bookmark.Length > 0) headers.Add(TerraBaseConsistency.BookmarkHeader, bookmark);
+                if (mode is not null) headers.Add(TerraBaseConsistency.ConsistencyHeader, mode);
+            },
+            cancellationToken, observe: bookmarks.ObserveResponse).ConfigureAwait(false);
+        bookmarks.ObserveAnswer(response.Bookmark, status);
         return response.ToResults(statements.Count, status);
     }
 
@@ -209,10 +286,11 @@ public sealed class TerraBaseSqlDatabase
         connection.OpenStreamAsync(path + "/export", "text/plain", cancellationToken);
 
     /// <summary>
-    /// Opens a SQL WebSocket session for interactive transactions. The caller owns and disposes it. The upgrade goes
-    /// through the client's HttpClient and its handlers, with the same credential as REST; a client without a credential
-    /// opens it over HTTP/2 (extended CONNECT) like its REST requests.
+    /// Opens a SQL WebSocket session (<c>terrascale.sql.v2</c>) for interactive transactions. The caller owns and disposes it.
+    /// The upgrade goes through the client's HttpClient and its handlers, with the same credential as REST; a client without
+    /// a credential opens it over HTTP/2 (extended CONNECT) like its REST requests. The session asks for
+    /// <see cref="Consistency"/> and shares this database's tracked bookmark.
     /// </summary>
     public Task<TerraBaseSqlSession> ConnectAsync(CancellationToken cancellationToken = default) =>
-        TerraBaseSqlSession.ConnectAsync(connection, path + "/sql/ws", cancellationToken);
+        TerraBaseSqlSession.ConnectAsync(connection, path + "/sql/ws", bookmarks, Consistency, cancellationToken);
 }

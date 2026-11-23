@@ -1,10 +1,9 @@
-using NUlid;
-using NUlid.Rng;
+using System.Security.Cryptography;
 
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Generates plain uppercase entity ULIDs using cryptographic randomness and NUlid's monotonic generator.
+/// Generates plain uppercase entity ULIDs using cryptographic randomness and a monotonic random component.
 /// Reuse one instance per caller-owned service. Calls on that instance are thread-safe and strictly increasing,
 /// including within a millisecond; a backward clock uses the last observed timestamp until the clock catches up.
 /// Independent instances do not share ordering state. IDs are not authentication secrets.
@@ -18,10 +17,12 @@ namespace TerraScale.DotNet;
 /// </remarks>
 public sealed class TerraScaleIdGenerator
 {
-    private readonly object gate = new();
-    private readonly MonotonicUlidRng random = new(new CSUlidRng());
+    private const int RandomnessBytes = 10;
+
+    private readonly Lock gate = new();
+    private readonly byte[] randomness = new byte[RandomnessBytes];
     private readonly TimeProvider timeProvider;
-    private DateTimeOffset? lastTime;
+    private long? lastMilliseconds;
 
     /// <summary>Creates an instance-owned generator using the system UTC clock.</summary>
     public TerraScaleIdGenerator() : this(TimeProvider.System) { }
@@ -34,15 +35,33 @@ public sealed class TerraScaleIdGenerator
     {
         lock (gate)
         {
-            var now = timeProvider.GetUtcNow();
-            if (lastTime is { } previous && now < previous)
+            var now = timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+            if (lastMilliseconds is { } previous && now <= previous)
             {
                 now = previous;
+                Increment(randomness);
+            }
+            else
+            {
+                RandomNumberGenerator.Fill(randomness);
             }
 
-            var id = Ulid.NewUlid(now, random).ToString();
-            lastTime = now;
-            return id;
+            lastMilliseconds = now;
+            return Ulid.NewUlid(DateTimeOffset.FromUnixTimeMilliseconds(now), randomness).ToString();
+        }
+    }
+
+    private static void Increment(Span<byte> value)
+    {
+        if (!value.ContainsAnyExcept(byte.MaxValue))
+        {
+            throw new OverflowException("The ULID random component is exhausted within this millisecond.");
+        }
+
+        var index = value.Length - 1;
+        while (++value[index] == 0)
+        {
+            index--;
         }
     }
 }

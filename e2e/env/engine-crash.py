@@ -5,10 +5,12 @@ import hashlib
 import json
 import os
 import pathlib
+import platform
 import secrets
 import shutil
 import signal
 import socket
+import statistics
 import struct
 import subprocess
 import sys
@@ -36,17 +38,20 @@ build = (
     pathlib.Path(os.environ["E2E_BUILD"]) / "terrabase"
     if "E2E_BUILD" in os.environ else root / "src/TerraBase/bin/Release/net11.0"
 )
+native = build / "runtimes" / ("linux-arm64" if platform.machine() == "aarch64" else "linux-x64") / "native"
 baseline = pathlib.Path(sys.argv[1]).resolve()
 state = pathlib.Path(tempfile.mkdtemp(prefix="engine-crash-"))
 capacity = shutil.disk_usage(state)
 assert capacity.used + 24_000_000_000 < capacity.total * 0.8
-_ports = e2e_ports.Hold({"client": 0, "internal": 0, "metrics": 0, "postgres": 0})
-ports = [_ports.ports[name] for name in ("client", "internal", "metrics", "postgres")]
+_ports = e2e_ports.Hold({"client": 0, "internal": 0, "metrics": 0, "postgres": 0, "quic": 0})
+ports = [_ports.ports[name] for name in ("client", "internal", "metrics", "postgres", "quic")]
 peer = secrets.token_hex(32)
 headers = state / "headers"
 headers.write_text("X-TerraBase-Peer-Credential: " + peer + "\n")
 headers.chmod(0o600)
 user = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+master = base64.b64encode(secrets.token_bytes(32)).decode()
+system_id = "0" * 26
 env = {
     **{
         key: value
@@ -62,25 +67,20 @@ env = {
     "TERRABASE_PEER_SECRET": peer,
     "DOTNET_STARTUP_HOOKS": str(state / "hook.dll"),
     "ENGINE_CRASH_SOCKET": str(state / "hook.sock"),
-    "TERRABASE_MASTER_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
+    "TERRABASE_MASTER_KEY": master,
     "TERRABASE_PORT": str(ports[0]),
     "TERRABASE_INTERNAL_PORT": str(ports[1]),
     "TERRABASE_METRICS_PORT": str(ports[2]),
     "TERRABASE_POSTGRES_PORT": str(ports[3]),
+    "TERRABASE_QUIC_PORT": str(ports[4]),
 }
 node = None
 generation = 0
 reader = None
-idle_observed = []
-idle_drained = threading.Event()
-proof_finished = threading.Condition()
-proof_events = 0
 rollback_count = 0
 proof_held = threading.Event()
-proof_reads = 0
-publication_late = threading.Event()
-fault_waiting = threading.Event()
-proof_failed = []
+checkpoint_held = threading.Event()
+crash_reached = []
 
 
 def request(method, path, body=None, actor=True):
@@ -112,13 +112,18 @@ def request(method, path, body=None, actor=True):
     return json.loads(text) if text else None
 
 
-def start(point=None, failure=None, binary=None, directory=None, proof_target=None, integrity=False, checkpoint_target=None):
-    global node, generation, reader, proof_events, proof_reads
+def start(point=None, target=None, failure=None, binary=None, directory=None, proof_target=None, integrity=False,
+          checkpoint_target=None, keys=None):
+    global node, generation, reader
     generation += 1
-    proof_reads = 0
     current = dict(env)
     if directory is not None:
         current["TERRABASE_DATA_DIRECTORY"] = str(directory) + "/"
+    if binary is not None:
+        del current["DOTNET_STARTUP_HOOKS"]
+    if keys is not None:
+        del current["TERRABASE_MASTER_KEY"]
+        current["TERRABASE_MASTER_KEYS"] = json.dumps(keys)
     if proof_target:
         current.update(
             LD_PRELOAD=str(state / "crash.so"),
@@ -137,7 +142,7 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
             ENGINE_INTEGRITY_CONTROL=str(state / "integrity-control"),
         )
     if point:
-        current.update(LD_PRELOAD=str(state / "crash.so"), ENGINE_CRASH_POINT=point)
+        current.update(LD_PRELOAD=str(state / "crash.so"), ENGINE_CRASH_POINT=point, ENGINE_CRASH_TARGET=target or "")
     node = subprocess.Popen(
         [
             "nice", "-n", "19", env["DOTNET_ROOT"] + "/dotnet",
@@ -153,38 +158,18 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
     process = node
 
     def drain():
-        global proof_events, proof_reads
         with log.open("wb") as output:
             while line := process.stdout.readline():
                 output.write(line)
                 output.flush()
-                if (
-                    b"Database restart proof:" in line
-                    or b"recovery proof is incomplete" in line
-                    or b"pending database recovery proof completed" in line
-                ):
-                    with proof_finished:
-                        proof_events += 1
-                        proof_finished.notify_all()
-                if b"Idle change history retained" in line:
-                    retained_rows = json.loads(line.decode().split(">", 1)[1])["RetainedRows"]
-                    idle_observed.append(retained_rows)
-                    if retained_rows < 32:
-                        idle_drained.set()
                 if b"open latency:" in line:
                     print(line.decode().strip(), flush=True)
-                if b"proof tenant file read" in line:
-                    proof_reads += 1
-                if b"still waiting for a modification in flight" in line:
-                    publication_late.set()
-                if b"A copy fault waits for storage capacity" in line:
-                    fault_waiting.set()
-                if b"recovery proof failed and will retry" in line or b"Recovery proof retries stopped;" in line:
-                    with proof_finished:
-                        proof_failed.append(line.decode().strip())
-                        proof_finished.notify_all()
-                if b"proof file claim held" in line:
+                if b"engine crash point" in line:
+                    crash_reached.append(line.decode().strip())
+                if b"proof file open held" in line:
                     proof_held.set()
+                if b"native checkpoint backfill held" in line:
+                    checkpoint_held.set()
                 if b"engine crash hook ready" in line:
                     hook_ready.set()
                 if b"Application started" in line:
@@ -196,12 +181,15 @@ def start(point=None, failure=None, binary=None, directory=None, proof_target=No
     reader.start()
     if ready.wait(600):
         if failure is not None:
-            node.wait(timeout=15)
+            try:
+                node.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                raise AssertionError("startup did not refuse: " + log.read_text()[-2000:]) from None
             reader.join(timeout=5)
             assert failure in log.read_text(), log.read_text()[-5000:]
             assert node.returncode != 0
             return
-        if hook_ready.wait(10) and node.poll() is None:
+        if (binary is not None or hook_ready.wait(10)) and node.poll() is None:
             return
     raise RuntimeError("node did not start: " + log.read_text()[-5000:])
 
@@ -233,40 +221,41 @@ def end(hard=False, rollback=True):
                 shutil.rmtree(snapshot)
 
 
-def sql(project, database, statements):
+def sql(database_id, statements):
     return request(
         "POST",
-        f"/v1/projects/{project}/databases/{database}/sql/execute",
+        f"/v1/projects/{project}/databases/{database_id}/sql/execute",
         {"statements": [{"sql": statement} for statement in statements]},
         actor=False,
     )
 
 
-def crash_request(point, method, path, body=None):
-    start(point)
+def rows(database_id, statement):
+    return sql(database_id, [statement])["results"][0]["rows"]
+
+
+def create(name):
+    return request("POST", f"/v1/projects/{project}/databases", {"name": name})["id"]
+
+
+def directory(database_id):
+    return state / "data" / "databases" / database_id
+
+
+def crash_request(point, action, target=None):
+    crash_reached.clear()
+    start(point, target=target)
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        pending = (
-            executor.submit(hook, "rewrite", database)
-            if point.startswith("rewrite")
-            else executor.submit(request, method, path, body)
-        )
+        pending = executor.submit(action)
 
         def expired(signum, frame):
-            raise TimeoutError("the node did not reach the crash boundary")
+            raise TimeoutError("the node did not reach the " + point + " boundary")
 
         previous = signal.signal(signal.SIGALRM, expired)
-        signal.alarm(40)
+        signal.alarm(60)
         try:
             _, status = os.waitpid(node.pid, os.WUNTRACED)
             assert os.WIFSTOPPED(status), "node exited before reaching the boundary"
-            keys = list((state / "data" / organization / project).glob("*.db.key"))
-            assert len(keys) == 1
-            assert pathlib.Path(str(keys[0])[:-4]).exists() == point.startswith("rewrite")
-            print(
-                point + ": main " + ("present" if point.startswith("rewrite") else "absent")
-                + ", key present at filesystem boundary",
-                flush=True,
-            )
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
@@ -275,48 +264,59 @@ def crash_request(point, method, path, body=None):
             pending.result(timeout=5)
             raise AssertionError("interrupted request unexpectedly returned success")
         except RuntimeError as error:
-            assert str(error).startswith(("curl ", "hook interrupted")), str(error)
-    print("kill -KILL node at " + point + ": exit -9", flush=True)
+            assert str(error).startswith("curl "), str(error)
+    assert crash_reached, "the crash point did not report its boundary"
+    print("kill -KILL node at " + point + ": exit -9 (" + crash_reached[-1] + ")", flush=True)
 
 
-def hook(operation, database_id, count=None):
+def hook(operation, database_id, count=0):
     with socket.socket(socket.AF_UNIX) as client:
-        client.settimeout(600)
+        client.settimeout(1800)
         client.connect(env["ENGINE_CRASH_SOCKET"])
-        message = f"{operation} {organization} {project} {database_id}" + (f" {count}" if count is not None else "")
-        client.sendall((message + "\n").encode())
-        result = client.recv(65536).decode().strip()
-        if not result:
-            raise RuntimeError("hook interrupted by process exit")
-        if operation in ("ledger", "unowned-ledger", "pending", "refused"):
-            return [int(value) for value in result.split()]
-        if operation == "idle-pass":
-            return result
-        assert result == "ok", result
+        client.sendall(f"{operation} {database_id} {count}\n".encode())
+        result = b""
+        while chunk := client.recv(65536):
+            result += chunk
+    answer = result.decode().strip()
+    if not answer:
+        raise RuntimeError("hook interrupted by process exit")
+    assert not answer.startswith("error"), answer
+    if operation in ("log", "check"):
+        return [float(value) for value in answer.split()]
+    if operation == "catalog":
+        return answer.split()
+    return answer
 
 
 def files(database_id):
-    path = state / "data" / organization / project
     return {
         file.name: (file.stat().st_size, hashlib.sha256(file.read_bytes()).hexdigest())
-        for file in path.glob(database_id + ".db*")
+        for file in directory(database_id).iterdir() if file.is_file() and not file.name.endswith("-shm")
     }
 
 
-def gauge(name):
-    metrics = subprocess.check_output(["curl", "-fsS", f"http://127.0.0.1:{ports[2]}/metrics"], text=True)
-    return sum(float(line.rsplit(" ", 1)[1]) for line in metrics.splitlines() if line.startswith((name + " ", name + "{")))
+def consistent(database_id):
+    watermark, last, entries = hook("log", database_id)
+    assert watermark == last, ("commit log and database disagree", watermark, last)
+    return int(watermark), int(entries)
 
 
 def unavailable(database_id, code):
     try:
-        sql(project, database_id, ["SELECT 1;"])
+        sql(database_id, ["SELECT 1;"])
         raise AssertionError("HTTP read served an unavailable database")
     except RuntimeError as error:
-        assert "503" in str(error) and code in str(error), str(error)
+        assert str(error).startswith("503 ") and code in str(error), str(error)
     with Postgres(database_id) as client:
         response = client.query("SELECT 1;")
-        assert response["C"] == "57P03" and code in response["M"], response
+        assert response["C"] == "57P03", response
+
+
+def healthy(database_id):
+    assert rows(database_id, "SELECT 1;") == [[1]]
+    with Postgres(database_id) as client:
+        assert client.query("SELECT 1;") == {}
+    assert request("GET", "/readyz", actor=False)["status"] == "ok"
 
 
 class Postgres:
@@ -372,1055 +372,471 @@ class Postgres:
         self.socket.close()
 
 
-def wait_for_proofs():
-    deadline = time.monotonic() + 90
-    with proof_finished:
-        while hook("pending", "*") != [0]:
-            remaining = deadline - time.monotonic()
-            assert remaining > 0, "proofs did not finish"
-            proof_finished.wait(remaining)
+def release(fifo):
+    descriptor = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+    try:
+        os.write(descriptor, b"x")
+    finally:
+        os.close(descriptor)
 
 
-def recovered(identities):
-    wait_for_proofs()
-    for identity in identities:
-        assert hook("ledger", identity) == [0, 0]
-        assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-        with Postgres(identity) as client:
-            assert client.query("SELECT 1;") == {}
-
-
-def crash_recording(identity, operation="fault"):
-    hook("arm-recording", identity)
-    crash_hook(operation, identity)
-
-
-def crash_hook(operation, identity):
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        pending = executor.submit(hook, operation, identity)
-
-        def expired(signum, frame):
-            raise TimeoutError(operation + " did not reach its stop boundary")
-
-        previous = signal.signal(signal.SIGALRM, expired)
-        signal.alarm(40)
-        try:
-            _, status = os.waitpid(node.pid, os.WUNTRACED)
-            assert os.WIFSTOPPED(status), "node exited before the " + operation + " stop boundary"
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, previous)
-            end(hard=True, rollback=False)
-        try:
-            pending.result(timeout=5)
-            raise AssertionError(operation + " returned before its killed boundary")
-        except RuntimeError as error:
-            assert str(error).startswith("hook interrupted"), str(error)
+def memory():
+    status = dict(line.split(":", 1) for line in pathlib.Path(f"/proc/{node.pid}/status").read_text().splitlines())
+    return int(status["VmRSS"].split()[0]) // 1024, int(status["VmHWM"].split()[0]) // 1024
 
 
 @case("latency")
 def latency_case():
     start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "open-latency"})["id"]
-    for _ in range(3):
-        hook("latency", identity)
+    identity = create("open-latency")
     end()
+    for _ in range(3):
+        start()
+        hook("latency", identity)
+        end()
 
 
 @case("native")
 def native_case():
     start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "native-barrier"})["id"]
+    identity = create("native-checkpoint")
+    sql(identity, ["CREATE TABLE payload (id INTEGER PRIMARY KEY, body BLOB);"])
     end()
-    release = state / "checkpoint-control.release"
-    os.mkfifo(release)
-    start(checkpoint_target=identity + ".db")
-    sql(project, identity, [
-        "CREATE TABLE native_evidence(id INTEGER PRIMARY KEY);", "INSERT INTO native_evidence VALUES (1);",
-    ])
-    hook("native-race", identity)
-    assert hook("ledger", identity) == [1, 0]
-    unavailable(identity, "copy_faulted")
-    end()
-    release.unlink()
-    print("native checkpoint barrier: publication waited for backfill; no later mutation", flush=True)
+    fifo = state / "checkpoint-control.release"
+    os.mkfifo(fifo)
+    checkpoint_held.clear()
+    start(checkpoint_target="/" + identity + ".db")
+    (state / "checkpoint-control").write_text("armed")
+    acknowledged = []
 
+    def fill():
+        for _ in range(64):
+            sql(identity, ["INSERT INTO payload (body) VALUES (randomblob(1048576));"])
+            acknowledged.append(1)
 
-@case("native-timeout")
-def native_timeout_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "native-deadline"})["id"]
-    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "native-healthy"})["id"]
-    end()
-    release = state / "checkpoint-control.release"
-    os.mkfifo(release)
-    publication_late.clear()
-    start(checkpoint_target=identity + ".db")
-    sql(project, identity, [
-        "CREATE TABLE native_deadline(id INTEGER PRIMARY KEY);", "INSERT INTO native_deadline VALUES (1);",
-    ])
-    began = time.perf_counter()
-    hook("native-race", identity, "timeout")
-    assert hook("ledger", identity) == [0, 1]
-    unavailable(identity, "copy_faulted")
-    assert publication_late.wait(60)
-    elapsed = time.perf_counter() - began
-    assert 34 <= elapsed < 45, elapsed
-    assert node.poll() is None
-    assert gauge("terrabase_storage_fault_publication_late_total") == 1
-    request("GET", "/readyz", actor=False)
-    assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-    with Postgres(healthy) as client:
-        assert client.query("SELECT 1;") == {}
-    assert hook("ledger", identity) == [0, 1]
-    unavailable(identity, "copy_faulted")
-    end(hard=True, rollback=False)
-    release.unlink()
-    start()
-    wait_for_proofs()
-    assert hook("ledger", identity) == [1, 0]
-    unavailable(identity, "copy_faulted")
-    assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-    end()
-    print(
-        f"stalled native checkpoint: node kept serving past the bound ({elapsed:.3f}s); intent durable during the wait; "
-        "killed during the wait, the restart refused the copy with a permanent fault", flush=True,
-    )
-
-
-@case("barrier-no-intent")
-def barrier_no_intent_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "barrier-no-intent"})["id"]
-    hook("check", identity)
-    hook("hold-fault", identity)
-    assert hook("ledger", identity) == [0, 1]
-    unavailable(identity, "copy_faulted")
-    end(hard=True, rollback=False)
-    start()
-    wait_for_proofs()
-    assert hook("ledger", identity) == [1, 0]
-    unavailable(identity, "copy_faulted")
-    end()
-    print("barrier held without a write intent at detection, then kill: restart refused the copy", flush=True)
-
-
-@case("session-open-kill")
-def session_open_kill_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "session-open"})["id"]
-    end()
-    control = state / "proof-control"
-    release = state / "proof-control.release"
-    os.mkfifo(release)
-    start(proof_target=identity + ".db")
-    hook("check", identity)
-    hook("close-idle", identity)
-    control.write_text("keyhold")
-    proof_held.clear()
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        reading = executor.submit(sql, project, identity, ["SELECT 1;"])
-        assert proof_held.wait(30)
-        hook("fault-recorded", identity)
-        assert hook("ledger", identity) == [0, 1], hook("ledger", identity)
-        assert not reading.done()
-        end(hard=True, rollback=False)
-    control.unlink()
-    release.unlink()
-    start()
-    wait_for_proofs()
-    assert hook("ledger", identity) == [1, 0]
-    unavailable(identity, "copy_faulted")
-    end()
-    print("real session open held the barrier inside the native open, then kill: restart refused the copy", flush=True)
-
-
-@case("delete-queued")
-def delete_queued_case():
-    for variant in ("queued", "busy"):
-        start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "delete-" + variant})["id"]
-        faulted = gauge("terrabase_storage_faulted_databases")
-        hook("delete-" + variant, identity)
-        assert hook("ledger", identity) == [0, 0], hook("ledger", identity)
-        assert gauge("terrabase_storage_faulted_databases") == faulted
-        hook("finish-delete", identity)
-        assert hook("unowned-ledger", identity) == [0, 0], hook("unowned-ledger", identity)
-        assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-        with Postgres(identity) as client:
-            assert client.query("SELECT 1;") == {}
-        end()
-        print(
-            f"fault record after a deletion forgot ({variant}): no fault row, gauge unchanged; same-id creation healthy",
-            flush=True,
-        )
-
-
-@case("busy-retry")
-def busy_retry_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "busy-retry"})["id"]
-    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "busy-healthy"})["id"]
-    hook("check", identity)
-    hook("check", healthy)
-    fault_waiting.clear()
-    hook("hold-writer", "journal")
-    hook("fault-async", identity)
-    assert fault_waiting.wait(90)
-    unavailable(identity, "copy_faulted")
-    request("GET", "/readyz", actor=False)
-    assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-    with Postgres(healthy) as client:
-        assert client.query("SELECT 1;") == {}
-    assert hook("ledger", identity) == [0, 0]
-    hook("release-writer", "journal")
-    hook("published", identity)
-    assert hook("ledger", identity) == [1, 0]
-    assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0]
-    end()
-    print("busy intent store: copy refused, node and other copies served; released writer made the fault durable", flush=True)
-
-
-@case("shutdown-busy")
-def shutdown_busy_case():
-    for kind in ("write", "read"):
-        start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "shutdown-busy-" + kind})["id"]
-        hook("check", identity)
-        if kind == "write":
-            hook("intent", identity)
-        fault_waiting.clear()
-        hook("hold-writer", "journal")
-        hook("fault-async", identity)
-        assert fault_waiting.wait(90)
-        hook("stop-retries", "*")
-        end()
-        start()
-        wait_for_proofs()
-        assert hook("ledger", identity) == [1, 0], hook("ledger", identity)
-        unavailable(identity, "copy_faulted")
-        end()
-        print(f"clean shutdown during a busy fault retry (damage found by a {kind}): restart refused the copy", flush=True)
-
-
-@case("proof-isolation")
-def proof_isolation_case():
-    start()
-    waiting = request("POST", f"/v1/projects/{project}/databases", {"name": "proof-isolated"})["id"]
-    hook("intent", waiting)
-    end(hard=True, rollback=False)
-    key = state / "data" / organization / project / (waiting + ".db.key")
-    key.chmod(0)
-    try:
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 1
-        proof_failed.clear()
-        hook("poison-proof", "*")
-        with proof_finished:
-            assert proof_finished.wait_for(lambda: proof_failed, 40)
-        hook("unpoison-proof", "*")
-    finally:
-        key.chmod(0o600)
-    wait_for_proofs()
-    hook("check", waiting)
-    end()
-    print(
-        "one proof retry failed unclassified (" + proof_failed[0][-80:] + "); the other pending proof still completed",
-        flush=True,
-    )
-
-
-@case("orphan-key")
-def orphan_key_case():
-    start()
-    existing = request("POST", f"/v1/projects/{project}/databases", {"name": "orphan-neighbour"})["id"]
-    sql(project, existing, ["CREATE TABLE kept(id INTEGER PRIMARY KEY);", "INSERT INTO kept VALUES (1);"])
-    end()
-    directory = state / "data" / organization / project
-    orphan = "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(26))
-    orphan = "0" + orphan[1:]
-    kept = (directory / (existing + ".db.key")).read_bytes()
-    (directory / (orphan + ".db.key")).write_bytes(kept)
-    start()
-    assert not (directory / (orphan + ".db.key")).exists()
-    retained = list(directory.glob("." + orphan + ".*.retained-key"))
-    assert len(retained) == 1 and retained[0].read_bytes() == kept
-    assert gauge("terrabase_storage_retained_keys") == len(list((state / "data").rglob(".*.retained-key")))
-    assert (directory / (existing + ".db.key")).read_bytes() == kept
-    hook("create", orphan)
-    assert (directory / (orphan + ".db")).exists()
-    assert (directory / (orphan + ".db.key")).read_bytes() != kept
-    assert sql(project, existing, ["SELECT id FROM kept;"])["results"][0]["rows"] == [[1]]
-    end()
-    start()
-    assert list(directory.glob("." + orphan + ".*.retained-key")) == retained and retained[0].read_bytes() == kept
-    assert (directory / (orphan + ".db")).exists()
-    end()
-    print(
-        "orphan key without main, log or creation retained at start as " + retained[0].name
-        + " with identical bytes and kept across restart; same-id creation succeeded; existing key kept",
-        flush=True,
-    )
-
-
-@case("delete-race")
-def delete_race_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "delete-race"})["id"]
-    hook("delete-race", identity)
-    assert hook("ledger", identity) == [0, 0]
-    assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-    with Postgres(identity) as client:
-        assert client.query("SELECT 1;") == {}
-    end()
-    print("deletion while fault publication waited: no fault row; same-key creation healthy", flush=True)
-
-
-@case("delete-forget")
-def delete_forget_case():
-    for point in ("delete", "deleting"):
-        start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "forget-" + point})["id"]
-        hook("fault", identity)
-        assert hook("ledger", identity) == [1, 0]
-        end()
-        start(point)
-        crash_hook("delete", identity)
-        start()
-        wait_for_proofs()
-        assert not list((state / "data" / organization / project).glob(identity + ".db*"))
-        assert hook("ledger", identity) == [0, 0]
-        assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0]
-        end()
-        print(f"kill at the {point} boundary of a deletion: next start ended deleted and forgotten", flush=True)
-
-
-@case("memory")
-def memory_case():
-    start()
-    waiting = request("POST", f"/v1/projects/{project}/databases", {"name": "memory-pending"})["id"]
-    faulted = request("POST", f"/v1/projects/{project}/databases", {"name": "memory-fault"})["id"]
-    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "memory-healthy"})["id"]
-    hook("intent", waiting)
-    end(hard=True, rollback=False)
-    key = state / "data" / organization / project / (waiting + ".db.key")
-    key.chmod(0)
-    try:
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 1
-        hook("check", healthy)
-        hook("check", faulted)
-        hook("saturate", "*")
-        with proof_finished:
-            before = proof_events
-        hook("fault", faulted)
-        with proof_finished:
-            assert proof_finished.wait_for(lambda: proof_events > before, 40)
-        request("GET", "/readyz", actor=False)
-        assert hook("refused", healthy) == [0]
-        assert hook("ledger", faulted) == [1, 0]
-        assert hook("ledger", waiting) == [0, 1]
-        assert gauge("terrabase_storage_proof_pending") == 1
-        hook("unsaturate", "*")
-        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-        with Postgres(healthy) as client:
-            assert client.query("SELECT 1;") == {}
-        unavailable(faulted, "copy_faulted")
-        unavailable(waiting, "recovery_pending")
-    finally:
-        key.chmod(0o600)
-    wait_for_proofs()
-    hook("check", waiting)
-    end()
-    print(
-        "memory budget saturated by tenants: fault recorded and pending proof retried; node ready, "
-        "healthy copy admitted, affected copies refused", flush=True,
-    )
-
-
-@case("idle-cost")
-def idle_cost_case():
-    start()
-    hook("many", "*", 1000)
-    end()
-    start()
-
-    def memory():
-        status = dict(line.split(":", 1) for line in pathlib.Path(f"/proc/{node.pid}/status").read_text().splitlines())
-        return int(status["VmRSS"].split()[0]) // 1024, int(status["VmHWM"].split()[0]) // 1024
-
-    resident, _ = memory()
-    for label in ("first pass after restart", "steady pass"):
-        result = hook("idle-pass", "*")
-        current, peak = memory()
-        print(
-            f"idle pass with 1000 idle databases, {label}: {result}; resident {current} MiB "
-            f"(+{current - resident} MiB since start), peak {peak} MiB", flush=True,
-        )
-    end()
-
-
-@case("recreate")
-def recreate_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "ordinary-recreate"})["id"]
-    hook("fault", identity)
-    hook("recreate", identity)
-    assert hook("ledger", identity) == [0, 0]
-    assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-    with Postgres(identity) as client:
-        assert client.query("SELECT 1;") == {}
-    end()
-    print(
-        "ordinary explicit deletion: new creation at the same path healthy over HTTP and PostgreSQL immediately", flush=True,
-    )
-
-
-@case("opened-key")
-def opened_key_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "opened-key"})["id"]
-    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy-key"})["id"]
-    hook("check", identity)
-    key = state / "data" / organization / project / (identity + ".db.key")
-    key.chmod(0)
-    try:
-        hook("fault", identity)
-        assert hook("ledger", identity) == [1, 0]
-        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-        with Postgres(healthy) as client:
-            assert client.query("SELECT 1;") == {}
-        assert request("GET", "/readyz", actor=False) is not None
-    finally:
-        key.chmod(0o600)
-    hook("recreate", identity)
-    assert hook("ledger", identity) == [0, 0]
-    assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-    with Postgres(identity) as client:
-        assert client.query("SELECT 1;") == {}
-    end()
-    print(
-        "opened unreadable key: fault persisted, healthy HTTP/PostgreSQL and readiness served; "
-        "explicit deletion and same-location recreation served immediately", flush=True,
-    )
-
-
-@case("key-retry")
-def key_retry_case():
-    global proof_reads
-    start(integrity=True)
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "key-retry"})["id"]
-    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "key-retry-healthy"})["id"]
-    lease = request("POST", f"/v1/projects/{project}/databases", {"name": "key-retry-lease"})["id"]
-    hook("first-open", identity, 11)
-    end(hard=True, rollback=False)
-    control = state / "proof-control"
-    control.write_text("io")
-    start(proof_target=identity + ".db.key")
-    assert hook("ledger", identity) == [0, 1]
-    release = pathlib.Path(str(control) + ".release")
-    os.mkfifo(release)
-    proof_held.clear()
-    proof_reads = 0
-    control.write_text("keyhold")
-    assert proof_held.wait(15), "the fault binding retry did not enter its key read"
-    try:
+        writing = executor.submit(fill)
+        assert checkpoint_held.wait(120), "no WAL checkpoint reached the main file"
         began = time.perf_counter()
-        hook("migration-lease", lease)
-        hook("fault", healthy)
+        healthy(database)
+        seen = rows(identity, "SELECT count(*) FROM payload;")[0][0]
+        assert seen in (len(acknowledged), len(acknowledged) + 1), (seen, len(acknowledged))
         elapsed = time.perf_counter() - began
-        assert elapsed < 5, elapsed
-        assert hook("ledger", healthy) == [1, 0]
-    finally:
-        control.write_text("pass")
-        descriptor = os.open(release, os.O_WRONLY | os.O_NONBLOCK)
-        os.write(descriptor, b"x")
-        os.close(descriptor)
-    wait_for_proofs()
-    assert proof_reads == 1, ("creation evidence was read again during commit", proof_reads)
-    assert hook("ledger", identity) == [1, 0]
-    control.unlink()
-    release.unlink()
+        assert not writing.done()
+        end(hard=True)
+        try:
+            writing.result(timeout=5)
+            raise AssertionError("the write held in its checkpoint returned success")
+        except RuntimeError as error:
+            assert str(error).startswith("curl "), str(error)
+    fifo.unlink()
+    start()
+    assert rows(identity, "SELECT count(*) FROM payload;") == [[len(acknowledged) + 1]]
+    consistent(identity)
     end()
     print(
-        f"held fault-binding key: independent fault and migration lease {elapsed:.3f}s; "
-        "exactly one evidence read outside commit", flush=True,
-    )
-
-
-@case("first-open")
-def first_open_case():
-    for code in (10, 11, 26):
-        start(integrity=True)
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "first-open-" + str(code)})["id"]
-        hook("first-open", identity, code)
-        assert hook("ledger", identity) == [0, 1]
-        before = files(identity)
-        unavailable(identity, "copy_faulted")
-        hook("migration-refused", identity)
-        assert hook("ledger", identity) == [0, 1]
-        assert files(identity) == before
-        end(hard=True, rollback=False)
-        start()
-        unavailable(identity, "copy_faulted")
-        hook("migration-refused", identity)
-        assert hook("ledger", identity) == [1, 0]
-        assert files(identity) == before
-        healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy-after-" + str(code)})["id"]
-        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-        assert request("GET", "/readyz", actor=False) is not None
-        end()
-        print(
-            f"first session {code}: durable identity-free marker refused reopen, migration and overwrite; "
-            "permanent after restart",
-            flush=True,
-        )
-
-
-@case("creation")
-def creation_case():
-    start(integrity=True)
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "creation-bound"})["id"]
-    replacement = request("POST", f"/v1/projects/{project}/databases", {"name": "different-creation"})["id"]
-    hook("first-open", identity, 11)
-    end()
-    directory = state / "data" / organization / project
-    for file in directory.glob(identity + ".db*"):
-        file.unlink()
-    for suffix in ("", ".key", "-wal"):
-        source = directory / (replacement + ".db" + suffix)
-        if source.exists():
-            shutil.copyfile(source, directory / (identity + ".db" + suffix))
-    before = files(identity)
-    start()
-    unavailable(identity, "recovery_pending")
-    assert hook("ledger", identity) == [0, 1], "the old intent faulted a different creation"
-    hook("migration-refused", identity)
-    assert files(identity) == before
-    end()
-    start()
-    assert hook("ledger", identity) == [0, 1]
-    assert files(identity) == before
-    request("DELETE", f"/v1/projects/{project}/databases/{identity}")
-    assert hook("ledger", identity) == [0, 0]
-    end()
-    print(
-        "different creation at same location: no inherited permanent fault; intent retained until explicit deletion",
+        f"native checkpoint held inside the main-file backfill after {len(acknowledged)} acknowledged MiB rows: other copy, "
+        f"PostgreSQL and readiness served and the same copy read in {elapsed:.3f}s; kill during the backfill, rollback "
+        "startup ready, restart served every acknowledged row plus the committed in-flight row; commit log = watermark",
         flush=True,
     )
-
-
-@case("checkpoints")
-def checkpoints_case():
-    for kind in ("eviction", "close"):
-        start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": kind + "-race"})["id"]
-        sql(project, identity, ["CREATE TABLE evidence(id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
-        hook(kind + "-race", identity)
-        before = files(identity)
-        unavailable(identity, "copy_faulted")
-        end()
-        assert files(identity) == before
-        print(kind + " queued checkpoint refused after concurrent fault; WAL byte-identical including close", flush=True)
 
 
 @case("independent")
 def independent_case():
     start()
-    copies = [
-        request("POST", f"/v1/projects/{project}/databases", {"name": "independent-" + str(index)})["id"]
-        for index in range(3)
-    ]
-    for identity in copies[:2]:
-        hook("intent", identity)
-    end(hard=True, rollback=False)
+    held = create("held-open")
+    other = create("independent-open")
+    for identity in (held, other):
+        sql(identity, ["CREATE TABLE evidence (id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
+    end()
     control = state / "proof-control"
-    control.write_text("io")
-    second_key = state / "data" / organization / project / (copies[1] + ".db.key")
-    second_key.chmod(0)
-    start(proof_target=copies[0] + ".db")
-    assert gauge("terrabase_storage_proof_pending") == 2
-    assert request("GET", "/readyz", actor=False) is not None
-    release = pathlib.Path(str(control) + ".release")
-    os.mkfifo(release)
+    fifo = state / "proof-control.release"
+    os.mkfifo(fifo)
     proof_held.clear()
+    start(proof_target="/" + held + ".db")
     control.write_text("hold")
-    assert proof_held.wait(15), "the background proof did not acquire its copy claim"
-    try:
-        second_key.chmod(0o600)
-        deadline = time.monotonic() + 15
-        with proof_finished:
-            while hook("ledger", copies[1]) != [0, 0]:
-                remaining = deadline - time.monotonic()
-                assert remaining > 0, "another proof waited behind the held copy"
-                proof_finished.wait(remaining)
-        recorded = time.perf_counter()
-        hook("fault", copies[2])
-        elapsed = time.perf_counter() - recorded
-        assert elapsed < 5, elapsed
-        assert hook("ledger", copies[2]) == [1, 0]
-        assert hook("ledger", copies[0]) == [0, 1]
-        unavailable(copies[0], "recovery_pending")
-        assert request("GET", "/readyz", actor=False) is not None
-        print(
-            f"held throwing copy: other proof completed, readiness stayed ready, third fault recorded in {elapsed:.3f}s",
-            flush=True,
-        )
-    finally:
-        control.write_text("io")
-        descriptor = os.open(release, os.O_WRONLY | os.O_NONBLOCK)
+    def served():
+        assert rows(other, "SELECT id FROM evidence;") == [[1]]
+        with Postgres(other) as client:
+            assert client.query("SELECT 1;") == {}
+        assert request("GET", "/readyz", actor=False)["status"] == "ok"
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        reading = executor.submit(rows, held, "SELECT id FROM evidence;")
         try:
-            os.write(descriptor, b"x")
+            assert proof_held.wait(30), "the held copy did not enter its native open"
+            began = time.perf_counter()
+            serving = executor.submit(served)
+            try:
+                serving.result(timeout=5)
+            except concurrent.futures.TimeoutError:
+                raise AssertionError("another copy's open waited behind the held native open") from None
+            elapsed = time.perf_counter() - began
+            assert not reading.done()
         finally:
-            os.close(descriptor)
-        second_key.chmod(0o600)
+            control.write_text("pass")
+            release(fifo)
+        assert reading.result(timeout=35) == [[1]]
     control.unlink()
-    recovered(copies[:2])
-    end()
-
-
-@case("migration")
-def migration_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "migration-refused"})["id"]
-    hook("fault", identity)
-    end()
-    before = files(identity)
-    start()
-    hook("migration-refused", identity)
-    unavailable(identity, "copy_faulted")
-    assert files(identity) == before
-    end()
-    print("faulted unopened copy: direct migration refused without reading or changing its files", flush=True)
-
-
-@case("unknown-key")
-def unknown_key_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "unknown-key"})["id"]
-    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "unknown-key-healthy"})["id"]
-    key = state / "data" / organization / project / (identity + ".db.key")
-    key.chmod(0)
-    try:
-        crash_recording(identity, "unopened-fault")
-    finally:
-        key.chmod(0o600)
-    before = files(identity)
-    snapshot = state / "unavailable-rollback"
-    shutil.copytree(state / "data", snapshot)
-    try:
-        start(binary=baseline, directory=snapshot)
-        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-        assert request("GET", "/readyz", actor=False) is not None
-        end()
-    finally:
-        shutil.rmtree(snapshot)
-    for _ in range(2):
-        start()
-        assert hook("ledger", identity) == [0, 1]
-        unavailable(identity, "recovery_pending")
-        assert sql(project, healthy, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
-        assert request("GET", "/readyz", actor=False) is not None
-        assert files(identity) == before
-        end()
-    start()
-    hook("recreate", identity)
-    assert hook("ledger", identity) == [0, 0]
-    assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
+    fifo.unlink()
     end()
     print(
-        "unopened unreadable key: unavailable binding survived two restarts; "
-        "rollback startup healthy; only that copy pending until explicit deletion", flush=True,
-    )
-
-
-@case("marker")
-def marker_case():
-    start()
-    identity = request("POST", f"/v1/projects/{project}/databases", {"name": "recording-marker"})["id"]
-    sql(project, identity, ["CREATE TABLE intact(id INTEGER PRIMARY KEY);", "INSERT INTO intact VALUES (1);"])
-    crash_recording(identity)
-    before = files(identity)
-    start()
-    assert hook("ledger", identity) == [1, 0], "fault marker was discarded"
-    unavailable(identity, "copy_faulted")
-    assert files(identity) == before
-    end()
-    start()
-    unavailable(identity, "copy_faulted")
-    assert hook("ledger", identity) == [1, 0]
-    assert files(identity) == before
-    end()
-    print(
-        "fault marker flushed, killed before fault row: permanent fault before proof; refused across two restarts", flush=True
-    )
-
-
-@case("integrity")
-def integrity_case():
-    for code in (11, 26):
-        start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "integrity-" + str(code)})["id"]
-        hook("intent", identity)
-        end(hard=True, rollback=False)
-        before = files(identity)
-        control = state / "integrity-control"
-        control.write_text(str(code))
-        start(integrity=True)
-        counts = hook("ledger", identity)
-        proof_log = (state / ("node-" + str(generation) + ".log")).read_text()
-        assert f"injected integrity exception {code}" in proof_log, proof_log
-        assert counts == [0, 1], (counts, [line for line in proof_log.splitlines() if "proof" in line or "injected" in line])
-        unavailable(identity, "recovery_pending")
-        hook("migration-refused", identity)
-        assert gauge("terrabase_storage_proof_pending") == 1
-        metrics = subprocess.check_output(["curl", "-fsS", f"http://127.0.0.1:{ports[2]}/metrics"], text=True)
-        assert 'reason="integrity_engine_corruption"' in metrics, metrics
-        assert files(identity) == before
-        end(hard=True, rollback=False)
-        start(integrity=True)
-        assert hook("ledger", identity) == [0, 1]
-        unavailable(identity, "recovery_pending")
-        assert files(identity) == before
-        control.unlink()
-        recovered([identity])
-        end()
-        print(
-            f"integrity throws {code}: no fault, retained intent and files, pending refusal across restart; "
-            "reason integrity_engine_corruption; healthy after removal", flush=True
-        )
-
-
-@case("admission")
-def admission_case():
-    start()
-    request("PUT", f"/v1/management/organizations/{organization}/plan", {"plan": "enterprise"})
-    marked = request("POST", f"/v1/projects/{project}/databases", {"name": "marked"})["id"]
-    with Postgres(marked) as existing:
-        hook("tap-open", marked)
-        sql(project, marked, ["CREATE TABLE captured(id INTEGER PRIMARY KEY);", "INSERT INTO captured VALUES (1);"])
-        assert existing.query("BEGIN;") == {}
-        assert existing.query("SELECT 1;") == {}
-        hook("fault", marked)
-        hook("tap-refused", marked)
-        before = files(marked)
-        response = existing.query("SELECT 1;")
-        assert response["C"] == "57P03" and "copy_faulted" in response["M"], response
-        unavailable(marked, "copy_faulted")
-        assert hook("ledger", marked) == [1, 0]
-        assert files(marked) == before, (before, files(marked))
-    end()
-    assert files(marked) == before, ("shutdown", before, files(marked))
-    start()
-    unavailable(marked, "copy_faulted")
-    assert hook("ledger", marked) == [1, 0]
-    assert gauge("terrabase_storage_faulted_databases") == hook("ledger", "*")[0] >= 1
-    assert files(marked) == before, (before, files(marked))
-    print(
-        "FAULTED: existing Postgres transaction and new SELECT -> 57P03 copy_faulted; HTTP read -> 503 "
-        "copy_faulted; files/key unchanged; fault gauge survives restart",
+        f"native open of one copy held: another copy opened and served over HTTP and PostgreSQL with readiness in "
+        f"{elapsed:.3f}s; the held copy served after release",
         flush=True,
     )
-    end()
 
-    for kind in ("locked", "io"):
+
+@case("locked")
+def locked_case():
+    start()
+    identity = create("locked-copy")
+    sql(identity, ["CREATE TABLE evidence (id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
+    end()
+    before = files(identity)
+    with (directory(identity) / (identity + ".db")).open("rb+") as handle:
+        fcntl.lockf(handle, fcntl.LOCK_EX)
         start()
-        identity = request("POST", f"/v1/projects/{project}/databases", {"name": "proof-" + kind})["id"]
-        hook("intent", identity)
-        end(hard=True, rollback=False)
+        unavailable(identity, "storage_busy")
+        healthy(database)
+        fcntl.lockf(handle, fcntl.LOCK_UN)
+    assert files(identity) == before
+    assert rows(identity, "SELECT id FROM evidence;") == [[1]]
+    end()
+    print(
+        "another process held the main file's lock: HTTP 503 storage_busy and PostgreSQL 57P03 after the busy timeout, "
+        "files unchanged, other copy and readiness served; served after release without a restart",
+        flush=True,
+    )
+
+
+@case("first-open")
+def first_open_case():
+    start()
+    identity = create("first-open")
+    sql(identity, ["CREATE TABLE evidence (id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
+    end()
+    control = state / "integrity-control"
+    for code in (10, 11, 26):
         before = files(identity)
-        control = state / "proof-control"
-        control.write_text(kind)
-        lock = (state / "data" / organization / project / (identity + ".db")).open("rb")
-        if kind == "locked":
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        start(proof_target=identity + ".db" if kind == "io" else None)
-        unavailable(identity, "recovery_pending")
-        assert hook("ledger", identity) == [0, 1]
-        assert gauge("terrabase_storage_proof_pending") == 1
+        control.write_text(f"open {code} /{identity}.db")
+        start(integrity=True)
+        unavailable(identity, "storage_corrupted")
         assert files(identity) == before
+        healthy(database)
         control.unlink()
-        lock.close()
-        recovered([identity])
+        assert rows(identity, "SELECT id FROM evidence;") == [[1]]
+        consistent(identity)
+        end(hard=True, rollback=False)
+        start()
+        assert rows(identity, "SELECT id FROM evidence;") == [[1]]
+        end()
         print(
-            f"{kind}: INCOMPLETE, no fault, intent retained, files/key unchanged; PostgreSQL 57P03 "
-            "recovery_pending and HTTP 503 recovery_pending; PASSED after removal, both protocols read",
+            f"open error {code} injected into the native open: HTTP 503 storage_corrupted and PostgreSQL 57P03, files "
+            "byte-identical, other copy and readiness served; served on the next open and after a kill and restart",
             flush=True,
         )
-        end()
 
-    start()
-    unreadable = [
-        request("POST", f"/v1/projects/{project}/databases", {"name": f"key-{index}"})["id"]
-        for index in range(24)
-    ]
-    for identity in unreadable:
-        hook("intent", identity)
+
+@case("commit-failure")
+def commit_failure_case():
+    start(integrity=True)
+    identity = create("commit-failure")
+    sql(identity, ["CREATE TABLE evidence (id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
+    control = state / "integrity-control"
+    for code in (10, 11, 26):
+        watermark, _ = consistent(identity)
+        control.write_text(f"commit {code} /{identity}.db")
+        try:
+            sql(identity, [f"INSERT INTO evidence VALUES ({code});"])
+            raise AssertionError("a failed native commit was acknowledged")
+        except RuntimeError as error:
+            assert str(error)[:1] == "5", str(error)
+        assert not control.exists(), "the native commit was not reached"
+        assert consistent(identity)[0] == watermark, "the failed commit stayed in the commit log"
+        assert rows(identity, "SELECT id FROM evidence ORDER BY id;") == [[1]]
+    sql(identity, ["INSERT INTO evidence VALUES (2);"])
+    watermark, _ = consistent(identity)
     end(hard=True, rollback=False)
+    start()
+    assert rows(identity, "SELECT id FROM evidence ORDER BY id;") == [[1], [2]]
+    assert consistent(identity)[0] == watermark
+    end()
+    print(
+        "native COMMIT failed with 10, 11 and 26 after the commit log append: refused, log truncated back to the "
+        "watermark, row absent; next write continued the sequence; kill and restart kept log and database equal",
+        flush=True,
+    )
+
+
+@case("wrong-key")
+def wrong_key_case():
+    second = base64.b64encode(secrets.token_bytes(32)).decode()
+    wrong = base64.b64encode(secrets.token_bytes(32)).decode()
+    start(keys={"active": "k1", "keys": {"k0": master, "k1": second}})
+    identity = create("second-key")
+    sql(identity, ["CREATE TABLE kept (id INTEGER PRIMARY KEY);", "INSERT INTO kept VALUES (1);"])
+    end()
+    before = files(identity)
+    for label, keys, code in (
+        ("different material", {"active": "k0", "keys": {"k0": master, "k1": wrong}}, "storage_corrupted"),
+        ("missing id", {"active": "k0", "keys": {"k0": master}}, "master_key_missing"),
+    ):
+        start(keys=keys)
+        unavailable(identity, code)
+        healthy(database)
+        end(hard=True, rollback=False)
+        assert files(identity) == before
+        print(f"master key {label}: HTTP 503 {code} and PostgreSQL 57P03; files byte-identical after a kill", flush=True)
+    start(keys={"active": "k0", "keys": {"k0": master, "k1": second}})
+    assert rows(identity, "SELECT id FROM kept;") == [[1]]
+    consistent(identity)
+    end()
+    print("correct master key restored: the copy served its rows; other copies served throughout", flush=True)
+
+
+@case("unreadable")
+def unreadable_case():
+    start()
+    unreadable = [create(f"unreadable-{index}") for index in range(24)]
+    for identity in unreadable:
+        sql(identity, ["CREATE TABLE evidence (id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
+    end()
     before = {identity: files(identity) for identity in unreadable}
     for identity in unreadable:
-        (state / "data" / organization / project / (identity + ".db.key")).chmod(0)
+        (directory(identity) / (identity + ".db")).chmod(0)
     try:
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 24
-        for identity in unreadable:
-            unavailable(identity, "recovery_pending")
-            assert hook("ledger", identity) == [0, 1]
-            path = state / "data" / organization / project
-            assert {file.name: file.stat().st_size for file in path.glob(identity + ".db*")} == {
-                name: value[0] for name, value in before[identity].items()
-            }
-        end()
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 24
-        for identity in unreadable:
-            assert hook("ledger", identity) == [0, 1]
+        for _ in range(2):
+            start()
+            for identity in unreadable:
+                unavailable(identity, "storage_corrupted")
+            healthy(database)
+            end(hard=True, rollback=False)
     finally:
         for identity in unreadable:
-            (state / "data" / organization / project / (identity + ".db.key")).chmod(0o600)
+            (directory(identity) / (identity + ".db")).chmod(0o600)
     for identity in unreadable:
         assert files(identity) == before[identity]
-    recovered(unreadable)
+    start()
+    for identity in unreadable:
+        assert rows(identity, "SELECT id FROM evidence;") == [[1]]
+        consistent(identity)
+    end()
     print(
-        "24 unreadable keys: INCOMPLETE, zero new faults, 24 intents and unchanged files; each protocol "
-        "unavailable; all 24 PASSED and readable after key access restored",
+        "24 unreadable main files across two kills: each refused over HTTP and PostgreSQL, files byte-identical, other "
+        "copy and readiness served; all 24 served after access was restored",
         flush=True,
     )
-    end()
 
+
+@case("empty-main")
+def empty_main_case():
     start()
-    empty = request("POST", f"/v1/projects/{project}/databases", {"name": "empty-after-kill"})["id"]
-    hook("hold", empty)
+    identity = create("empty-after-kill")
+    sql(identity, ["CREATE TABLE evidence (id INTEGER PRIMARY KEY, body BLOB);"])
+    for index in range(1, 201):
+        sql(identity, [f"INSERT INTO evidence VALUES ({index}, randomblob(1024));"])
+    end()
+    start()
+    sql(identity, ["INSERT INTO evidence VALUES (201, randomblob(1024));"])
+    acknowledged = rows(identity, "SELECT id, hex(body) FROM evidence ORDER BY id;")
+    watermark, _ = consistent(identity)
     end(hard=True, rollback=False)
-    path = state / "data" / organization / project / (empty + ".db")
-    assert pathlib.Path(str(path) + "-wal").exists()
-    path.write_bytes(b"")
-    before = files(empty)
+    main = directory(identity) / (identity + ".db")
+    assert pathlib.Path(str(main) + "-wal").exists()
+    checkpointed = main.stat().st_size
+    main.write_bytes(b"")
     start()
-    unavailable(empty, "copy_faulted")
-    assert hook("ledger", empty) == [1, 0]
-    assert files(empty) == before
+    assert rows(identity, "SELECT id, hex(body) FROM evidence ORDER BY id;") == acknowledged
+    assert rows(identity, "PRAGMA integrity_check;") == [["ok"]]
+    assert consistent(identity)[0] == watermark
+    healthy(database)
+    end()
     print(
-        "zero-length main with WAL after kill: DAMAGED; main/WAL/key unchanged; PostgreSQL 57P03 "
-        "copy_faulted, HTTP 503 copy_faulted",
+        f"main file ({checkpointed} bytes, 200 rows only there) truncated to zero after a kill with one more row in the "
+        "WAL: restart rebuilt the copy from its commit log; all 201 acknowledged rows byte-identical, integrity_check ok, "
+        "commit log = watermark",
         flush=True,
     )
-    end()
 
 
-def repair_keys(identities, healthy):
+@case("create-kill")
+def create_kill_case():
+    crash_request("create", lambda: create("half"))
     start()
-    damaged, inaccessible = identities
-    hook("intent", damaged)
-    hook("intent", inaccessible)
-    end(hard=True)
-    key = state / "data" / organization / project / (damaged + ".db.key")
-    original_key = key.read_bytes()
-    record = original_key.decode().splitlines()
-    wrapped = bytearray(base64.b64decode(record[1]))
-    wrapped[-1] ^= 1
-    key.write_text(record[0] + "\n" + base64.b64encode(wrapped).decode() + "\n")
-    blocked = state / "data" / organization / project / (inaccessible + ".db.key")
-    blocked.chmod(0)
+    listed = [item["name"] for item in request("GET", f"/v1/projects/{project}/databases")["items"]]
+    active = set(hook("catalog", "*"))
+    local = {path.name for path in (state / "data" / "databases").iterdir()}
+    assert local <= active, ("local copies without a catalog record", sorted(local - active))
+    end()
+    print("creation killed after its main file: no local copy without a catalog record; catalog=" + json.dumps(listed),
+          flush=True)
+
+
+@case("delete-kill")
+def delete_kill_case():
+    start()
+    identity = create("delete-kill")
+    sql(identity, ["CREATE TABLE evidence (id INTEGER PRIMARY KEY);", "INSERT INTO evidence VALUES (1);"])
+    end()
+    crash_request("delete", lambda: request("DELETE", f"/v1/projects/{project}/databases/{identity}"), target=identity)
+    start()
     try:
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 2
-        assert hook("ledger", damaged) == [0, 1]
-        assert hook("ledger", inaccessible) == [0, 1]
-        assert sql(project, healthy, ["SELECT count(*) FROM healthy;"])["results"][0]["rows"] == [[1]]
-    finally:
-        key.write_bytes(original_key)
-        blocked.chmod(0o600)
-    wait_for_proofs()
-    for identity in (damaged, inaccessible):
-        assert hook("ledger", identity) == [0, 0]
-        hook("check", identity)
-    print(
-        "damaged wrapped key and inaccessible key: INCOMPLETE, no faults, intents retained; healthy "
-        "database readable; both recover after key repair",
-        flush=True,
-    )
+        request("GET", f"/v1/projects/{project}/databases/{identity}")
+        raise AssertionError("the deleted database is still listed")
+    except RuntimeError as error:
+        assert str(error).startswith("404 "), str(error)
+    assert identity not in hook("catalog", "*")
+    remaining = sorted(path.name for path in directory(identity).rglob("*")) if directory(identity).exists() else []
+    assert not remaining, ("files of the deleted database survived the restart", remaining)
     end()
+    print("deletion killed after its first shredded file: next start ended deleted with no files left", flush=True)
 
 
-@case("key-repair")
-def key_repair_case():
+@case("missing-catalog")
+def missing_catalog_case():
     start()
-    identities = [
-        request("POST", f"/v1/projects/{project}/databases", {"name": name})["id"]
-        for name in ("key-damaged", "key-inaccessible")
-    ]
-    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "key-healthy"})["id"]
-    sql(project, healthy, ["CREATE TABLE healthy(value INTEGER);", "INSERT INTO healthy VALUES (1);"])
+    sql(database, ["CREATE TABLE kept (id INTEGER PRIMARY KEY);", "INSERT INTO kept VALUES (1);"])
     end()
-    repair_keys(identities, healthy)
+    catalog = directory(system_id)
+    saved = state / "system-catalog.saved"
+    catalog.rename(saved)
+    start(failure="system catalog")
+    end()
+    assert not catalog.exists(), ("startup replaced the missing system catalog", sorted(path.name for path in catalog.iterdir()))
+    saved.rename(catalog)
+    start()
+    assert rows(database, "SELECT id FROM kept;") == [[1]]
+    end()
+    print("system catalog missing on a populated node: startup refuses without creating one; restored catalog served",
+          flush=True)
+
+
+@case("idle-cost")
+def idle_cost_case():
+    start()
+    with concurrent.futures.ThreadPoolExecutor(8) as executor:
+        idle = list(executor.map(lambda index: create(f"idle-{index}"), range(1000)))
+    end()
+    start()
+    resident, _ = memory()
+    for label in ("first pass after restart", "steady pass"):
+        began = time.perf_counter()
+        with concurrent.futures.ThreadPoolExecutor(8) as executor:
+            assert all(result == [[1]] for result in executor.map(lambda identity: rows(identity, "SELECT 1;"), idle))
+        elapsed = time.perf_counter() - began
+        current, peak = memory()
+        print(
+            f"read pass over 1000 idle databases, {label}: {elapsed:.3f}s; {hook('sessions', '*')}; resident {current} MiB "
+            f"(+{current - resident} MiB since start), peak {peak} MiB",
+            flush=True,
+        )
+    end()
 
 
 @case("recovery")
 def recovery_case():
+    rollbacks = rollback_count
     start()
     with Postgres(database) as client:
         assert client.query("SELECT 1;") == {}
     print("PostgreSQL authentication and healthy SELECT: ready", flush=True)
-    print("create organization, project, database under trailing-separator data directory: 201", flush=True)
     print(
-        json.dumps(
-            sql(
-                project,
-                database,
-                [
-                    "CREATE TABLE durable (id INTEGER PRIMARY KEY, value TEXT NOT NULL);",
-                    "INSERT INTO durable VALUES (1, 'acknowledged');",
-                ],
-            )
-        ),
+        json.dumps(sql(database, [
+            "CREATE TABLE durable (id INTEGER PRIMARY KEY, value TEXT NOT NULL);",
+            "INSERT INTO durable VALUES (1, 'acknowledged');",
+        ])),
         flush=True,
     )
     end(hard=True)
     print("kill -KILL node: exit -9 after acknowledged write", flush=True)
     start()
-    result = sql(project, database, ["SELECT id, value FROM durable;"])
+    result = rows(database, "SELECT id, value FROM durable;")
     print("restart SELECT: " + json.dumps(result), flush=True)
-    assert result["results"][0]["rows"] == [[1, "acknowledged"]]
+    assert result == [[1, "acknowledged"]]
     for index in range(2, 102):
-        sql(project, database, [f"INSERT INTO durable VALUES ({index}, 'bounded');"])
-    metrics = subprocess.check_output(["curl", "-fsS", f"http://127.0.0.1:{ports[2]}/metrics"], text=True)
-    retained = [line for line in metrics.splitlines() if line.startswith("terrabase_cdc_retained_rows{")]
-    assert len(retained) == 1 and float(retained[0].rsplit(" ", 1)[1]) <= 32
-    assert sql(project, database, ["SELECT count(*) FROM durable;"])["results"][0]["rows"] == [[101]]
-    print("101 acknowledged rows, no backup tap: " + retained[0], flush=True)
+        sql(database, [f"INSERT INTO durable VALUES ({index}, 'bounded');"])
+    assert rows(database, "SELECT count(*) FROM durable;") == [[101]]
+    watermark, entries = consistent(database)
+    print(f"101 acknowledged rows; commit log contiguous through the watermark {watermark} ({entries} entries)", flush=True)
+    sql(database, ["CREATE TABLE segments (id INTEGER PRIMARY KEY, body BLOB);"])
+    watermark, _ = consistent(database)
     end()
 
-    crash_request("rewrite-intent", "", "")
+    crash_request("log-ahead", lambda: sql(database, ["INSERT INTO durable VALUES (102, 'logged');"]), target=database)
     start()
-    assert sql(project, database, ["SELECT count(*) FROM durable;"])["results"][0]["rows"] == [[101]]
-    print("rewrite before rename restart: copy healthy; 101 acknowledged rows remain", flush=True)
-    end()
-
-    crash_request("rewrite", "", "")
-    start()
-    try:
-        sql(project, database, ["SELECT count(*) FROM durable;"])
-        raise AssertionError("a single-value intent cannot prove the replacement lineage")
-    except RuntimeError as error:
-        assert "fault" in str(error), str(error)
+    assert rows(database, "SELECT value FROM durable WHERE id = 102;") == [["logged"]]
+    assert consistent(database)[0] == watermark + 1
     print(
-        "rewrite after rename: single-value writer retained; replacement lineage unavailable; "
-        "copy refuses pending later writer release", flush=True,
+        "kill after the commit log fsync and before the database commit: restart replayed the logged write; "
+        "commit log = watermark", flush=True,
     )
     end()
 
-    crash_request("delete", "DELETE", f"/v1/projects/{project}/databases/{database}")
-    start()
-    assert not list((state / "data" / organization / project).glob("*.db*"))
-    assert hook("ledger", database) == [0, 0]
-    print("delete restart: no database or sidecars remain", flush=True)
-    end()
-    retained_before = len(list((state / "data" / organization / project).glob(".*.retained-key")))
-    crash_request("publish", "POST", f"/v1/projects/{project}/databases", {"name": "half"})
-    start()
-    records = request("GET", f"/v1/projects/{project}/databases")
-    assert not list((state / "data").glob("*/*/.*.creating*"))
-    assert len(list((state / "data" / organization / project).glob(".*.retained-key"))) == retained_before + 1
-    for file in (state / "data" / organization / project).glob("*.db.key"):
-        assert pathlib.Path(str(file)[:-4]).exists()
-    for file in (state / "data" / organization / project).glob("*.db"):
-        assert pathlib.Path(str(file) + ".key").exists()
-    print(
-        "publish restart: no half pairs or creation scratch remain; the unpublished key is retained; catalog="
-        + json.dumps(records),
-        flush=True,
-    )
-    end()
-    start()
-    request_database = request("POST", f"/v1/projects/{project}/databases", {"name": "healthy"})["id"]
-    sql(project, request_database, ["CREATE TABLE healthy (id INTEGER PRIMARY KEY);", "INSERT INTO healthy VALUES (1);"])
-    end()
+    acknowledged = []
 
+    def fill():
+        for _ in range(64):
+            sql(database, ["INSERT INTO segments (body) VALUES (randomblob(1048576));"])
+            acknowledged.append(1)
+
+    crash_request("seal", fill, target=database)
     start()
-    idle = "0" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(25))
-    hook("backlog", idle)
-    end()
-    start()
-    idle_observed.clear()
-    idle_drained.clear()
-    assert idle_drained.wait(150), idle_observed
-    metrics = subprocess.check_output(["curl", "-fsS", f"http://127.0.0.1:{ports[2]}/metrics"], text=True)
-    retained = [float(line.rsplit(" ", 1)[1]) for line in metrics.splitlines() if line.startswith("terrabase_cdc_retained_rows{")]
-    assert len(idle_observed) >= 2 and retained and retained[0] < 32, (idle_observed, retained)
+    assert rows(database, "SELECT count(*) FROM segments;") == [[len(acknowledged) + 1]]
+    watermark, entries = consistent(database)
+    sql(database, ["INSERT INTO segments (body) VALUES (randomblob(16));"])
+    assert consistent(database)[0] == watermark + 1
+    sealed = len(list(directory(database).glob("*.tbseg")))
     print(
-        "idle history after restart, no tenant writes or opens: retained-row gauge " + str(idle_observed)
-        + " final " + str(retained), flush=True,
+        f"kill after a commit log segment was sealed and before the next active log existed: restart served "
+        f"{len(acknowledged)} acknowledged rows and the logged in-flight row; {sealed} sealed segments, {entries} entries "
+        "contiguous; next write continued the sequence", flush=True,
     )
     end()
 
-    databases = ["0" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(25)) for _ in range(24)]
+    databases = []
     start()
-    for index, identity in enumerate(databases):
-        hook("populate", identity, 200 if index < 20 else 1000)
+    for index in range(24):
+        identity = create(f"sample-{index}")
+        sql(identity, ["CREATE TABLE payload (id INTEGER PRIMARY KEY, body BLOB);"])
+        hook("populate", identity, 100 if index < 20 else 500)
+        databases.append(identity)
     end()
     for sample in range(3):
         start()
         for identity in databases:
-            hook("replay", identity)
-            hook("intent", identity)
+            for row in range(16):
+                updated = sql(identity, [
+                    "UPDATE payload SET body = randomblob(1048576) "
+                    f"WHERE id = (SELECT id FROM payload ORDER BY id LIMIT 1 OFFSET {row});",
+                ])
+                assert updated["results"][0]["rows_affected"] == 1, updated
         end(hard=True)
-        sizes = [(state / "data" / organization / project / (identity + ".db")).stat().st_size for identity in databases]
-        wal_sizes = [(state / "data" / organization / project / (identity + ".db-wal")).stat().st_size for identity in databases]
-        assert min(wal_sizes) >= 16 * 1024 * 1024, wal_sizes
+        sizes = [(directory(identity) / (identity + ".db")).stat().st_size for identity in databases]
+        logs = sum(file.stat().st_size for identity in databases for file in directory(identity).glob("*.tb*"))
+        wal = sum(pathlib.Path(str(directory(identity) / (identity + ".db")) + "-wal").stat().st_size for identity in databases)
         for file in (state / "data").rglob("*"):
-            if file.is_file() and (file.suffix == ".db" or file.name.endswith("-wal")):
+            if file.is_file():
                 with file.open("rb") as handle:
                     os.posix_fadvise(handle.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
         began = time.perf_counter()
         start()
         elapsed = time.perf_counter() - began
-        recovery_log = (state / ("node-" + str(generation) + ".log")).read_text()
-        proofs = [json.loads(line.split(">", 1)[1]) for line in recovery_log.splitlines() if "Restart proofs" in line]
-        checks = [json.loads(line.split(">", 1)[1]) for line in recovery_log.splitlines() if "Database restart proof:" in line]
-        assert len(proofs) == 1 and proofs[0]["Count"] == 24, proofs
-        assert len(checks) == 24, checks
-        for identity in databases:
-            hook("check", identity)
-        gb = sum(item["Bytes"] for item in checks) / 1e9
-        wal_gb = sum(wal_sizes) / 1e9
-        replay = sum(item["ReplayMs"] for item in checks) / 1000
-        integrity = sum(item["IntegrityMs"] for item in checks) / 1000
+        checks = [hook("check", identity) for identity in databases]
+        for _, watermark, last, _ in checks:
+            assert watermark == last, ("commit log and database disagree after recovery", watermark, last)
+        opens = sorted(opened for opened, _, _, _ in checks)
         print(
-            f"recovery sample {sample + 1}: 24 open intents, main files {min(sizes)}..{max(sizes)} bytes, {gb:.3f} GB; "
-            f"recovery phase {proofs[0]['TotalMs'] / 1000:.3f}s; process launch to ready {elapsed:.3f}s; "
-            f"replay {replay:.3f}s ({replay / wal_gb:.3f}s/WAL-GB over {wal_gb:.3f} GB WAL); "
-            f"integrity {integrity:.3f}s ({integrity / gb:.3f}s/GB); "
-            f"max replay {max(item['ReplayMs'] for item in checks) / 1000:.3f}s; "
-            f"ledger/key overhead {proofs[0]['TotalMs'] / 1000 - replay - integrity:.3f}s",
-            flush=True,
-        )
-        print(
-            f"recovery checks sample {sample + 1}: median {proofs[0]['MedianMs']:.3f}ms, "
-            f"p99 {proofs[0]['P99Ms']:.3f}ms, max {proofs[0]['MaxMs']:.3f}ms",
+            f"recovery sample {sample + 1}: 24 databases killed after 16 MiB bursts, main files {min(sizes)}..{max(sizes)} "
+            f"bytes, {sum(sizes) / 1e9:.3f} GB; commit logs {logs / 1e9:.3f} GB; WAL {wal / 1e6:.1f} MB; process launch "
+            f"to ready {elapsed:.3f}s; first open and read total {sum(opens) / 1000:.3f}s, median "
+            f"{statistics.median(opens):.3f}ms, p99 {opens[int(len(opens) * 0.99)]:.3f}ms, max {opens[-1]:.3f}ms",
             flush=True,
         )
         end()
 
-    repair_keys(databases[:2], request_database)
-    assert rollback_count == 9, rollback_count
-    for name in ("_system.db", "_intents.db"):
-        path = state / "data" / name
-        saved = state / (name + ".saved")
-        path.rename(saved)
-        start(failure="a required catalog or intent store is missing its main file")
-        end()
-        assert pathlib.Path(str(path) + ".key").exists()
-        assert not path.exists()
-        saved_key = state / (name + ".key.saved")
-        key = pathlib.Path(str(path) + ".key")
-        key.rename(saved_key)
-        start(failure="a required catalog or intent store is missing its main file")
-        end()
-        assert not path.exists()
-        saved_key.rename(key)
-        saved.rename(path)
-        print(name + " missing on populated node: startup refuses with or without key; key retained", flush=True)
+    assert rollback_count - rollbacks == 6, rollback_count - rollbacks
 
 
 references = {}
@@ -1429,12 +845,21 @@ for pack in ("Microsoft.NETCore.App.Ref", "Microsoft.AspNetCore.App.Ref"):
         references[file.name] = file
 for file in build.glob("*.dll"):
     references.setdefault(file.name, file)
+usings = state / "usings.cs"
+usings.write_text("".join("global using " + name + ";\n" for name in (
+    "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing",
+    "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Hosting",
+    "Microsoft.Extensions.Logging", "System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http",
+    "System.Net.Http.Json", "System.Threading", "System.Threading.Tasks", "TerraScale.Contracts.Consistency",
+    "TerraScale.Contracts.Storage", "TerraScale.Results",
+)))
 response = state / "compile.rsp"
 response.write_text(
     "\n".join(
-        ["-nologo", "-target:library", "-nullable:enable", "-langversion:preview", "-out:" + str(state / "hook.dll")]
+        ["-nologo", "-target:library", "-nullable:enable", "-langversion:preview", "-warnaserror", "-nowarn:1701,1702",
+         "-out:" + str(state / "hook.dll")]
         + ["-r:" + str(file) for file in references.values()]
-        + [str(root / "e2e/env/engine-crash-hook.cs")]
+        + [str(usings), str(root / "e2e/env/engine-crash-hook.cs")]
     )
 )
 subprocess.run(
@@ -1457,12 +882,12 @@ subprocess.run(
 
 subprocess.run(
     ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash-integrity.c"),
-     "-o", str(state / "integrity.so"), "-Wl,--no-as-needed", str(build / "libturso_sdk_kit.so"),
-     "-Wl,-rpath," + str(build), "-ldl", "-pthread"], check=True
+     "-o", str(state / "integrity.so"), "-Wl,--no-as-needed", str(native / "libsqlite3mc.so"),
+     "-Wl,-rpath," + str(native), "-ldl", "-pthread"], check=True
 )
 
 selected = sys.argv[2].split(",") if len(sys.argv) > 2 else [
-    "recovery", "admission", *[name for name in cases if name not in ("recovery", "admission", "idle-cost")], "idle-cost",
+    "recovery", *[name for name in cases if name not in ("recovery", "idle-cost")], "idle-cost",
 ]
 assert len(selected) == len(set(selected)), "duplicate crash cases"
 assert "recovery" not in selected[1:], "the dependent recovery sequence must run first"
@@ -1471,21 +896,18 @@ assert set(selected) <= cases.keys(), "unknown crash cases: " + str(set(selected
 try:
     start()
     organization = request("POST", "/v1/management/organizations", {"name": "Crash proof"})["id"]
+    request("PUT", f"/v1/management/organizations/{organization}/plan", {"plan": "enterprise"}, actor=False)
     project = request("POST", f"/v1/management/organizations/{organization}/projects", {"name": "Crash proof"})["id"]
-    database = request("POST", f"/v1/projects/{project}/databases", {"name": "durable"})["id"]
+    database = create("durable")
     api_key = request("POST", "/admin/api-keys", {
         "name": "crash protocols", "scopes": ["sql:read", "sql:write"],
         "organizationId": organization, "projectId": project,
     }, actor=False)["secret"]
-    if selected[0] != "recovery":
-        request("PUT", f"/v1/management/organizations/{organization}/plan", {"plan": "enterprise"})
     end()
     for name in selected:
         began = time.perf_counter()
         cases[name]()
         print(f"crash case {name}: {time.perf_counter() - began:.3f}s", flush=True)
-    if "recovery" in selected:
-        assert rollback_count == 9, rollback_count
     print(f"crash harness: {time.perf_counter() - harness_started:.3f}s", flush=True)
 finally:
     end()

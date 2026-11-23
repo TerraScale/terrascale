@@ -4,16 +4,35 @@ using System.Data.Common;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>An ADO.NET connection to one <see cref="TerraBaseSqlDatabase"/>, for Dapper and other ADO.NET callers.</summary>
+/// <summary>
+/// An ADO.NET connection to one <see cref="TerraBaseSqlDatabase"/>, for Dapper and other ADO.NET callers. Commands and
+/// transactions share the database's tracked <c>TerraScale-Bookmark</c>, so every connection to it reads the writes the
+/// others committed.
+/// </summary>
 public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbConnection
 {
     private ConnectionState state = ConnectionState.Closed;
 
-    /// <summary>The database every command of this connection runs against.</summary>
     internal TerraBaseSqlDatabase SqlDatabase { get; } = database;
 
-    /// <summary>The connection's open transaction, or null outside one.</summary>
     internal TerraBaseDbTransaction? CurrentTransaction { get; set; }
+
+    /// <summary>
+    /// The consistency of this connection's autocommit commands and of transactions begun with
+    /// <see cref="IsolationLevel.Unspecified"/>; it starts as the database handle's
+    /// <see cref="TerraBaseSqlDatabase.Consistency"/>, and null leaves it to the database's <c>defaultConsistency</c>.
+    /// <see cref="IsolationLevel.Serializable"/> transactions are always <see cref="TerraBaseConsistencyMode.Strong"/>.
+    /// </summary>
+    public TerraBaseConsistencyMode? Consistency { get; set; } = database.Consistency;
+
+    /// <summary>The newest <c>TerraScale-Bookmark</c> observed for the connection's database, or empty before the first answer.</summary>
+    public string Bookmark => SqlDatabase.Bookmark;
+
+    /// <summary>
+    /// Merges a <c>TerraScale-Bookmark</c> from another process into the database's tracked bookmark; later commands observe
+    /// it. Throws <see cref="ArgumentException"/> when <paramref name="bookmark"/> is not one TerraScale returned.
+    /// </summary>
+    public void ObserveBookmark(string bookmark) => SqlDatabase.ObserveBookmark(bookmark);
 
     /// <summary>Always empty; the connection is built from a <see cref="TerraBaseSqlDatabase"/>, not a connection string.</summary>
     [AllowNull]
@@ -85,21 +104,27 @@ public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbCon
     protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
         throw new NotSupportedException("The TerraScale SDK is async-only; use the async method with a CancellationToken.");
 
-    /// <summary>Opens a SQL WebSocket session, begins a transaction on it and returns the wrapping <see cref="TerraBaseDbTransaction"/>.</summary>
+    /// <summary>
+    /// Opens a SQL WebSocket session, begins a transaction on it and returns the wrapping <see cref="TerraBaseDbTransaction"/>.
+    /// <see cref="IsolationLevel.Serializable"/> begins a strong transaction (<c>BEGIN STRONG</c>);
+    /// <see cref="IsolationLevel.Unspecified"/> begins one with the connection's <see cref="Consistency"/>.
+    /// </summary>
     protected override async ValueTask<DbTransaction> BeginDbTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken)
     {
-        if (isolationLevel is not (IsolationLevel.Unspecified or IsolationLevel.Serializable))
+        var consistency = isolationLevel switch
         {
-            throw new NotSupportedException($"Only {nameof(IsolationLevel.Unspecified)} and {nameof(IsolationLevel.Serializable)} are supported.");
-        }
+            IsolationLevel.Serializable => TerraBaseConsistencyMode.Strong,
+            IsolationLevel.Unspecified => Consistency,
+            _ => throw new NotSupportedException($"Only {nameof(IsolationLevel.Unspecified)} and {nameof(IsolationLevel.Serializable)} are supported."),
+        };
 
         if (CurrentTransaction is not null) throw new InvalidOperationException("The connection already has an open transaction.");
-        var session = await SqlDatabase.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        var session = await SqlDatabase.WithConsistency(consistency).ConnectAsync(cancellationToken).ConfigureAwait(false);
         TerraBaseDbTransaction transaction;
         try
         {
-            await session.BeginAsync(cancellationToken).ConfigureAwait(false);
-            transaction = new(this, session);
+            await (consistency is { } mode ? session.BeginAsync(mode, cancellationToken) : session.BeginAsync(cancellationToken)).ConfigureAwait(false);
+            transaction = new(this, session, consistency);
         }
         catch
         {

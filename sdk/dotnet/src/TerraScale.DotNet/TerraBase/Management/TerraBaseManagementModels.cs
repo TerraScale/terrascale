@@ -88,4 +88,10 @@ public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, strin
 
     /// <summary>The immutable database id that kept <see cref="PreviousName"/>, or null.</summary>
     public string? ConflictOf { get; init; }
+
+    /// <summary>The consistency of SQL requests that do not send <c>TerraScale-Consistency</c>; null from servers that do not report it.</summary>
+    public TerraBaseConsistencyMode? DefaultConsistency { get; init; }
+
+    /// <summary>Whether every write to the database runs strong, whatever consistency a request asks for.</summary>
+    public bool Strict { get; init; }
 }

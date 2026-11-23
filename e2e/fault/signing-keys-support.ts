@@ -32,8 +32,6 @@ export async function signingNode(request: APIRequestContext) {
   delete environment.TS_PEERS_FILE;
   delete environment.TS_REGION;
   delete environment.TS_NODE;
-  delete environment.TS_NATS_URL;
-  delete environment.TERRABASE_NATS_TOKEN_FILE;
   for (const name of Object.keys(environment)) {
     if (name.startsWith('AWS_') || name === 'BUCKET_NAME') delete environment[name];
   }
