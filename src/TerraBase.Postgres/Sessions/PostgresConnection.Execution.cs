@@ -27,7 +27,7 @@ internal sealed partial class PostgresConnection
         using var scope = session.BeginStatement(closed);
         try
         {
-            return await RunAsync(command, parameters, describedColumns, scope.Token).ConfigureAwait(false);
+            return await RunAsync(command, parameters, describedColumns, scope.Token);
         }
         catch (OperationCanceledException) when (!closed.IsCancellationRequested)
         {
@@ -45,26 +45,26 @@ internal sealed partial class PostgresConnection
         return command switch
         {
             PgEmptyCommand => PgResult.EmptyQuery,
-            PgSqlCommand sql => await ExecuteSqlAsync(sql, parameters, describedColumns, cancellationToken).ConfigureAwait(false),
+            PgSqlCommand sql => await ExecuteSqlAsync(sql, parameters, describedColumns, cancellationToken),
             PgCannedCommand canned => canned.Result,
             PgBeginCommand begin => Begin(begin),
-            PgCommitCommand => await CommitAsync(cancellationToken).ConfigureAwait(false),
-            PgRollbackCommand => await RollbackAsync().ConfigureAwait(false),
-            PgSavepointCommand savepoint => await SavepointAsync($"SAVEPOINT {savepoint.Name}", "SAVEPOINT", cancellationToken).ConfigureAwait(false),
-            PgReleaseCommand release => await SavepointAsync($"RELEASE SAVEPOINT {release.Name}", "RELEASE", cancellationToken).ConfigureAwait(false),
-            PgRollbackToCommand rollbackTo => await RollbackToAsync(rollbackTo, cancellationToken).ConfigureAwait(false),
+            PgCommitCommand => await CommitAsync(cancellationToken),
+            PgRollbackCommand => await RollbackAsync(),
+            PgSavepointCommand savepoint => await SavepointAsync($"SAVEPOINT {savepoint.Name}", "SAVEPOINT", cancellationToken),
+            PgReleaseCommand release => await SavepointAsync($"RELEASE SAVEPOINT {release.Name}", "RELEASE", cancellationToken),
+            PgRollbackToCommand rollbackTo => await RollbackToAsync(rollbackTo, cancellationToken),
             PgSetCommand set => Set(set),
             PgResetAllCommand => ResetAll(),
             PgSetTransactionCommand setTransaction => SetTransaction(setTransaction),
             PgSetConfigCommand setConfig => SetConfig(setConfig),
             PgShowCommand show => Show(show),
             PgDeallocateCommand deallocate => Deallocate(deallocate),
-            PgDiscardCommand => await DiscardAsync().ConfigureAwait(false),
+            PgDiscardCommand => await DiscardAsync(),
             PgListenCommand listen => Listen(listen),
-            PgUnlistenCommand unlisten => await UnlistenAsync(unlisten).ConfigureAwait(false),
+            PgUnlistenCommand unlisten => await UnlistenAsync(unlisten),
             PgNoOpCommand noOp => PgResult.Command(noOp.Tag),
-            PgCopyFromCommand copyFrom => await CopyFromAsync(copyFrom, cancellationToken).ConfigureAwait(false),
-            PgCopyToCommand copyTo => await CopyToAsync(copyTo, parameters, cancellationToken).ConfigureAwait(false),
+            PgCopyFromCommand copyFrom => await CopyFromAsync(copyFrom, cancellationToken),
+            PgCopyToCommand copyTo => await CopyToAsync(copyTo, parameters, cancellationToken),
         };
     }
 
@@ -80,8 +80,8 @@ internal sealed partial class PostgresConnection
             return PgErrors.ReadOnlyCredential;
         }
 
-        var statement = new SqlStatement(command.Rewrite.Sql, parameters, NoNamed);
-        return await ExecuteStatementAsync(statement, command.Access, cancellationToken).ConfigureAwait(false) switch
+        var statement = new SqlStatement(command.Rewrite.Sql, command.Rewrite.Bind(parameters), NoNamed);
+        return await ExecuteStatementAsync(statement, command.Access, cancellationToken) switch
         {
             SqlResultSet set => ToResult(command, set, describedColumns),
             PgError error => error,
@@ -97,9 +97,9 @@ internal sealed partial class PostgresConnection
                 return PgErrors.ReadOnlyTransaction;
             }
 
-            return await EnsureTransactionAsync(block, cancellationToken).ConfigureAwait(false) switch
+            return await EnsureTransactionAsync(block, cancellationToken) switch
             {
-                ISqlTransaction active => await active.ExecuteAsync(statement, cancellationToken).ConfigureAwait(false) switch
+                ISqlTransaction active => await active.ExecuteAsync(statement, cancellationToken) switch
                 {
                     SqlResultSet set => set,
                     SqlError error => PgErrors.From(error),
@@ -113,7 +113,7 @@ internal sealed partial class PostgresConnection
         var request = new SqlStatementRequest(session.Executor.DatabaseId, [statement], access, session.Settings.DefaultMode, session.Bookmark);
         if (access == SqlAccess.Read)
         {
-            return await session.Executor.ReadAsync(request, cancellationToken).ConfigureAwait(false) switch
+            return await session.Executor.ReadAsync(request, cancellationToken) switch
             {
                 SqlReadResult read => Observed(read.Observed, read.ResultSets),
                 SqlError error => PgErrors.From(error),
@@ -122,7 +122,7 @@ internal sealed partial class PostgresConnection
             };
         }
 
-        return await session.Executor.WriteAsync(request, cancellationToken).ConfigureAwait(false) switch
+        return await session.Executor.WriteAsync(request, cancellationToken) switch
         {
             SqlWriteResult write => Observed(write.Commit.Bookmark, write.ResultSets),
             SqlError error => PgErrors.From(error),

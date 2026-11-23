@@ -61,6 +61,11 @@ internal static class CatalogImportProof
             Done => null,
             Unavailable unavailable => unavailable.Code,
         } is null, "the database deletion was not recorded");
+        Require(await catalog.PurgeDatabaseAsync(database.Id, cancellationToken) switch
+        {
+            Done => null,
+            Unavailable unavailable => unavailable.Code,
+        } is null, "the database purge was not recorded");
         var afterDelete = Sequence(session.CurrentBookmark, origin);
 
         var create = await FindAsync(session, origin, beforeCreate + 1, beforeDelete, database.Id, MutationOp.Insert, cancellationToken);

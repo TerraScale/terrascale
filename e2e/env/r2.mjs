@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { port } from './ports.mjs';
 
 const platformBuckets = new Set(['journey-backups', 'journey-shapes', 'ts-terrabase-shapes-prod']);
-const platformObject = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor)\/[^?]+)$/;
+const platformObject = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor|databases)\/[^?]+)$/;
 const origin = 'https://dash.terrascale.tech';
 const bucket = /^\/(terrascale-[a-z]+-files)\/(app-files\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26})$/;
 const listing = /^\/(terrascale-[a-z]+-files)\/?$/;
@@ -89,11 +89,14 @@ function list(request, response, account, name, query) {
   const limit = Number(query.get('max-keys') ?? 1000);
   const platform = platformBuckets.has(name);
   const encoded = query.has('encoding-type');
-  if (query.get('list-type') !== '2' || !(platform ? prefix.startsWith('v1/') : projectPrefix.test(prefix)) || [...query.keys()].some((key) => !listQuery.has(key) && !(platform && key === 'start-after'))
+  const allowedPrefix = platform ? (prefix.startsWith('v1/') || prefix.startsWith('databases/')) : projectPrefix.test(prefix);
+  if (query.get('list-type') !== '2' || !allowedPrefix || [...query.keys()].some((key) => !listQuery.has(key) && !(platform && (key === 'start-after' || key === 'continuation-token')))
     || !Number.isInteger(limit) || limit < 1 || limit > 1000 || (encoded && query.get('encoding-type') !== 'url'))
     return unexpected(request, response, 400, 'InvalidArgument', 'a listing that is not ListObjectsV2 of one project prefix');
   const text = (value) => (encoded ? value.split('/').map(encode).join('/') : value);
-  const keys = [...objects.keys()].filter((key) => key.startsWith(`${accountPrefix}${prefix}`) && (!query.has('start-after') || key.slice(accountPrefix.length) > query.get('start-after'))).sort();
+  const continuation = query.has('continuation-token') ? Buffer.from(query.get('continuation-token'), 'base64').toString('utf8') : null;
+  const cursor = continuation ? (continuation.startsWith(`${name}/`) ? continuation.slice(name.length + 1) : continuation) : query.get('start-after');
+  const keys = [...objects.keys()].filter((key) => key.startsWith(`${accountPrefix}${prefix}`) && (!cursor || key.slice(accountPrefix.length) > cursor)).sort();
   const contents = keys.slice(0, limit).map((key) => {
     const stored = objects.get(key);
     return `<Contents><Key>${text(key.slice(accountPrefix.length))}</Key><LastModified>${new Date(stored.modified).toISOString()}</LastModified>`

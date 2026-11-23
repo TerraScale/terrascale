@@ -32,7 +32,7 @@ public sealed record DatabaseBody(
     bool Strict,
     string State,
     string? PreviousName,
-    DateTimeOffset? ExpiresAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? ExpiresAt,
     long? TtlSeconds)
 {
     public static DatabaseBody From(DatabaseRecord database, string region, DateTimeOffset now)

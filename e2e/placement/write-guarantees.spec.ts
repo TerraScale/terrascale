@@ -47,18 +47,23 @@ test('consistency follows the request header, then the database default', async 
   const fast = await json<Database>(await cells.post(`${gru}${project()}/databases`, {
     data: { name: name('fast-default'), regions: ['gru', 'fra'] },
   }), 201);
+  try {
+    expect(fast.defaultConsistency).toBe('fast');
+    await sql(cells, gru, fast.id, notes);
+    await converged(cells, fra, fast.id, 'SELECT count(*) FROM notes', rows => rows.length === 1);
+    expect((await answer(cells, fra, fast.id, ["INSERT INTO notes (id, value) VALUES (1, 'default')"])).consistency).toBe('fast');
+    expect((await answer(cells, fra, fast.id, ["INSERT INTO notes (id, value) VALUES (2, 'strong')"], { consistency: 'strong' })).consistency).toBe('strong');
+  } finally {
+    await removeDatabase(cells, fast.id);
+  }
+
   const strong = await json<Database>(await cells.post(`${gru}${project()}/databases`, {
     data: { name: name('strong-default'), regions: ['gru', 'fra'], defaultConsistency: 'strong' },
   }), 201);
   try {
-    expect(fast.defaultConsistency).toBe('fast');
     expect(strong.defaultConsistency).toBe('strong');
-    for (const created of [fast, strong]) {
-      await sql(cells, gru, created.id, notes);
-      await converged(cells, fra, created.id, 'SELECT count(*) FROM notes', rows => rows.length === 1);
-    }
-    expect((await answer(cells, fra, fast.id, ["INSERT INTO notes (id, value) VALUES (1, 'default')"])).consistency).toBe('fast');
-    expect((await answer(cells, fra, fast.id, ["INSERT INTO notes (id, value) VALUES (2, 'strong')"], { consistency: 'strong' })).consistency).toBe('strong');
+    await sql(cells, gru, strong.id, notes);
+    await converged(cells, fra, strong.id, 'SELECT count(*) FROM notes', rows => rows.length === 1);
     const strongCommit = await answer(cells, fra, strong.id, ["INSERT INTO notes (id, value) VALUES (1, 'default')"]);
     expect(strongCommit.consistency).toBe('strong');
     expect((await answer(cells, fra, strong.id, ["INSERT INTO notes (id, value) VALUES (2, 'fast')"], { consistency: 'fast' })).consistency).toBe('fast');
@@ -66,7 +71,6 @@ test('consistency follows the request header, then the database default', async 
     expect(committed.results[0].rows, 'gru reads the strong commit made in fra with its bookmark').toEqual([[1, 'default']]);
   } finally {
     await removeDatabase(cells, strong.id);
-    await removeDatabase(cells, fast.id);
   }
 });
 

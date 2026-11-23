@@ -4,6 +4,7 @@ using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Rules;
+using TerraBase.Storage;
 using TerraScale.Contracts.Cluster;
 using TerraScale.Contracts.Http;
 
@@ -53,8 +54,12 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         response.Headers.CacheControl = "no-store";
     }
 
+    public ValueTask<Result<SqlRun, SqlRefusal>> RunAsync(
+        ResolvedDatabase target, IReadOnlyList<SqlStatement> statements, SqlCausality causality, CancellationToken cancellationToken) =>
+        RunAsync(target, statements, causality, serviceRead: false, cancellationToken);
+
     public async ValueTask<Result<SqlRun, SqlRefusal>> RunAsync(
-        ResolvedDatabase target, IReadOnlyList<SqlStatement> statements, SqlCausality causality, CancellationToken cancellationToken)
+        ResolvedDatabase target, IReadOnlyList<SqlStatement> statements, SqlCausality causality, bool serviceRead, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(causality);
@@ -66,7 +71,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
         return SqlPlan.Batch(statements, allowTransactionControl: false) switch
         {
-            SqlBatch batch => await RunBatchAsync(target, batch, causality, cancellationToken),
+            SqlBatch batch => await RunBatchAsync(target, batch, causality, serviceRead, cancellationToken),
             SqlRefusal refusal => refusal,
         };
     }
@@ -117,7 +122,8 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     public static string Describe(CommitMetadata commit) =>
         string.Concat(commit.OriginRegion, ":", commit.Sequence.ToString(CultureInfo.InvariantCulture));
 
-    private async ValueTask<Result<SqlRun, SqlRefusal>> RunBatchAsync(ResolvedDatabase target, SqlBatch batch, SqlCausality causality, CancellationToken cancellationToken)
+    private async ValueTask<Result<SqlRun, SqlRefusal>> RunBatchAsync(
+        ResolvedDatabase target, SqlBatch batch, SqlCausality causality, bool serviceRead, CancellationToken cancellationToken)
     {
         var firstWrite = FirstWrite(batch.Statements);
         if (firstWrite >= 0 && !target.CanWrite)
@@ -133,7 +139,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
             {
                 ISqlDatabaseSession session => await PrepareAsync(target, batch.Statements, cancellationToken, session) switch
                 {
-                    EnforcedSql enforced => await ExecuteAsync(target, session, enforced.Statements, batch.Writes, mode, causality.After, enforced.RulesVersion, cancellationToken),
+                    EnforcedSql enforced => await ExecuteAsync(target, session, enforced.Statements, batch.Writes, mode, causality.After, enforced.RulesVersion, serviceRead, cancellationToken),
                     SqlRefusal refusal => refusal,
                 },
                 Unavailable unavailable => SqlRefusal.From(unavailable),
@@ -144,12 +150,15 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
     private async ValueTask<Result<SqlRun, SqlRefusal>> ExecuteAsync(
         ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<SqlStatement> statements, bool writes, ConsistencyMode mode, CausalBookmark after,
-        string? rulesVersion, CancellationToken cancellationToken)
+        string? rulesVersion, bool serviceRead, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(target.Database.Id, statements, writes ? SqlAccess.Write : SqlAccess.Read, mode, after);
         if (!writes)
         {
-            return await session.ExecuteReadAsync(request, cancellationToken) switch
+            var result = serviceRead
+                ? await SqliteStorageEngine.ExecuteServiceReadAsync(session, request, cancellationToken)
+                : await session.ExecuteReadAsync(request, cancellationToken);
+            return result switch
             {
                 SqlReadResult read => Finish(target, read.ResultSets, after.Merge(read.Observed), mode, wrote: false, rulesVersion),
                 SqlError error => SqlRefusal.From(error),

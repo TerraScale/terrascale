@@ -103,6 +103,7 @@ test('bookmark and point-in-time restores run in fra and gru reads the copies', 
   } finally {
     for (const id of copies) await discard(cells, id);
     await discard(cells, source.id);
+    await publish('hobby');
   }
 });
 

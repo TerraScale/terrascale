@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
-import { test, answer, database, json, name, project, regions as replication, removeDatabase, type Cells } from '../placement/support';
+import { test, answer, converged, database, json, name, project, regions as replication, removeDatabase, type Cells } from '../placement/support';
 import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { verifyRestoreDrill } from './restore-drill';
@@ -129,9 +129,8 @@ test('a bookmark restore copies the snapshot ledger into every region and leaves
     expect(operation).toMatchObject({ sourceDatabaseId: created.id });
     copies.push(await completed(cells, created.id, operation.operationId));
     for (const region of regions) {
-      await expect.poll(async () => (await answer(cells, endpoint(region), copies[0], ['SELECT id, value FROM fault_rows ORDER BY id'])).results[0].rows, {
-        message: `the restored ${region} copy matches the bookmark`, timeout: 45_000, intervals: [250, 500, 1000],
-      }).toEqual([[1, 'snapshot-gru']]);
+      expect(await converged(cells, endpoint(region), copies[0], 'SELECT id, value FROM fault_rows ORDER BY id',
+        rows => JSON.stringify(rows) === JSON.stringify([[1, 'snapshot-gru']]))).toEqual([[1, 'snapshot-gru']]);
     }
     expect((await answer(cells, endpoint('gru'), created.id, ['SELECT id, value FROM fault_rows ORDER BY id'])).results[0].rows).toEqual([[1, 'snapshot-gru'], [2, 'snapshot-fra'], [3, 'after-snapshot']]);
     expect(fraWrite.bookmark).not.toBe(snapshot.bookmark);
@@ -427,7 +426,7 @@ test('closure reaches every peer, including one that was down, and a platform pr
     const token = await projectToken(request);
     await ledger.write(cells, 'gru', [[1, 'before-fra-outage']]);
     await ledger.converge(token, peersIn('gru'));
-    const occupied = await nodeRequest(gru, closurePath, 'PUT', closure);
+    const occupied = await nodeRequest(gru, closurePath, 'PUT', { ...closure, version: 1 });
     expect(occupied.status, occupied.body).toBe(409);
     expect(JSON.parse(occupied.body).error.code).toBe('not_empty');
     await manage(fra, 'DELETE', `/v1/projects/${projectRecord.id}/databases/${databaseRecord.id}`, undefined, 204);

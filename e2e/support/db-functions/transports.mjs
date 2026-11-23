@@ -23,14 +23,14 @@ export async function transport(surface, region, project, database, credential, 
         body: JSON.stringify({ statements }), signal: AbortSignal.timeout(30000), redirect: 'error',
       });
       const body = await response.json();
-      if (body.error) throw Object.assign(new Error('SQL response'), body.error, { status: response.status });
+      if (body.error) throw Object.assign(new Error('SQL response'), body.error, { sqlstate: body.error.sqlState ?? body.error.sqlstate, status: response.status });
       if (!response.ok || !Array.isArray(body.results)) throw new Error('SQL response HTTP ' + response.status);
       return Object.assign(body.results, { region: response.headers.get('x-terrabase-region'), route: response.headers.get('terrascale-write-route') });
     },
     close: async () => {},
   };
   if (surface === 'WebSocket') {
-    const socket = new WebSocket(origin.replace('https:', 'wss:') + path + 'ws', 'terrascale.sql.v1');
+    const socket = new WebSocket(origin.replace('https:', 'wss:') + path + 'ws', 'terrascale.sql.v2');
     let id = 0;
     const pending = new Map();
     socket.addEventListener('message', event => {
@@ -38,7 +38,7 @@ export async function transport(surface, region, project, database, credential, 
       const waiting = pending.get(body.id);
       if (!waiting) return;
       pending.delete(body.id);
-      if (body.error) waiting.reject(Object.assign(new Error('SQL frame'), body.error));
+      if (body.error) waiting.reject(Object.assign(new Error('SQL frame'), body.error, { sqlstate: body.error.sqlState ?? body.error.sqlstate }));
       else waiting.resolve(body.results);
     });
     socket.addEventListener('close', event => {
@@ -63,7 +63,7 @@ export async function transport(surface, region, project, database, credential, 
       socket.close();
       throw error;
     }
-    return { execute: statements => send('execute', { statements }), control: type => send(type), close: async () => { socket.close(); } };
+    return { execute: statements => send('execute', { statements }), control: (type, fields) => send(type, fields), close: async () => { socket.close(); } };
   }
   const { default: pg } = await import('pg');
   const address = ports ? { address: '127.0.0.1' } : await lookup(region + '.api.terrascale.tech', { family: 4 });
@@ -119,5 +119,11 @@ export async function transport(surface, region, project, database, credential, 
     client.connection.on('parameterDescription', parameters);
     client.query(query);
   });
-  return { execute, describeBind, control: type => execute([{ sql: type.toUpperCase() }]), close: async () => { await client.end(); if (broken) throw Object.assign(new Error(broken.message), { sqlstate: broken.code }); }, address: address.address };
+  return {
+    execute,
+    describeBind,
+    control: (type, fields) => execute([{ sql: type === 'begin' && fields?.consistency === 'strong' ? 'BEGIN ISOLATION LEVEL SERIALIZABLE' : type.toUpperCase() }]),
+    close: async () => { await client.end(); if (broken) throw Object.assign(new Error(broken.message), { sqlstate: broken.code }); },
+    address: address.address,
+  };
 }

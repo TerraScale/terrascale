@@ -40,7 +40,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private static readonly string[] TenantRefusedClaims = ["project_id", "instance_id", "token_kind", "platform_role", "key_id", "key_gen"];
 
-    private readonly ConfigurationManager<OpenIdConnectConfiguration>? _platform = options.AuthIssuer is { } issuer ? Manager(http, issuer) : null;
+    private readonly IssuerEntry? _platform = options.AuthIssuer is { } issuer ? CreateIssuer(http, issuer) : null;
 
     private readonly MemoryCache _projects = new(new MemoryCacheOptions { SizeLimit = MaxProjectIssuers });
 
@@ -61,7 +61,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return new Unauthorized("the bearer token's issuer is not trusted", "invalid_token");
         }
 
-        if (await ConfigurationAsync(trusted.Manager, cancellationToken) is not { } configuration)
+        if (await ConfigurationAsync(trusted.Entry.Manager, cancellationToken) is not { } configuration)
         {
             return new Unavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
         }
@@ -69,11 +69,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, configuration.SigningKeys));
         if (!validated.IsValid && validated.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            trusted.Manager.RequestRefresh();
-            if (await ConfigurationAsync(trusted.Manager, cancellationToken) is { } refreshed)
+            trusted.Entry.Manager.RequestRefresh();
+            if (await FetchFreshAsync(trusted.Entry, cancellationToken) is not { } refreshed)
             {
-                validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, refreshed.SigningKeys));
+                return new Unavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
             }
+
+            validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, refreshed.SigningKeys));
         }
 
         if (!validated.IsValid || validated.SecurityToken is not JsonWebToken jwt)
@@ -106,29 +108,32 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
 
         var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, last)).ToArray();
-        return new TrustedIssuer(projectIssuer, ProjectManager(projectIssuer), audiences, project);
+        return new TrustedIssuer(projectIssuer, ProjectIssuer(projectIssuer), audiences, project);
     }
 
-    private ConfigurationManager<OpenIdConnectConfiguration> ProjectManager(string issuer)
+    private IssuerEntry ProjectIssuer(string issuer)
     {
-        if (_projects.TryGetValue(issuer, out ConfigurationManager<OpenIdConnectConfiguration>? cached) && cached is { } existing)
+        if (_projects.TryGetValue(issuer, out IssuerEntry? cached) && cached is { } existing)
         {
             return existing;
         }
 
-        var created = Manager(http, issuer);
+        var created = CreateIssuer(http, issuer);
         _projects.Set(issuer, created, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = ProjectIssuerIdle });
         return created;
     }
 
-    private static ConfigurationManager<OpenIdConnectConfiguration> Manager(IHttpClientFactory http, string issuer) => new(
-        string.Concat(issuer.TrimEnd('/'), "/.well-known/openid-configuration"),
-        new OpenIdConnectConfigurationRetriever(),
-        new HttpDocumentRetriever(http.CreateClient(HttpClientName)) { RequireHttps = new Uri(issuer).Scheme == Uri.UriSchemeHttps })
+    private static IssuerEntry CreateIssuer(IHttpClientFactory http, string issuer)
     {
-        AutomaticRefreshInterval = TimeSpan.FromHours(1),
-        RefreshInterval = TimeSpan.FromSeconds(30),
-    };
+        var metadataAddress = string.Concat(issuer.TrimEnd('/'), "/.well-known/openid-configuration");
+        var retriever = new HttpDocumentRetriever(http.CreateClient(HttpClientName)) { RequireHttps = new Uri(issuer).Scheme == Uri.UriSchemeHttps };
+        var manager = new ConfigurationManager<OpenIdConnectConfiguration>(metadataAddress, new OpenIdConnectConfigurationRetriever(), retriever)
+        {
+            AutomaticRefreshInterval = TimeSpan.FromHours(1),
+            RefreshInterval = TimeSpan.FromSeconds(30),
+        };
+        return new IssuerEntry(metadataAddress, retriever, manager);
+    }
 
     private static bool IsCanonicalUlid(string value) =>
         value.Length == 26 && Ulid.TryParse(value, out var parsed) && string.Equals(parsed.ToString(), value, StringComparison.Ordinal);
@@ -259,6 +264,21 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return null;
         }
     }
+
+    private static async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, cancellationToken);
+        }
+        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
+            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return null;
+        }
+    }
 }
 
-internal sealed record TrustedIssuer(string Issuer, ConfigurationManager<OpenIdConnectConfiguration> Manager, IReadOnlyList<string> Audiences, Ulid? Tenant);
+internal sealed record IssuerEntry(string MetadataAddress, HttpDocumentRetriever Retriever, ConfigurationManager<OpenIdConnectConfiguration> Manager);
+
+internal sealed record TrustedIssuer(string Issuer, IssuerEntry Entry, IReadOnlyList<string> Audiences, Ulid? Tenant);

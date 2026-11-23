@@ -16,6 +16,8 @@ public sealed record SqlRefusal(
 
     public static SqlRefusal Invalid(string message, int statement) => new("invalid_request", message, "22023", statement, StatusCodes.Status400BadRequest);
 
+    public static SqlRefusal RequestTooLarge() => new("too_large", "SQL request bodies are at most 1 MiB", "54000", 0, StatusCodes.Status413PayloadTooLarge);
+
     public static SqlRefusal ForbiddenScope(int statement) =>
         new("forbidden_scope", "writes and schema changes need the sql:write scope", "42501", statement, StatusCodes.Status403Forbidden);
 

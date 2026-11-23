@@ -27,9 +27,9 @@ public sealed class ClusterTopology(ClusterOptions options)
         options.Peers.FirstOrDefault(peer => string.Equals(peer.NodeId, nodeId, StringComparison.Ordinal));
 
     public IReadOnlyList<StrongParticipantTarget> StrongParticipants(Ulid databaseId) =>
-        [.. Regions.Select(region => Participant(region, databaseId))];
+        [.. Regions.Select(region => StrongCandidates(region, databaseId)[0])];
 
-    private StrongParticipantTarget Participant(string region, Ulid databaseId)
+    public IReadOnlyList<StrongParticipantTarget> StrongCandidates(string region, Ulid databaseId)
     {
         var candidates = options.Peers.Where(peer => string.Equals(peer.Region, region, StringComparison.Ordinal)).Select(static peer => peer.NodeId);
         if (string.Equals(region, options.Region, StringComparison.Ordinal))
@@ -37,8 +37,10 @@ public sealed class ClusterTopology(ClusterOptions options)
             candidates = candidates.Append(options.NodeId);
         }
 
-        var chosen = candidates.MaxBy(nodeId => Weight(databaseId, nodeId)) ?? options.NodeId;
-        return new StrongParticipantTarget(region, chosen, string.Equals(chosen, options.NodeId, StringComparison.Ordinal));
+        StrongParticipantTarget[] ordered = [.. candidates
+            .OrderByDescending(nodeId => Weight(databaseId, nodeId))
+            .Select(nodeId => new StrongParticipantTarget(region, nodeId, string.Equals(nodeId, options.NodeId, StringComparison.Ordinal)))];
+        return ordered.Length > 0 ? ordered : [new StrongParticipantTarget(region, options.NodeId, true)];
     }
 
     private static ulong Weight(Ulid databaseId, string nodeId)

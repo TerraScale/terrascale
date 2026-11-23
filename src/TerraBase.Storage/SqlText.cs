@@ -35,7 +35,7 @@ internal static class SqlTokenizer
         while (index < sql.Length)
         {
             var current = sql[index];
-            if (char.IsWhiteSpace(current))
+            if (char.IsWhiteSpace(current) || current == '\uFEFF')
             {
                 index++;
                 continue;

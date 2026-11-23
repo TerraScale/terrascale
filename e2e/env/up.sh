@@ -50,21 +50,23 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
     AWS_ACCESS_KEY_ID="$r2_access_key_id" AWS_SECRET_ACCESS_KEY="$r2_secret_access_key")
   start terrabase env "${cells[@]}" TS_REGION=gru TS_NODE=journey-1 TERRABASE_DATA_DIRECTORY="$state/terrabase" TERRABASE_PORT="$(e2e_port terrabase)" \
     TERRABASE_METRICS_PORT="$(e2e_port metrics)" TERRABASE_POSTGRES_PORT="$(e2e_port postgres)" TERRABASE_QUIC_PORT="$(e2e_port quic)" dotnet "$build/terrabase/terrabase.dll"
-  ready terrabase curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase)/readyz"
-  node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
   start terrabase-fra env "${cells[@]}" TS_REGION=fra TS_NODE=journey-2 TERRABASE_DATA_DIRECTORY="$state/terrabase-fra" TERRABASE_PORT="$(e2e_port terrabase_fra)" \
     TERRABASE_METRICS_PORT="$(e2e_port metrics_fra)" TERRABASE_POSTGRES_PORT="$(e2e_port postgres_fra)" TERRABASE_QUIC_PORT="$(e2e_port quic_fra)" dotnet "$build/terrabase/terrabase.dll"
   if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
     rm -rf "$state/terrabase-gru-2" "$state/terrabase-fra-2"
+    mkdir -p "$state/terrabase-gru-2" "$state/terrabase-fra-2"
     start terrabase-gru-2 env "${cells[@]}" TS_REGION=gru TS_NODE=journey-3 TERRABASE_DATA_DIRECTORY="$state/terrabase-gru-2" TERRABASE_PORT="$(e2e_port terrabase_gru2)" \
       TERRABASE_METRICS_PORT="$(e2e_port metrics_gru2)" TERRABASE_POSTGRES_PORT="$(e2e_port postgres_gru2)" TERRABASE_QUIC_PORT="$(e2e_port quic_gru2)" dotnet "$build/terrabase/terrabase.dll"
     start terrabase-fra-2 env "${cells[@]}" TS_REGION=fra TS_NODE=journey-4 TERRABASE_DATA_DIRECTORY="$state/terrabase-fra-2" TERRABASE_PORT="$(e2e_port terrabase_fra2)" \
       TERRABASE_METRICS_PORT="$(e2e_port metrics_fra2)" TERRABASE_POSTGRES_PORT="$(e2e_port postgres_fra2)" TERRABASE_QUIC_PORT="$(e2e_port quic_fra2)" dotnet "$build/terrabase/terrabase.dll"
-    ready terrabase-gru-2 curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase_gru2)/readyz"
-    ready terrabase-fra-2 curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase_fra2)/readyz"
   fi
   ready terrabase curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase)/readyz"
   ready terrabase-fra curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase_fra)/readyz"
+  if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
+    ready terrabase-gru-2 curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase_gru2)/readyz"
+    ready terrabase-fra-2 curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase_fra2)/readyz"
+  fi
+  node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
 else
   start terrabase env DOTNET_ENVIRONMENT=Development "${identity[@]}" TS_REGION=gru TS_NODE=journey-1 TERRABASE_DATA_DIRECTORY="$state/terrabase" \
     TERRABASE_PORT="$(e2e_port terrabase)" TERRABASE_METRICS_PORT="$(e2e_port metrics)" TERRABASE_POSTGRES_PORT="$(e2e_port postgres)" \

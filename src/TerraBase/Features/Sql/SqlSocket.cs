@@ -24,7 +24,7 @@ internal sealed record SocketServices(
 
 internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, string? project, string? database, SocketServices services) : IAsyncDisposable
 {
-    public const int MaxFrameBytes = 1024 * 1024;
+    public const int MaxFrameBytes = SqlFlow.MaxRequestBytes;
 
     private const string TransactionExpired = "the transaction expired: it was open for more than 5 seconds and was rolled back";
 
@@ -35,12 +35,17 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private readonly IClusterCoordinator coordinator = services.Coordinator;
     private readonly TimeProvider time = services.Time;
 
+    private readonly SemaphoreSlim _transactionGate = new(1, 1);
     private ResolvedDatabase? _target;
     private ISqlDatabaseSession? _session;
     private ISqlTransaction? _transaction;
+    private ITimer? _transactionTimer;
+    private Task _transactionExpiry = Task.CompletedTask;
+    private IDisposable? _preauthentication;
     private IDisposable? _tenantSession;
     private ConsistencyMode _mode;
     private bool _failed;
+    private bool _transactionExpired;
     private long _transactionStarted;
     private CausalBookmark _bookmark = CausalBookmark.Empty;
 
@@ -51,7 +56,11 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         ArgumentNullException.ThrowIfNull(causality);
         _bookmark = causality.After;
         _mode = causality.Mode ?? target?.Database.DefaultConsistency ?? ConsistencyMode.Fast;
-        if (target is not null && await AdmitAsync(null, target, causality, cancellationToken) is { } refused)
+        if (target is null)
+        {
+            _preauthentication = services.Sessions.BeginPreauthentication();
+        }
+        else if (await AdmitAsync(null, target, causality, cancellationToken) is { } refused)
         {
             await RefuseAsync(null, refused, cancellationToken);
             return;
@@ -74,12 +83,24 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     public async ValueTask DisposeAsync()
     {
-        if (_transaction is { } transaction)
+        StopTransactionTimer();
+        await _transactionExpiry;
+        await _transactionGate.WaitAsync();
+        try
         {
-            _transaction = null;
-            await transaction.DisposeAsync();
+            if (_transaction is { } transaction)
+            {
+                _transaction = null;
+                await transaction.DisposeAsync();
+            }
+        }
+        finally
+        {
+            _transactionGate.Release();
         }
 
+        _transactionGate.Dispose();
+        EndPreauthentication();
         _tenantSession?.Dispose();
     }
 
@@ -108,27 +129,38 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             _bookmark = _bookmark.Merge(bookmark);
         }
 
-        if (_transaction is not null && time.GetElapsedTime(_transactionStarted, message.Started) > QosPolicy.MaxTransaction)
+        await _transactionGate.WaitAsync(cancellationToken);
+        try
         {
-            await ExpireTransactionAsync(frame.Id);
-            return false;
-        }
+            if (_transactionExpired || (_transaction is not null && time.GetElapsedTime(_transactionStarted, message.Started) > QosPolicy.MaxTransaction))
+            {
+                _transactionExpired = false;
+                _failed = false;
+                await RollbackUnlockedAsync();
+                await ErrorAsync(frame.Id, new SqlRefusal("query_canceled", TransactionExpired, "57014", 0, StatusCodes.Status400BadRequest), cancellationToken);
+                return true;
+            }
 
-        var outcome = frame.Type switch
+            var outcome = frame.Type switch
+            {
+                "execute" or "batch" => await ExecuteAsync(frame, _target, cancellationToken),
+                "begin" => await BeginAsync(Mode(frame.Consistency) ?? _mode, cancellationToken),
+                "commit" => await EndTransactionAsync(commit: true, cancellationToken),
+                "rollback" => await EndTransactionAsync(commit: false, cancellationToken),
+                "auth" => SqlRefusal.Invalid("the socket is already authenticated", 0),
+                _ => SqlRefusal.Invalid("type is execute, batch, begin, commit or rollback", 0),
+            };
+            await (outcome switch
+            {
+                SocketAnswer answer => ResultAsync(frame.Id, answer.Results, cancellationToken),
+                SqlRefusal refusal => ErrorAsync(frame.Id, refusal, cancellationToken),
+            });
+            return true;
+        }
+        finally
         {
-            "execute" or "batch" => await ExecuteAsync(frame, _target, cancellationToken),
-            "begin" => await BeginAsync(Mode(frame.Consistency) ?? _mode, cancellationToken),
-            "commit" => await EndTransactionAsync(commit: true, cancellationToken),
-            "rollback" => await EndTransactionAsync(commit: false, cancellationToken),
-            "auth" => SqlRefusal.Invalid("the socket is already authenticated", 0),
-            _ => SqlRefusal.Invalid("type is execute, batch, begin, commit or rollback", 0),
-        };
-        await (outcome switch
-        {
-            SocketAnswer answer => ResultAsync(frame.Id, answer.Results, cancellationToken),
-            SqlRefusal refusal => ErrorAsync(frame.Id, refusal, cancellationToken),
-        });
-        return true;
+            _transactionGate.Release();
+        }
     }
 
     private async Task<bool> AuthenticateAsync(SocketFrame frame, SqlCausality causality, CancellationToken cancellationToken)
@@ -182,10 +214,20 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private SqlRefusal? Accept(ResolvedDatabase target, SqlCausality causality, IDisposable? session)
     {
+        EndPreauthentication();
         _tenantSession = session;
         _target = target;
         _mode = causality.Mode ?? target.Database.DefaultConsistency;
         return null;
+    }
+
+    private void EndPreauthentication()
+    {
+        if (_preauthentication is { } preauthentication)
+        {
+            _preauthentication = null;
+            preauthentication.Dispose();
+        }
     }
 
     private async Task RefuseAsync(long? id, SqlRefusal refusal, CancellationToken cancellationToken)
@@ -260,11 +302,24 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private SocketAnswer Opened(ISqlDatabaseSession session, ISqlTransaction transaction, ConsistencyMode mode)
     {
+        StopTransactionTimer();
         _session = session;
         _transaction = transaction;
         _mode = mode;
         _failed = false;
+        _transactionExpired = false;
         _transactionStarted = time.GetTimestamp();
+        _transactionTimer = time.CreateTimer(
+            static state =>
+            {
+                if (state is SqlSocket self)
+                {
+                    self._transactionExpiry = self.ExpireOpenTransactionAsync();
+                }
+            },
+            this,
+            QosPolicy.MaxTransaction,
+            Timeout.InfiniteTimeSpan);
         return new SocketAnswer([]);
     }
 
@@ -308,12 +363,13 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private async ValueTask<SqlRefusal> FailAsync(SqlRefusal refusal)
     {
         _failed = true;
-        await RollbackAsync();
+        await RollbackUnlockedAsync();
         return refusal;
     }
 
-    private async ValueTask RollbackAsync()
+    private async ValueTask RollbackUnlockedAsync()
     {
+        StopTransactionTimer();
         if (_transaction is not { } transaction)
         {
             return;
@@ -326,12 +382,21 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         }
     }
 
+    private void StopTransactionTimer()
+    {
+        if (_transactionTimer is { } timer)
+        {
+            _transactionTimer = null;
+            timer.Dispose();
+        }
+    }
+
     private async ValueTask<Result<SocketAnswer, SqlRefusal>> EndTransactionAsync(bool commit, CancellationToken cancellationToken)
     {
         if (_failed)
         {
             _failed = false;
-            await RollbackAsync();
+            await RollbackUnlockedAsync();
             return commit
                 ? new SqlRefusal("transaction_rolled_back", "the transaction failed earlier and was rolled back", "40000", 0, StatusCodes.Status400BadRequest)
                 : new SocketAnswer([]);
@@ -342,6 +407,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return new SqlRefusal("transaction_state", "no transaction is open", "25P01", 0, StatusCodes.Status400BadRequest);
         }
 
+        StopTransactionTimer();
         _transaction = null;
         await using (transaction)
         {
@@ -414,9 +480,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     }
 
     private TimeSpan IdleBudget() =>
-        _target is null ? AuthTimeout
-        : _transaction is not null ? QosPolicy.MaxTransaction - time.GetElapsedTime(_transactionStarted)
-        : QosPolicy.IdleTimeout;
+        _target is null ? AuthTimeout : QosPolicy.IdleTimeout;
 
     private async Task<SocketMessage?> ReceiveAsync(CancellationToken cancellationToken)
     {
@@ -479,21 +543,38 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         {
             await CloseAsync(WebSocketCloseStatus.PolicyViolation, "incomplete message timeout exceeded");
         }
-        else if (_transaction is not null)
-        {
-            await ExpireTransactionAsync(null);
-        }
         else
         {
             await CloseAsync(WebSocketCloseStatus.PolicyViolation, "session idle timeout exceeded");
         }
     }
 
-    private async Task ExpireTransactionAsync(long? id)
+    private async Task ExpireOpenTransactionAsync()
     {
-        await RollbackAsync();
-        await ErrorAsync(id, new SqlRefusal("query_canceled", TransactionExpired, "57014", 0, StatusCodes.Status400BadRequest), CancellationToken.None);
-        await CloseAsync(WebSocketCloseStatus.PolicyViolation, TransactionExpired);
+        try
+        {
+            await _transactionGate.WaitAsync();
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_transaction is null || time.GetElapsedTime(_transactionStarted) < QosPolicy.MaxTransaction)
+            {
+                return;
+            }
+
+            _failed = false;
+            _transactionExpired = true;
+            await RollbackUnlockedAsync();
+        }
+        finally
+        {
+            _transactionGate.Release();
+        }
     }
 
     private async Task CloseAsync(WebSocketCloseStatus status, string reason)

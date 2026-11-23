@@ -28,6 +28,13 @@ public sealed class PostgresConnectionHandler(
             || (error is OperationCanceledException && closed.IsCancellationRequested))
         {
         }
+        finally
+        {
+            if (wire.Writer.Aborted)
+            {
+                connection.Abort();
+            }
+        }
     }
 
     private async Task ServeAsync(PgWire wire, IPAddress? client, CancellationToken closed)

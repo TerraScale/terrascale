@@ -16,6 +16,8 @@ internal sealed partial class PostgresSqlRewriter
         "TABLE", "THEN", "TO", "UNION", "UNIQUE", "UPDATE", "USING", "VALUES", "WHEN", "WHERE", "WINDOW", "WITH",
     ]);
 
+    private static readonly FrozenSet<string> NamespaceColumns = FrozenSet.Create(StringComparer.Ordinal, ["oid", "nspname", "nspowner", "nspacl"]);
+
     private static readonly FrozenSet<string> TypeContinuations = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
         ["precision", "varying", "with", "without", "time", "zone"]);
 
@@ -26,6 +28,8 @@ internal sealed partial class PostgresSqlRewriter
     private readonly Dictionary<int, int> _parameterTypes = [];
     private readonly List<PgParameterColumn> _parameterColumns = [];
     private readonly List<int> _deferred = [];
+    private List<int>? _selectLiterals;
+    private readonly List<(string Name, string Alias, int Token)> _catalogRelations = [];
     private int _parameterCount;
     private bool _usesCatalog;
 
@@ -49,12 +53,18 @@ internal sealed partial class PostgresSqlRewriter
     private Result<PgRewrite, PgError> Run()
     {
         CollectParameterColumns();
+        var referenced = _parameterColumns.Count == 0 ? [] : ReferencedNames();
         if (RewriteLiterals() is { } literalError)
         {
             return literalError;
         }
 
-        RewriteQualifiedNames();
+        if (RewriteQualifiedNames() is { } qualifiedError)
+        {
+            return qualifiedError;
+        }
+
+        JoinMissingNamespace();
         KillUnsupportedCalls();
         RewriteClauses();
         if (RewriteCasts() is { } castError)
@@ -77,7 +87,31 @@ internal sealed partial class PostgresSqlRewriter
         RewriteDefinitions();
         RunDeferred();
         AliasSelectList();
-        return new PgRewrite(_tokens.Render(), _parameterCount, _parameterTypes, _parameterColumns, _usesCatalog);
+        var sql = _tokens.Render();
+        SqlValue[] boundLiterals = _selectLiterals is { } candidates && !PgRewrite.Fits(sql, describe: true) ? BindSelectLiterals(candidates) : [];
+        if (boundLiterals.Length > 0)
+        {
+            sql = _tokens.Render();
+        }
+
+        return new PgRewrite(sql, _parameterCount, _parameterTypes, _parameterColumns, referenced, _usesCatalog, boundLiterals);
+    }
+
+    private SqlValue[] BindSelectLiterals(List<int> candidates)
+    {
+        List<SqlValue> values = [];
+        foreach (var index in candidates)
+        {
+            var parameter = _parameterCount + values.Count + 1;
+            var placeholder = "?" + parameter.ToString(CultureInfo.InvariantCulture);
+            if (parameter <= ushort.MaxValue && placeholder.Length < _tokens.Raw(index).Length)
+            {
+                _tokens.Replace(index, placeholder);
+                values.Add(SqlValue.FromText(_literals[index]));
+            }
+        }
+
+        return [.. values];
     }
 
     private PgError? RewriteLiterals()
@@ -122,7 +156,7 @@ internal sealed partial class PostgresSqlRewriter
         return null;
     }
 
-    private void RewriteQualifiedNames()
+    private PgError? RewriteQualifiedNames()
     {
         for (var index = 0; index < _tokens.Count; index++)
         {
@@ -132,11 +166,13 @@ internal sealed partial class PostgresSqlRewriter
                 var name = _tokens.Identifier(index + 2);
                 switch (schema)
                 {
+                    case "information_schema" when _tokens.Kind(index - 1) != PgTokenKind.Period:
+                        return PgError.Unsupported("information_schema") with { Hint = "query the pg_catalog relations instead" };
                     case "public":
                         _tokens.Remove(index);
                         _tokens.Remove(index + 1);
                         break;
-                    case "pg_catalog" or "information_schema" when _tokens.Kind(index + 3) != PgTokenKind.LeftParen
+                    case "pg_catalog" when _tokens.Kind(index + 3) != PgTokenKind.LeftParen
                         && PgCatalogSql.TryGetRelation(schema, name, _context, out var relation):
                         _tokens.Remove(index);
                         _tokens.Remove(index + 1);
@@ -163,6 +199,8 @@ internal sealed partial class PostgresSqlRewriter
                 ReplaceRelation(index, _tokens.Identifier(index), bare);
             }
         }
+
+        return null;
     }
 
     private void ReplaceRelation(int index, string name, string relation)
@@ -176,7 +214,71 @@ internal sealed partial class PostgresSqlRewriter
         if (!aliased)
         {
             _tokens.Append(index, " AS " + name);
+            _catalogRelations.Add((name, name, index));
+            return;
         }
+
+        var alias = _tokens.IsWord(next, "AS") ? next + 1 : next;
+        if (_tokens.IsName(alias))
+        {
+            _catalogRelations.Add((name, _tokens.Identifier(alias), alias));
+        }
+    }
+
+    private void JoinMissingNamespace()
+    {
+        if (_catalogRelations.Find(static relation => relation.Name == "pg_class") is not { Alias: { } owner } pgClass)
+        {
+            return;
+        }
+
+        HashSet<string> declared = new(StringComparer.Ordinal);
+        Dictionary<string, bool> qualifiers = new(StringComparer.Ordinal);
+        for (var index = 0; index < _tokens.Count; index++)
+        {
+            if (!_tokens.IsName(index) || _tokens.IsEdited(index))
+            {
+                continue;
+            }
+
+            var identifier = _tokens.Identifier(index);
+            if (_tokens.Kind(index + 1) != PgTokenKind.Period || _tokens.Kind(index - 1) == PgTokenKind.Period)
+            {
+                declared.Add(identifier);
+                continue;
+            }
+
+            var namespaceColumn = _tokens.IsName(index + 2) && NamespaceColumns.Contains(_tokens.Identifier(index + 2));
+            qualifiers[identifier] = (!qualifiers.TryGetValue(identifier, out var known) || known) && namespaceColumn;
+        }
+
+        foreach (var (qualifier, onlyNamespace) in qualifiers)
+        {
+            if (onlyNamespace && !declared.Contains(qualifier) && !_catalogRelations.Exists(relation => relation.Alias == qualifier)
+                && PgCatalogSql.TryGetRelation("pg_catalog", "pg_namespace", _context, out var relation))
+            {
+                var quoted = "\"" + qualifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+                var source = "\"" + owner.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+                _tokens.Append(pgClass.Token, $" LEFT JOIN ({relation}) AS {quoted} ON {quoted}.oid = {source}.relnamespace");
+                return;
+            }
+        }
+    }
+
+    private List<string> ReferencedNames()
+    {
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        List<string> names = [];
+        for (var index = 0; index < _tokens.Count; index++)
+        {
+            if (_tokens.IsName(index) && !(_tokens.Kind(index) == PgTokenKind.Word && Reserved.Contains(_tokens.Text(index)))
+                && seen.Add(_tokens.Identifier(index)))
+            {
+                names.Add(_tokens.Identifier(index));
+            }
+        }
+
+        return names;
     }
 
     private void KillUnsupportedCalls()
@@ -323,7 +425,7 @@ internal sealed partial class PostgresSqlRewriter
                 return;
             case "regnamespace":
                 _tokens.Prepend(start, "(CASE ");
-                _tokens.Replace(operatorIndex, " WHEN 11 THEN 'pg_catalog' WHEN 2200 THEN 'public' WHEN 13000 THEN 'information_schema' ELSE NULL END)");
+                _tokens.Replace(operatorIndex, " WHEN 11 THEN 'pg_catalog' WHEN 2200 THEN 'public' ELSE NULL END)");
                 _tokens.RemoveRange(operatorIndex + 1, end);
                 return;
             case "bool" or "boolean" when literal is not null && PgValueCodec.TryParseBool(literal, out var flag):

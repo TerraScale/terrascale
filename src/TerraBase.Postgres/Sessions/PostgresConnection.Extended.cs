@@ -77,8 +77,20 @@ internal sealed partial class PostgresConnection
 
     private async ValueTask<PgError?> InferParameterTypesAsync(PgSqlCommand command, int[] oids)
     {
-        const string Schema = "SELECT p.name, p.type FROM sqlite_schema m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table', 'view')";
-        var outcome = await ReadMetadataAsync(Schema, []).ConfigureAwait(false);
+        if (session.Transaction is { Failed: true })
+        {
+            return PgError.InFailedTransaction;
+        }
+
+        var names = command.Rewrite.ReferencedNames;
+        if (names.Count == 0)
+        {
+            return null;
+        }
+
+        var placeholders = string.Join(", ", Enumerable.Range(1, names.Count).Select(static number => "?" + number.ToString(CultureInfo.InvariantCulture)));
+        var schema = $"SELECT m.name, p.name, p.type FROM sqlite_schema m JOIN pragma_table_info(m.name) p WHERE m.type IN ('table', 'view') AND m.name COLLATE NOCASE IN ({placeholders})";
+        var outcome = await ReadMetadataAsync(schema, [.. names.Select(SqlValue.FromText)]).ConfigureAwait(false);
         return outcome switch
         {
             SqlResultSet set => ApplyParameterTypes(command, oids, set),
@@ -88,16 +100,22 @@ internal sealed partial class PostgresConnection
 
     private static PgError? ApplyParameterTypes(PgSqlCommand command, int[] oids, SqlResultSet set)
     {
+        Dictionary<string, int> target = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, int> types = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> ambiguous = new(StringComparer.OrdinalIgnoreCase);
         foreach (var row in set.Rows)
         {
-            if (row.Count < 2 || !row[0].TryGetText(out var name))
+            if (row.Count < 3 || !row[0].TryGetText(out var table) || !row[1].TryGetText(out var name))
             {
                 continue;
             }
 
-            var oid = row[1].TryGetText(out var declared) ? PgOid.FromDeclaredType(declared) : 0;
+            var oid = row[2].TryGetText(out var declared) ? PgOid.FromDeclaredType(declared) : 0;
+            if (command.TargetTable is { } owner && owner.Equals(table, StringComparison.OrdinalIgnoreCase))
+            {
+                target[name] = oid;
+            }
+
             if (types.TryGetValue(name, out var existing) && existing != oid)
             {
                 ambiguous.Add(name);
@@ -108,7 +126,15 @@ internal sealed partial class PostgresConnection
 
         foreach (var (parameter, column) in command.Rewrite.ParameterColumns)
         {
-            if (parameter <= oids.Length && oids[parameter - 1] == 0 && !ambiguous.Contains(column) && types.TryGetValue(column, out var oid) && oid > 0)
+            if (parameter > oids.Length || oids[parameter - 1] != 0)
+            {
+                continue;
+            }
+
+            var oid = target.TryGetValue(column, out var owned) ? owned
+                : !ambiguous.Contains(column) && types.TryGetValue(column, out var shared) ? shared
+                : 0;
+            if (oid > 0)
             {
                 oids[parameter - 1] = oid;
             }

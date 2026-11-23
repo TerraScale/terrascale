@@ -7,7 +7,7 @@ public sealed record PostgresServerOptions(SslServerAuthenticationOptions? Tls);
 internal static class PostgresLimits
 {
     public const int MaxStartupBytes = 10_000;
-    public const int MaxMessageBytes = 8 * 1024 * 1024;
+    public const int MaxMessageBytes = 1024 * 1024;
     public const int MaxConnections = 4096;
     public const int MaxPreparedStatements = 256;
     public const int MaxPortals = 256;

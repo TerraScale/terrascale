@@ -20,6 +20,7 @@ internal sealed record SessionContext(
 internal sealed partial class DatabaseSession : ISqlDatabaseSession
 {
     private const int ApplicationIdBase = 0x54420000;
+    private const int HistoryPageSize = 512;
 
     private readonly SessionContext _context;
     private readonly SqliteConnection _writer;
@@ -368,6 +369,87 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         lock (_logsGate)
         {
             return _logs.GetValueOrDefault(origin);
+        }
+    }
+
+    internal void SealCommittedLogs()
+    {
+        foreach (var log in Logs())
+        {
+            _ = log.SealCommitted(_versions.Get(log.Origin));
+        }
+    }
+
+    internal bool Strict => _strict;
+
+    internal bool HasFullHistory(CausalBookmark target) =>
+        target.Entries.All(entry => entry.Value <= 0 || (Log(entry.Key) is { FirstAvailable: 1 } log && log.LastSequence >= entry.Value));
+
+    internal SessionContext TargetContext(string directory, Ulid databaseId, ReadOnlyMemory<byte> rawKey) => _context with
+    {
+        DatabaseId = databaseId,
+        Directory = directory,
+        DatabasePath = Path.Combine(directory, string.Concat(databaseId.ToString(), ".db")),
+        RawKey = rawKey.ToArray(),
+    };
+
+    internal StorageBusy? CopyHistoryTo(SessionContext target, CausalBookmark through)
+    {
+        using var cipher = new CommitLogCipher(target.RawKey, target.DatabaseId);
+        foreach (var (origin, last) in through.Entries)
+        {
+            if (last <= 0 || Log(origin) is not { FirstAvailable: 1 } source)
+            {
+                continue;
+            }
+
+            var opened = OriginLog.Open(target.Directory, target.DatabaseId, origin, 0, cipher, _logOptions, target.Time);
+            var failure = opened switch
+            {
+                OriginLog destination => CopyOriginHistory(source, destination, last),
+                StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.Zero),
+            };
+            if (failure is not null)
+            {
+                return failure;
+            }
+        }
+
+        return null;
+    }
+
+    private static StorageBusy? CopyOriginHistory(OriginLog source, OriginLog destination, long last)
+    {
+        using (destination)
+        {
+            for (var next = 1L; next <= last;)
+            {
+                var read = source.Read(next, HistoryPageSize);
+                List<CommitMetadata> page = read switch
+                {
+                    IReadOnlyList<CommitMetadata> entries => [.. entries.Where(entry => entry.Sequence <= last)],
+                    CommitLogGap or StorageCorrupted => [],
+                };
+                if (page.Count == 0)
+                {
+                    return new StorageBusy(read switch
+                    {
+                        IReadOnlyList<CommitMetadata> => string.Concat("commit log for origin ", source.Origin, " ends before sequence ", next.ToString(CultureInfo.InvariantCulture)),
+                        CommitLogGap gap => string.Concat("commit log for origin ", gap.OriginRegion, " has a gap before sequence ", gap.OldestAvailable.ToString(CultureInfo.InvariantCulture)),
+                        StorageCorrupted corrupted => corrupted.Message,
+                    }, TimeSpan.Zero);
+                }
+
+                var appended = destination.Append(page, out _);
+                if (!appended.IsOk)
+                {
+                    return appended.ToBusy();
+                }
+
+                next = page[^1].Sequence + 1;
+            }
+
+            return destination.SealCommitted(last) ? null : new StorageBusy(string.Concat("copied commit log for origin ", source.Origin, " could not be sealed"), TimeSpan.Zero);
         }
     }
 

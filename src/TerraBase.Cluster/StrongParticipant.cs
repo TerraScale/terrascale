@@ -6,7 +6,7 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, QuicRpcClient client, HlcClock clock, ILogger<StrongParticipant> logger)
+public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, AntiEntropyService antiEntropy, QuicRpcClient client, HlcClock clock, ILogger<StrongParticipant> logger)
 {
     private const int MaxWoundRounds = 4;
 
@@ -22,22 +22,21 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(payload);
         ArgumentNullException.ThrowIfNull(originBookmark);
+        var isRemoteCoordinator = !string.Equals(coordinatorNodeId, options.NodeId, StringComparison.Ordinal);
         if (!session.CurrentBookmark.Dominates(originBookmark))
         {
-            _ = databases.RequestCatchUp(payload.DatabaseId);
-            var caughtUp = await session.WaitForBookmarkAsync(originBookmark, options.StrongPrepareTimeout / 2, cancellationToken).ConfigureAwait(false);
-            var behind = caughtUp switch
-            {
-                Done => false,
-                RequestTimeout => true,
-            };
+            var behind = isRemoteCoordinator
+                ? !await antiEntropy.PullUntilAsync(session, coordinatorNodeId, originBookmark, options.StrongPrepareTimeout / 2, cancellationToken).ConfigureAwait(false)
+                : await WaitLocalCatchUpAsync(session, payload.DatabaseId, originBookmark, cancellationToken).ConfigureAwait(false);
             if (behind)
             {
+                _ = databases.RequestCatchUp(payload.DatabaseId);
                 return new Unavailable("participant has not applied the origin's causal history yet", "participant_behind");
             }
         }
 
-        if (await ValidateAsync(session, payload, cancellationToken).ConfigureAwait(false) is { } invalid)
+        var seen = isRemoteCoordinator ? originBookmark : null;
+        if (await ValidateAsync(session, payload, seen, cancellationToken) is { } invalid)
         {
             return invalid;
         }
@@ -48,7 +47,7 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
             var attempt = locks.TryAcquire(holder);
             var decision = attempt switch
             {
-                LockGranted => await GrantedAsync(session, payload, cancellationToken).ConfigureAwait(false),
+                LockGranted => await GrantedAsync(session, payload, seen, cancellationToken),
                 LockDenied denied => Denied(payload, denied.Winner),
                 LockWoundRequired wound => await WoundAllAsync(payload, wound.Victims, cancellationToken).ConfigureAwait(false),
             };
@@ -61,9 +60,20 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
         return Denied(payload, holder);
     }
 
-    private async ValueTask<StrongVote?> GrantedAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CancellationToken cancellationToken)
+    private async ValueTask<bool> WaitLocalCatchUpAsync(ISqlDatabaseSession session, Ulid databaseId, CausalBookmark originBookmark, CancellationToken cancellationToken)
     {
-        var revalidated = await ValidateAsync(session, payload, cancellationToken).ConfigureAwait(false);
+        _ = databases.RequestCatchUp(databaseId);
+        var caughtUp = await session.WaitForBookmarkAsync(originBookmark, options.StrongPrepareTimeout / 2, cancellationToken).ConfigureAwait(false);
+        return caughtUp switch
+        {
+            Done => false,
+            RequestTimeout => true,
+        };
+    }
+
+    private async ValueTask<StrongVote?> GrantedAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CausalBookmark? seen, CancellationToken cancellationToken)
+    {
+        var revalidated = await ValidateAsync(session, payload, seen, cancellationToken);
         if (revalidated is not null)
         {
             _ = locks.Release(payload.DatabaseId, payload.TxId);
@@ -120,9 +130,15 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
         };
     }
 
-    private static async ValueTask<StrongVote?> ValidateAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CancellationToken cancellationToken)
+    private static async ValueTask<StrongVote?> ValidateAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CausalBookmark? seen, CancellationToken cancellationToken)
     {
-        var validated = await session.ValidateReadSetAsync(payload.ReadSnapshot, payload.ReadSet, payload.ScannedTables, payload.SchemaEpoch, cancellationToken).ConfigureAwait(false);
+        var covered = Covered(session, seen);
+        var validated = await ValidateReadSetAsync(session, payload, covered, cancellationToken);
+        if (covered && !Covered(session, seen))
+        {
+            validated = await ValidateReadSetAsync(session, payload, covered: false, cancellationToken);
+        }
+
         return validated switch
         {
             Done => null,
@@ -131,6 +147,11 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases d
             StorageBusy busy => Vote(new Unavailable(busy.Message, "storage_busy")),
         };
     }
+
+    private static bool Covered(ISqlDatabaseSession session, CausalBookmark? seen) => seen is { } origin && origin.Dominates(session.CurrentBookmark);
+
+    private static ValueTask<Result<Done, ReadSetConflict, SchemaMismatch, StorageBusy>> ValidateReadSetAsync(ISqlDatabaseSession session, StrongPreparePayload payload, bool covered, CancellationToken cancellationToken) =>
+        session.ValidateReadSetAsync(payload.ReadSnapshot, payload.ReadSet, covered ? [] : payload.ScannedTables, payload.SchemaEpoch, cancellationToken);
 
     private async ValueTask<Result<StrongPrepareResponseMessage, QuicRemoteError>> HandlePrepareAsync(QuicCallContext context, StrongPrepareMessage message, CancellationToken cancellationToken)
     {

@@ -45,6 +45,15 @@ public sealed class QuicRpcClient : IAsyncDisposable
         return QuicPlatform.IsSupported ? _core.RemovePeerAsync(nodeId) : ValueTask.CompletedTask;
     }
 
+    public void ResetPeer(string nodeId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+        if (QuicPlatform.IsSupported)
+        {
+            _core.ResetPeer(nodeId);
+        }
+    }
+
     public ValueTask<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> CallAsync<TReq, TRes>(
         string peerId,
         ushort messageTypeId,
@@ -132,6 +141,8 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
     public void UpsertPeer(QuicPeer peer) => _pool.Upsert(peer);
 
     public ValueTask RemovePeerAsync(string nodeId) => _pool.RemoveAsync(nodeId);
+
+    public void ResetPeer(string nodeId) => _pool.Reset(nodeId);
 
     public async ValueTask<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> CallAsync<TReq, TRes>(
         string peerId,
@@ -334,17 +345,30 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         where TRes : IBinaryMessage<TRes>
     {
         _metrics.StreamOpened(QuicSide.Client);
-        await using (lease.Stream.ConfigureAwait(false))
+        var aborted = false;
+        try
         {
             var read = await SendAndReceiveAsync(lease.Stream, encoded, scope).ConfigureAwait(false);
             var result = read switch
             {
                 PooledFrame frame => Decode<TRes>(Received(frame), messageTypeId, requestId),
                 StreamEnded => new QuicRemoteError(QuicRemoteError.ProtocolViolation, $"The peer closed request {requestId} without a response frame."),
-                QuicFault fault => await FailedExchangeAsync<TRes>(lease, fault).ConfigureAwait(false),
+                QuicFault fault => FailedExchange<TRes>(lease, fault, out aborted),
             };
-            _metrics.StreamClosed(QuicSide.Client);
             return result;
+        }
+        finally
+        {
+            if (aborted)
+            {
+                _ = QuicIo.DisposeStreamAsync(lease.Stream);
+            }
+            else
+            {
+                await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
+            }
+
+            _metrics.StreamClosed(QuicSide.Client);
         }
     }
 
@@ -370,10 +394,11 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         return await QuicIo.ReadFrameAsync(stream, scope).ConfigureAwait(false);
     }
 
-    private async ValueTask<Result<TRes, Unavailable, RequestTimeout, QuicRemoteError>> FailedExchangeAsync<TRes>(StreamLease lease, QuicFault fault)
+    private Result<TRes, Unavailable, RequestTimeout, QuicRemoteError> FailedExchange<TRes>(StreamLease lease, QuicFault fault, out bool aborted)
     {
+        aborted = true;
         lease.Stream.Abort(QuicAbortDirection.Both, QuicProtocol.StreamErrorCode);
-        await _pool.InvalidateIfDeadAsync(lease, fault).ConfigureAwait(false);
+        _pool.InvalidateIfDead(lease, fault);
         return Failed<TRes>(fault);
     }
 
@@ -399,16 +424,28 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
     private async ValueTask<Result<Done, QuicFault>> SendOneShotAsync(StreamLease lease, ReadOnlyMemory<byte> encoded, CallScope scope)
     {
         _metrics.StreamOpened(QuicSide.Client);
-        await using (lease.Stream.ConfigureAwait(false))
+        var aborted = false;
+        try
         {
             var written = await QuicIo.WriteAsync(lease.Stream, encoded, true, scope).ConfigureAwait(false);
-            var result = written switch
+            return written switch
             {
                 Done done => SentPush(done, encoded.Length),
-                QuicFault fault => await AbortPushAsync(lease, fault).ConfigureAwait(false),
+                QuicFault fault => AbortPush(lease, fault, out aborted),
             };
+        }
+        finally
+        {
+            if (aborted)
+            {
+                _ = QuicIo.DisposeStreamAsync(lease.Stream);
+            }
+            else
+            {
+                await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
+            }
+
             _metrics.StreamClosed(QuicSide.Client);
-            return result;
         }
     }
 
@@ -418,10 +455,11 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         return done;
     }
 
-    private async ValueTask<Result<Done, QuicFault>> AbortPushAsync(StreamLease lease, QuicFault fault)
+    private QuicFault AbortPush(StreamLease lease, QuicFault fault, out bool aborted)
     {
+        aborted = true;
         lease.Stream.Abort(QuicAbortDirection.Write, QuicProtocol.StreamErrorCode);
-        await _pool.InvalidateIfDeadAsync(lease, fault).ConfigureAwait(false);
+        _pool.InvalidateIfDead(lease, fault);
         return fault;
     }
 

@@ -12,8 +12,8 @@ internal sealed partial class PostgresConnection
     private async ValueTask<Result<PgDescription, PgError>> DescribeColumnsAsync(PgCommand command, IReadOnlyList<SqlValue> parameters) => command switch
     {
         PgSqlCommand { Explain: true } => new PgDescription([new PgColumn("QUERY PLAN", PgOid.Text)]),
-        PgSqlCommand { Access: SqlAccess.Read } read => await ProbeAsync(read, parameters).ConfigureAwait(false),
-        PgSqlCommand { Returning: { } items, TargetTable: { } table } => await ReturningAsync(table, items).ConfigureAwait(false),
+        PgSqlCommand { Access: SqlAccess.Read } read => await ProbeAsync(read, parameters),
+        PgSqlCommand { Returning: { } items, TargetTable: { } table } => await ReturningAsync(table, items),
         PgSqlCommand => NoData,
         PgCannedCommand canned => new PgDescription(canned.Result.Columns),
         PgShowCommand show => Show(show) switch
@@ -34,8 +34,7 @@ internal sealed partial class PostgresConnection
             return PgError.InFailedTransaction;
         }
 
-        var probe = $"SELECT * FROM ({command.Rewrite.Sql}) LIMIT 1";
-        return await ReadMetadataAsync(probe, parameters).ConfigureAwait(false) switch
+        return await ReadMetadataAsync(command.Rewrite.ProbeSql, command.Rewrite.Bind(parameters)) switch
         {
             SqlResultSet set => new PgDescription(set.Columns.Count == 0 ? null : InferColumns(set.Columns, set.Rows, command.Rewrite.UsesCatalog)),
             PgError error => error,
@@ -49,7 +48,7 @@ internal sealed partial class PostgresConnection
             return PgError.InFailedTransaction;
         }
 
-        return await ReadMetadataAsync("SELECT name, type FROM pragma_table_info(?1)", [SqlValue.FromText(table)]).ConfigureAwait(false) switch
+        return await ReadMetadataAsync("SELECT name, type FROM pragma_table_info(?1)", [SqlValue.FromText(table)]) switch
         {
             SqlResultSet set => new PgDescription(ReturningColumns(set, items)),
             PgError error => error,

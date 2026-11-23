@@ -50,6 +50,7 @@ internal static class HostModules
             services.AddTerraBaseCluster(cluster, static provider => provider.GetRequiredService<ClusterSessions>().ResolveAsync, clock);
             services.AddSingleton<IContinuityDatabaseCatalog>(static provider => provider.GetRequiredService<ClusterSessions>());
             services.AddSingleton<IQuicEndpoints, InternalSqlQuicEndpoint>();
+            services.AddSingleton<IQuicEndpoints, RewindDatabaseQuicEndpoint>();
             services.AddSingleton<SystemBootstrap>();
             services.AddHostedService(static provider => provider.GetRequiredService<SystemBootstrap>());
             return services.AddTerraBaseContinuity(continuity);

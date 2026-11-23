@@ -164,13 +164,14 @@ test('an open SQL socket keeps its verified token when signing keys drop, and a 
     socket.send(JSON.stringify({ id: 3, type: 'execute', statements: [{ sql: 'SELECT 1' }] }));
     await expect.poll(() => messages.length).toBe(1);
     expect(messages.shift()).toMatchObject({ id: 3, type: 'result', results: [{ rows: [[1]] }] });
+    const pendingToken = rewrite(token, { kid: 'pending-key' }, {});
     const next = new WebSocket(`ws://127.0.0.1:18780/v1/projects/${createdProject.id}/databases/${database.id}/sql/ws`, 'terrascale.sql.v1');
     fresh = next;
     const freshMessages: Record<string, unknown>[] = [];
     next.addEventListener('message', event => freshMessages.push(JSON.parse(String(event.data))));
     const closed = new Promise<CloseEvent>(resolve => next.addEventListener('close', resolve, { once: true }));
     await once(next, 'open');
-    next.send(JSON.stringify({ id: 1, type: 'auth', token }));
+    next.send(JSON.stringify({ id: 1, type: 'auth', token: pendingToken }));
     await expect.poll(() => freshMessages.length).toBe(1);
     expect(freshMessages.shift()).toMatchObject({ id: 1, type: 'error', error: { code: 'token_keys_pending' } });
     expect((await closed).code).toBe(1008);
@@ -207,6 +208,8 @@ test('PostgreSQL refuses a bad password with 28P01, reports 57P03 while signing 
     connections.push(refused);
     expect(refused.authenticated).toEqual(['28P01']);
     isolated.outage(true);
+    await isolated.stop();
+    await isolated.start();
     const pending = await postgres(target, token);
     connections.push(pending);
     expect(pending.authenticated).toEqual(['57P03']);

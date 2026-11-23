@@ -24,6 +24,8 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     private GCHandle<SqliteConnection> _self;
     private GCHandle<SnowflakeGenerator> _snowflake;
     private StatementInfo? _collecting;
+    private CancellationToken _workCancellation;
+    private long _workStarted;
     private bool _userMode;
     private bool _applyMode;
     private long _schemaCookie = -1;
@@ -36,6 +38,8 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         _options = options;
         _self = new GCHandle<SqliteConnection>(this);
     }
+
+    public bool HasUserLimits => _options.DatabaseId != Ulid.Empty;
 
     public bool InTransaction => SqliteNative.GetAutocommit(Handle) == 0;
 
@@ -272,14 +276,24 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
         _userMode = false;
         _collecting = null;
-        statement = handle;
-        if (rc == SqliteNative.Ok)
+        var status = rc == SqliteNative.Ok ? SqliteStatus.Success : UserStatus(Status(rc), info);
+        if (handle != 0 || !status.IsOk)
         {
-            return SqliteStatus.Success;
+            var policy = ValidatePreparedSql(rc == SqliteNative.Ok ? sql[..consumed] : sql);
+            if (!policy.IsOk)
+            {
+                status = policy;
+            }
         }
 
-        var status = Status(rc);
-        return info.Denied is { } denied ? new SqliteStatus(SqliteNative.Auth, denied) : status;
+        if (!status.IsOk)
+        {
+            FinalizeStatement(handle);
+            handle = 0;
+        }
+
+        statement = handle;
+        return status;
     }
 
     public SqliteStatus BindUser(nint statement, SqlStatement source)
@@ -313,15 +327,8 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return SqliteStatus.Success;
     }
 
-    public SqliteStatus StepUser(nint statement, out SqlResultSet result, CancellationToken cancellationToken)
+    public SqliteStatus StepUser(nint statement, StatementInfo info, out SqlResultSet result, bool limitResults, CancellationToken cancellationToken)
     {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (_options.StatementTimeout != Timeout.InfiniteTimeSpan)
-        {
-            budget.CancelAfter(_options.StatementTimeout);
-        }
-
-        using var interrupt = budget.Token.Register(Interrupt);
         var columnCount = SqliteNative.ColumnCount(statement);
         var columns = new SqlColumn[columnCount];
         for (var index = 0; index < columnCount; index++)
@@ -333,40 +340,118 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
         List<IReadOnlyList<SqlValue>> rows = [];
         var readOnly = SqliteNative.StatementReadOnly(statement) != 0;
+        _workCancellation = cancellationToken;
+        _workStarted = Stopwatch.GetTimestamp();
+        _collecting = info;
         _userMode = true;
-        var status = SqliteStatus.Success;
-        while (true)
+        SqliteStatus status;
+        SqliteNative.SetProgressHandler(Handle, 1000, &OnProgress, GCHandle<SqliteConnection>.ToIntPtr(_self));
+        try
         {
-            if (budget.IsCancellationRequested)
+            status = ReadUserRows(statement, rows, columnCount, limitResults && HasUserLimits);
+        }
+        finally
+        {
+            SqliteNative.SetProgressHandler(Handle, 0, null, 0);
+            _userMode = false;
+            _collecting = null;
+            _workCancellation = default;
+        }
+
+        result = new SqlResultSet(columns, rows, readOnly ? 0 : SqliteNative.Changes64(_db), SqliteNative.LastInsertRowId(_db));
+        return status.Code switch
+        {
+            SqliteNative.Interrupt when !cancellationToken.IsCancellationRequested => TimedOut,
+            SqliteNative.ConstraintUnique when ViolatesPrimaryKey(status.Message) => status with { Code = SqliteNative.ConstraintPrimaryKey },
+            _ => UserStatus(status, info),
+        };
+    }
+
+    private SqliteStatus ReadUserRows(nint statement, List<IReadOnlyList<SqlValue>> rows, int columnCount, bool limitResults)
+    {
+        var remainingBytes = SqlLimits.MaxResultBytes;
+        while (!IsWorkCanceled())
+        {
+            var rc = SqliteNative.Step(statement);
+            if (Capture is { Fault.IsOk: false } capture)
             {
-                status = Canceled;
-                break;
+                return capture.Fault;
             }
 
+            if (rc == SqliteNative.Done)
+            {
+                return IsWorkCanceled() ? Canceled : SqliteStatus.Success;
+            }
+
+            if (rc != SqliteNative.Row)
+            {
+                return Status(rc);
+            }
+
+            if (limitResults)
+            {
+                if (rows.Count == SqlLimits.MaxResultRows)
+                {
+                    return new SqliteStatus(SqliteNative.TooBig, "a result holds at most 10000 rows");
+                }
+
+                for (var index = 0; index < columnCount; index++)
+                {
+                    remainingBytes -= SqliteNative.ColumnType(statement, index) switch
+                    {
+                        SqliteNative.TypeBlob or SqliteNative.TypeText => Math.Max(1, SqliteNative.ColumnBytes(statement, index)),
+                        SqliteNative.TypeNull => 1,
+                        _ => sizeof(long),
+                    };
+                    if (remainingBytes < 0)
+                    {
+                        return new SqliteStatus(SqliteNative.TooBig, "a result holds at most 4 MiB");
+                    }
+                }
+            }
+
+            rows.Add(ReadRow(statement));
+        }
+
+        return Canceled;
+    }
+
+    public SqliteStatus CheckCreatedTable(string table, PreupdateCapture capture)
+    {
+        var query = string.Concat("SELECT * FROM main.", TableSql.Quote(table));
+        var status = Rent(query, out var statement, out var cached);
+        if (!status.IsOk)
+        {
+            return status;
+        }
+
+        var columnCount = SqliteNative.ColumnCount(statement);
+        while (true)
+        {
             var rc = SqliteNative.Step(statement);
             if (rc == SqliteNative.Done)
             {
                 break;
             }
 
-            if (rc != SqliteNative.Row)
+            status = rc == SqliteNative.Row ? capture.ChargeCreatedRow(statement, columnCount) : Status(rc);
+            if (!status.IsOk)
             {
-                status = Status(rc);
                 break;
             }
-
-            rows.Add(ReadRow(statement));
         }
 
-        _userMode = false;
-        result = new SqlResultSet(columns, rows, readOnly ? 0 : SqliteNative.Changes64(_db), SqliteNative.LastInsertRowId(_db));
-        return status.Code switch
-        {
-            SqliteNative.Interrupt when !cancellationToken.IsCancellationRequested => TimedOut,
-            SqliteNative.ConstraintUnique when ViolatesPrimaryKey(status.Message) => status with { Code = SqliteNative.ConstraintPrimaryKey },
-            _ => status,
-        };
+        Return(statement, cached);
+        return status;
     }
+
+    private bool IsWorkCanceled() =>
+        _workCancellation.IsCancellationRequested || (_options.StatementTimeout != Timeout.InfiniteTimeSpan
+            && Stopwatch.GetElapsedTime(_workStarted) >= _options.StatementTimeout);
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static int OnProgress(nint context) =>
+        GCHandle<SqliteConnection>.FromIntPtr(context).Target.IsWorkCanceled() ? 1 : 0;
 
     private bool ViolatesPrimaryKey(string message)
     {
@@ -463,8 +548,6 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             ? SqliteStatus.Success
             : new SqliteStatus(SqliteNative.ExtendedErrCode(destination.Handle), SqliteNative.ReadUtf8(SqliteNative.ErrMsg(destination.Handle)));
     }
-
-    private void Interrupt() => SqliteNative.InterruptQuery(Handle);
 
     public void Dispose()
     {

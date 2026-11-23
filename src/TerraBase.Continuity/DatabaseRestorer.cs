@@ -33,10 +33,25 @@ public sealed class DatabaseRestorer(
             NotFound notFound => new OperationFailed(notFound.Message ?? "target database key not found"),
         };
 
-    internal async ValueTask<Result<CausalBookmark, OperationFailed>> RewindAsync(Ulid operationId, Ulid databaseId, RestoreTarget target, CancellationToken cancellationToken)
+    internal async ValueTask<Result<CausalBookmark, OperationFailed>> RewindAsync(
+        Ulid operationId,
+        Ulid databaseId,
+        RestoreTarget target,
+        bool notifyPeers,
+        CancellationToken cancellationToken)
     {
         if (!_layout.Exists(databaseId))
         {
+            if (!notifyPeers)
+            {
+                await sessions.Catalog.DatabaseReplacedAsync(databaseId, null, cancellationToken).ConfigureAwait(false);
+                return target switch
+                {
+                    CausalBookmark bookmark => bookmark,
+                    DateTimeOffset => CausalBookmark.Empty,
+                };
+            }
+
             return new OperationFailed("database is not stored on this node");
         }
 
@@ -45,7 +60,7 @@ public sealed class DatabaseRestorer(
         {
             ReadOnlyMemory<byte> key => await BuildAsync(operationId, databaseId, temporary, key, target, cancellationToken).ConfigureAwait(false) switch
             {
-                CausalBookmark bookmark => await SwapAsync(operationId, databaseId, temporary, bookmark, cancellationToken).ConfigureAwait(false),
+                CausalBookmark bookmark => await SwapAsync(operationId, databaseId, temporary, key, bookmark, notifyPeers, cancellationToken).ConfigureAwait(false),
                 OperationFailed failed => failed,
             },
             NotFound notFound => new OperationFailed(notFound.Message ?? "database key not found"),
@@ -298,15 +313,12 @@ public sealed class DatabaseRestorer(
 
         foreach (var group in manifest.Segments.GroupBy(static segment => segment.Origin, StringComparer.Ordinal))
         {
-            var expected = snapshot.Bookmark.Get(group.Key) + 1;
-            foreach (var segment in group.OrderBy(static segment => segment.FirstSequence))
+            var baseline = snapshot.Bookmark.Get(group.Key);
+            var history = Chain([.. group], 1);
+            var chain = history.Count > 0 && history[^1].LastSequence >= baseline ? history : Chain([.. group], baseline + 1);
+            foreach (var segment in chain)
             {
-                if (segment.LastSequence < expected)
-                {
-                    continue;
-                }
-
-                if (segment.FirstSequence > expected || !Needed(segment, target))
+                if (segment.LastSequence > baseline && !Needed(segment, target))
                 {
                     break;
                 }
@@ -316,15 +328,20 @@ public sealed class DatabaseRestorer(
                 {
                     return failure;
                 }
-
-                expected = segment.LastSequence + 1;
             }
         }
 
         return null;
     }
 
-    private async ValueTask<Result<CausalBookmark, OperationFailed>> SwapAsync(Ulid operationId, Ulid databaseId, Ulid temporary, CausalBookmark bookmark, CancellationToken cancellationToken)
+    private async ValueTask<Result<CausalBookmark, OperationFailed>> SwapAsync(
+        Ulid operationId,
+        Ulid databaseId,
+        Ulid temporary,
+        ReadOnlyMemory<byte> key,
+        CausalBookmark bookmark,
+        bool notifyPeers,
+        CancellationToken cancellationToken)
     {
         var staging = _layout.StagingDirectory(operationId);
         var rewound = Path.Combine(staging, RewoundDirectoryName);
@@ -332,6 +349,12 @@ public sealed class DatabaseRestorer(
         if (Local(ContinuityFiles.CreateDirectory(rewound)) is { } created)
         {
             return created;
+        }
+
+        if (await CopyRewoundHistoryAsync(temporary, key, rewound, databaseId, bookmark, cancellationToken).ConfigureAwait(false) is { } historyFailure)
+        {
+            Cleanup(staging);
+            return historyFailure;
         }
 
         var prefix = string.Concat(temporary.ToString(), ".db");
@@ -361,8 +384,37 @@ public sealed class DatabaseRestorer(
         }
 
         Cleanup(staging);
-        await sessions.Catalog.DatabaseReplacedAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        await sessions.Catalog.DatabaseReplacedAsync(databaseId, notifyPeers ? bookmark : null, cancellationToken).ConfigureAwait(false);
         return bookmark;
+    }
+
+    private async ValueTask<OperationFailed?> CopyRewoundHistoryAsync(
+        Ulid temporary,
+        ReadOnlyMemory<byte> key,
+        string destination,
+        Ulid databaseId,
+        CausalBookmark bookmark,
+        CancellationToken cancellationToken) =>
+        await sessions.OpenAsync(temporary, key, cancellationToken).ConfigureAwait(false) switch
+        {
+            ISqlDatabaseSession session => await CopyAndCloseAsync(session, destination, databaseId, key, bookmark).ConfigureAwait(false),
+            NotFound => null,
+            Unavailable unavailable => new OperationFailed(unavailable.Message),
+        };
+
+    private static async ValueTask<OperationFailed?> CopyAndCloseAsync(
+        ISqlDatabaseSession session,
+        string destination,
+        Ulid databaseId,
+        ReadOnlyMemory<byte> key,
+        CausalBookmark bookmark)
+    {
+        await using (session.ConfigureAwait(false))
+        {
+            return SqliteStorageEngine.CopyHistory(session, destination, databaseId, key, bookmark) is { } busy
+                ? new OperationFailed(busy.Message)
+                : null;
+        }
     }
 
     private static OperationFailed? MoveDatabaseFiles(string directory, string prefix, string destination, string replacement) =>
@@ -434,6 +486,21 @@ public sealed class DatabaseRestorer(
             DateTimeOffset at => ordered.LastOrDefault(snapshot => snapshot.Archived.TakenAtUtc <= at),
             CausalBookmark bookmark => bookmark.IsEmpty ? ordered.LastOrDefault() : ordered.LastOrDefault(snapshot => bookmark.Dominates(snapshot.Bookmark)),
         };
+    }
+
+    private static List<ArchivedSegment> Chain(IReadOnlyList<ArchivedSegment> segments, long from)
+    {
+        List<ArchivedSegment> chain = [];
+        var expected = from;
+        while (segments
+            .Where(segment => chain.Count == 0 ? segment.FirstSequence <= expected && segment.LastSequence >= expected : segment.FirstSequence == expected)
+            .MaxBy(static segment => segment.LastSequence) is { } next)
+        {
+            chain.Add(next);
+            expected = next.LastSequence + 1;
+        }
+
+        return chain;
     }
 
     private static bool Needed(ArchivedSegment segment, RestoreTarget target) => target switch

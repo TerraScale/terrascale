@@ -6,7 +6,7 @@ public interface IContinuityDatabaseCatalog
 
     ValueTask<Result<ReadOnlyMemory<byte>, NotFound>> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken);
 
-    ValueTask DatabaseReplacedAsync(Ulid databaseId, CancellationToken cancellationToken);
+    ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken);
 
     ValueTask<Result<Done, Unavailable>> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken);
 }

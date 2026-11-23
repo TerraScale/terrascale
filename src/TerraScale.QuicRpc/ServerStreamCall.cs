@@ -49,7 +49,7 @@ internal sealed class ServerStreamCall<TRes>(
         {
             PooledFrame frame => Interpret(frame),
             StreamEnded => Finish(new QuicRemoteError(QuicRemoteError.ProtocolViolation, $"The peer ended server stream {requestId} without an end-of-stream frame."), QuicOutcome.RemoteError),
-            QuicFault fault => await FailAsync(lease, fault).ConfigureAwait(false),
+            QuicFault fault => Fail(lease, fault),
         };
     }
 
@@ -61,9 +61,13 @@ internal sealed class ServerStreamCall<TRes>(
             if (!_completed)
             {
                 lease.Stream.Abort(QuicAbortDirection.Both, QuicProtocol.StreamErrorCode);
+                _ = QuicIo.DisposeStreamAsync(lease.Stream);
+            }
+            else
+            {
+                await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
             }
 
-            await lease.Stream.DisposeAsync().ConfigureAwait(false);
             metrics.StreamClosed(QuicSide.Client);
         }
 
@@ -84,7 +88,7 @@ internal sealed class ServerStreamCall<TRes>(
         return await QuicIo.WriteAsync(lease.Stream, encoded, true, _scope).ConfigureAwait(false) switch
         {
             Done => Sent(encoded.Length),
-            QuicFault fault => await FailAsync(lease, fault).ConfigureAwait(false),
+            QuicFault fault => Fail(lease, fault),
         };
     }
 
@@ -132,9 +136,9 @@ internal sealed class ServerStreamCall<TRes>(
         return Finish(failure, QuicRpcClientCore.Outcome(failure));
     }
 
-    private async ValueTask<StreamStep<TRes>> FailAsync(StreamLease lease, QuicFault fault)
+    private StreamStep<TRes> Fail(StreamLease lease, QuicFault fault)
     {
-        await client.Pool.InvalidateIfDeadAsync(lease, fault).ConfigureAwait(false);
+        client.Pool.InvalidateIfDead(lease, fault);
         return Fail(fault);
     }
 }

@@ -431,6 +431,44 @@ internal sealed class OriginLog : IDisposable
         }
 
         List<CommitMetadata> entries = [];
+        if (ReadSealed(segments, fromSequence, maxEntries, entries) is { } unreadable)
+        {
+            return unreadable;
+        }
+
+        if (entries.Count < maxEntries && last >= fromSequence)
+        {
+            byte[] bytes;
+            List<(CommitLogSegment Segment, string Path)> late;
+            lock (_gate)
+            {
+                late = [.. _sealed.Skip(segments.Count)];
+                var first = _frames.FindIndex(frame => frame.Sequence >= fromSequence);
+                var offset = first < 0 ? _length : _frames[first].Offset;
+                bytes = new byte[_length - offset];
+                if (FileIo.Read(_active, bytes, offset) is not null)
+                {
+                    return new StorageCorrupted(_databaseId, "active commit log unreadable");
+                }
+            }
+
+            if (ReadSealed(late, fromSequence, maxEntries, entries) is { } lateUnreadable)
+            {
+                return lateUnreadable;
+            }
+
+            if (entries.Count < maxEntries && !CommitFrame.TryParseAll(bytes, Origin, _cipher, entries, fromSequence, maxEntries - entries.Count))
+            {
+                return new StorageCorrupted(_databaseId, "active commit log failed verification");
+            }
+        }
+
+        IReadOnlyList<CommitMetadata> page = entries;
+        return page;
+    }
+
+    private StorageCorrupted? ReadSealed(List<(CommitLogSegment Segment, string Path)> segments, long fromSequence, int maxEntries, List<CommitMetadata> entries)
+    {
         foreach (var (segment, path) in segments)
         {
             if (segment.LastSequence < fromSequence || entries.Count >= maxEntries)
@@ -444,28 +482,7 @@ internal sealed class OriginLog : IDisposable
             }
         }
 
-        if (entries.Count < maxEntries && last >= fromSequence)
-        {
-            byte[] bytes;
-            lock (_gate)
-            {
-                var first = _frames.FindIndex(frame => frame.Sequence >= fromSequence);
-                var offset = first < 0 ? _length : _frames[first].Offset;
-                bytes = new byte[_length - offset];
-                if (FileIo.Read(_active, bytes, offset) is not null)
-                {
-                    return new StorageCorrupted(_databaseId, "active commit log unreadable");
-                }
-            }
-
-            if (!CommitFrame.TryParseAll(bytes, Origin, _cipher, entries, fromSequence, maxEntries - entries.Count))
-            {
-                return new StorageCorrupted(_databaseId, "active commit log failed verification");
-            }
-        }
-
-        IReadOnlyList<CommitMetadata> page = entries;
-        return page;
+        return null;
     }
 
     public IReadOnlyList<CommitLogSegment> ListSealed(long afterSequence)
@@ -474,6 +491,31 @@ internal sealed class OriginLog : IDisposable
         {
             SealIfDue(force: false);
             return [.. _sealed.Where(entry => entry.Segment.LastSequence > afterSequence).Select(static entry => entry.Segment)];
+        }
+    }
+
+    public long FirstAvailable
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _firstAvailable;
+            }
+        }
+    }
+
+    public bool SealCommitted(long committedThrough)
+    {
+        lock (_gate)
+        {
+            if (_disposed || _lastSequence > committedThrough)
+            {
+                return false;
+            }
+
+            SealIfDue(force: true);
+            return _frames.Count == 0;
         }
     }
 

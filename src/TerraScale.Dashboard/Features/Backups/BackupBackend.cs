@@ -85,19 +85,37 @@ namespace TerraScale.Dashboard.Features.Backups
 
         public async Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            try { return await CallAsync(scope, home, ["databases:read"], _ => Unsupported(), BackupBackendJson.Default.BackupDestinationView, cancellationToken); }
-            catch (DatabaseProviderException error) when (error.StatusCode == HttpStatusCode.NotFound) { return null; }
+            try
+            {
+                return await CallAsync(scope, home, ["databases:read"], caller => terraBase.GetBackupDestinationAsync(caller, scope.ProjectId, cancellationToken),
+                    BackupBackendJson.Default.BackupDestinationView, cancellationToken);
+            }
+            catch (DatabaseProviderException error) when (error.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
         }
+
         public Task<BackupDestinationView> SetDestinationAsync(DatabaseScope scope, DatabaseRegion home, string endpoint, string region, string bucket,
             string accessKeyId, string secretKey, CancellationToken cancellationToken)
         {
             var request = JsonSerializer.SerializeToElement(new BackupDestinationRequest(endpoint, region, bucket, accessKeyId, secretKey, "both"), BackupBackendJson.Default.BackupDestinationRequest);
-            return CallAsync(scope, home, ["databases:write"], _ => Unsupported(), BackupBackendJson.Default.BackupDestinationView, cancellationToken);
+            return CallAsync(scope, home, ["databases:write"], caller => terraBase.SetBackupDestinationAsync(caller, scope.ProjectId, request, cancellationToken),
+                BackupBackendJson.Default.BackupDestinationView, cancellationToken);
         }
 
         public async Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            await CallAsync(scope, home, ["databases:write"], _ => Unsupported(), BackupBackendJson.Default.BackupDestinationView, cancellationToken);
+            ArgumentNullException.ThrowIfNull(home);
+            var caller = ServiceCaller.User(await AccessAsync(scope, ["databases:write"], cancellationToken));
+            var removed = await terraBase.DeleteBackupDestinationAsync(caller, scope.ProjectId, cancellationToken);
+            switch (removed)
+            {
+                case Done:
+                    return;
+                case TerraBaseRefusal refusal:
+                    throw Failure(refusal.Exception(), "");
+            }
         }
 
         public async Task<ProducerRestoreOperation> StartRestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken)
@@ -181,10 +199,6 @@ namespace TerraScale.Dashboard.Features.Backups
             };
         }
 
-        private static Task<Result<JsonElement, TerraBaseRefusal>> Unsupported() =>
-            Task.FromResult<Result<JsonElement, TerraBaseRefusal>>(new TerraBaseRefusal(StatusCodes.Status404NotFound, "not_found",
-                "Customer backup destinations are not available on this TerraBase."));
-
         private async Task<string> AccessAsync(DatabaseScope scope, string[] permissions, CancellationToken ct)
         {
             if (scope.IsApiKey) return scope.AccessToken;
@@ -211,7 +225,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 _ => null
             };
             return message is null ? new DatabaseProviderException((HttpStatusCode)error.Status) { RetryAfter = error.RetryAfter }
-                : new AccountAccessException(message, error.Status, code!);
+                : new AccountAccessException(message, error.Status, code);
         }
 
         private async Task<string> NameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)

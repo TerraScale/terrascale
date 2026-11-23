@@ -1,12 +1,17 @@
+using TerraBase.Cluster;
 using TerraBase.Continuity;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.InternalApi;
 using TerraBase.Features.Management;
+using TerraScale.Contracts.Quic;
+using TerraScale.QuicRpc;
 
 namespace TerraBase.Engine;
 
 internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngine engine, DatabaseKeyring keyring) : IContinuityDatabaseCatalog
 {
     private const int CatalogPage = 512;
+    private static readonly TimeSpan PeerRewindTimeout = TimeSpan.FromSeconds(15);
 
     private TenantDatabases Databases => services.GetRequiredService<TenantDatabases>();
 
@@ -15,6 +20,10 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     private CatalogStore Catalog => services.GetRequiredService<CatalogStore>();
 
     private ManagementService Management => services.GetRequiredService<ManagementService>();
+
+    private ClusterOptions Cluster => services.GetRequiredService<ClusterOptions>();
+
+    private QuicRpcClient Quic => services.GetRequiredService<QuicRpcClient>();
 
     public async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken) =>
         await PlacementAsync(databaseId, cancellationToken) switch
@@ -57,8 +66,22 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
             Unavailable unavailable => new NotFound(unavailable.Message, unavailable.Code),
         };
 
-    public async ValueTask DatabaseReplacedAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+    public async ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken)
+    {
         await Databases.EvictAsync(databaseId);
+        if (rewoundTo is not { } bookmark || Cluster.Peers.Count == 0)
+        {
+            return;
+        }
+
+        var request = new RewindDatabaseRequest(databaseId, bookmark.Encode());
+        await Task.WhenAll(Cluster.Peers.Select(peer => RewindPeerAsync(peer.NodeId, request, cancellationToken)));
+    }
+
+    private async Task RewindPeerAsync(string nodeId, RewindDatabaseRequest request, CancellationToken cancellationToken)
+    {
+        _ = await Quic.CallAsync<RewindDatabaseRequest, RewindDatabaseReply>(nodeId, QuicMessageType.RewindDatabase, request, PeerRewindTimeout, cancellationToken);
+    }
 
     public async ValueTask<Result<Done, Unavailable>> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken) =>
         await Management.DiscardCopyAsync(databaseId, cancellationToken);

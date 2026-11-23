@@ -12,13 +12,12 @@ internal static class PgCatalogSql
     private const string UserToken = "\u0001user\u0001";
 
     private static readonly string TypeOid = BuildTypeOid("c_decl");
-    private static readonly string TypeName = BuildCase("c._tb_typid", static type => type.Name, "text");
     private static readonly string FormatBase = BuildCase("c._tb_typid", static type => type.FormatName, "text");
     private static readonly string TypeLength = BuildCase("c._tb_typid", static type => type.Length.ToString(CultureInfo.InvariantCulture), "-1", quote: false);
 
     private static readonly string Columns = $$"""
         SELECT m.rowid AS _tb_relrowid, m.name AS _tb_relname, m.type AS _tb_reltype, p.cid AS _tb_cid, p.name AS _tb_attname, p.type AS _tb_decl,
-            p."notnull" AS _tb_notnull, p.dflt_value AS _tb_default, p.pk AS _tb_pk, {{TypeOid.Replace("c_decl", "p.type", StringComparison.Ordinal)}} AS _tb_typid,
+            p."notnull" AS _tb_notnull, p.dflt_value AS _tb_default, p.pk AS _tb_pk, {{CatalogTypeOid("p.type")}} AS _tb_typid,
             (SELECT count(*) FROM pragma_table_info(m.name) q WHERE q.pk > 0) AS _tb_pkcount
         FROM sqlite_schema m JOIN pragma_table_info(m.name) p
         WHERE m.type IN ('table', 'view') AND {{UserObject("m")}}
@@ -170,14 +169,7 @@ internal static class PgCatalogSql
         ["pg_stat_activity"] = ["datid", "datname", "pid", "leader_pid", "usesysid", "usename", "application_name", "client_addr", "client_hostname", "client_port", "backend_start", "xact_start", "query_start", "state_change", "wait_event_type", "wait_event", "state", "backend_xid", "backend_xmin", "query_id", "query", "backend_type"],
         ["pg_locks"] = ["locktype", "database", "relation", "page", "tuple", "virtualxid", "transactionid", "classid", "objid", "objsubid", "virtualtransaction", "pid", "mode", "granted", "fastpath", "waitstart"],
         ["pg_prepared_xacts"] = ["transaction", "gid", "prepared", "owner", "database"],
-        ["sequences"] = ["sequence_catalog", "sequence_schema", "sequence_name", "data_type", "numeric_precision", "numeric_precision_radix", "numeric_scale", "start_value", "minimum_value", "maximum_value", "increment", "cycle_option"],
-        ["routines"] = ["specific_catalog", "specific_schema", "specific_name", "routine_catalog", "routine_schema", "routine_name", "routine_type", "data_type", "routine_definition", "external_language"],
-        ["triggers"] = ["trigger_catalog", "trigger_schema", "trigger_name", "event_manipulation", "event_object_catalog", "event_object_schema", "event_object_table", "action_order", "action_condition", "action_statement", "action_orientation", "action_timing"],
-        ["check_constraints"] = ["constraint_catalog", "constraint_schema", "constraint_name", "check_clause"],
-        ["parameters"] = ["specific_catalog", "specific_schema", "specific_name", "ordinal_position", "parameter_mode", "parameter_name", "data_type"],
     }.ToFrozenDictionary(StringComparer.Ordinal);
-
-    private static readonly FrozenSet<string> InformationSchemaEmpty = ["sequences", "routines", "triggers", "check_constraints", "parameters"];
 
     public static string PgClassRelation => PgClass;
 
@@ -185,20 +177,12 @@ internal static class PgCatalogSql
 
     public static string PgConstraintRelation => PgConstraint;
 
-    public static bool IsAlwaysEmpty(string schema, string name) =>
-        (schema == "pg_catalog" && name.StartsWith("pg_", StringComparison.Ordinal) && EmptyRelations.ContainsKey(name))
-        || (schema == "information_schema" && InformationSchemaEmpty.Contains(name));
+    public static bool IsAlwaysEmpty(string schema, string name) => schema == "pg_catalog" && EmptyRelations.ContainsKey(name);
 
     public static bool TryGetRelation(string schema, string name, PgRewriteContext context, out string sql)
     {
         sql = string.Empty;
-        var template = schema switch
-        {
-            "pg_catalog" => PgCatalogRelation(name, context),
-            "information_schema" => InformationSchemaRelation(name),
-            _ => null,
-        };
-        if (template is null)
+        if (schema != "pg_catalog" || PgCatalogRelation(name, context) is not { } template)
         {
             return false;
         }
@@ -220,7 +204,7 @@ internal static class PgCatalogSql
         "pg_index" => PgIndex,
         "pg_constraint" => PgConstraint,
         "pg_type" => PgType,
-        "pg_namespace" => "SELECT CAST(v.column1 AS INTEGER) AS oid, v.column2 AS nspname, CAST(10 AS INTEGER) AS nspowner, NULL AS nspacl FROM (VALUES (11, 'pg_catalog'), (2200, 'public'), (13000, 'information_schema')) v",
+        "pg_namespace" => "SELECT CAST(v.column1 AS INTEGER) AS oid, v.column2 AS nspname, CAST(10 AS INTEGER) AS nspowner, NULL AS nspacl FROM (VALUES (11, 'pg_catalog'), (2200, 'public')) v",
         "pg_am" => "SELECT CAST(v.column1 AS INTEGER) AS oid, v.column2 AS amname, CAST(0 AS INTEGER) AS amhandler, v.column3 AS amtype FROM (VALUES (2, 'heap', 't'), (403, 'btree', 'i')) v",
         "pg_tablespace" => "SELECT CAST(v.column1 AS INTEGER) AS oid, v.column2 AS spcname, CAST(10 AS INTEGER) AS spcowner, NULL AS spcacl, NULL AS spcoptions FROM (VALUES (1663, 'pg_default'), (1664, 'pg_global')) v",
         "pg_database" => $"SELECT CAST(16383 AS INTEGER) AS oid, {DatabaseToken} AS datname, CAST(10 AS INTEGER) AS datdba, CAST(6 AS INTEGER) AS encoding, 'c' AS datlocprovider, CAST(0 AS INTEGER) AS datistemplate, CAST(1 AS INTEGER) AS datallowconn, CAST(0 AS INTEGER) AS dathasloginevt, CAST(-1 AS INTEGER) AS datconnlimit, CAST(0 AS INTEGER) AS datfrozenxid, CAST(0 AS INTEGER) AS datminmxid, CAST(1663 AS INTEGER) AS dattablespace, 'C' AS datcollate, 'C' AS datctype, NULL AS datlocale, NULL AS daticulocale, NULL AS daticurules, NULL AS datcollversion, NULL AS datacl",
@@ -230,65 +214,12 @@ internal static class PgCatalogSql
         "pg_views" => $"SELECT 'public' AS schemaname, o.name AS viewname, {UserToken} AS viewowner, o.sql AS definition FROM sqlite_schema o WHERE o.type = 'view' AND {UserObject("o")}",
         "pg_indexes" => $"SELECT 'public' AS schemaname, x._tb_tablename AS tablename, x._tb_indexname AS indexname, NULL AS tablespace, x._tb_indexdef AS indexdef, x.indexrelid AS _tb_oid FROM ({PgIndex}) x",
         "pg_settings" => Settings(context),
-        _ when EmptyRelations.TryGetValue(name, out var columns) && name.StartsWith("pg_", StringComparison.Ordinal) => Empty(columns),
+        _ when EmptyRelations.TryGetValue(name, out var columns) => Empty(columns),
         _ => null,
     };
 
-    private static string? InformationSchemaRelation(string name) => name switch
-    {
-        "tables" => $"SELECT {DatabaseToken} AS table_catalog, 'public' AS table_schema, o.name AS table_name, CASE o.type WHEN 'view' THEN 'VIEW' ELSE 'BASE TABLE' END AS table_type, NULL AS self_referencing_column_name, NULL AS reference_generation, NULL AS user_defined_type_catalog, NULL AS user_defined_type_schema, NULL AS user_defined_type_name, CASE o.type WHEN 'view' THEN 'NO' ELSE 'YES' END AS is_insertable_into, 'NO' AS is_typed, NULL AS commit_action FROM sqlite_schema o WHERE o.type IN ('table', 'view') AND {UserObject("o")}",
-        "columns" => $"""
-            SELECT {DatabaseToken} AS table_catalog, 'public' AS table_schema, c._tb_relname AS table_name, c._tb_attname AS column_name, CAST(c._tb_cid + 1 AS INTEGER) AS ordinal_position,
-                {DefaultExpression("c._tb_default")} AS column_default, CASE WHEN c._tb_notnull OR c._tb_pk > 0 THEN 'NO' ELSE 'YES' END AS is_nullable, {FormatBase} AS data_type,
-                CAST(CASE WHEN c._tb_typid IN (1042, 1043) AND instr(c._tb_decl, '(') > 0 THEN CAST(substr(c._tb_decl, instr(c._tb_decl, '(') + 1) AS INTEGER) END AS INTEGER) AS character_maximum_length,
-                NULL AS character_octet_length,
-                CAST(CASE c._tb_typid WHEN 21 THEN 16 WHEN 23 THEN 32 WHEN 20 THEN 64 WHEN 700 THEN 24 WHEN 701 THEN 53 END AS INTEGER) AS numeric_precision,
-                CAST(CASE WHEN c._tb_typid IN (20, 21, 23, 700, 701, 1700) THEN 2 END AS INTEGER) AS numeric_precision_radix,
-                CAST(CASE WHEN c._tb_typid IN (20, 21, 23) THEN 0 END AS INTEGER) AS numeric_scale,
-                CAST(CASE WHEN c._tb_typid IN (1082, 1083, 1114, 1184) THEN 6 END AS INTEGER) AS datetime_precision, NULL AS interval_type, NULL AS interval_precision,
-                NULL AS character_set_catalog, NULL AS character_set_schema, NULL AS character_set_name, NULL AS collation_catalog, NULL AS collation_schema, NULL AS collation_name,
-                NULL AS domain_catalog, NULL AS domain_schema, NULL AS domain_name, {DatabaseToken} AS udt_catalog, 'pg_catalog' AS udt_schema, {TypeName} AS udt_name,
-                NULL AS scope_catalog, NULL AS scope_schema, NULL AS scope_name, NULL AS maximum_cardinality, CAST(c._tb_cid + 1 AS INTEGER) AS dtd_identifier,
-                'NO' AS is_self_referencing, CASE WHEN {Identity} THEN 'YES' ELSE 'NO' END AS is_identity, CASE WHEN {Identity} THEN 'BY DEFAULT' END AS identity_generation,
-                NULL AS identity_start, NULL AS identity_increment, NULL AS identity_maximum, NULL AS identity_minimum, CASE WHEN {Identity} THEN 'NO' END AS identity_cycle,
-                'NEVER' AS is_generated, NULL AS generation_expression, CASE c._tb_reltype WHEN 'view' THEN 'NO' ELSE 'YES' END AS is_updatable
-            FROM ({Columns}) c
-            """,
-        "schemata" => $"SELECT {DatabaseToken} AS catalog_name, v.column1 AS schema_name, {UserToken} AS schema_owner, NULL AS default_character_set_catalog, NULL AS default_character_set_schema, NULL AS default_character_set_name, NULL AS sql_path FROM (VALUES ('public'), ('information_schema'), ('pg_catalog')) v",
-        "table_constraints" => $"SELECT {DatabaseToken} AS constraint_catalog, 'public' AS constraint_schema, k.conname AS constraint_name, {DatabaseToken} AS table_catalog, 'public' AS table_schema, k._tb_tablename AS table_name, CASE k.contype WHEN 'p' THEN 'PRIMARY KEY' WHEN 'u' THEN 'UNIQUE' WHEN 'f' THEN 'FOREIGN KEY' ELSE 'CHECK' END AS constraint_type, 'NO' AS is_deferrable, 'NO' AS initially_deferred, 'YES' AS enforced, CASE WHEN k.contype = 'u' THEN 'YES' END AS nulls_distinct FROM ({PgConstraint}) k",
-        "key_column_usage" => $"""
-            SELECT {DatabaseToken} AS constraint_catalog, 'public' AS constraint_schema, k.constraint_name AS constraint_name, {DatabaseToken} AS table_catalog, 'public' AS table_schema,
-                k.table_name AS table_name, k.column_name AS column_name, CAST(k.ordinal_position AS INTEGER) AS ordinal_position, CAST(k.unique_position AS INTEGER) AS position_in_unique_constraint
-            FROM (
-                SELECT t.name || '_pkey' AS constraint_name, t.name AS table_name, p.name AS column_name, p.pk AS ordinal_position, NULL AS unique_position
-                FROM sqlite_schema t JOIN pragma_table_info(t.name) p WHERE t.type = 'table' AND {UserObject("t")} AND p.pk > 0
-                UNION ALL
-                SELECT {IndexName("il.name", "t.name", "il.origin")}, t.name, ii.name, ii.seqno + 1, NULL
-                FROM sqlite_schema t JOIN pragma_index_list(t.name) il JOIN pragma_index_info(il.name) ii WHERE t.type = 'table' AND {UserObject("t")} AND il.origin = 'u'
-                UNION ALL
-                SELECT {ForeignKeyName}, t.name, f."from", f.seq + 1, f.seq + 1
-                FROM sqlite_schema t JOIN pragma_foreign_key_list(t.name) f WHERE t.type = 'table' AND {UserObject("t")}
-            ) k
-            """,
-        "referential_constraints" => $"SELECT {DatabaseToken} AS constraint_catalog, 'public' AS constraint_schema, {ForeignKeyName} AS constraint_name, {DatabaseToken} AS unique_constraint_catalog, 'public' AS unique_constraint_schema, f.\"table\" || '_pkey' AS unique_constraint_name, 'NONE' AS match_option, f.on_update AS update_rule, f.on_delete AS delete_rule FROM sqlite_schema t JOIN pragma_foreign_key_list(t.name) f WHERE t.type = 'table' AND {UserObject("t")} AND f.seq = 0",
-        "constraint_column_usage" => $"""
-            SELECT {DatabaseToken} AS table_catalog, 'public' AS table_schema, k.table_name AS table_name, k.column_name AS column_name, {DatabaseToken} AS constraint_catalog,
-                'public' AS constraint_schema, k.constraint_name AS constraint_name
-            FROM (
-                SELECT t.name || '_pkey' AS constraint_name, t.name AS table_name, p.name AS column_name
-                FROM sqlite_schema t JOIN pragma_table_info(t.name) p WHERE t.type = 'table' AND {UserObject("t")} AND p.pk > 0
-                UNION ALL
-                SELECT {IndexName("il.name", "t.name", "il.origin")}, t.name, ii.name
-                FROM sqlite_schema t JOIN pragma_index_list(t.name) il JOIN pragma_index_info(il.name) ii WHERE t.type = 'table' AND {UserObject("t")} AND il.origin = 'u'
-                UNION ALL
-                SELECT {ForeignKeyName}, f."table", f."to"
-                FROM sqlite_schema t JOIN pragma_foreign_key_list(t.name) f WHERE t.type = 'table' AND {UserObject("t")}
-            ) k
-            """,
-        "views" => $"SELECT {DatabaseToken} AS table_catalog, 'public' AS table_schema, o.name AS table_name, o.sql AS view_definition, 'NONE' AS check_option, 'NO' AS is_updatable, 'NO' AS is_insertable_into, 'NO' AS is_trigger_updatable, 'NO' AS is_trigger_deletable, 'NO' AS is_trigger_insertable_into FROM sqlite_schema o WHERE o.type = 'view' AND {UserObject("o")}",
-        _ when InformationSchemaEmpty.Contains(name) => Empty(EmptyRelations[name]),
-        _ => null,
-    };
+    private static string CatalogTypeOid(string declared) =>
+        $"(CASE WHEN upper(trim({declared})) = 'INTEGER' THEN {PgOid.Int4} ELSE {TypeOid.Replace("c_decl", declared, StringComparison.Ordinal)} END)";
 
     private static string UserObject(string alias) =>
         $"({alias}.name NOT LIKE 'sqlite\\_%' ESCAPE '\\' OR {alias}.name LIKE 'sqlite\\_autoindex\\_%' ESCAPE '\\') AND {alias}.name NOT LIKE '\\_tb\\_%' ESCAPE '\\' AND {alias}.tbl_name NOT LIKE '\\_tb\\_%' ESCAPE '\\'";

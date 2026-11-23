@@ -14,6 +14,8 @@ internal sealed record OperationWork(Ulid OperationId, OperationKind Kind, Ulid 
 
 internal sealed record FinishedOperation(RestoreOperation Operation, string Kind, string? RecordFailure);
 
+internal sealed record ArchiveProof(CausalBookmark Bookmark, DateTimeOffset CheckedAtUtc);
+
 public sealed class BackupContinuityService(
     ContinuitySessions sessions,
     ArchiveManifests manifests,
@@ -259,10 +261,23 @@ public sealed class BackupContinuityService(
         CausalBookmark => null,
     };
 
+    public async ValueTask<Result<CausalBookmark, Unavailable>> RewindLocalAsync(Ulid databaseId, CausalBookmark bookmark, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(bookmark);
+        using var lease = await manifests.AcquireAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        var operationId = Ulid.NewUlid(timeProvider.GetUtcNow());
+        var rewound = await restorer.RewindAsync(operationId, databaseId, new RestoreTarget(bookmark), notifyPeers: false, cancellationToken).ConfigureAwait(false);
+        return rewound switch
+        {
+            CausalBookmark applied => applied,
+            OperationFailed failed => new Unavailable(failed.Message, "rewind_failed"),
+        };
+    }
+
     private async ValueTask<Result<CausalBookmark, OperationFailed>> RewindLockedAsync(OperationWork work, CancellationToken cancellationToken)
     {
         using var lease = await manifests.AcquireAsync(work.TargetDatabaseId, cancellationToken).ConfigureAwait(false);
-        var rewound = await restorer.RewindAsync(work.OperationId, work.TargetDatabaseId, work.Target, cancellationToken).ConfigureAwait(false);
+        var rewound = await restorer.RewindAsync(work.OperationId, work.TargetDatabaseId, work.Target, notifyPeers: true, cancellationToken).ConfigureAwait(false);
         return rewound switch
         {
             CausalBookmark bookmark when manifests.IsEnabled => await ReconcileArchiveAsync(work.TargetDatabaseId, bookmark, cancellationToken).ConfigureAwait(false),
@@ -344,11 +359,11 @@ public sealed class BackupContinuityService(
         {
             ISqlDatabaseSession session => await StatusForOpenSessionAsync(manifest, session, cancellationToken).ConfigureAwait(false),
             NotFound when manifest.IsEmpty => new NotFound("database has no local files or archived restore points"),
-            NotFound => Status(manifest, 0),
+            NotFound => Status(manifest, 0, null),
             Unavailable unavailable => unavailable,
         };
 
-    private static async ValueTask<Result<BackupStatus, NotFound, Unavailable>> StatusForOpenSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
+    private async ValueTask<Result<BackupStatus, NotFound, Unavailable>> StatusForOpenSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
     {
         await using (session.ConfigureAwait(false))
         {
@@ -356,10 +371,12 @@ public sealed class BackupContinuityService(
         }
     }
 
-    private static async ValueTask<Result<BackupStatus, NotFound, Unavailable>> StatusForSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
+    private async ValueTask<Result<BackupStatus, NotFound, Unavailable>> StatusForSessionAsync(ArchiveManifest manifest, ISqlDatabaseSession session, CancellationToken cancellationToken)
     {
+        var checkedAt = timeProvider.GetUtcNow();
+        var current = session.CurrentBookmark;
         var pending = 0;
-        foreach (var (origin, _) in session.CurrentBookmark.Entries)
+        foreach (var (origin, _) in current.Entries)
         {
             var (count, busy) = Pending(await session.ListSealedSegmentsAsync(origin, manifest.ArchivedSegmentThrough(origin), cancellationToken).ConfigureAwait(false));
             if (busy is not null)
@@ -370,7 +387,7 @@ public sealed class BackupContinuityService(
             pending += count;
         }
 
-        return Status(manifest, pending);
+        return Status(manifest, pending, new ArchiveProof(current, checkedAt));
     }
 
     private static (int Count, StorageBusy? Busy) Pending(Result<IReadOnlyList<CommitLogSegment>, StorageBusy> listed) => listed switch
@@ -379,7 +396,7 @@ public sealed class BackupContinuityService(
         StorageBusy busy => (0, busy),
     };
 
-    private static Result<BackupStatus, NotFound, Unavailable> Status(ArchiveManifest manifest, int pendingSegments)
+    private static Result<BackupStatus, NotFound, Unavailable> Status(ArchiveManifest manifest, int pendingSegments, ArchiveProof? proof)
     {
         var snapshots = ManifestCodec.Snapshots(manifest);
         if (snapshots.Count == 0 || !Ulid.TryParse(manifest.DatabaseId, out var databaseId))
@@ -408,9 +425,15 @@ public sealed class BackupContinuityService(
             }
         }
 
+        var archivedThrough = CausalBookmark.Create(through);
+        if (proof is { } proven && proven.CheckedAtUtc > latestPoint && archivedThrough.Dominates(proven.Bookmark))
+        {
+            latestPoint = proven.CheckedAtUtc;
+        }
+
         return new BackupStatus(
             databaseId,
-            CausalBookmark.Create(through),
+            archivedThrough,
             snapshots.Min(static snapshot => snapshot.Archived.TakenAtUtc),
             latestPoint,
             latest.Archived.TakenAtUtc,

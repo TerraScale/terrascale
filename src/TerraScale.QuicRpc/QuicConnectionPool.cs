@@ -208,6 +208,15 @@ internal sealed class QuicConnectionPool(
         }
     }
 
+    public void Reset(string nodeId)
+    {
+        if (_slots.TryGetValue(nodeId, out var slot) && slot.Take() is { } active)
+        {
+            metrics.ConnectionClosed(QuicSide.Client);
+            _ = QuicIo.DisposeConnectionAsync(active.Connection);
+        }
+    }
+
     public OrderedPushChannel? GetOrderedChannel(PeerSlot slot, string channelKey) => slot.GetOrAddChannel(channelKey, this);
 
     public Task CompleteChannelsAsync()
@@ -232,11 +241,11 @@ internal sealed class QuicConnectionPool(
             QuicFault fault => fault,
         };
 
-    public async ValueTask InvalidateIfDeadAsync(StreamLease lease, QuicFault fault)
+    public void InvalidateIfDead(StreamLease lease, QuicFault fault)
     {
         if (QuicFaults.IsDeadConnection(fault))
         {
-            await InvalidateAsync(lease.Slot, lease.Connection).ConfigureAwait(false);
+            Invalidate(lease.Slot, lease.Connection);
         }
     }
 
@@ -258,7 +267,7 @@ internal sealed class QuicConnectionPool(
 
     private async ValueTask<Result<StreamLease, QuicFault>> ReopenAsync(PeerSlot slot, QuicConnection dead, QuicStreamType type, CallScope scope)
     {
-        await InvalidateAsync(slot, dead).ConfigureAwait(false);
+        Invalidate(slot, dead);
         return await GetConnectionAsync(slot, scope).ConfigureAwait(false) switch
         {
             QuicConnection connection => await OpenOnAsync(slot, connection, type, false, scope).ConfigureAwait(false),
@@ -266,12 +275,12 @@ internal sealed class QuicConnectionPool(
         };
     }
 
-    private async ValueTask InvalidateAsync(PeerSlot slot, QuicConnection connection)
+    private void Invalidate(PeerSlot slot, QuicConnection connection)
     {
         if (slot.Clear(connection))
         {
             metrics.ConnectionClosed(QuicSide.Client);
-            await connection.DisposeAsync().ConfigureAwait(false);
+            _ = QuicIo.DisposeConnectionAsync(connection);
         }
     }
 

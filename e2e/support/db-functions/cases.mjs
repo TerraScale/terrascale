@@ -33,7 +33,7 @@ export function sqlCases(prefix) {
     { name: 'undefined-column-error', sql: `SELECT absent FROM ${t}`, error: 'undefined_column', sqlstate: '42703' },
     { name: 'syntax-error', sql: 'SELECT FROM', error: 'syntax_error', sqlstate: '42601' },
     { name: 'sandbox', sql: "ATTACH DATABASE ':memory:' AS other", error: 'sql_sandbox', sqlstate: '42501' },
-    { name: 'full-join-refusal', sql: `SELECT * FROM ${t} a FULL OUTER JOIN ${t} b ON a.id=b.id`, error: 'sql_error', sqlstate: '0A000' },
+    { name: 'full-join', sql: `SELECT a.id,b.id FROM ${t} a FULL OUTER JOIN ${t} b ON a.id=b.id ORDER BY a.id`, rows: [['1', '1'], ['2', '2']] },
     { name: 'create-index', sql: `CREATE INDEX ${i} ON ${t}(value) WHERE value>0` },
     { name: 'expression-index', sql: `CREATE INDEX ${i}_expression ON ${t}(lower(name))` },
     { name: 'create-view', sql: `CREATE VIEW ${v} AS SELECT name FROM ${t}` },

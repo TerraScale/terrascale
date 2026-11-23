@@ -17,7 +17,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
     private RaftShard[] _shards = [];
     private WriteAheadLog[] _logs = [];
 
-    public bool IsReplicated => options.RegionPeers.Count > 0;
+    public bool IsReplicated => options.RegionPeers.Count >= 2;
 
     public int ShardCount => options.RaftShardCount;
 
@@ -91,7 +91,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
             }
 
             var outcome = leader.IsRemote
-                ? await ForwardAsync(leader.NodeId, shard.Context.Shard, payload, deadline.Token).ConfigureAwait(false)
+                ? await ForwardAsync(leader.NodeId, shard.Context.Shard, payload, deadline.Token, cancellationToken).ConfigureAwait(false)
                 : await RaftBoundary.ReplicateAsync(shard, payload, deadline.Token, cancellationToken).ConfigureAwait(false);
             if (outcome == RaftProposeStatus.NotLeader)
             {
@@ -153,15 +153,22 @@ public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient cli
         }
     }
 
-    private async ValueTask<RaftProposeStatus> ForwardAsync(string leaderNodeId, ushort shard, byte[] payload, CancellationToken cancellationToken)
+    private async ValueTask<RaftProposeStatus> ForwardAsync(string leaderNodeId, ushort shard, byte[] payload, CancellationToken deadline, CancellationToken cancellationToken)
     {
         var message = new RaftAppendMessage(shard, RaftAppendKind.Propose, default, 0, 0, 0, 0, 0, [new RaftWireEntry(0, null, false, payload)]);
-        var response = await client.CallAsync<RaftAppendMessage, RaftAppendResponse>(leaderNodeId, QuicMessageType.RaftAppendEntries, message, options.RaftCommitTimeout, cancellationToken).ConfigureAwait(false);
-        return response switch
+        try
         {
-            RaftAppendResponse received => received.Status,
-            Unavailable or RequestTimeout or QuicRemoteError => RaftProposeStatus.Failed,
-        };
+            var response = await client.CallAsync<RaftAppendMessage, RaftAppendResponse>(leaderNodeId, QuicMessageType.RaftAppendEntries, message, options.RaftCommitTimeout, deadline).ConfigureAwait(false);
+            return response switch
+            {
+                RaftAppendResponse received => received.Status,
+                Unavailable or RequestTimeout or QuicRemoteError => RaftProposeStatus.Failed,
+            };
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return RaftProposeStatus.Failed;
+        }
     }
 
     private RaftShard? Shard(ushort index) =>

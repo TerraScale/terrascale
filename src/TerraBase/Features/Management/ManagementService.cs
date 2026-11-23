@@ -1,3 +1,4 @@
+using TerraBase.Cluster;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Atlas;
@@ -15,6 +16,7 @@ internal sealed class ManagementService(
     TenantDatabases databases,
     RegionDirectory regions,
     IBackupContinuity continuity,
+    AntiEntropyService antiEntropy,
     AtlasPublisher atlas,
     TerraBaseOptions options,
     TimeProvider time)
@@ -79,7 +81,7 @@ internal sealed class ManagementService(
         return DisplayName(name) switch
         {
             string checkedName => await catalog.CreateOrganizationAsync(
-                new OrganizationRecord(Ulid.NewUlid(time.GetUtcNow()), checkedName, user.UserId, time.GetUtcNow(), Plans.Hobby, false), cancellationToken) switch
+                new OrganizationRecord(Ulid.NewUlid(Now()), checkedName, user.UserId, Now(), Plans.Hobby, false), cancellationToken) switch
             {
                 OrganizationRecord created => created,
                 Conflict conflict => conflict,
@@ -176,6 +178,7 @@ internal sealed class ManagementService(
             return new Conflict("TerraScale's own projects hold its services' databases and cannot be closed", "platform_project_protected");
         }
 
+        _ = await antiEntropy.SyncAsync(SystemDatabase.Id, TimeSpan.FromSeconds(2), cancellationToken);
         var found = await catalog.GetProjectAsync(projectId, cancellationToken);
         return found switch
         {
@@ -279,7 +282,7 @@ internal sealed class ManagementService(
             return new Validation("ttlSeconds is at least 60", "invalid_ttl");
         }
 
-        return await SaveAsync(current, current with { ExpiresAt = ttlSeconds is { } ttl ? time.GetUtcNow().AddSeconds(ttl) : null }, cancellationToken);
+        return await SaveAsync(current, current with { ExpiresAt = ttlSeconds is { } ttl ? Now().AddSeconds(ttl) : null }, cancellationToken);
     }
 
     public async ValueTask<Result<Done, Unavailable>> DeleteDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken)
@@ -383,10 +386,12 @@ internal sealed class ManagementService(
         current.AllRegions == allRegions
         && current.Regions.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).SequenceEqual(placed.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal), StringComparer.Ordinal);
 
+    private DateTimeOffset Now() => DateTimeOffset.FromUnixTimeMilliseconds(time.GetUtcNow().ToUnixTimeMilliseconds());
+
     private DatabaseRecord Record(
         ProjectRecord project, string name, IReadOnlyList<string> placed, bool allRegions, ConsistencyMode mode, bool strict, long? ttlSeconds, Ulid? branchedFrom, long storageLimit)
     {
-        var now = time.GetUtcNow();
+        var now = Now();
         return new DatabaseRecord(Ulid.NewUlid(now), project.Id, name, placed, allRegions, mode, strict, ControlDatabaseState.Active, databases.ActiveKeyId, branchedFrom, null, now,
             ttlSeconds is { } ttl ? now.AddSeconds(ttl) : null, 1, storageLimit);
     }
@@ -413,7 +418,7 @@ internal sealed class ManagementService(
             Regions = placed,
             AllRegions = allRegions,
             DefaultConsistency = mode,
-            ExpiresAt = input.TtlSeconds is { } ttl ? time.GetUtcNow().AddSeconds(ttl) : current.ExpiresAt,
+            ExpiresAt = input.TtlSeconds is { } ttl ? Now().AddSeconds(ttl) : current.ExpiresAt,
             Version = SamePlacement(current, placed, allRegions) ? current.Version : current.Version + 1,
         };
     }

@@ -255,6 +255,34 @@ internal static class QuicIo
         }
     }
 
+    public static async Task DisposeConnectionAsync(QuicConnection connection)
+    {
+        try
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (QuicException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    public static async Task DisposeStreamAsync(QuicStream stream)
+    {
+        try
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (QuicException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
     public static async Task<bool> PeerStoppedReadingAsync(QuicStream stream, Task finished)
     {
         var writesClosed = stream.WritesClosed;

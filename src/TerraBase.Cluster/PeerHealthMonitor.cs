@@ -9,6 +9,7 @@ namespace TerraBase.Cluster;
 
 public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient client, TimeProvider timeProvider, ILogger<PeerHealthMonitor> logger)
 {
+    private readonly long _instanceId = Random.Shared.NextInt64(1, long.MaxValue);
     private readonly ConcurrentDictionary<string, PeerState> _peers = new(
         options.Peers.Select(static peer => KeyValuePair.Create(peer.NodeId, new PeerState(peer))),
         StringComparer.Ordinal);
@@ -81,14 +82,26 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
         var response = await client.CallAsync<PingMessage, PongMessage>(
             state.Info.NodeId,
             QuicMessageType.Ping,
-            new PingMessage(options.NodeId, options.Region, started),
+            new PingMessage(options.NodeId, options.Region, started, _instanceId),
             options.PingTimeout,
             cancellationToken).ConfigureAwait(false);
-        var success = response switch
+        var (success, timedOut, remoteInstanceId) = response switch
         {
-            PongMessage pong => string.Equals(pong.NodeId, state.Info.NodeId, StringComparison.Ordinal),
-            Unavailable or RequestTimeout or QuicRemoteError => false,
+            PongMessage pong when string.Equals(pong.NodeId, state.Info.NodeId, StringComparison.Ordinal) => (true, false, pong.InstanceId),
+            PongMessage => (false, false, 0L),
+            RequestTimeout => (false, true, 0L),
+            Unavailable or QuicRemoteError => (false, false, 0L),
         };
+        if (remoteInstanceId != 0)
+        {
+            state.ObserveInstance(remoteInstanceId);
+        }
+
+        if (timedOut)
+        {
+            client.ResetPeer(state.Info.NodeId);
+        }
+
         Record(state, success, timeProvider.GetElapsedTime(started));
     }
 
@@ -136,16 +149,26 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
     {
         if (_peers.TryGetValue(message.NodeId, out var state))
         {
-            state.MarkSeen(timeProvider.GetUtcNow());
+            var (restarted, previous, next) = state.ObserveInbound(message.InstanceId, timeProvider.GetUtcNow());
+            if (previous != next)
+            {
+                ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
+            }
+
+            if (restarted)
+            {
+                client.ResetPeer(message.NodeId);
+            }
         }
 
-        return ValueTask.FromResult<Result<PongMessage, QuicRemoteError>>(new PongMessage(options.NodeId, options.Region, message.SentAtTicks));
+        return ValueTask.FromResult<Result<PongMessage, QuicRemoteError>>(new PongMessage(options.NodeId, options.Region, message.SentAtTicks, _instanceId));
     }
 
     private sealed class PeerState(PeerNodeInfo info)
     {
         private readonly Lock _gate = new();
         private PeerHealth _health = new(info, PeerStatus.Suspect, TimeSpan.Zero, DateTimeOffset.MinValue);
+        private long _instanceId;
         private int _failures;
 
         public PeerNodeInfo Info { get; } = info;
@@ -176,11 +199,36 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             }
         }
 
-        public void MarkSeen(DateTimeOffset now)
+        public void ObserveInstance(long instanceId)
         {
             lock (_gate)
             {
-                _health = _health with { LastSeenUtc = now };
+                _instanceId = instanceId;
+            }
+        }
+
+        public (bool Restarted, PeerStatus Previous, PeerStatus Next) ObserveInbound(long instanceId, DateTimeOffset now)
+        {
+            lock (_gate)
+            {
+                var restarted = _instanceId != 0 && instanceId != 0 && _instanceId != instanceId;
+                if (instanceId != 0)
+                {
+                    _instanceId = instanceId;
+                }
+
+                var previous = _health.Status;
+                if (previous == PeerStatus.Unreachable)
+                {
+                    _failures = 0;
+                    _health = _health with { Status = PeerStatus.Suspect, LastSeenUtc = now };
+                }
+                else
+                {
+                    _health = _health with { LastSeenUtc = now };
+                }
+
+                return (restarted, previous, _health.Status);
             }
         }
     }

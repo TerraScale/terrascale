@@ -18,6 +18,7 @@ internal static unsafe partial class SqliteNative
     public const int IoError = 10;
     public const int Corrupt = 11;
     public const int Full = 13;
+    public const int TooBig = 18;
     public const int Constraint = 19;
     public const int Mismatch = 20;
     public const int Misuse = 21;
@@ -83,6 +84,7 @@ internal static unsafe partial class SqliteNative
     public const int ActionAnalyze = 28;
     public const int ActionCreateVirtualTable = 29;
     public const int ActionDropVirtualTable = 30;
+    public const int ActionFunction = 31;
     public const int ActionSavepoint = 32;
 
     public const int ConfigEnableTrigger = 1003;
@@ -102,6 +104,9 @@ internal static unsafe partial class SqliteNative
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_interrupt")]
     public static partial void InterruptQuery(nint db);
+
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_progress_handler")]
+    public static partial void SetProgressHandler(nint db, int instructions, delegate* unmanaged[Cdecl]<nint, int> callback, nint context);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_errmsg")]
     public static partial byte* ErrMsg(nint db);

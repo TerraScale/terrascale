@@ -232,29 +232,57 @@ internal sealed partial class DatabaseSession
             return true;
         }
 
-        var begun = BeginWrite(applying: false);
-        if (!begun.IsOk)
-        {
-            foreach (var request in group)
-            {
-                _ = Fail(request, begun.ToBusy());
-            }
-
-            return false;
-        }
-
-        var nextSequence = _versions.Get(Region) + 1;
-        var epoch = SchemaEpoch;
+        var nextSequence = 0L;
+        var epoch = 0UL;
         List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed = [];
         var schemaTouched = false;
-        foreach (var request in group)
+        var active = false;
+        for (var index = 0; index < group.Count; index++)
         {
+            if (!active)
+            {
+                var begun = BeginWrite(applying: false);
+                if (!begun.IsOk)
+                {
+                    for (; index < group.Count; index++)
+                    {
+                        _ = Fail(group[index], begun.ToBusy());
+                    }
+
+                    return false;
+                }
+
+                nextSequence = _versions.Get(Region) + 1;
+                epoch = SchemaEpoch;
+                active = true;
+            }
+
+            var request = group[index];
             schemaTouched |= request switch
             {
                 LocalWriteRequest local => RunLocalItem(local, completed, ref nextSequence, ref epoch),
                 StageRequest stage => RunStageItem(stage),
                 TransactionRequest or RemoteApplyRequest or CommitStagedRequest => RejectFromGroup(request),
             };
+
+            if (!_writer.InTransaction)
+            {
+                var rolledBack = new StorageBusy("SQLite rolled back the write group; retry the request", TimeSpan.Zero);
+                foreach (var (pending, _, _) in completed)
+                {
+                    _ = Fail(pending, rolledBack);
+                }
+
+                completed.Clear();
+                _writer.InvalidateSchemaCache();
+                schemaTouched = false;
+                active = false;
+            }
+        }
+
+        if (!active)
+        {
+            return false;
         }
 
         if (schemaTouched)
@@ -430,6 +458,11 @@ internal sealed partial class DatabaseSession
             SqlError error => error,
             StrongRequired strong => TransactionStrong(context, strong, execute.Index),
         };
+        if (_capture.Fault.Primary == SqliteNative.TooBig && _writer.InTransaction)
+        {
+            _ = _writer.Exec("ROLLBACK;");
+        }
+
         execute.Completion.TrySetResult(outcome);
         return false;
     }
@@ -509,7 +542,11 @@ internal sealed partial class DatabaseSession
 
     private void RollbackItemSchema(WriteContext context)
     {
-        _ = _writer.Exec(RollbackItem);
+        if (_writer.InTransaction)
+        {
+            _ = _writer.Exec(RollbackItem);
+        }
+
         if (context.IsSchemaChange)
         {
             _writer.InvalidateSchemaCache();

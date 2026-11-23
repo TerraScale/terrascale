@@ -4,6 +4,8 @@ namespace TerraBase.Storage;
 
 internal readonly record struct SqliteStatus(int Code, string Message)
 {
+    private const int UnsupportedStatement = -1;
+
     public static SqliteStatus Success { get; } = new(SqliteNative.Ok, "ok");
 
     public bool IsOk => Code is SqliteNative.Ok or SqliteNative.Row or SqliteNative.Done;
@@ -13,6 +15,8 @@ internal readonly record struct SqliteStatus(int Code, string Message)
     public bool IsBusy => Primary is SqliteNative.Busy or SqliteNative.Locked;
 
     public static SqliteStatus Fail(string message) => new(SqliteNative.Error, message);
+
+    public static SqliteStatus Unsupported(string message) => new(UnsupportedStatement, message);
 
     public SqlError ToSqlError(int statementIndex) => new(ErrorCode(), Message, SqlState(), statementIndex, Code);
 
@@ -34,6 +38,7 @@ internal readonly record struct SqliteStatus(int Code, string Message)
             SqliteNative.ReadOnly => "read_only",
             SqliteNative.Interrupt => "query_canceled",
             SqliteNative.Auth => "not_authorized",
+            SqliteNative.TooBig => "too_large",
             SqliteNative.Corrupt or SqliteNative.NotADatabase => "storage_corrupted",
             SqliteNative.IoError or SqliteNative.Full => "io_error",
             SqliteNative.Mismatch => "datatype_mismatch",
@@ -49,6 +54,7 @@ internal readonly record struct SqliteStatus(int Code, string Message)
         SqliteNative.ConstraintForeignKey => "23503",
         SqliteNative.ConstraintNotNull => "23502",
         SqliteNative.ConstraintCheck => "23514",
+        UnsupportedStatement => "0A000",
         _ => Primary switch
         {
             SqliteNative.Constraint => "23000",
@@ -56,6 +62,7 @@ internal readonly record struct SqliteStatus(int Code, string Message)
             SqliteNative.ReadOnly => "25006",
             SqliteNative.Interrupt => "57014",
             SqliteNative.Auth => "42501",
+            SqliteNative.TooBig => "54000",
             SqliteNative.Corrupt or SqliteNative.NotADatabase => "XX001",
             SqliteNative.IoError or SqliteNative.Full => "58030",
             SqliteNative.Mismatch => "42804",

@@ -13,10 +13,23 @@ internal sealed class TenantSessions
 
     private readonly Counter<long> _refusals;
 
+    private long _active;
+
+    private long _preauthentication;
+
     public TenantSessions(IMeterFactory meters)
     {
         ArgumentNullException.ThrowIfNull(meters);
-        _refusals = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.session.refusals");
+        var meter = meters.Create(Telemetry.MeterName);
+        _refusals = meter.CreateCounter<long>("terrabase.qos.session.refusals");
+        _ = meter.CreateObservableGauge("terrabase.qos.active.sessions", () => Volatile.Read(ref _active));
+        _ = meter.CreateObservableGauge("terrabase.qos.preauthentication.sessions", () => Volatile.Read(ref _preauthentication));
+    }
+
+    public PreauthenticationSession BeginPreauthentication()
+    {
+        _ = Interlocked.Increment(ref _preauthentication);
+        return new PreauthenticationSession(this);
     }
 
     public Result<TenantSession, TenantBusy> TryOpen(Tenant tenant)
@@ -32,6 +45,7 @@ internal sealed class TenantSessions
             }
 
             _open[tenant.OrganizationId] = open + 1;
+            _ = Interlocked.Increment(ref _active);
             return new TenantSession(this, tenant.OrganizationId);
         }
     }
@@ -48,6 +62,23 @@ internal sealed class TenantSessions
             else
             {
                 _open[organizationId] = open;
+            }
+
+            _ = Interlocked.Decrement(ref _active);
+        }
+    }
+
+    private void EndPreauthentication() => _ = Interlocked.Decrement(ref _preauthentication);
+
+    internal sealed class PreauthenticationSession(TenantSessions owner) : IDisposable
+    {
+        private int _closed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) == 0)
+            {
+                owner.EndPreauthentication();
             }
         }
     }

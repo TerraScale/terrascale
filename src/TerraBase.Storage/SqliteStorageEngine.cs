@@ -31,6 +31,33 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
     public SnowflakeGenerator Snowflake { get; }
 
+    public static ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteServiceReadAsync(
+        ISqlDatabaseSession session, SqlStatementRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session is DatabaseSession sqlite
+            ? sqlite.ExecuteReadAsync(request, limitResults: false, cancellationToken)
+            : session.ExecuteReadAsync(request, cancellationToken);
+    }
+
+    public static void SealCommittedLogs(ISqlDatabaseSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (session is DatabaseSession sqlite)
+        {
+            sqlite.SealCommittedLogs();
+        }
+    }
+
+    public static StorageBusy? CopyHistory(ISqlDatabaseSession source, string targetDirectory, Ulid targetDatabaseId, ReadOnlyMemory<byte> targetRawKey, CausalBookmark through)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(through);
+        return source is DatabaseSession sqlite
+            ? sqlite.CopyHistoryTo(sqlite.TargetContext(targetDirectory, targetDatabaseId, targetRawKey), through)
+            : null;
+    }
+
     public async ValueTask<Result<ISqlDatabaseSession, NotFound, Validation, StorageCorrupted, StorageBusy>> OpenAsync(DatabaseOpenRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -159,14 +186,37 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 ? await CopyLiveAsync(source, destination, cancellationToken).ConfigureAwait(false)
                 : CopySnapshot(source, destination, target);
             destination.Dispose();
-            if (copied is not { } baseline)
+            var createEmpty = false;
+            CausalBookmark baseline;
+            if (copied is { } snapshotBaseline)
+            {
+                baseline = snapshotBaseline;
+            }
+            else if (source.HasFullHistory(target))
+            {
+                _ = FileIo.DeleteDirectory(branchContext.Directory);
+                if (FileIo.CreateDirectory(branchContext.Directory) is { } recreateError)
+                {
+                    return new StorageBusy(recreateError, TimeSpan.FromSeconds(1));
+                }
+
+                baseline = CausalBookmark.Empty;
+                createEmpty = true;
+            }
+            else
             {
                 _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return new Validation("no snapshot precedes the requested bookmark");
             }
 
+            if (!createEmpty && source.CopyHistoryTo(branchContext, baseline) is { } history)
+            {
+                _ = FileIo.DeleteDirectory(branchContext.Directory);
+                return history;
+            }
+
             replay = CollectReplay(source, baseline, target);
-            branch = DatabaseSession.Open(branchContext, create: false, strict: false, ReleaseAsync) switch
+            branch = DatabaseSession.Open(branchContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync) switch
             {
                 DatabaseSession session => Track(session),
                 StorageCorrupted or StorageBusy => null,

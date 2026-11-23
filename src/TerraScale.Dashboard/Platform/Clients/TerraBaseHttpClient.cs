@@ -91,6 +91,16 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
         transport.SendAsync(caller, HttpMethod.Post, string.Concat(Rules(projectId, database), ":test"), Json(request, Wire.JsonElement), Wire.TerraBaseRulesTestResult,
             null, cancellationToken);
 
+    public Task<Result<JsonElement, TerraBaseRefusal>> GetBackupDestinationAsync(ServiceCaller caller, string projectId, CancellationToken cancellationToken) =>
+        transport.SendAsync(caller, HttpMethod.Get, BackupDestination(projectId), Wire.JsonElement, cancellationToken);
+
+    public Task<Result<JsonElement, TerraBaseRefusal>> SetBackupDestinationAsync(ServiceCaller caller, string projectId, JsonElement request,
+        CancellationToken cancellationToken) =>
+        transport.SendAsync(caller, HttpMethod.Put, BackupDestination(projectId), Json(request, Wire.JsonElement), Wire.JsonElement, null, cancellationToken);
+
+    public Task<Result<Done, TerraBaseRefusal>> DeleteBackupDestinationAsync(ServiceCaller caller, string projectId, CancellationToken cancellationToken) =>
+        transport.SendAsync(caller, HttpMethod.Delete, BackupDestination(projectId), null, cancellationToken);
+
     public Task<Result<JsonElement, TerraBaseRefusal>> GetBackupStatusAsync(ServiceCaller caller, string projectId, string database, CancellationToken cancellationToken) =>
         transport.SendAsync(caller, HttpMethod.Get, string.Concat(Database(projectId, database), "/backups"), Wire.JsonElement, cancellationToken);
 
@@ -182,6 +192,8 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
 
     public Task<Result<JsonElement, TerraBaseRefusal>> ListAllowancesAsync(CancellationToken cancellationToken) =>
         transport.SendAsync(ServiceCaller.Operator, HttpMethod.Get, "/v1/usage/allowances", Wire.JsonElement, cancellationToken);
+
+    private static string BackupDestination(string projectId) => string.Concat("/v1/projects/", Segment(projectId), "/backup-destination");
 
     private static string Databases(string projectId) => string.Concat("/v1/projects/", Segment(projectId), "/databases");
 

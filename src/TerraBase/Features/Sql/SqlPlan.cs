@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using TerraBase.Storage;
 
 namespace TerraBase.Features.Sql;
 
@@ -25,7 +26,7 @@ internal static class SqlPlan
 {
     public const int MaxStatements = 256;
 
-    public const int MaxStatementBytes = 1024 * 1024;
+    public const int MaxStatementBytes = SqlLimits.MaxStatementBytes;
 
     private static readonly FrozenSet<string> ReadVerbs = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "SELECT", "VALUES", "EXPLAIN", "PRAGMA");
 
@@ -41,9 +42,9 @@ internal static class SqlPlan
             return SqlRefusal.Invalid("sql must be a non-empty statement", index);
         }
 
-        if (statement.Sql.Length > MaxStatementBytes)
+        if (!SqlLimits.StatementFits(statement.Sql))
         {
-            return new SqlRefusal("too_large", "a statement is at most 1 MiB", "54000", index, StatusCodes.Status413PayloadTooLarge);
+            return SqlRefusal.From(SqlLimits.StatementTooLong(index));
         }
 
         if (!SqlText.TryTokenize(statement.Sql, out var tokens) || tokens.Count == 0)
@@ -51,8 +52,12 @@ internal static class SqlPlan
             return new SqlRefusal("syntax_error", "the statement has an unterminated quote or no tokens", "42601", index, StatusCodes.Status400BadRequest);
         }
 
-        var meaningful = tokens.Count > 0 && tokens[^1].Kind == SqlTokenKind.Semicolon ? tokens[..^1] : tokens;
-        var verb = meaningful[0];
+        var meaningful = tokens[^1].Kind == SqlTokenKind.Semicolon ? tokens[..^1] : tokens;
+        if (meaningful is not [var verb, ..])
+        {
+            return SqlRefusal.Invalid("sql must be a non-empty statement", index);
+        }
+
         if (verb.Is("BEGIN") || verb.Is("START"))
         {
             return new PlannedStatement(statement, StatementKind.Begin, meaningful, BeginMode(meaningful));

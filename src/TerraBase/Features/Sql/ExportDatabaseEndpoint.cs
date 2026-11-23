@@ -66,7 +66,7 @@ public sealed class SqlDump(ISqlDatabaseSession session, string name) : IResult
         }
 
         var writer = httpContext.Response.BodyWriter;
-        await writer.WriteAsync(Encoding.UTF8.GetBytes("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n"), cancellationToken);
+        await writer.WriteAsync("BEGIN;\n"u8.ToArray(), cancellationToken);
         foreach (var row in schema.Where(static row => row.TextAt(0) == "table"))
         {
             await writer.WriteAsync(Encoding.UTF8.GetBytes(string.Concat(row.TextAt(2), ";\n")), cancellationToken);

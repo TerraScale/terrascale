@@ -22,6 +22,8 @@ internal sealed unsafe class PreupdateCapture : IDisposable
     private readonly Dictionary<(string Table, string Key), TouchedRow> _byKey = [];
     private readonly List<TouchedRow> _touched = [];
     private GCHandle<PreupdateCapture> _self;
+    private int _writtenRows;
+    private int _remainingBytes;
     private bool _active;
     private bool _registered;
 
@@ -44,6 +46,8 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         _touched.Clear();
         _byKey.Clear();
         Fault = SqliteStatus.Success;
+        _writtenRows = 0;
+        _remainingBytes = SqlLimits.MaxWriteBytes;
         Annotation = null;
         _active = true;
     }
@@ -97,6 +101,32 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
         End();
         return status;
+    }
+
+    public SqliteStatus ChargeCreatedRow(nint statement, int columnCount)
+    {
+        if (!CountWrite())
+        {
+            return Fault;
+        }
+
+        for (var column = 0; column < columnCount; column++)
+        {
+            var length = SqliteNative.ColumnType(statement, column) switch
+            {
+                SqliteNative.TypeText or SqliteNative.TypeBlob => SqliteNative.ColumnBytes(statement, column),
+                SqliteNative.TypeNull => 0,
+                _ => sizeof(long),
+            };
+            if (!FitsWrite(length, _remainingBytes))
+            {
+                return Fault;
+            }
+
+            _remainingBytes -= length;
+        }
+
+        return SqliteStatus.Success;
     }
 
     public void Dispose()
@@ -195,6 +225,12 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             return;
         }
 
+        if (_connection.HasUserLimits && !ChargeWrite(db, op, schema.Columns))
+        {
+            SqliteNative.InterruptQuery(db);
+            return;
+        }
+
         IReadOnlyList<int> sources = [.. schema.DataColumns.Select(static column => column.Index)];
         if (schema.IsShadow)
         {
@@ -252,6 +288,90 @@ internal sealed unsafe class PreupdateCapture : IDisposable
                 Fault = SqliteStatus.Fail("unknown preupdate operation");
                 break;
         }
+    }
+
+    private bool CountWrite()
+    {
+        if (++_writtenRows > SqlLimits.MaxWriteRows)
+        {
+            Fault = new SqliteStatus(SqliteNative.TooBig, "a transaction may write at most 1024 rows");
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool ChargeWrite(nint db, int op, IReadOnlyList<TableColumn> columns)
+    {
+        if (!CountWrite())
+        {
+            return false;
+        }
+
+        var bytes = 0;
+        if (op != SqliteNative.OpInsert && !MeasureRow(db, columns, useNew: false, out bytes))
+        {
+            return false;
+        }
+
+        if (op != SqliteNative.OpDelete)
+        {
+            if (!MeasureRow(db, columns, useNew: true, out var after))
+            {
+                return false;
+            }
+
+            bytes = Math.Max(bytes, after);
+        }
+
+        _remainingBytes -= bytes;
+        return true;
+    }
+
+    private bool MeasureRow(nint db, IReadOnlyList<TableColumn> columns, bool useNew, out int bytes)
+    {
+        bytes = 0;
+        foreach (var column in columns)
+        {
+            nint value;
+            var rc = useNew ? SqliteNative.PreupdateNew(db, column.Index, &value) : SqliteNative.PreupdateOld(db, column.Index, &value);
+            if (rc == SqliteNative.Range && column.Generated)
+            {
+                continue;
+            }
+
+            if (rc != SqliteNative.Ok)
+            {
+                Fault = new SqliteStatus(rc, "preupdate value read failed");
+                return false;
+            }
+
+            var length = SqliteNative.ValueType(value) switch
+            {
+                SqliteNative.TypeText or SqliteNative.TypeBlob => SqliteNative.ValueBytes(value),
+                SqliteNative.TypeNull => 0,
+                _ => sizeof(long),
+            };
+            if (!FitsWrite(length, _remainingBytes - bytes))
+            {
+                return false;
+            }
+
+            bytes += length;
+        }
+
+        return true;
+    }
+
+    private bool FitsWrite(int length, int remainingBytes)
+    {
+        if (length > remainingBytes)
+        {
+            Fault = new SqliteStatus(SqliteNative.TooBig, "a transaction may write at most 8 MiB");
+            return false;
+        }
+
+        return true;
     }
 
     private TouchedRow Touch(nint db, TableSchema schema, IReadOnlyList<int> sources, SqlValue[] key, bool existed)

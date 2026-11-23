@@ -164,7 +164,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 return await WriteAsync(lease, push, true, scope).ConfigureAwait(false);
             }
 
-            await RetireAsync(lease).ConfigureAwait(false);
+            Retire(lease);
         }
 
         return await OpenAndWriteAsync(push, scope).ConfigureAwait(false);
@@ -189,12 +189,12 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         {
             Done done => Sent(done, push.Length),
             QuicFault fault when reused && QuicFaults.IsStreamGone(fault) => await ReopenAsync(lease, fault, push, scope).ConfigureAwait(false),
-            QuicFault fault => await ResetAsync(lease, fault).ConfigureAwait(false),
+            QuicFault fault => Reset(lease, fault),
         };
 
     private async ValueTask<Result<Done, QuicFault>> ReopenAsync(StreamLease lease, QuicFault fault, PendingPush push, CallScope scope)
     {
-        await ResetAsync(lease, fault).ConfigureAwait(false);
+        _ = Reset(lease, fault);
         return await OpenAndWriteAsync(push, scope).ConfigureAwait(false);
     }
 
@@ -204,19 +204,19 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         return done;
     }
 
-    private async ValueTask<QuicFault> ResetAsync(StreamLease lease, QuicFault fault)
+    private QuicFault Reset(StreamLease lease, QuicFault fault)
     {
         _pool.Metrics.Error(QuicSide.Client, fault);
-        await RetireAsync(lease).ConfigureAwait(false);
-        await _pool.InvalidateIfDeadAsync(lease, fault).ConfigureAwait(false);
+        Retire(lease);
+        _pool.InvalidateIfDead(lease, fault);
         return fault;
     }
 
-    private async ValueTask RetireAsync(StreamLease lease)
+    private void Retire(StreamLease lease)
     {
         _lease = null;
         lease.Stream.Abort(QuicAbortDirection.Write, QuicProtocol.StreamErrorCode);
-        await lease.Stream.DisposeAsync().ConfigureAwait(false);
+        _ = QuicIo.DisposeStreamAsync(lease.Stream);
         _pool.Metrics.StreamClosed(QuicSide.Client);
     }
 
@@ -234,9 +234,13 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         {
             lease.Stream.Abort(QuicAbortDirection.Write, QuicProtocol.StreamErrorCode);
             _pool.Metrics.Error(QuicSide.Client, failure);
+            _ = QuicIo.DisposeStreamAsync(lease.Stream);
+        }
+        else
+        {
+            await QuicIo.DisposeStreamAsync(lease.Stream).ConfigureAwait(false);
         }
 
-        await lease.Stream.DisposeAsync().ConfigureAwait(false);
         _pool.Metrics.StreamClosed(QuicSide.Client);
     }
 }

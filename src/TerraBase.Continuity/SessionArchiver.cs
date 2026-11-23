@@ -1,3 +1,5 @@
+using TerraBase.Storage;
+
 namespace TerraBase.Continuity;
 
 internal sealed record ArchiveStep(ArchiveManifest Manifest, Unavailable? Failure);
@@ -14,6 +16,7 @@ internal sealed class SessionArchiver(
 
     public async ValueTask<Result<ArchiveManifest, Unavailable>> RunAsync(ArchiveManifest manifest, bool forceSnapshot, CancellationToken cancellationToken)
     {
+        SqliteStorageEngine.SealCommittedLogs(session);
         var step = new ArchiveStep(manifest, null);
         foreach (var (origin, _) in session.CurrentBookmark.Entries)
         {

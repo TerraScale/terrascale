@@ -10,23 +10,25 @@ public readonly union StrongVote(Prepared, Wounded, ReadSetStale, SchemaEpochSta
 
 public sealed record StrongVoteTally(int Prepared, int Required, IReadOnlyList<StrongPrepareOutcome> Rejections, int Unreachable, IReadOnlyList<string> RemoteParticipants, bool WithinLease);
 
-public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology topology, StrongParticipant participant, QuicRpcClient client, TimeProvider timeProvider)
+public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology topology, PeerHealthMonitor health, StrongParticipant participant, QuicRpcClient client, TimeProvider timeProvider)
 {
     public async ValueTask<StrongVoteTally> CollectAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(payload);
         var started = timeProvider.GetTimestamp();
-        var targets = topology.StrongParticipants(payload.DatabaseId);
+        var regionCount = topology.Regions.Count;
         var required = topology.RegionQuorum;
-        List<Task<StrongVote>> votes = [.. targets.Select(target => VoteAsync(session, payload, target, cancellationToken))];
+        List<Task<RegionVote>> votes = [.. topology.Regions.Select(region => VoteRegionAsync(session, payload, region, cancellationToken))];
         var prepared = 0;
         var unreachable = 0;
         List<StrongPrepareOutcome> rejections = [];
+        List<string> contacted = [];
         await foreach (var completed in Task.WhenEach(votes).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            var vote = await completed.ConfigureAwait(false);
-            var definitive = vote switch
+            var result = await completed.ConfigureAwait(false);
+            contacted.AddRange(result.RemoteNodeIds);
+            var definitive = result.Vote switch
             {
                 Prepared => Increment(ref prepared),
                 Wounded wounded => Reject(rejections, wounded, definitive: false),
@@ -34,15 +36,47 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
                 SchemaEpochStale epoch => Reject(rejections, epoch, definitive: true),
                 Unavailable => Increment(ref unreachable),
             };
-            if (prepared >= required || definitive || targets.Count - rejections.Count - unreachable < required)
+            if (prepared >= required || definitive || regionCount - rejections.Count - unreachable < required)
             {
                 break;
             }
         }
 
         var withinLease = timeProvider.GetElapsedTime(started) < options.StrongLockLease / 2;
-        return new StrongVoteTally(prepared, required, rejections, unreachable, [.. targets.Where(static target => !target.IsLocal).Select(static target => target.NodeId)], withinLease);
+        return new StrongVoteTally(prepared, required, rejections, unreachable, contacted, withinLease);
     }
+
+    private async Task<RegionVote> VoteRegionAsync(ISqlDatabaseSession session, StrongPreparePayload payload, string region, CancellationToken cancellationToken)
+    {
+        var candidates = topology.StrongCandidates(region, payload.DatabaseId);
+        StrongParticipantTarget[] ordered = [.. candidates.OrderByDescending(candidate => candidate.IsLocal || health.IsReachable(candidate.NodeId))];
+        List<string> contacted = [];
+        StrongVote last = new Unavailable("no candidate available in region", "region_unreachable");
+        foreach (var candidate in ordered)
+        {
+            if (!candidate.IsLocal)
+            {
+                contacted.Add(candidate.NodeId);
+            }
+
+            var vote = await VoteAsync(session, payload, candidate, cancellationToken).ConfigureAwait(false);
+            last = vote;
+            if (!IsRetryable(vote))
+            {
+                return new RegionVote(vote, contacted);
+            }
+        }
+
+        return new RegionVote(last, contacted);
+    }
+
+    private static bool IsRetryable(StrongVote vote) => vote switch
+    {
+        Unavailable => true,
+        Prepared or Wounded or ReadSetStale or SchemaEpochStale => false,
+    };
+
+    private sealed record RegionVote(StrongVote Vote, IReadOnlyList<string> RemoteNodeIds);
 
     private static bool Increment(ref int counter)
     {
@@ -81,9 +115,15 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         {
             StrongPrepareResponseMessage message => Flatten(message.Outcome),
             Unavailable unavailable => unavailable,
-            RequestTimeout timeout => new Unavailable(timeout.Message, timeout.Code),
+            RequestTimeout timeout => TimedOutVote(target.NodeId, timeout),
             QuicRemoteError error => new Unavailable(error.Message, error.Code),
         };
+    }
+
+    private Unavailable TimedOutVote(string nodeId, RequestTimeout timeout)
+    {
+        client.ResetPeer(nodeId);
+        return new Unavailable(timeout.Message, timeout.Code);
     }
 }
 

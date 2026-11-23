@@ -24,4 +24,6 @@ public static class QuicMessageType
     public const ushort InternalSqlResponse = 0x0411;
     public const ushort ControlSnapshotSync = 0x0500;
     public const ushort ControlSnapshotAck = 0x0501;
+    public const ushort RewindDatabase = 0x0510;
+    public const ushort RewindDatabaseAck = 0x0511;
 }

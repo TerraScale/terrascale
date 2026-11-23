@@ -45,6 +45,11 @@ internal sealed partial class PostgresSqlRewriter
             return;
         }
 
+        if (start == end && _literals.ContainsKey(start))
+        {
+            (_selectLiterals ??= []).Add(start);
+        }
+
         var name = ItemName(start, end);
         if (name is not null)
         {

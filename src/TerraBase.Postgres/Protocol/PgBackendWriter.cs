@@ -11,12 +11,21 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
 {
     private readonly PgMessageBuffer _buffer = new();
 
+    private bool _aborted;
+
+    public bool Aborted => _aborted;
+
     public PgMessageBuffer Buffer => _buffer;
 
     public bool ShouldFlush => _buffer.Length >= PostgresLimits.OutputFlushBytes;
 
     public async ValueTask<bool> FlushAsync(CancellationToken cancellationToken)
     {
+        if (_aborted)
+        {
+            return false;
+        }
+
         if (_buffer.Length > 0)
         {
             output.Write(_buffer.WrittenSpan);
@@ -28,10 +37,17 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
         try
         {
             var flushed = await output.FlushAsync(linked.Token).ConfigureAwait(false);
-            return !flushed.IsCompleted && !flushed.IsCanceled;
+            if (flushed.IsCompleted || flushed.IsCanceled)
+            {
+                _aborted = true;
+                return false;
+            }
+
+            return true;
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
+            _aborted = true;
             return false;
         }
     }

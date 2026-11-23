@@ -67,6 +67,8 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         long? started = null;
         var seen = 0L;
+        var oversized = 0L;
+        var discarded = 0L;
         while (true)
         {
             ReadResult read;
@@ -80,31 +82,48 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             }
 
             var buffer = read.Buffer;
-            if (buffer.Length > seen)
+            if (discarded + buffer.Length > seen)
             {
                 var first = started ??= timeProvider.GetTimestamp();
-                seen = buffer.Length;
+                seen = discarded + buffer.Length;
                 var remaining = PostgresLimits.MessageBudget(seen) - timeProvider.GetElapsedTime(first);
                 deadline.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
             }
 
-            if (buffer.Length >= 5)
+            if (oversized == 0 && buffer.Length >= 5)
             {
                 var type = (char)buffer.FirstSpan[0];
                 var length = ReadInt32(buffer.Slice(1));
-                if (length is < 4 or > PostgresLimits.MaxMessageBytes)
+                if (length < 4)
                 {
                     input.AdvanceTo(buffer.End);
                     return PgError.ProtocolViolation($"message length {length} is out of bounds");
                 }
 
-                if (buffer.Length > length)
+                if (length > PostgresLimits.MaxMessageBytes)
+                {
+                    oversized = length + 1L;
+                }
+                else if (buffer.Length > length)
                 {
                     var message = Parse(buffer.Slice(5, length - 4), body => ParseMessage(type, body));
                     input.AdvanceTo(buffer.GetPosition(length + 1));
                     LastMessageStarted = started ?? timeProvider.GetTimestamp();
                     return message;
                 }
+            }
+
+            if (oversized > 0)
+            {
+                var skipped = Math.Min(buffer.Length, oversized - discarded);
+                discarded += skipped;
+                input.AdvanceTo(buffer.GetPosition(skipped));
+                if (discarded == oversized || read.IsCompleted || read.IsCanceled)
+                {
+                    return PgError.ProtocolViolation($"message length {oversized - 1} exceeds the limit of {PostgresLimits.MaxMessageBytes} bytes");
+                }
+
+                continue;
             }
 
             if (read.IsCanceled)

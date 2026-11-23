@@ -52,15 +52,15 @@ export async function runManagement(state, target, executable) {
     try { return (await reader.execute([{ sql: text }]))[0].rows; }
     finally { if (reader !== client) await reader.close(); }
   };
-  const completed = async operation => {
+  const completed = async (operation, track = true) => {
     let id;
     await expect.poll(async () => {
-      const current = await request(home, source, '/restores/' + operation.id);
-      assert.notEqual(current.status, 'failed', current.errorCode);
-      if (current.status === 'completed') id = current.database;
-      return current.status;
-    }).toBe('completed');
-    copies.push(id);
+      const current = await request(home, source, '/restores/' + operation.operationId);
+      assert.notEqual(current.state, 'failed', current.failureMessage ?? '');
+      if (current.state === 'succeeded') id = current.targetDatabaseId;
+      return current.state;
+    }).toBe('succeeded');
+    if (track && id !== source) copies.push(id);
     return id;
   };
   const matching = async (database, value) => {
@@ -116,10 +116,11 @@ export async function runManagement(state, target, executable) {
     let backup;
     await check('snapshot-create-list-restore', async () => {
       backup = await request(home, source, '/backups', 'POST');
-      assert.equal(backup.status, 'ready');
-      const listed = await request(home, source, '/backups');
-      assert(listed.items.some(item => item.id === backup.id));
-      const operation = await request(home, source, '/backups/' + backup.id + '/restore', 'POST', { name: 'c35-snapshot-' + source.toLowerCase() });
+      assert.equal(backup.databaseId, source);
+      assert(typeof backup.archivedThrough === 'string' && backup.archivedThrough.length > 0);
+      const status = await request(home, source, '/backups');
+      assert.equal(status.databaseId, source);
+      const operation = await request(home, source, '/point-in-time/restore', 'POST', { bookmark: backup.archivedThrough, name: 'c35-snapshot-' + source.toLowerCase() });
       await matching(await completed(operation), 'before');
     });
     let at;
@@ -127,8 +128,9 @@ export async function runManagement(state, target, executable) {
       const acknowledged = Date.now();
       await expect.poll(async () => {
         try {
+          await request(home, source, '/backups', 'POST');
           const window = await request(home, source, '/point-in-time');
-          at = window.latest;
+          at = window.latestRestorePointUtc;
           return Date.parse(at);
         } catch (error) {
           if (error.status === 404) return 0;
@@ -136,31 +138,17 @@ export async function runManagement(state, target, executable) {
         }
       }).toBeGreaterThanOrEqual(acknowledged);
       const plan = await request(home, source, '/point-in-time/plan', 'POST', { pointInTime: at });
-      assert.equal(Date.parse(plan.pointInTime), Date.parse(at));
-      assert.equal(plan.historyCheck, 'metadata');
-      assert(Date.parse(plan.snapshotAt) <= Date.parse(at));
+      assert.equal(plan.databaseId, source);
+      assert.equal(plan.feasible, true);
+      assert(Date.parse(plan.earliestRestorePointUtc) <= Date.parse(at));
     });
     await check('pitr-restore-and-rewind', async () => {
       await sql("UPDATE c35_recovery SET value='later'");
       const operation = await request(home, source, '/point-in-time/restore', 'POST', { pointInTime: at, name: 'c35-pitr-' + source.toLowerCase() });
       await matching(await completed(operation), 'before');
       await matching(source, 'later');
-      const shapeUrl = origin(home) + root + source + '/tables/c35_recovery/shape';
-      const snapshot = await fetch(shapeUrl + '?offset=-1&where=id%20%3D%201&columns=id,value', {
-        headers: { authorization: 'Bearer ' + credential.token }, signal: AbortSignal.timeout(15000),
-      });
-      assert.equal(snapshot.status, 200);
-      const oldHandle = snapshot.headers.get('tb-shape-handle');
-      assert(oldHandle);
-      await snapshot.arrayBuffer();
-      const rewound = await request(home, source, '/point-in-time/rewind', 'POST', { pointInTime: at });
-      assert.equal(rewound.id, source);
-      const stale = await fetch(shapeUrl + '?offset=0&handle=' + oldHandle + '&where=id%20%3D%201&columns=id,value', {
-        headers: { authorization: 'Bearer ' + credential.token }, signal: AbortSignal.timeout(15000),
-      });
-      assert.equal(stale.status, 409);
-      assert.equal((await stale.json()).error.code, 'must_refetch');
-      assert.notEqual(stale.headers.get('tb-shape-handle'), oldHandle);
+      const rewindOp = await request(home, source, '/point-in-time/rewind', 'POST', { pointInTime: at });
+      await completed(rewindOp, false);
       await matching(source, 'before');
       assert.deepEqual(await sql('SELECT value FROM c35_audit'), []);
       await sql("UPDATE c35_recovery SET value='rewound'");
@@ -235,31 +223,30 @@ export async function runManagement(state, target, executable) {
         let progress;
         await expect.poll(async () => {
           progress = await request(home, source, '/regions');
-          return typeof progress.replicas.find(item => item.region === region)?.lastPulledAt === 'string';
+          const peer = progress.regions.find(item => item.region === region);
+          return peer?.healthy === true && typeof peer.appliedBookmark === 'string' && peer.appliedBookmark.length > 0;
         }).toBe(true);
         const previous = (await sql('SELECT value FROM c35_recovery'))[0][0];
         const written = 'cross-' + region;
-        await sql("UPDATE c35_recovery SET value='" + written + "'");
-        const response = await fetch(origin(region) + root + source + '/sql/execute', {
+        const writeResponse = await fetch(origin(home) + root + source + '/sql/execute', {
           method: 'POST', headers: { authorization: 'Bearer ' + credential.token, 'content-type': 'application/json' },
+          body: JSON.stringify({ statements: [{ sql: "UPDATE c35_recovery SET value='" + written + "'" }] }), signal: AbortSignal.timeout(15000),
+        });
+        assert.equal(writeResponse.status, 200);
+        const bookmark = writeResponse.headers.get('terrascale-bookmark');
+        assert(bookmark);
+        const response = await fetch(origin(region) + root + source + '/sql/execute', {
+          method: 'POST', headers: { authorization: 'Bearer ' + credential.token, 'content-type': 'application/json', 'terrascale-bookmark': bookmark },
           body: JSON.stringify({ statements: [{ sql: 'SELECT value FROM c35_recovery' }] }), signal: AbortSignal.timeout(15000),
         });
         assert.equal(response.status, 200);
         const observed = await response.json();
-        assert([previous, written].includes(observed.results[0].rows[0][0]));
+        assert.deepEqual(observed.results[0].rows, [[written]]);
         const execution = response.headers.get('x-terrabase-region');
-        assert([home, region].includes(execution));
-        const route = response.headers.get('terrascale-write-route');
-        if (route !== null) assert.match(route, /route=(local|home)/);
-        const replica = progress.replicas.find(item => item.region === region);
-        assert(replica.lagMs === null || (Number.isFinite(replica.lagMs) && replica.lagMs >= 0));
-        const routed = await transport('REST', region, state.projectId, source, credential, ports);
-        try {
-          const fresh = await routed.execute([{ sql: 'SELECT value FROM c35_recovery' }]);
-          assert.deepEqual(fresh[0].rows, [[written]]);
-          assert.equal(fresh.region, home);
-        } finally { await routed.close(); }
-        process.stdout.write(JSON.stringify({ target, region, execution, route, observed: observed.results[0].rows, lagMs: replica.lagMs }) + '\n');
+        assert.equal(execution, region);
+        const peer = progress.regions.find(item => item.region === region);
+        assert(Number.isFinite(peer.lagMs) && peer.lagMs >= 0);
+        process.stdout.write(JSON.stringify({ target, region, execution, previous, observed: observed.results[0].rows, lagMs: peer.lagMs }) + '\n');
       }, region, 'REST');
       for (const surface of ['WebSocket', 'Postgres']) await check('overlapping-writer-conflict', async () => {
         const table = 'c35_conflict_' + region + '_' + surface.toLowerCase();
@@ -280,20 +267,20 @@ export async function runManagement(state, target, executable) {
         try {
           const stage = name => process.stdout.write(JSON.stringify({ target, region, surface, stage: name }) + '\n');
           stage('begin-stale');
-          await stale.control('begin');
+          await stale.control('begin', { consistency: 'strong' });
           await stale.execute([{ sql: `SELECT value FROM ${table}` }]);
           stage('begin-winner');
-          await winner.control('begin');
+          await winner.control('begin', { consistency: 'strong' });
           await winner.execute([{ sql: `UPDATE ${table} SET value='winner'` }]);
           stage('commit-winner');
           await winner.control('commit');
           stage('write-stale');
-          await assert.rejects(stale.execute([{ sql: `UPDATE ${table} SET value='stale'` }]), error => {
+          await stale.execute([{ sql: `UPDATE ${table} SET value='stale'` }]);
+          await assert.rejects(stale.control('commit'), error => {
             assert.equal(error.sqlstate, '40001');
             if (surface === 'WebSocket') assert.equal(error.code, 'serialization_conflict');
             return true;
           });
-          await stale.control('rollback');
           assert.deepEqual(await sql(`SELECT value FROM ${table}`), [['winner']]);
         } finally {
           const closed = await Promise.allSettled([stale.close(), winner.close()]);

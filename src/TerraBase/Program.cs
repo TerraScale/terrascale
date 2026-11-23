@@ -66,11 +66,15 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
         json.SerializerOptions.TypeInfoResolverChain.Insert(0, JsonTypeInfoResolver.Combine(
             TerraScaleContractsJsonContext.Default, SqlJsonContext.Default, SqlSocketJsonContext.Default, ManagementJsonContext.Default, BackupJsonContext.Default,
             RulesJsonContext.Default, RowsJsonContext.Default, ApiKeysJsonContext.Default, HealthJsonContext.Default, UsageJsonContext.Default, LogsJsonContext.Default,
-            RegionsJsonContext.Default, PressureJsonContext.Default, ClockJsonContext.Default));
+            RegionsJsonContext.Default, PressureJsonContext.Default, ClockJsonContext.Default, BackupDestinationJson.Default));
     });
     builder.Services.AddHttpClient(TokenVerifier.HttpClientName, static client => client.Timeout = TimeSpan.FromSeconds(10));
     builder.Services.AddHttpClient(AtlasPublisher.HttpClientName, static client => client.Timeout = TimeSpan.FromSeconds(10));
     builder.Services.AddHttpClient(CloseProjectEndpoint.HttpClientName, static client => client.Timeout = TimeSpan.FromSeconds(15));
+    builder.Services.AddHttpClient(BackupDestinationProbe.ClientName, static client => client.Timeout = TimeSpan.FromSeconds(20))
+        .ConfigurePrimaryHttpMessageHandler(BackupDestinationNetwork.Handler);
+    builder.Services.AddSingleton<BackupDestinationProbe>();
+    builder.Services.AddSingleton<BackupDestinationStore>();
     builder.Services.AddTerraScaleEndpoints(endpoints =>
     {
         endpoints.Title = "TerraBase API";
@@ -85,6 +89,7 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
 
     var app = builder.Build();
     prepared.Callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
+    _ = app.Services.GetRequiredService<TenantSessions>();
     app.UseRouting();
     app.UseTerraBaseSocketInput();
     app.UseWebSockets();

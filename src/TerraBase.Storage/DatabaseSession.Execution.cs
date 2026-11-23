@@ -33,6 +33,16 @@ internal sealed partial class DatabaseSession
 
     private StatementOutcome ExecuteStatement(WriteContext context, SqlStatement statement, int index)
     {
+        if (!_capture.Fault.IsOk)
+        {
+            return _capture.Fault.ToSqlError(index);
+        }
+
+        if (!SqlLimits.StatementFits(statement.Sql))
+        {
+            return SqlLimits.StatementTooLong(index);
+        }
+
         var exposure = ConflictsTable.Expose(statement.Sql, out var sql);
         if (!exposure.IsOk)
         {
@@ -92,8 +102,24 @@ internal sealed partial class DatabaseSession
                 return status.ToSqlError(index);
             }
 
+            string? populatedTable = null;
+            if (_writer.HasUserLimits && info.CreatedTable is { } table && CreatesPopulatedTable(tokens))
+            {
+                status = _writer.QueryFirst("SELECT 1 FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE", out var existing, SqlValue.FromText(table));
+                if (!status.IsOk)
+                {
+                    SqliteConnection.FinalizeStatement(handle);
+                    return status.ToSqlError(index);
+                }
+
+                if (existing is null)
+                {
+                    populatedTable = table;
+                }
+            }
+
             _capture.Annotation = SqlAnalyzer.Annotate(tokens, _writer.Schema);
-            status = _writer.StepUser(handle, out var result, context.CancellationToken);
+            status = _writer.StepUser(handle, info, out var result, limitResults: true, context.CancellationToken);
             _capture.Annotation = null;
             SqliteConnection.FinalizeStatement(handle);
             if (!status.IsOk)
@@ -104,6 +130,15 @@ internal sealed partial class DatabaseSession
             if (isDdl)
             {
                 context.Ddl.Add(segment.Trim().TrimEnd(';'));
+                if (populatedTable is not null)
+                {
+                    status = _writer.CheckCreatedTable(populatedTable, _capture);
+                    if (!status.IsOk)
+                    {
+                        return status.ToSqlError(index);
+                    }
+                }
+
                 _ = _writer.ValidateSchemaCache();
             }
 
@@ -112,6 +147,18 @@ internal sealed partial class DatabaseSession
 
         context.Results.Add(last);
         return last;
+    }
+
+    private static bool CreatesPopulatedTable(List<SqlToken> tokens)
+    {
+        var start = tokens.FindIndex(static token => !token.IsSymbol(";"));
+        if (start < 0 || !tokens[start].Is("CREATE"))
+        {
+            return false;
+        }
+
+        var source = tokens.FindIndex(start + 1, static token => token.Is("AS") || token.IsSymbol("("));
+        return source >= 0 && tokens[source].Is("AS");
     }
 
     private StrongRequiredReason? Gate(StatementInfo info)
@@ -318,8 +365,13 @@ internal sealed partial class DatabaseSession
         }
     }
 
-    internal static Result<SqlResultSet, SqlError> ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, CancellationToken cancellationToken)
+    internal static Result<SqlResultSet, SqlError> ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, bool limitResults, CancellationToken cancellationToken)
     {
+        if (!SqlLimits.StatementFits(statement.Sql))
+        {
+            return SqlLimits.StatementTooLong(index);
+        }
+
         var exposure = ConflictsTable.Expose(statement.Sql, out var sql);
         if (!exposure.IsOk)
         {
@@ -348,7 +400,7 @@ internal sealed partial class DatabaseSession
             status = reader.BindUser(handle, statement);
             if (status.IsOk)
             {
-                status = reader.StepUser(handle, out last, cancellationToken);
+                status = reader.StepUser(handle, info, out last, limitResults, cancellationToken);
             }
 
             SqliteConnection.FinalizeStatement(handle);

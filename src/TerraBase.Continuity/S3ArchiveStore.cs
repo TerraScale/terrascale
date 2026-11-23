@@ -2,7 +2,6 @@ using System.Net;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
-using Amazon.S3.Transfer;
 
 namespace TerraBase.Continuity;
 
@@ -44,8 +43,8 @@ public sealed class S3ArchiveStore : IDisposable
         return Narrow(await InvokeAsync(
             async (client, bucket, token) =>
             {
-                using var transfer = new TransferUtility(client);
-                await transfer.UploadAsync(new TransferUtilityUploadRequest { BucketName = bucket, Key = key, FilePath = path }, token).ConfigureAwait(false);
+                await using var content = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                _ = await client.PutObjectAsync(Put(bucket, key, content, ManifestCodec.BinaryContentType), token);
                 return new Done();
             },
             cancellationToken).ConfigureAwait(false));
@@ -59,17 +58,7 @@ public sealed class S3ArchiveStore : IDisposable
         return Narrow(await InvokeAsync(
             async (client, bucket, token) =>
             {
-                _ = await client.PutObjectAsync(
-                    new PutObjectRequest
-                    {
-                        BucketName = bucket,
-                        Key = key,
-                        InputStream = content,
-                        AutoCloseStream = false,
-                        UseChunkEncoding = false,
-                        ContentType = contentType,
-                    },
-                    token).ConfigureAwait(false);
+                _ = await client.PutObjectAsync(Put(bucket, key, content, contentType), token);
                 return new Done();
             },
             cancellationToken).ConfigureAwait(false));
@@ -168,6 +157,16 @@ public sealed class S3ArchiveStore : IDisposable
 
         return keys;
     }
+
+    private static PutObjectRequest Put(string bucket, string key, Stream content, string contentType) => new()
+    {
+        BucketName = bucket,
+        Key = key,
+        InputStream = content,
+        AutoCloseStream = false,
+        UseChunkEncoding = false,
+        ContentType = contentType,
+    };
 
     private static Result<Done, Unavailable, RequestTimeout> Narrow(Result<Done, NotFound, Unavailable, RequestTimeout> result) => result switch
     {

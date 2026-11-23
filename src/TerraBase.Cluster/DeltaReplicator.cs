@@ -52,7 +52,8 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         }
 
         var message = new DeltaPushMessage(databaseId, topology.LocalNodeId, [commit], ackRequested);
-        foreach (var peer in topology.RemotePeers)
+        var peers = topology.RegionPeers.Count < 2 ? topology.Peers : topology.RemotePeers;
+        foreach (var peer in peers)
         {
             Enqueue(peer.NodeId, new OutboundDelta(databaseId, message));
         }

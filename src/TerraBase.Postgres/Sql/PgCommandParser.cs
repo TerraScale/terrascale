@@ -32,6 +32,11 @@ internal static class PgCommandParser
                 continue;
             }
 
+            if (!PgRewrite.Fits(sql.AsSpan(editor.Start(0), editor.End(editor.Count - 1) - editor.Start(0))))
+            {
+                return PgRewrite.StatementTooLong;
+            }
+
             var failure = ParseStatement(editor, context) switch
             {
                 PgCommand command => Collect(commands, command),
@@ -185,8 +190,8 @@ internal static class PgCommandParser
                 return PgError.Unsupported("DROP SCHEMA");
             case "comment":
                 return new PgNoOpCommand("COMMENT");
-            case "vacuum" or "analyze":
-                return new PgNoOpCommand(first.ToUpperInvariant());
+            case "vacuum" or "analyze" or "analyse":
+                return new PgError("42501", $"{first.ToUpperInvariant()} is not permitted");
             case "grant" or "revoke" or "lock" or "cluster" or "checkpoint" or "load" or "security" or "reassign" or "refresh":
                 return PgError.Unsupported(first.ToUpperInvariant());
             case "truncate":

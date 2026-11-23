@@ -3,37 +3,41 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-internal sealed record PingMessage(string NodeId, string Region, long SentAtTicks) : IBinaryMessage<PingMessage>
+internal sealed record PingMessage(string NodeId, string Region, long SentAtTicks, long InstanceId) : IBinaryMessage<PingMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
         writer.WriteString(NodeId);
         writer.WriteString(Region);
         writer.WriteInt64(SentAtTicks);
+        writer.WriteInt64(InstanceId);
     }
 
     public static PingMessage ReadFrom(ref WireReader reader)
     {
         var nodeId = reader.ReadString();
         var region = reader.ReadString();
-        return new PingMessage(nodeId, region, reader.ReadInt64());
+        var sentAtTicks = reader.ReadInt64();
+        return new PingMessage(nodeId, region, sentAtTicks, reader.ReadInt64());
     }
 }
 
-internal sealed record PongMessage(string NodeId, string Region, long SentAtTicks) : IBinaryMessage<PongMessage>
+internal sealed record PongMessage(string NodeId, string Region, long SentAtTicks, long InstanceId) : IBinaryMessage<PongMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
         writer.WriteString(NodeId);
         writer.WriteString(Region);
         writer.WriteInt64(SentAtTicks);
+        writer.WriteInt64(InstanceId);
     }
 
     public static PongMessage ReadFrom(ref WireReader reader)
     {
         var nodeId = reader.ReadString();
         var region = reader.ReadString();
-        return new PongMessage(nodeId, region, reader.ReadInt64());
+        var sentAtTicks = reader.ReadInt64();
+        return new PongMessage(nodeId, region, sentAtTicks, reader.ReadInt64());
     }
 }
 

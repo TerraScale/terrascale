@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace TerraBase.Storage;
 
@@ -10,6 +11,8 @@ internal sealed class StatementInfo
 
     public string? Denied { get; set; }
 
+    public string? CreatedTable { get; set; }
+
     public HashSet<string> WrittenTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public HashSet<string> ReadTables { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -18,6 +21,7 @@ internal sealed class StatementInfo
     {
         IsDdl = false;
         Denied = null;
+        CreatedTable = null;
         WrittenTables.Clear();
         ReadTables.Clear();
     }
@@ -57,6 +61,12 @@ internal sealed unsafe partial class SqliteConnection
         "foreign_keys",
         "journal_mode");
 
+    private static readonly FrozenSet<string> DeniedTables = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
+        "sqlite_dbpage", "sqlite_dbdata", "sqlite_dbptr", "sqlite_stmt", "sqlite_dbstat", "dbstat", "btree_dump");
+
+    private static readonly FrozenSet<string> DeniedFunctions = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
+        "load_extension", "readfile", "writefile");
+
     private int Authorize(int action, string? first, string? second, string? database)
     {
         if (!_userMode)
@@ -75,6 +85,12 @@ internal sealed unsafe partial class SqliteConnection
             case SqliteNative.ActionCreateTempIndex or SqliteNative.ActionCreateTempTable or SqliteNative.ActionCreateTempTrigger or SqliteNative.ActionCreateTempView
                 or SqliteNative.ActionDropTempIndex or SqliteNative.ActionDropTempTable or SqliteNative.ActionDropTempTrigger or SqliteNative.ActionDropTempView:
                 return Deny(info, "temporary schema objects are not supported");
+            case SqliteNative.ActionAnalyze:
+                return Deny(info, "ANALYZE is not permitted");
+            case SqliteNative.ActionCreateVirtualTable:
+                return Deny(info, "virtual tables are not supported");
+            case SqliteNative.ActionFunction when second is not null && DeniedFunctions.Contains(second):
+                return Deny(info, "the function is not permitted");
             case SqliteNative.ActionSavepoint:
                 return IsInternal(second) ? Deny(info, "reserved savepoint name") : SqliteNative.AuthOk;
             case SqliteNative.ActionPragma:
@@ -82,6 +98,11 @@ internal sealed unsafe partial class SqliteConnection
                     ? SqliteNative.AuthOk
                     : Deny(info, string.Concat("PRAGMA ", first, " is not permitted"));
             case SqliteNative.ActionRead:
+                if (first is not null && DeniedTables.Contains(first))
+                {
+                    return Deny(info, "the internal SQLite table is not accessible");
+                }
+
                 if (IsInternal(first))
                 {
                     return Deny(info, "internal TerraBase tables are not accessible");
@@ -105,7 +126,7 @@ internal sealed unsafe partial class SqliteConnection
                 }
 
                 return SqliteNative.AuthOk;
-            case SqliteNative.ActionCreateTable or SqliteNative.ActionCreateView or SqliteNative.ActionCreateVirtualTable
+            case SqliteNative.ActionCreateTable or SqliteNative.ActionCreateView
                 or SqliteNative.ActionDropTable or SqliteNative.ActionDropView or SqliteNative.ActionDropVirtualTable:
                 if (IsInternal(first) || (first is not null && IsSystem(first)))
                 {
@@ -113,6 +134,11 @@ internal sealed unsafe partial class SqliteConnection
                 }
 
                 info?.IsDdl = main;
+                if (action == SqliteNative.ActionCreateTable && main)
+                {
+                    info?.CreatedTable = first;
+                }
+
                 return SqliteNative.AuthOk;
             case SqliteNative.ActionCreateIndex or SqliteNative.ActionCreateTrigger or SqliteNative.ActionDropIndex or SqliteNative.ActionDropTrigger:
                 if (IsInternal(first) || IsInternal(second))
@@ -133,6 +159,49 @@ internal sealed unsafe partial class SqliteConnection
             default:
                 return SqliteNative.AuthOk;
         }
+    }
+
+    private static SqliteStatus ValidatePreparedSql(ReadOnlySpan<byte> sql)
+    {
+        var tokens = SqlTokenizer.Tokenize(Encoding.UTF8.GetString(sql));
+        var start = tokens.FindIndex(static token => !token.IsSymbol(";"));
+        if (start >= 0 && (tokens[start].Is("VACUUM") || tokens[start].Is("ANALYZE")))
+        {
+            return new SqliteStatus(SqliteNative.Auth, string.Concat(tokens[start].Text, " is not permitted"));
+        }
+
+        return SqliteStatus.Success;
+    }
+
+    private static SqliteStatus UserStatus(SqliteStatus status, StatementInfo info)
+    {
+        if (info.Denied is { } reason)
+        {
+            return new SqliteStatus(SqliteNative.Auth, reason);
+        }
+
+        const string missingFunction = "no such function: ";
+        const string missingTable = "no such table: ";
+        if (status.Primary != SqliteNative.Error)
+        {
+            return status;
+        }
+
+        if (status.Message.StartsWith(missingFunction, StringComparison.Ordinal) && DeniedFunctions.Contains(status.Message[missingFunction.Length..]))
+        {
+            return new SqliteStatus(SqliteNative.Auth, "the function is not permitted");
+        }
+
+        if (status.Message.StartsWith(missingTable, StringComparison.Ordinal))
+        {
+            var name = status.Message[missingTable.Length..];
+            if (DeniedTables.Contains(name[(name.LastIndexOf('.') + 1)..]))
+            {
+                return new SqliteStatus(SqliteNative.Auth, "the internal SQLite table is not accessible");
+            }
+        }
+
+        return status;
     }
 
     private static int Deny(StatementInfo? info, string reason)

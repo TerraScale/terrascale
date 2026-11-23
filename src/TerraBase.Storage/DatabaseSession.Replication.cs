@@ -8,7 +8,11 @@ internal readonly union SnapshotOutcome(SnapshotCapture, StorageBusy);
 
 internal sealed partial class DatabaseSession
 {
-    public async ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken)
+    public ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken) =>
+        ExecuteReadAsync(request, limitResults: true, cancellationToken);
+
+    internal async ValueTask<Result<SqlReadResult, SqlError, StorageBusy, RequestTimeout>> ExecuteReadAsync(
+        SqlStatementRequest request, bool limitResults, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken).ConfigureAwait(false);
@@ -35,7 +39,7 @@ internal sealed partial class DatabaseSession
             List<SqlResultSet> results = [];
             for (var index = 0; index < request.Statements.Count; index++)
             {
-                SqlError? failure = ExecuteOnReader(reader, request.Statements[index], index, info, null, cancellationToken) switch
+                SqlError? failure = ExecuteOnReader(reader, request.Statements[index], index, info, null, limitResults, cancellationToken) switch
                 {
                     SqlResultSet result => Collect(results, result),
                     SqlError error => error,

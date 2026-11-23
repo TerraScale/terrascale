@@ -24,6 +24,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         ("rules_current", "CREATE TABLE rules_current (database_id TEXT PRIMARY KEY, version TEXT NOT NULL)"),
         ("usage_counters", "CREATE TABLE usage_counters (scope TEXT NOT NULL, month TEXT NOT NULL, metric TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (scope, month, metric))"),
         ("request_logs", "CREATE TABLE request_logs (database_id TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER NOT NULL, duration_ms INTEGER NOT NULL, region TEXT NOT NULL, PRIMARY KEY (database_id, id))"),
+        ("backup_destinations", "CREATE TABLE backup_destinations (project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, endpoint TEXT NOT NULL, region TEXT NOT NULL, bucket TEXT NOT NULL, mode TEXT NOT NULL, updated_at INTEGER NOT NULL, key_id TEXT NOT NULL, credentials BLOB NOT NULL)"),
         ("backup_policies", "CREATE TABLE backup_policies (database_id TEXT PRIMARY KEY, retention_days INTEGER NOT NULL, full_backup_cron TEXT, updated_at INTEGER NOT NULL)"),
     ];
 
@@ -39,25 +40,26 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         registry.Register(Id, "usage_counters", "value");
     }
 
-    public async ValueTask<Result<Done, ConfigurationError>> OpenAsync(bool bootstrap, CancellationToken cancellationToken)
+    public async ValueTask<Result<Done, ConfigurationError>> OpenAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
     {
         var keyFile = Path.Combine(options.DataDirectory, KeyIdFile);
         var keyId = KeyId;
         return File.Exists(keyFile)
             ? await databases.OpenAsync(Id, keyId, cancellationToken) switch
             {
-                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, cancellationToken),
+                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, sync, cancellationToken),
                 NotFound => new ConfigurationError("the system catalog is missing from a data-directory that already holds one; restore it before starting"),
                 Unavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
             }
             : await databases.OpenOrCreateAsync(Id, keyId, strict: false, cancellationToken) switch
             {
-                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, cancellationToken),
+                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, sync, cancellationToken),
                 Unavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
             };
     }
 
-    private async ValueTask<Result<Done, ConfigurationError>> InitializeAsync(ISqlDatabaseSession session, string keyFile, string keyId, bool bootstrap, CancellationToken cancellationToken)
+    private async ValueTask<Result<Done, ConfigurationError>> InitializeAsync(
+        ISqlDatabaseSession session, string keyFile, string keyId, bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
     {
         _session = session;
         if (WriteKeyId(keyFile, keyId) is { } unwritable)
@@ -65,7 +67,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             return unwritable;
         }
 
-        return await EnsureSchemaAsync(bootstrap, cancellationToken);
+        return await EnsureSchemaAsync(bootstrap, sync, cancellationToken);
     }
 
     public async ValueTask<Result<IReadOnlyList<IReadOnlyList<SqlValue>>, Unavailable>> QueryAsync(SqlStatement statement, CancellationToken cancellationToken)
@@ -120,10 +122,15 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         }
     }
 
-    private async ValueTask<Result<Done, ConfigurationError>> EnsureSchemaAsync(bool bootstrap, CancellationToken cancellationToken)
+    private async ValueTask<Result<Done, ConfigurationError>> EnsureSchemaAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
     {
         while (true)
         {
+            if (!bootstrap && sync is not null)
+            {
+                await sync(cancellationToken);
+            }
+
             Result<Done, ConfigurationError>? settled = await QueryAsync(SqlBuild.Statement("SELECT name FROM sqlite_schema WHERE type = 'table'"), cancellationToken) switch
             {
                 IReadOnlyList<IReadOnlyList<SqlValue>> rows => await SettleAsync(Missing([.. rows.Select(static row => row.TextAt(0))]), bootstrap, cancellationToken),

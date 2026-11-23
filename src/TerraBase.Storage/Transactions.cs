@@ -130,7 +130,7 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
             }
             else
             {
-                outcome = DatabaseSession.ExecuteOnReader(reader, statement, _statements++, _info, ReadTables, cancellationToken) switch
+                outcome = DatabaseSession.ExecuteOnReader(reader, statement, _statements++, _info, ReadTables, limitResults: true, cancellationToken) switch
                 {
                     SqlResultSet result => Record(result),
                     SqlError error => error,

@@ -69,16 +69,22 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(FlushInterval, time);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        try
         {
-            await FlushAsync(stoppingToken);
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                await FlushAsync(stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
         }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
-        await FlushAsync(CancellationToken.None);
+        await FlushAsync(cancellationToken);
     }
 
     private async Task FlushAsync(CancellationToken cancellationToken)
@@ -95,12 +101,22 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
                 "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?, ?, ?, ?) ON CONFLICT (scope, month, metric) DO UPDATE SET value = value + excluded.value",
                 SqlBuild.Text(item.Key.Scope), SqlBuild.Text(item.Key.Month), SqlBuild.Text(item.Key.Metric), SqlBuild.Integer(item.Value))),
         ];
-        var failure = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken) switch
+        string? failure;
+        try
         {
-            SqlWriteResult => null,
-            Conflict conflict => conflict.Message,
-            Unavailable unavailable => unavailable.Message,
-        };
+            var written = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
+            failure = written switch
+            {
+                SqlWriteResult => null,
+                Conflict conflict => conflict.Message,
+                Unavailable unavailable => unavailable.Message,
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            failure = "usage flush canceled";
+        }
+
         if (failure is not null)
         {
             foreach (var (key, value) in drained)
