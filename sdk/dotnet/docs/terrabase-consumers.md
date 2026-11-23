@@ -1,7 +1,7 @@
 # TerraBase consumers
 
 ts-auth persists its state in TerraBase SQL tables through `TerraBaseSqlClient` from this SDK, consumed as source
-(`$(TsDotnetRoot)/src/TerraScale.DotNet`) from the same monorepo revision, not as a package.
+(`sdk/dotnet/src/TerraScale.DotNet`) from the same monorepo revision, not as a package.
 
 ## Routes
 

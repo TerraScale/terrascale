@@ -120,7 +120,10 @@
     <PackageVersion Include="Ulid" Version="1.4.1" />
     <PackageVersion Include="NUlid" Version="1.7.3" />
   </ItemGroup>
-  <!-- Benchmarks (benchmark/dotnet): BenchmarkDotNet 0.16 is the first release with net11.0 support. -->
+  <ItemGroup Label="Local development">
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="17.0.0" />
+    <PackageVersion Include="Aspire.Hosting.Dotnet" Version="17.0.0" />
+  </ItemGroup>
   <ItemGroup Label="Benchmarks">
     <PackageVersion Include="BenchmarkDotNet" Version="0.16.0-preview.2" />
   </ItemGroup>

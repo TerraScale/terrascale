@@ -545,7 +545,7 @@ original_key = key.read_text()
 key.write_text(original_key.splitlines()[0] + "\nAAAA\n")
 undo_env = env | {"TERRABASE_MASTER_KEY": env["TERRABASE_MASTER_KEY"]}
 first = subprocess.run(
-    ["python3", str(repo / "scripts/storage-format-undo.py"), str(candidate), str(undo)],
+    ["python3", str(repo / "e2e/storage/storage-format-undo.py"), str(candidate), str(undo)],
     env=undo_env,
     capture_output=True,
     text=True,
@@ -555,7 +555,7 @@ key.write_text(original_key)
 left = [name for name, version in stamps(undo).items() if version == 24]
 assert left == [str(middle.relative_to(undo))], left
 second = subprocess.run(
-    ["python3", str(repo / "scripts/storage-format-undo.py"), str(candidate), str(undo)],
+    ["python3", str(repo / "e2e/storage/storage-format-undo.py"), str(candidate), str(undo)],
     env=undo_env,
     capture_output=True,
     text=True,

@@ -7,4 +7,4 @@
 - `npm run canonical:sync` regenerates pricing, LLM and translated documentation. Keep generated files current. `npm run check:links` validates built links.
 - Every feature is always on. Do not add feature flags, activation settings, deploy toggles, kill switches or tuning knobs. Keep one correct value in code. CI allowances for unavoidable third-party switch names need a one-line reason. No fakes, demo stores or skip-auth.
 - Document automatic public endpoint discovery. Publish the product contract without claiming unshipped runtime behavior or inventing APIs.
-- Changes limited to `AGENTS.md`/`CLAUDE.md` run no build in CI.
+- Changes limited to `AGENTS.md` run no build in CI.

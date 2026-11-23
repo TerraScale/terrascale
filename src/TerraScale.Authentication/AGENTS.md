@@ -2,16 +2,16 @@
 
 Read the root [AGENTS.md](../../AGENTS.md).
 
-ts-auth is the hosted identity provider. Prioritize security, tenant isolation, correctness and interoperability over convenience or performance. Contract: `docs/auth/platform-contract.md`.
+ts-auth is the hosted identity provider. Prioritize security, tenant isolation, correctness and interoperability over convenience or performance. Platform contract: `src/TerraScale.Authentication/platform-api.openapi.yaml`.
 
 ## Ownership and stack
 
 - Own identity/access: users, credentials, sessions, MFA, SSO/federation, OAuth/OIDC clients, signing keys/JWKS, organizations, projects, memberships, roles, invitations, ownership transfers, audits, API client credentials and authentication email branding.
 - Keep the platform tenant `terrascale` isolated from each customer project's end-user tenant. Preserve project-bound issuers and all tenant boundaries.
-- Persist state only in relational tables through `AuthDbContext` (`src/TerraScale.Authentication/Storage`) on the TerraBase EF Core provider; see `docs/auth/storage.md`. Schema changes are EF Core migrations generated with the `src/TerraScale.Authentication.EntityFrameworkDesign` host and committed; encode invariants (uniqueness, ownership) as constraints. Hot paths save in one request without explicit transactions. Never embed/import the TerraBase server or bypass the SDK. Reach TerraBase with the peer credential, never an auth token signed by ts-auth. Do not copy other products' data; call their SDKs.
+- Persist state only in relational tables through `AuthDbContext` (`src/TerraScale.Authentication/Storage`) on the TerraBase EF Core provider. Schema changes are EF Core migrations generated with the `src/TerraScale.Authentication.EntityFrameworkDesign` host and committed; encode invariants (uniqueness, ownership) as constraints. Hot paths save in one request without explicit transactions. Never embed/import the TerraBase server or bypass the SDK. Reach TerraBase with the peer credential, never an auth token signed by ts-auth. Do not copy other products' data; call their SDKs.
 - C#/ASP.NET Core on .NET 11; single-file self-contained Linux x64/arm64 releases. Razor Slices renders HTML; business logic stays out of templates. Datastar drives server updates through `Assets/admin/datastar.js`; no .NET Datastar SDK is currently referenced. Add no other backend runtime or frontend framework.
 - Use Geralt/libsodium for Argon2id, Microsoft.IdentityModel for JWTs and OpenIddict for OAuth/OIDC. No custom cryptography or token-signing algorithms.
-- Build: `make auth-build`; checks: `make auth-check`, `make auth-audit`, `make auth-openapi-check`; development: `make auth-dev` (`scripts/auth/dev.sh`).
+- Build: `make auth-build`; checks: `make auth-check`, `make auth-audit`, `make auth-openapi-check`; local stack: `make dev`.
 
 ## Architecture and security
 

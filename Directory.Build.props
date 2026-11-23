@@ -41,11 +41,8 @@
          incompatibilities surface at build time. -->
     <RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
-    <!-- Reproducible restores: lock files are committed and CI restores in locked mode. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
-    <!-- Services consume the SDK source from the same monorepo revision. -->
-    <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)sdk/dotnet</TsDotnetRoot>
   </PropertyGroup>
 </Project>

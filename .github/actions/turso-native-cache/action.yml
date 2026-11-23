@@ -20,4 +20,4 @@ runs:
     - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ inputs.dir }}/src/vendor/Turso.Data.Sqlite/native
-        key: turso-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/src/vendor/Turso.Native/SHA256SUMS', inputs.dir), format('{0}/scripts/vendor/download-turso-native.sh', inputs.dir)) }}
+        key: turso-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/src/vendor/Turso.Native/SHA256SUMS', inputs.dir), format('{0}/src/vendor/Turso.Native/scripts/download-turso-native.sh', inputs.dir)) }}

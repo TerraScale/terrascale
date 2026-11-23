@@ -17,7 +17,7 @@ On main, the `deploy-status` job of `.github/workflows/sites.yml` waits for the
 `status-deploy` lock, checks out the tip of `main`, builds it and deploys it
 with `npm run deploy:prebuilt` (the two vantage Workers, then `ts-status`) using
 the repository's `CLOUDFLARE_API_TOKEN`, with that commit as each version's
-message. The monorepo's `scripts/ci/prove-worker-deploy.mjs` then reads
+message. The monorepo's `.github/scripts/ci/prove-worker-deploy.mjs` then reads
 Cloudflare's records: each Worker's active deployment must serve the version the
 deploy created at 100%, and that version's message must be the commit. Pull
 requests never deploy and the Worker has no preview URLs.

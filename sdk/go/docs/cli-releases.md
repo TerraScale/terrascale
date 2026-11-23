@@ -42,8 +42,8 @@ The original `0.0.2`–`0.0.10` CLI downloads retain the `history/ts-go/v0.0.X` 
 
 ## Release
 
-Every green main commit whose `sdk/go/**`, `scripts/sdk/**` or
-`.github/workflows/sdk-release.yml` (outside `AGENTS.md` and `CLAUDE.md`) differs from
+Every green main commit whose `sdk/go/**`, `.github/scripts/sdk-release.py` or
+`.github/workflows/sdk-release.yml` (outside `AGENTS.md`) differs from
 the newest `sdk/go/v0.0.X` tag releases the CLI automatically; there is no manual tag
 step and no deploy switch. The path is:
 
@@ -58,7 +58,7 @@ step and no deploy switch. The path is:
    the `go-due` check against the tags as they are when it starts, and ends green without
    building or tagging when it no longer holds: a release that ran while it waited
    already shipped these inputs or a newer commit. Then it runs
-   `python3 scripts/sdk/build-release.py go`: the release gates, all six GoReleaser
+   `python3 .github/scripts/sdk-release.py go`: the release gates, all six GoReleaser
    targets (version = highest existing `sdk/go/v0.0.X` tag + 1) and
    `python3 scripts/check-release.py`. It creates the `sdk/go/v0.0.X` tag on that exact
    commit unless the newest tag is no longer its ancestor.

@@ -23,7 +23,7 @@ jobs:
         with:
           global-json-file: global.json
       - name: Restore the dashboard
-        run: dotnet restore scripts/dashboard/TerraScale.Dashboard.slnx --locked-mode
+        run: make dashboard-restore
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24.21.0'
@@ -33,11 +33,11 @@ jobs:
         run: npm ci --prefix src/TerraScale.Dashboard/web
       - name: Checked build
         run: |
-          dotnet build scripts/dashboard/TerraScale.Dashboard.slnx --configuration Release --no-restore
-          scripts/ci/release-only.sh
+          make -o dashboard-restore dashboard-build CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
       - name: Dashboard lint
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
-          make dashboard-lint
+          make dashboard-lint CONFIGURATION=Release

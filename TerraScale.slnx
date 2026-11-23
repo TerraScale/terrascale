@@ -37,4 +37,7 @@
     <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <Project Path="src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj" />
   </Folder>
+  <Folder Name="/aspire/">
+    <Project Path="src/TerraScale.Aspire/TerraScale.Aspire.csproj" />
+  </Folder>
 </Solution>

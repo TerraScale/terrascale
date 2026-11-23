@@ -1,0 +1,4 @@
+[
+  {"path": "^\\.github/scripts/auth/check\\-nuget\\-vulnerabilities\\.lib\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass AuditReportException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
+  {"path": "^\\.github/scripts/legacy-scan/", "repo": "terrascale", "reason": "Scanner policy and process fixtures necessarily name forbidden terms."}
+]

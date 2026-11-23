@@ -45,8 +45,7 @@ dotnet_separate_import_directive_groups = false
 csharp_using_directive_placement = outside_namespace:suggestion
 csharp_style_namespace_declarations = file_scoped:suggestion
 
-# ts-auth (and its scripts): SDK 11 turns these on by default. ts-auth built on SDK 10, where they were not enforced; they stay off here.
-[{src/TerraScale.Authentication*,scripts/auth}/**.cs]
+[{src/TerraScale.Authentication*,.github/scripts/auth}/**.cs]
 dotnet_diagnostic.CA2026.severity = silent
 dotnet_diagnostic.CA2027.severity = silent
 dotnet_diagnostic.IDE0005.severity = silent
