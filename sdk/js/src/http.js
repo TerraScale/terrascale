@@ -157,8 +157,6 @@ export class TsAuthHttp {
             ...(body === undefined ? {} : { body }),
           };
           if (options.method !== "GET" && typeof process !== "undefined" && process.release?.name === "node") {
-            // Native Node fetch replays buffered mutations on 421, even with SDK retries disabled.
-            // Empty DELETEs also need a one-shot body. Keep JSON/form bytes and media types unchanged.
             const bytes = body === undefined ? undefined : new TextEncoder().encode(body);
             init.body = new ReadableStream({ start(controller) {
               if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes);
@@ -389,8 +387,6 @@ async function readResponseBody(response, request, signal) {
     offset += chunk.byteLength;
   }
   const raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  // Published closure/status operations return empty 202 while still pending.
-  // Keep exceptions bound to exact named paths, methods and status.
   const closure = /^\/?v1\/terrascale\/organizations\/([^/]+)\/projects\/([^/]+)$/u.exec(request.path);
   const pendingClosure = request.method === "DELETE" && (
     routeName === "tsauth.platform.delete_project" && isValidId(closure?.[1]) && isValidId(closure?.[2]) ||
@@ -420,7 +416,6 @@ async function readResponseBody(response, request, signal) {
   try {
     const strictOauth = strictOauthRoute(routeName);
     if (strictOauth) {
-      // Bound syntax depth and reject duplicate members before OAuth decoding.
       parseStrictJson(bytes);
     }
     /** @type {unknown} */
@@ -451,8 +446,6 @@ async function readResponseBody(response, request, signal) {
       : JSON.parse(raw);
     return { ok: true, value };
   } catch {
-    // JSON parser messages may quote secret-bearing response bytes. Only
-    // decoded JSON can enter diagnostics, where sensitive fields are redacted.
     return {
       ok: false,
       errorMessage: "ts-auth returned an invalid JSON response body.",
@@ -491,9 +484,6 @@ function retryDelay(response, baseDelayMs, attempt) {
     return retryAfter;
   }
 
-  // Computed backoff carries jitter (ADR 0050 §5.9) so concurrent clients
-  // that fail together do not retry in lockstep; server-provided
-  // Retry-After timing is honoured exactly and never jittered.
   const exponential = Math.min(baseDelayMs * 2 ** attempt, 30_000);
   const jitterRatio = 0.8 + Math.random() * 0.4;
   return Math.round(Math.min(exponential * jitterRatio, 30_000));
@@ -523,7 +513,6 @@ function withCancellation(operation, signal, disposeLateValue) {
           try {
             disposeLateValue?.(value);
           } catch {
-            // Cleanup failure cannot change a terminal cancellation.
           }
           onAbort();
         } else resolve(value);
@@ -572,18 +561,10 @@ function delayForRetry(delayMs, signal) {
  * @returns {TerraScaleError}
  */
 function errorFromResponse(response, body, routeName) {
-  // Error responses are producer-controlled. Sanitize before extracting any
-  // published fields so hostile values cannot enter `message`, `fix`, or
-  // validation metadata and rely on a later result-level pass to clean them.
   const safeBody = sanitizeHttpDiagnostic(body);
   const source = unwrapErrorBody(safeBody);
   const category = errorCategory(source);
   const traceId = stringProperty(source, "traceId");
-  // RFC 6749 flat OAuth failures carry the code in `error` and the message in
-  // `error_description`. On ts-auth routes a bare `error` is already the
-  // published OAuth code (RFC 6749 allows omitting the description); on every
-  // other surface the pair only maps when both are present, so the legacy
-  // flat shape (a bare human message in `error`) keeps its meaning.
   const flatError = stringProperty(source, "error");
   const flatOAuthPair =
     flatError !== undefined && typeof source.error_description === "string";

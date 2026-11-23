@@ -32,6 +32,7 @@ pub struct ProjectRestrictions {
 pub struct ProjectInvitation {
     pub id: String,
     pub email: String,
+    #[serde(default)]
     pub redirect_url: Option<String>,
     pub created_at: String,
     pub expires_at: String,
@@ -41,6 +42,7 @@ pub struct ProjectInvitation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectInvitationPage {
     pub items: Vec<ProjectInvitation>,
+    #[serde(default)]
     pub next: Option<String>,
 }
 
@@ -56,6 +58,7 @@ pub struct ProjectWaitlistEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectWaitlistPage {
     pub items: Vec<ProjectWaitlistEntry>,
+    #[serde(default)]
     pub next: Option<String>,
 }
 
@@ -131,6 +134,7 @@ pub struct ProjectConfiguration {
     pub require_mfa: bool,
     pub allow_totp: bool,
     pub allow_passkey: bool,
+    #[serde(default)]
     pub inactivity_timeout_minutes: Option<u32>,
     #[serde(default)]
     pub single_session: bool,
@@ -171,8 +175,10 @@ pub struct ProjectProvider {
     /// The callback URL to register at the provider.
     pub callback_url: String,
     /// Microsoft account audience.
+    #[serde(default)]
     pub tenant: Option<String>,
     /// Custom OAuth2 endpoints and claims.
+    #[serde(default)]
     pub oauth2: Option<ProjectOAuth2>,
 }
 
@@ -225,9 +231,13 @@ pub struct ProjectSettingsUpdate {
 /// A project end user.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectUser {
+    #[serde(default)]
     pub first_name: Option<String>,
+    #[serde(default)]
     pub last_name: Option<String>,
+    #[serde(default)]
     pub image_url: Option<String>,
+    #[serde(default)]
     pub external_id: Option<String>,
     pub email_verified: bool,
     pub public_metadata: serde_json::Map<String, Value>,
@@ -245,26 +255,26 @@ pub struct ProjectUser {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserProfile {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_metadata: Option<serde_json::Map<String, Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_metadata: Option<serde_json::Map<String, Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unsafe_metadata: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CreateProjectUser {
     pub email: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
     #[serde(flatten)]
     pub profile: UserProfile,
@@ -274,7 +284,7 @@ pub struct CreateProjectUser {
 pub struct ImportProjectUser {
     pub email: String,
     pub email_verified: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_hash: Option<String>,
     #[serde(flatten)]
     pub profile: UserProfile,
@@ -282,19 +292,19 @@ pub struct ImportProjectUser {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UpdateProjectUser {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_name: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_name: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_url: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_id: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_metadata: Option<serde_json::Map<String, Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_metadata: Option<serde_json::Map<String, Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unsafe_metadata: Option<serde_json::Map<String, Value>>,
 }
 
@@ -1279,7 +1289,9 @@ pub struct UserApiKey {
     pub prefix: String,
     pub scopes: Vec<String>,
     pub created_at: String,
+    #[serde(default)]
     pub expires_at: Option<String>,
+    #[serde(default)]
     pub key: Option<String>,
 }
 
@@ -1309,9 +1321,13 @@ pub struct UserApiKeyPolicy {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UserApiKeyVerification {
     pub valid: bool,
+    #[serde(default)]
     pub user_id: Option<String>,
+    #[serde(default)]
     pub scopes: Option<Vec<String>>,
+    #[serde(default)]
     pub key_id: Option<String>,
+    #[serde(default)]
     pub expires_at: Option<String>,
 }
 

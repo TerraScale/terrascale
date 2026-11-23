@@ -1,6 +1,5 @@
 //! Best-effort tenant-scoped recent request observations.
 use super::{Database, Error, Number, Result};
-use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -26,21 +25,11 @@ pub struct DatabaseRequestLog {
     #[serde(deserialize_with = "nonnegative_int64")]
     pub operations: u64,
     pub is_query: bool,
+    #[serde(default)]
     pub request_id: Option<String>,
 }
 fn nonnegative_int64<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Integer(u64),
-        Decimal(String),
-    }
-    let n = match Wire::deserialize(d)? {
-        Wire::Integer(n) => Some(n),
-        Wire::Decimal(s) => super::types::u64_string::parse_canonical_u64(&s),
-    };
-    n.filter(|n| *n <= i64::MAX as u64)
-        .ok_or_else(|| serde::de::Error::custom("expected a nonnegative int64"))
+    super::types::decimal_u64(d, i64::MAX as u64, "expected a nonnegative int64")
 }
 fn status_code<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u16, D::Error> {
     let n = nonnegative_int64(d)?;
@@ -71,7 +60,6 @@ impl Database {
             .map(|s| ("status", s.to_owned()))
             .into_iter()
             .collect();
-        self.management(Method::GET, &["logs"], &query, None::<&()>, StatusCode::OK)
-            .await
+        self.get_json(&["logs"], &query).await
     }
 }

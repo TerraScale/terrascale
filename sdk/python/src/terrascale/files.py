@@ -84,7 +84,7 @@ class FileObjectPage:
     def from_json(cls, b: dict[str, Any]) -> FileObjectPage:
         if not isinstance(b["items"], list):
             raise ValueError("file items must be an array")
-        cursor = b["next"]
+        cursor = b.get("next")
         return cls([FileObject.from_json(x) for x in b["items"]],
                    validate_id(cursor, "file cursor") if cursor is not None else None)
 

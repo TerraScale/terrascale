@@ -13,7 +13,10 @@ import (
 	"math"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
+
+	"terrascale.tech/sdk/internal/httpx"
 )
 
 const (
@@ -218,7 +221,7 @@ func (d *Database) Batch(ctx context.Context, statements []Statement) ([]Result,
 		out, err := d.batchOnce(ctx, p, body, header, len(statements))
 		var sqlErr *SQLError
 		if errors.As(err, &sqlErr) && (sqlErr.IsSerializationConflict() || sqlErr.IsSchemaMismatch()) && attempt < maxSQLResends {
-			if err := sleep(ctx, backoff(attempt)); err != nil {
+			if err := httpx.Wait(ctx, backoff(attempt)); err != nil {
 				return nil, err
 			}
 			continue
@@ -330,14 +333,14 @@ func (b blob) MarshalJSON() ([]byte, error) {
 
 func (r *Result) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Columns           []wireColumn        `json:"columns"`
-		Rows              [][]json.RawMessage `json:"rows"`
-		RowsAffected      *int64              `json:"rows_affected"`
-		LastInsertRowID   *int64              `json:"last_insert_rowid"`
-		RowsAffectedV2    *int64              `json:"rowsAffected"`
-		LastInsertRowIDV2 *int64              `json:"lastInsertRowId"`
+		Columns           []wireColumn `json:"columns"`
+		Rows              [][]any      `json:"rows"`
+		RowsAffected      *int64       `json:"rows_affected"`
+		LastInsertRowID   *int64       `json:"last_insert_rowid"`
+		RowsAffectedV2    *int64       `json:"rowsAffected"`
+		LastInsertRowIDV2 *int64       `json:"lastInsertRowId"`
 	}
-	if err := json.Unmarshal(data, &wire); err != nil || wire.Columns == nil || wire.Rows == nil {
+	if decodeExact(data, &wire) != nil || wire.Columns == nil || wire.Rows == nil {
 		return &SQLProtocolError{}
 	}
 	rowsAffected, lastInsertRowID := wire.RowsAffected, wire.LastInsertRowID
@@ -352,29 +355,24 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 		columns[i] = Column{Name: column.Name, DeclType: cmp.Or(column.DeclType, column.Type)}
 	}
 	rows := make([]Row, len(wire.Rows))
-	for i, raw := range wire.Rows {
-		if len(raw) != len(wire.Columns) {
+	for i, cells := range wire.Rows {
+		if len(cells) != len(columns) {
 			return &SQLProtocolError{}
 		}
-		values := make([]any, len(raw))
-		for j, cell := range raw {
+		for j, cell := range cells {
 			v, err := sqlCell(cell)
 			if err != nil {
 				return err
 			}
-			values[j] = v
+			cells[j] = v
 		}
-		rows[i] = Row{columns: columns, values: values}
+		rows[i] = Row{columns: columns, values: cells}
 	}
 	*r = Result{Columns: columns, Rows: rows, RowsAffected: *rowsAffected, LastInsertRowID: lastInsertRowID}
 	return nil
 }
 
-func sqlCell(cell json.RawMessage) (any, error) {
-	var v any
-	if decodeExact(cell, &v) != nil {
-		return nil, &SQLProtocolError{}
-	}
+func sqlCell(v any) (any, error) {
 	switch v := v.(type) {
 	case nil, string:
 		return v, nil
@@ -422,10 +420,8 @@ func (r Row) Map() map[string]any {
 }
 
 func (r Row) Value(column string) (any, error) {
-	for i, c := range r.columns {
-		if c.Name == column {
-			return r.values[i], nil
-		}
+	if i := slices.IndexFunc(r.columns, func(c Column) bool { return c.Name == column }); i >= 0 {
+		return r.values[i], nil
 	}
 	return nil, fmt.Errorf("terrabase: no column %q", column)
 }
@@ -525,7 +521,7 @@ func sqlErrorFrom(apiErr *APIError) error {
 	var env struct {
 		Error struct {
 			Statement *int   `json:"statement"`
-			SQLState  string `json:"sqlstate"`
+			SQLState  string `json:"sqlState"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(apiErr.Body, &env) != nil || env.Error.Statement == nil {

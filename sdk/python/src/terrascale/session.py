@@ -184,9 +184,8 @@ class _State:
                 raise ValueError("unknown SQL frame")
             if type(body.get("transaction")) is not bool:
                 raise ValueError("missing transaction flag")
-            if body["type"] == "error" and (
-                not isinstance(body.get("error"), dict) or not isinstance(body["error"].get("code"), str)
-            ):
+            error = body.get("error")
+            if body["type"] == "error" and (not isinstance(error, dict) or not isinstance(error.get("code"), str)):
                 raise ValueError("invalid SQL error")
             bookmark = body.get("bookmark")
             if bookmark is not None and not isinstance(bookmark, str):
@@ -201,7 +200,6 @@ class _State:
             self.pending.pop(frame_id, None)
             self.controls.discard(frame_id)
         self.transaction = body["transaction"]
-        error = body.get("error")
         if isinstance(error, dict) and error.get("code") in {"commit_uncertain", "write_outcome_unknown"}:
             self.failure = CommitUncertainError(0, str(error["code"]), "the server reported an uncertain write outcome")
         return frame_id, body
@@ -223,7 +221,7 @@ def _raise_error(body: dict[str, Any]) -> None:
 
 def _results(body: dict[str, Any], expected: int, uncertain: bool) -> list[StatementResult]:
     try:
-        return _sql.results(body, expected, frame=True)
+        return _sql.results(body, expected)
     except (ValueError, KeyError, TypeError, AttributeError):
         cls = CommitUncertainError if uncertain else InvalidResponseError
         raise cls(0, "invalid_response", "invalid SQL answer; reconcile writes before retrying") from None

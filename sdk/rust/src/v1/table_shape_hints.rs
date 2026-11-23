@@ -38,6 +38,7 @@ enum Frame {
     },
     Error {
         code: String,
+        #[serde(default)]
         retry_after: Option<f64>,
     },
 }
@@ -51,9 +52,10 @@ impl Hints {
     ) -> Result<Self> {
         tokio::time::timeout(Duration::from_secs(10), async {
             let socket = client
-                .open_socket_query(
+                .open_socket(
                     vec!["v1", "databases", database, "tables", table, "shape", "ws"],
                     query,
+                    &[],
                     PROTOCOL,
                     64 * 1024,
                 )

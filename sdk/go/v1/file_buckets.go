@@ -36,18 +36,14 @@ type createFileBucketRequest struct {
 
 // ListBuckets lists a project's file buckets with sql:read, one bounded page in ID order.
 func (c *Client) ListBuckets(ctx context.Context, project string, opts PageOptions) (*Page[FileBucket], error) {
-	req, err := projectRequest(http.MethodGet, project, bucketAfterQuery(opts.After), "buckets")
+	out, err := projectCall[Page[FileBucket]](ctx, c, http.MethodGet, project, bucketAfterQuery(opts.After), nil, "buckets")
 	if err != nil {
-		return nil, err
-	}
-	var out Page[FileBucket]
-	if _, err := c.call(ctx, req, nil, &out); err != nil {
 		return nil, err
 	}
 	if out.Items == nil {
 		return nil, errors.New("terrabase: buckets response requires items array")
 	}
-	return &out, nil
+	return out, nil
 }
 
 // CreateBucket creates a project file bucket with sql:write; rules deny end users unless granted.

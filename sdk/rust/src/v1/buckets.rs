@@ -11,7 +11,7 @@ pub struct ReadWriteGrants {
     pub owner: bool,
     pub public: bool,
     /// Trusted, case-sensitive roles; an empty array grants no role access.
-    #[serde(deserialize_with = "null_deny")]
+    #[serde(default, deserialize_with = "null_deny")]
     pub roles: Vec<String>,
 }
 
@@ -20,15 +20,16 @@ pub struct ReadWriteGrants {
 pub struct BucketRules {
     /// JSON Pointer to the immutable owner subject, or no ownership grant.
     /// Serialized explicitly as null when absent.
+    #[serde(default)]
     pub owner: Option<String>,
-    #[serde(deserialize_with = "null_deny")]
+    #[serde(default, deserialize_with = "null_deny")]
     pub read: ReadWriteGrants,
-    #[serde(deserialize_with = "null_deny")]
+    #[serde(default, deserialize_with = "null_deny")]
     pub write: ReadWriteGrants,
 }
 
-// Null responses carry no grants. Missing fields remain malformed, while
-// serialization always emits complete operation objects and role arrays.
+// Absent and null values carry no grants. Serialization emits complete
+// operation objects and role arrays.
 fn null_deny<'de, D, T>(d: D) -> std::result::Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -51,7 +52,7 @@ pub struct FileBucket {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FileBucketPage {
     pub items: Vec<FileBucket>,
-    #[serde(deserialize_with = "bucket_cursor")]
+    #[serde(default, deserialize_with = "bucket_cursor")]
     pub next: Option<String>,
 }
 
@@ -84,14 +85,7 @@ impl Client {
             check_id(after)?;
             query.push(("after", after.to_owned()));
         }
-        self.management(
-            Method::GET,
-            vec!["v1", "buckets"],
-            &query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(vec!["v1", "buckets"], &query).await
     }
 
     /// Creates a bucket. Null rules deny end users; grants use immutable file metadata.

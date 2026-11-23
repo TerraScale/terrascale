@@ -121,7 +121,7 @@ its connection.
 
 ### Sessions
 
-`db.connect()` opens a SQL WebSocket session (`terrascale.sql.v1`) for
+`db.connect()` opens a SQL WebSocket session (`terrascale.sql.v2`) for
 interactive transactions of at most 5 seconds:
 
 ```python
@@ -230,9 +230,9 @@ db = ts.create_database("orders", regions=["gru", "sjc"])
 ts.set_database_placement(db.id, regions=["fra", "gru", "sjc"])
 ```
 
-Every region that holds a database is equal. `Database` carries `regions` (every region that holds it, sorted by
-region id; the order has no meaning) and `all_regions`. `db.regions()` reads each region's pull progress; an entry's
-`role` is `writer` for the region that commits writes. `create_database` and `set_database_placement` take `regions`
+Every region that holds a database is equal and accepts writes. `Database` carries `regions` (every region that holds it, sorted by
+region id; the order has no meaning) and `all_regions`. `db.regions()` reads each region's applied bookmark, health and lag.
+`create_database` and `set_database_placement` take `regions`
 (at least one, no duplicates) or `all_regions`, and not both. TerraBase picks which region writes and moves that on
 its own when the set changes. Tests cover the recorded fixtures in
 `sdk/dotnet/contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
@@ -253,11 +253,7 @@ its own when the set changes. Tests cover the recorded fixtures in
 **Regions**: `create_database("eu", regions=["fra"])` selects the regions that hold the database;
 without `regions` the called region holds it.
 
-Every region that holds a database is equal.
-A region can accept a local SQL REST write; TerraBase applies it once. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
-consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
-preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+Every region that holds a database accepts writes. REST, the SQL WebSocket and Postgres preserve read-your-writes when the client sends the newest `TerraScale-Bookmark`. `TerraScale-Consistency` is `fast` (the default) or `strong`. All-regions
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
 
@@ -299,7 +295,6 @@ not sent.
 A failed write is uncertain if no response arrives after sending, if a 5xx response has no server error code, or if the server code is `commit_uncertain`, `write_outcome_unknown` or `internal_error`. Other coded 5xx responses and SQL errors (the request rolled back) are definite refusals. Reads are never uncertain. Reconcile state before repeating an uncertain write; a malformed success acknowledgement is also uncertain.
 
 Malformed read responses raise `InvalidResponseError`.
-The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the writer applies that write once. A push stream that returns NATS error 10074 is not retried, because it requests more regional copies than the cluster provides.
 
 ## Development
 
@@ -328,18 +323,9 @@ using a valid token; only missing, actually expired, or refused tokens require a
 
 Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
 and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
-with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
-Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
-`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-An SDK needs no knowledge of a database's region: it can connect to any region. A region that does not hold the
-database authenticates the client and proxies to a region that holds it, which authenticates again. This adds one
-inter-region round trip (about 170 ms between the current regions) and passes two request admissions, one in each
-region. Completed requests and bytes are attributed to the final destination. A terminal forwarding failure is counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
-
-A writer move closes pinned WebSocket sessions with 1012 and PostgreSQL sessions with 57P01; an open transaction is
-rolled back. Reconnect for later requests. If the proxy leg drops while a statement or commit is in flight, its
-outcome is unknown (`write_outcome_unknown` for REST/WebSocket, SQLSTATE 08007 for PostgreSQL). The proxy never
-replays that request. Check the committed state before deciding whether to send a new write.
+with membership and stays unchanged for an identical set. Unknown response fields are ignored.
+`db.regions()` returns each selected region's applied bookmark, health and nullable lag.
+A client can call any region that holds the database. Later requests send the newest `TerraScale-Bookmark` so that region applies those writes before it runs. If a commit's answer is lost, the outcome is `write_outcome_unknown` (SQLSTATE 08007 on PostgreSQL). Check the committed state before sending the write again.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).

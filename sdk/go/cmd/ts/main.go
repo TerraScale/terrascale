@@ -723,7 +723,7 @@ func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyR
 		return req, fmt.Errorf("-expires must be 30d, 90d, 365d or never: %w", errUsage)
 	}
 	if allowCIDR != "" {
-		for _, c := range strings.Split(allowCIDR, ",") {
+		for c := range strings.SplitSeq(allowCIDR, ",") {
 			if c = strings.TrimSpace(c); c != "" {
 				req.AllowedCIDRs = append(req.AllowedCIDRs, c)
 			}

@@ -7,23 +7,6 @@ import { stringifyExactJson } from "./json.js";
 /** @typedef {"getRow" | "createRow" | "updateRow" | "deleteRow" | "batchRows"} RowOperation */
 /** @typedef {{ key: string; row: import("./json.js").JsonObject | null }} RowAnswer */
 /** @typedef {{ op: "create"; table: string; row: import("./json.js").JsonInputObject } | { op: "update"; table: string; key: string; row: import("./json.js").JsonInputObject } | { op: "delete"; table: string; key: string }} RowMutation */
-const database = "/v1/projects/{project}/databases/{database}";
-/** @type {readonly (Omit<import("./routes.js").V1Route, "operation" | "method"> & { operation: RowOperation; method: "GET" | "POST" | "PATCH" | "DELETE" })[]} */
-export const rowRoutes = [
-  ["getRow", "GET", database + "/tables/{table}/rows/{key}", 200],
-  ["createRow", "POST", database + "/tables/{table}/rows", 201],
-  ["updateRow", "PATCH", database + "/tables/{table}/rows/{key}", 200],
-  ["deleteRow", "DELETE", database + "/tables/{table}/rows/{key}", 204],
-  ["batchRows", "POST", database + "/rows:batch", 200],
-].map(([operation, method, pathTemplate, status]) => ({
-  operation: /** @type {RowOperation} */ (operation),
-  method: /** @type {"GET" | "POST" | "PATCH" | "DELETE"} */ (method),
-  pathTemplate: String(pathTemplate), permission: method === "GET" ? "sql:read" : "sql:write",
-  requestMediaTypes: method === "POST" || method === "PATCH" ? ["application/json"] : [],
-  responseMediaType: status === 204 ? "" : "application/json", successStatuses: [Number(status)],
-  idempotencyKey: "none", replaySafe: method === "GET", contract: "docs/terrabase/rules.md", contractText: [],
-}));
-
 /** Row operations return typed results; every peer region accepts them. */
 export class V1Rows {
   #transport;
@@ -84,7 +67,7 @@ export function batchRows(transport, database, operations, options = {}) {
 /** @param {import("./json.js").JsonValue | undefined} value @returns {RowAnswer} */
 function answer(value) {
   const raw = object(value, "row answer");
-  return { key: rowKey(string(raw.key, "row key")), row: raw.row === null ? null : object(raw.row, "row") };
+  return { key: rowKey(string(raw.key, "row key")), row: raw.row == null ? null : object(raw.row, "row") };
 }
 
 /** @param {string} key */

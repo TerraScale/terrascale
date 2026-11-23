@@ -3,6 +3,8 @@ package v1
 import (
 	"context"
 	"time"
+
+	"terrascale.tech/sdk/internal/httpx"
 )
 
 // RetryBudgetError refuses a retry whose server cooldown exceeds the remaining
@@ -29,5 +31,5 @@ func waitRetry(ctx context.Context, delay time.Duration, api *APIError) error {
 	if deadline, ok := ctx.Deadline(); ok && delay >= time.Until(deadline) {
 		return &RetryBudgetError{RetryAfter: delay, API: api}
 	}
-	return sleep(ctx, delay)
+	return httpx.Wait(ctx, delay)
 }

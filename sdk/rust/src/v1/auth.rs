@@ -8,12 +8,11 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use futures_util::StreamExt;
 use reqwest::header::{HeaderValue, AUTHORIZATION, RETRY_AFTER};
 use serde::Deserialize;
 use tokio::{sync::Mutex, time::Instant};
 
-use super::client::{backoff, RetryPolicy};
+use super::client::{read_body, retry_delay, RetryPolicy};
 use super::errors::{Error, Result};
 
 pub(super) enum Credential {
@@ -251,11 +250,7 @@ impl KeyAuth {
             if !transient || attempt >= retry.max_retries {
                 return Err(error);
             }
-            let delay = match retry_after {
-                Some(delay) => delay.min(retry.max_retry_after),
-                None => backoff(retry, attempt),
-            };
-            tokio::time::sleep(delay).await;
+            tokio::time::sleep(retry_delay(retry, retry_after, attempt)).await;
             attempt += 1;
         }
     }
@@ -295,27 +290,21 @@ impl KeyAuth {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok())
             .map(Duration::from_secs);
-        let mut body = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let Ok(chunk) = chunk else {
-                let mut error = transport_error_with(Some(status), "response body interrupted");
-                set_request_id(&mut error, request_id);
-                return Err((error, None));
+        let (body, failed) = read_body(response, 64 << 10, false).await;
+        if let Some(failed) = failed {
+            let (mut error, retry_after) = if matches!(failed, Error::Transport(_)) {
+                let error = transport_error_with(Some(status), "response body interrupted");
+                (error, None)
+            } else {
+                let code = if status == 200 {
+                    "invalid_token_response"
+                } else {
+                    "token_exchange_refused"
+                };
+                (exchange_error(Some(status), code), retry_after)
             };
-            if body.len() + chunk.len() > 64 << 10 {
-                let mut error = exchange_error(
-                    Some(status),
-                    if status == 200 {
-                        "invalid_token_response"
-                    } else {
-                        "token_exchange_refused"
-                    },
-                );
-                set_request_id(&mut error, request_id);
-                return Err((error, retry_after));
-            }
-            body.extend_from_slice(&chunk);
+            set_request_id(&mut error, request_id);
+            return Err((error, retry_after));
         }
         if status != 200 {
             if status == 401 {

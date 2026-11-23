@@ -279,11 +279,11 @@ export class V1SqlSocket {
     }
     try {
       this.#transaction = boolean(frame.transaction, "SQL transaction flag");
-      if (frame.bookmark !== undefined && frame.bookmark !== null) this.#session.bookmarks.observe(string(frame.bookmark, "SQL bookmark"));
+      if (frame.bookmark != null) this.#session.bookmarks.observe(string(frame.bookmark, "SQL bookmark"));
       if (frame.type === "result") waiter.resolve(frame);
       else if (frame.type === "error") {
         const error = socketError(object(frame.error, "SQL error"));
-        if (["write_outcome_unknown", "commit_uncertain"].includes(error.code)) {
+        if (error.code === "write_outcome_unknown") {
           this.#closed = error;
           this.#fail(error);
           this.#socket.close();

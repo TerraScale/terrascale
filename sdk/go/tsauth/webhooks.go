@@ -71,7 +71,7 @@ func VerifyWebhook(secret string, headers http.Header, rawBody []byte, now ...fu
 	mac.Write([]byte("."))
 	mac.Write(rawBody)
 	digest := mac.Sum(nil)
-	for _, entry := range strings.Split(signature, " ") {
+	for entry := range strings.SplitSeq(signature, " ") {
 		value, ok := strings.CutPrefix(entry, "v1,")
 		if !ok {
 			continue

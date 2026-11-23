@@ -1,11 +1,15 @@
 package v1
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
+
+	"terrascale.tech/sdk/internal/httpx"
 )
 
 // DatabaseBackup is a completed manual or scheduled snapshot.
@@ -38,6 +42,23 @@ type RestoreWindow struct {
 	Latest   time.Time `json:"latest"`
 }
 
+func (r *RestoreWindow) UnmarshalJSON(data []byte) error {
+	type window RestoreWindow
+	var wire struct {
+		window
+		EarliestRestorePointUTC time.Time `json:"earliestRestorePointUtc"`
+		LatestRestorePointUTC   time.Time `json:"latestRestorePointUtc"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*r = RestoreWindow{
+		Earliest: cmp.Or(wire.EarliestRestorePointUTC, wire.Earliest),
+		Latest:   cmp.Or(wire.LatestRestorePointUTC, wire.Latest),
+	}
+	return nil
+}
+
 // PointInTimePlan previews backup metadata; it does not prove object integrity.
 type PointInTimePlan struct {
 	Window          RestoreWindow `json:"window"`
@@ -54,6 +75,17 @@ type PointInTimeRequest struct {
 	PointInTime time.Time `json:"pointInTime"`
 	Destination string    `json:"destination,omitempty"`
 	Name        string    `json:"name,omitempty"`
+}
+
+type restoreTarget struct {
+	PointInTime time.Time `json:"pointInTime"`
+}
+
+type restoreRequest struct {
+	Name        string        `json:"name,omitempty"`
+	Target      restoreTarget `json:"target"`
+	TTLSeconds  *int64        `json:"ttlSeconds,omitempty"`
+	Destination string        `json:"destination,omitempty"`
 }
 
 // CreateBackup creates a consistent snapshot.
@@ -79,15 +111,45 @@ type RestoreOperation struct {
 	FinishedAt   *time.Time `json:"finishedAt"`
 }
 
+func (o *RestoreOperation) UnmarshalJSON(data []byte) error {
+	type operation RestoreOperation
+	var wire struct {
+		operation
+		State            string     `json:"state"`
+		TargetDatabaseID string     `json:"targetDatabaseId"`
+		StartedAtUTC     time.Time  `json:"startedAtUtc"`
+		UpdatedAtUTC     *time.Time `json:"updatedAtUtc"`
+		FailureMessage   *string    `json:"failureMessage"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	switch wire.State {
+	case "":
+	case "pending", "running", "succeeded", "failed":
+		wire.ID = wire.OperationID
+		wire.Database = wire.TargetDatabaseID
+		wire.CreatedAt = wire.StartedAtUTC
+		wire.ErrorMessage = wire.FailureMessage
+		wire.Status = wire.State
+		if wire.State == "succeeded" {
+			wire.Status = "completed"
+		}
+		if wire.Status == "completed" || wire.Status == "failed" {
+			wire.FinishedAt = wire.UpdatedAtUTC
+		}
+		if err := checkID(wire.Database); err != nil {
+			return fmt.Errorf("terrabase: restore target: %w", err)
+		}
+	default:
+		return fmt.Errorf("terrabase: invalid restore operation state %q", wire.State)
+	}
+	*o = RestoreOperation(wire.operation)
+	return nil
+}
+
 const restorePollInterval = 250 * time.Millisecond
 const restoreDeadline = 10 * time.Minute
-
-func restoreFailure(code, message string) *APIError {
-	if code == "" {
-		code = "restore_failed"
-	}
-	return &APIError{Status: http.StatusOK, Code: ErrorCode(code), Message: message}
-}
 
 // GetRestoreOperation reads one background restore operation of this database.
 func (d *Database) GetRestoreOperation(ctx context.Context, operationID string) (*RestoreOperation, error) {
@@ -102,16 +164,12 @@ func (d *Database) GetRestoreOperation(ctx context.Context, operationID string) 
 func (d *Database) awaitRestore(ctx context.Context, operation *RestoreOperation) (*ManagedDatabase, error) {
 	deadline := time.Now().Add(restoreDeadline)
 	var err error
-	for operation.Status == "running" {
+	for operation.Status == "pending" || operation.Status == "running" {
 		if !time.Now().Before(deadline) {
-			return nil, restoreFailure("restore_timeout", "the restore operation did not finish within ten minutes")
+			return nil, &APIError{Status: http.StatusOK, Code: "restore_timeout", Message: "the restore operation did not finish within ten minutes"}
 		}
-		timer := time.NewTimer(restorePollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
+		if err := httpx.Wait(ctx, restorePollInterval); err != nil {
+			return nil, err
 		}
 		operation, err = d.GetRestoreOperation(ctx, operation.ID)
 		if err != nil {
@@ -119,14 +177,14 @@ func (d *Database) awaitRestore(ctx context.Context, operation *RestoreOperation
 		}
 	}
 	if operation.Status != "completed" {
-		code, message := "", "the restore operation failed"
+		code, message := "restore_failed", "the restore operation failed"
 		if operation.ErrorCode != nil {
-			code = *operation.ErrorCode
+			code = cmp.Or(*operation.ErrorCode, code)
 		}
 		if operation.ErrorMessage != nil {
 			message = *operation.ErrorMessage
 		}
-		return nil, restoreFailure(code, message)
+		return nil, &APIError{Status: http.StatusOK, Code: ErrorCode(code), Message: message}
 	}
 	return d.c.Database(d.project, operation.Database).Info(ctx)
 }
@@ -142,9 +200,13 @@ func (d *Database) RestoreBackup(ctx context.Context, id, name string) (*Managed
 			return nil, err
 		}
 	}
-	operation, err := databaseCall[RestoreOperation](ctx, d, http.MethodPost, nil, struct {
+	return d.startRestore(ctx, struct {
 		Name string `json:"name,omitempty"`
 	}{name}, "backups", id, "restore")
+}
+
+func (d *Database) startRestore(ctx context.Context, body any, path ...string) (*ManagedDatabase, error) {
+	operation, err := databaseCall[RestoreOperation](ctx, d, http.MethodPost, nil, body, path...)
 	if err != nil {
 		return nil, err
 	}
@@ -187,19 +249,17 @@ func (d *Database) RestorePointInTime(ctx context.Context, in PointInTimeRequest
 			return nil, err
 		}
 	}
-	operation, err := databaseCall[RestoreOperation](ctx, d, http.MethodPost, nil, in, "point-in-time", "restore")
-	if err != nil {
-		return nil, err
-	}
-	return d.awaitRestore(ctx, operation)
+	return d.startRestore(ctx, restoreRequest{
+		Name: in.Name, Target: restoreTarget{PointInTime: in.PointInTime}, Destination: in.Destination,
+	}, "point-in-time", "restore")
 }
 
 // RewindPointInTime replaces the database's tables in place with their state at the selected instant.
 func (d *Database) RewindPointInTime(ctx context.Context, in PointInTimeRequest) (*ManagedDatabase, error) {
-	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, struct {
+	return d.startRestore(ctx, struct {
 		PointInTime time.Time `json:"pointInTime"`
 		Destination string    `json:"destination,omitempty"`
-	}{in.PointInTime, in.Destination}, "point-in-time", "rewind")
+	}{in.PointInTime, in.Destination}, "rewind")
 }
 
 // ProjectBackupDestination is customer bucket metadata without credentials.

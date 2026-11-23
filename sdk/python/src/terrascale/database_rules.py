@@ -26,9 +26,10 @@ class RulesTable:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> RulesTable:
+        values = body.get("set")
         return cls(body.get("read"), body.get("create"), body.get("update"), body.get("delete"),
                    body.get("columns"), body.get("writable"), body.get("validate"),
-                   RulesValues(**body["set"]) if body.get("set") is not None else None)
+                   RulesValues(**values) if values is not None else None)
 
 
 @dataclass(frozen=True)
@@ -55,11 +56,13 @@ class Rules:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Rules:
+        problems = body.get("problems")
+        warnings = body.get("warnings")
         return cls(validate_id(body["version"], "rules version"),
                    {name: RulesTable.from_json(value) for name, value in body["tables"].items()},
                    body["updatedAt"], body["updatedBy"],
-                   [RulesProblem(**p) for p in body.get("problems", [])],
-                   [RulesProblem(**p) for p in body.get("warnings", [])])
+                   [RulesProblem(**p) for p in problems] if problems is not None else [],
+                   [RulesProblem(**p) for p in warnings] if warnings is not None else [])
 
 
 @dataclass(frozen=True)
@@ -78,7 +81,7 @@ class RulesVersionPage:
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> RulesVersionPage:
         return cls([RulesVersion(validate_id(v["version"], "rules version"), v["updatedAt"],
-                                 v["updatedBy"], v["digest"]) for v in body["items"]], body["next"])
+                                 v["updatedBy"], v["digest"]) for v in body["items"]], body.get("next"))
 
 
 @dataclass(frozen=True)
@@ -118,8 +121,8 @@ class RulesTestResult:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> RulesTestResult:
-        return cls(body["allowed"], body["decidedBy"], body["clause"],
-                   [RulesTestValue(**v) for v in body["results"]], body["columns"],
+        return cls(body["allowed"], body.get("decidedBy", ""), body.get("condition", body.get("clause")),
+                   [RulesTestValue(**v) for v in body.get("results", [])], body.get("columns", []),
                    [RulesProblem(**p) for p in body["problems"]])
 
 
@@ -156,6 +159,13 @@ def rules_call(project: str, database: str, operation: str, *, rules: RulesSet |
             raise ValueError("request is required")
         path[-1] = "rules:test"
         method, body = "POST", asdict(request)
+        auth = body["auth"]
+        auth["orgId"] = auth.pop("org_id")
+        auth["orgRole"] = auth.pop("org_role")
+        auth["isAnonymous"] = auth.pop("is_anonymous")
+        draft = body.pop("rules")
+        if draft is not None:
+            body["tables"] = draft["tables"]
     return Call(method, path, lambda r: RulesVersionPage.from_json(r.json()) if operation == "versions" else (
         RulesTestResult.from_json(r.json()) if operation == "test" else Rules.from_json(r.json())),
         body=body, headers=headers, params=params, replay_safe=method == "GET")

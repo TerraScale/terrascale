@@ -153,6 +153,7 @@ pub struct ProjectDatabaseInfo {
     #[serde(deserialize_with = "super::ids::entity_id")]
     pub project_id: String,
     pub name: String,
+    #[serde(default)]
     pub branched_from: Option<String>,
     /// Contested name lost to another database during cross-region convergence.
     #[serde(default, skip_serializing_if = "Option::is_none")]

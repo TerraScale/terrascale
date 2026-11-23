@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -129,28 +130,21 @@ func runRules(ctx context.Context, db *v1.Database, command string, flags rulesF
 	deployed, err := db.DeployRules(ctx, *desired, state.Version)
 	if err != nil {
 		var api *v1.APIError
-		if errors.As(err, &api) && api.Status == 412 {
+		if !errors.As(err, &api) {
+			return err
+		}
+		if api.Status == http.StatusPreconditionFailed {
 			return rulesChanged(err)
 		}
-		if errors.As(err, &api) && errors.Is(err, v1.ErrInvalidRules) {
-			var body struct {
-				Error struct {
-					Details struct {
-						Problems []v1.RulesProblem `json:"problems"`
-					} `json:"details"`
-				} `json:"error"`
-			}
-			if decodeErr := json.Unmarshal(api.Body, &body); decodeErr != nil {
-				return errors.Join(err, decodeErr)
-			}
-			if !jsonMode(out) {
-				if printErr := printRulesProblems(out, body.Error.Details.Problems); printErr != nil {
-					return printErr
-				}
-			}
-			return &cliError{code: "invalid_rules", message: "Rules deployment failed; fix the listed problems.", status: api.Status, err: err, problems: body.Error.Details.Problems}
+		if !errors.Is(err, v1.ErrInvalidRules) {
+			return err
 		}
-		return err
+		if !jsonMode(out) {
+			if printErr := printRulesProblems(out, api.Problems); printErr != nil {
+				return printErr
+			}
+		}
+		return &cliError{code: "invalid_rules", message: "Rules deployment failed; fix the listed problems.", status: api.Status, err: err, problems: api.Problems}
 	}
 	state.Version = &deployed.Version
 	if err := saveRulesState(state); err != nil {

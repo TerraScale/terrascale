@@ -55,8 +55,9 @@ spelling.
 ## SQL
 
 Every call is one `POST /v1/projects/{project}/databases/{database}/sql/execute` request and one transaction:
-all statements commit or none do, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. The server forwards a timed-out local publish with
-`TerraBase-Publish-Id` set to the same transaction id, and the writer applies that write once.
+all statements commit or none do, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. Every answer carries a
+`TerraScale-Bookmark` that later requests from the same client send back, and `TerraScale-Consistency`
+selects `fast` or `strong` commits.
 
 | Method | Returns |
 |---|---|
@@ -80,7 +81,7 @@ error variants (401, 404, 429, 503).
 ### Sessions: interactive transactions
 
 `database.connect().await?` opens a `SqlSession` on
-`GET /v1/projects/{project}/databases/{database}/sql/ws` (subprotocol `terrascale.sql.v1`, `Authorization: Bearer`,
+`GET /v1/projects/{project}/databases/{database}/sql/ws` (subprotocol `terrascale.sql.v2`, `Authorization: Bearer`,
 the region pin when set). It has the same `execute`/`query`/`query_as`/`batch` methods as REST, plus `begin`,
 `commit`, `rollback`, `transaction(|s| async move { … })` (begin, run, commit; on error roll back if still open and
 return the error), `in_transaction()` and `close()`. Outside a transaction each call is its own transaction; a
@@ -108,14 +109,10 @@ use the same project client. Backup operations are typed: `create_backup`/`list_
 `BackupPolicyRequest`, `get_restore_window` returns `RestoreWindow`, `plan_point_in_time` returns
 `PointInTimePlan` from a `PointInTimeRequest`, and `restore_backup`/`restore_point_in_time` poll a
 `RestoreOperation` to its ten-minute deadline before returning the `RestoredDatabase`.
-`get_backup_destination`/`set_backup_destination` use `ProjectBackupDestination`; its request's
-credentials are write-only and never printed.
 
-Every region that holds a database is equal.
-A region can accept a local SQL REST write; TerraBase applies it once. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
-consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
-preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+Every region that holds a database is an equal active-active peer that accepts reads and writes. A
+`fast` write commits in the receiving region and replicates to its peers; a `strong` write commits on a
+regional quorum. Causal bookmarks give read-your-writes in any region. All-regions
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
 
@@ -131,8 +128,7 @@ unset options are not sent. `regions` names at least one region id, with no dupl
 `Client::set_database_placement(database, &DatabasePlacement)` needs exactly one
 of `regions` or `all_regions`. `ManagedDatabase` carries `regions` (every region that holds the database,
 sorted by region id; the order has no meaning) and `all_regions`.
-`Database::get_database_regions` reads each region's pull progress; an entry's `role` is `Some("writer")`
-for the region that commits writes.
+`Database::get_database_regions` reads each peer's applied bookmark, lag and health.
 
 ```rust,no_run
 use terrascale::v1::{Client, CreateDatabaseOptions, DatabasePlacement};
@@ -205,27 +201,23 @@ across clones; create a new client with a replacement key. A refused token excha
 terminal `Error::TokenExchange` code `invalid_key` (upstream bodies remain redacted). `503 auth_unavailable`
 uses the existing replay-safe backoff and `Retry-After` policy without discarding the token.
 
-A push stream that returns NATS error 10074 is not retried, because it requests more regional copies than the cluster provides.
-
 
 ## Region-set placement
 
 Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
 and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
-with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
-Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
-`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
+with membership and stays unchanged for an identical set.
+Region status exposes every selected region in `regions`, with its `appliedBookmark`, `lagMs` and `healthy`.
 An SDK needs no knowledge of a database's region: it can connect to any region. A region that does not hold the
 database authenticates the client and proxies to a region that holds it, which authenticates again. This adds one
 inter-region round trip (about 170 ms between the current regions) and passes two request admissions, one in each
 region. Completed requests and bytes are attributed to the final destination. A terminal forwarding failure is counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
 
-A writer move closes pinned WebSocket sessions with 1012 and PostgreSQL sessions with 57P01; an open transaction is
-rolled back. Reconnect for later requests. If the proxy leg drops while a statement or commit is in flight, its
+If the proxy leg drops while a statement or commit is in flight, its
 outcome is unknown (`write_outcome_unknown` for REST/WebSocket, SQLSTATE 08007 for PostgreSQL). The proxy never
 replays that request. Check the committed state before deciding whether to send a new write.
 
-Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Dropping a region can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
 A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
 The SDK exposes `Error::code()` returning `Some("replica_not_ready")` or `Some("move_in_progress")`, preserved by `Error::Response` around `Error::Api`. Neither code is automatically retried;

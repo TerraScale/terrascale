@@ -1,5 +1,5 @@
 //! Wire scalars shared by the data plane and the control plane: exact JSON
-//! numbers and `u64` decimal strings.
+//! numbers and integers that may arrive as decimal strings.
 
 use std::fmt;
 use std::str::FromStr;
@@ -153,53 +153,31 @@ impl<'de> Deserialize<'de> for Number {
     }
 }
 
-/// Serde adapter for `u64` quantities carried as canonical decimal strings
-/// (offsets, sequences, timestamps, byte and row counts).
-pub mod u64_string {
-    use super::*;
-
-    pub fn serialize<S: Serializer>(v: &u64, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&v.to_string())
+/// Deserializes a non-negative integer of at most `max`, sent as a JSON
+/// number or a canonical decimal string; `what` describes a refused value.
+pub(crate) fn decimal_u64<'de, D: Deserializer<'de>>(
+    d: D,
+    max: u64,
+    what: &'static str,
+) -> std::result::Result<u64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Integer(u64),
+        Decimal(String),
     }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
-        let s = String::deserialize(d)?;
-        parse_canonical_u64(&s)
-            .ok_or_else(|| D::Error::custom(format!("u64 {s:?} is not a canonical decimal string")))
+    match Wire::deserialize(d)? {
+        Wire::Integer(n) => Some(n),
+        Wire::Decimal(s) => parse_canonical_u64(&s),
     }
-
-    pub(crate) fn parse_canonical_u64(s: &str) -> Option<u64> {
-        if s.is_empty()
-            || (s.len() > 1 && s.starts_with('0'))
-            || !s.bytes().all(|b| b.is_ascii_digit())
-        {
-            return None;
-        }
-        s.parse().ok()
-    }
+    .filter(|n| *n <= max)
+    .ok_or_else(|| D::Error::custom(what))
 }
 
-/// Serde adapter for `Option<u64>` decimal strings (`null` or absent is `None`).
-pub mod opt_u64_string {
-    use super::*;
-
-    pub fn serialize<S: Serializer>(v: &Option<u64>, s: S) -> std::result::Result<S::Ok, S::Error> {
-        match v {
-            Some(v) => s.serialize_str(&v.to_string()),
-            None => s.serialize_none(),
-        }
+fn parse_canonical_u64(s: &str) -> Option<u64> {
+    if s.is_empty() || (s.len() > 1 && s.starts_with('0')) || !s.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
     }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> std::result::Result<Option<u64>, D::Error> {
-        match Option::<String>::deserialize(d)? {
-            None => Ok(None),
-            Some(s) => u64_string::parse_canonical_u64(&s)
-                .map(Some)
-                .ok_or_else(|| {
-                    D::Error::custom(format!("u64 {s:?} is not a canonical decimal string"))
-                }),
-        }
-    }
+    s.parse().ok()
 }

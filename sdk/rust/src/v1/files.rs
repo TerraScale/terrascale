@@ -31,6 +31,7 @@ pub struct FileObject {
     pub metadata: Value,
     pub status: String,
     pub upload_expires_at: String,
+    #[serde(default)]
     pub delete_after: Option<String>,
 }
 
@@ -38,7 +39,7 @@ pub struct FileObject {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileObjectPage {
     pub items: Vec<FileObject>,
-    #[serde(deserialize_with = "file_cursor")]
+    #[serde(default, deserialize_with = "file_cursor")]
     pub next: Option<String>,
 }
 
@@ -63,18 +64,7 @@ impl fmt::Debug for FileSignedUrl {
 }
 
 fn file_size<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Integer(u64),
-        Decimal(String),
-    }
-    let n = match Wire::deserialize(d)? {
-        Wire::Integer(n) => Some(n),
-        Wire::Decimal(s) => super::types::u64_string::parse_canonical_u64(&s),
-    };
-    n.filter(|n| *n <= i64::MAX as u64)
-        .ok_or_else(|| serde::de::Error::custom("file size must be a nonnegative int64"))
+    super::types::decimal_u64(d, i64::MAX as u64, "file size must be a nonnegative int64")
 }
 fn file_cursor<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<String>, D::Error> {
     let next = Option::<String>::deserialize(d)?;

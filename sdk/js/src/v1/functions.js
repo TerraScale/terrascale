@@ -1,7 +1,7 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
 import { list, nullable, numeric, optional, record, text, defaulted } from "./management-decode.js";
-import { members, mutationOptions } from "./management-validation.js";
+import { members } from "./management-validation.js";
 import { stringifyExactJson } from "./json.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
@@ -35,7 +35,6 @@ export class V1Functions {
   /** @param {string} name @param {V1FunctionDeployRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1Function>} */
   async deploy(name, request, options = {}) {
     members(request, ["source", "cron"]);
-    mutationOptions(options);
     if (typeof request.source !== "string") throw new TypeError("source must be a string.");
     if (request.cron !== undefined && typeof request.cron !== "string") throw new TypeError("cron must be a five-field UTC expression.");
     return functionBody((await this.#transport.call("deployFunction", { ...this.#params, function: requireName("function", name) }, {
@@ -55,7 +54,6 @@ export class V1Functions {
   /** @param {string} name @param {V1FunctionInvokeRequest} [request] @param {V1RequestOptions} [options] @returns {Promise<V1FunctionResponse>} */
   async invoke(name, request = {}, options = {}) {
     members(request, ["body", "query"]);
-    mutationOptions(options);
     const bytes = typeof request.body === "string" ? new TextEncoder().encode(request.body) : request.body;
     if (bytes !== undefined && bytes.byteLength > maximumInvokeBytes)
       throw new TypeError(`Function input is limited to ${maximumInvokeBytes} bytes.`);
@@ -89,7 +87,6 @@ export class V1Functions {
   }
   /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>} */
   async delete(name, options = {}) {
-    mutationOptions(options);
     await this.#transport.call("deleteFunction", { ...this.#params, function: requireName("function", name) }, { signal: options.signal });
   }
 }

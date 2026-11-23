@@ -190,7 +190,6 @@ export class ReactiveQueryObserver {
       isLoading: this.#state.data === undefined,
       ...(this.#state.data === undefined ? { status: /** @type {const} */ ("pending") } : {}),
     });
-    // State listeners may synchronously refetch or disable this generation.
     if (generation !== this.#generation || abort.signal.aborted) return;
     /** @type {ReactiveDisposer | void | Promise<ReactiveDisposer | void>} */
     let result;
@@ -287,17 +286,12 @@ export class ReactiveQueryObserver {
     if (generation !== this.#generation || this.#abort?.signal.aborted) return;
     const error = normalizeReactiveError(cause, "subscription");
     if (generation !== this.#generation || this.#abort?.signal.aborted) return;
-    // A subscription error is terminal for this delivery generation. Fence
-    // late stream events before aborting and disposing the transport so an
-    // already reported error cannot be replaced by a subsequent value.
     const terminalGeneration = ++this.#generation;
     const abort = this.#abort;
     this.#abort = undefined;
     const cleanup = this.#cleanup;
     this.#cleanup = undefined;
     this.#started = false;
-    // Abort listeners and transport cleanup may synchronously refetch. Detach
-    // the failed generation first, then leave any replacement ownership intact.
     abort?.abort();
     cleanup?.();
     if (terminalGeneration !== this.#generation) return;
@@ -538,8 +532,6 @@ export class ReactiveMutationObserver {
     this.#activeKey = undefined;
     const cancelledGeneration = this.#activeRun = ++this.#run;
     const error = normalizeReactiveError(cancelledError(), "cancelled");
-    // Publish the detached ownership before invoking abort/rollback callbacks,
-    // then notify only if those callbacks did not start a replacement run.
     this.#state = freezeMutationState({ status: "cancelled", data: this.#state.data, error, idempotencyKey: key, isPending: false });
     abort?.abort();
     rollback?.();

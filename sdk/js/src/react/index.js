@@ -94,8 +94,6 @@ export function useMutation(options) {
     const generation = ++effectGeneration.current;
     return () => {
       observer.cancel();
-      // React may immediately mount this effect again in Strict Mode. Cancel
-      // owned work now, then dispose only if the effect stays unmounted.
       queueMicrotask(() => {
         if (effectGeneration.current === generation) observer.dispose();
       });

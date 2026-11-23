@@ -223,7 +223,7 @@ impl From<String> for SqlStatement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SqlColumn {
     pub name: String,
-    #[serde(alias = "type")]
+    #[serde(default, alias = "type")]
     pub decltype: Option<String>,
 }
 
@@ -234,7 +234,7 @@ pub struct SqlStatementResult {
     pub rows: Vec<Vec<SqlValue>>,
     #[serde(alias = "rowsAffected")]
     pub rows_affected: u64,
-    #[serde(alias = "lastInsertRowId")]
+    #[serde(default, alias = "lastInsertRowId")]
     pub last_insert_rowid: Option<i64>,
 }
 

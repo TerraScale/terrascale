@@ -65,15 +65,11 @@ func (c *Client) CreateDatabase(ctx context.Context, project, name string, opts 
 	if err := checkPlacementRegions(opts.Regions); err != nil {
 		return nil, err
 	}
-	req, err := projectRequest(http.MethodPost, project, nil, "databases")
-	if err != nil {
-		return nil, err
-	}
 	body := struct {
 		Name string `json:"name"`
 		CreateDatabaseOptions
 	}{name, opts}
-	return publicCall[ManagedDatabase](ctx, c, req, body)
+	return projectCall[ManagedDatabase](ctx, c, http.MethodPost, project, nil, body, "databases")
 }
 
 func (c *Client) ForkDatabase(ctx context.Context, project, source, name string, opts ForkDatabaseOptions) (*ManagedDatabase, error) {
@@ -83,19 +79,16 @@ func (c *Client) ForkDatabase(ctx context.Context, project, source, name string,
 	if err := checkAgentTTL(opts.TTLSeconds, 31536000); err != nil {
 		return nil, err
 	}
-	body := struct {
-		Name string `json:"name"`
-		ForkDatabaseOptions
-	}{name, opts}
 	d := c.Database(project, source)
 	if opts.PointInTime != nil {
-		operation, err := databaseCall[RestoreOperation](ctx, d, http.MethodPost, nil, body, "point-in-time", "restore")
-		if err != nil {
-			return nil, err
-		}
-		return d.awaitRestore(ctx, operation)
+		return d.startRestore(ctx, restoreRequest{
+			Name: name, Target: restoreTarget{PointInTime: *opts.PointInTime}, TTLSeconds: opts.TTLSeconds,
+		}, "branches")
 	}
-	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, body, "branches")
+	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, struct {
+		Name       string `json:"name"`
+		TTLSeconds *int64 `json:"ttlSeconds,omitempty"`
+	}{name, opts.TTLSeconds}, "branches")
 }
 
 func (c *Client) SetDatabaseTTL(ctx context.Context, project, database string, ttlSeconds int64) (*ManagedDatabase, error) {
@@ -142,9 +135,7 @@ func (c *Client) CreateScopedKey(ctx context.Context, in ScopedKeyRequest) (*Sco
 	}
 	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
 	defer cancel()
-	hc := *c.hc
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	transport := Client{hc: &hc, maxResponse: c.maxResponse}
+	transport := Client{hc: c.hc}
 	resp, err := transport.send(ctx, request{
 		method: http.MethodPost,
 		body:   body,

@@ -54,27 +54,31 @@ type sqlFrame struct {
 }
 
 type sqlAnswer struct {
-	ID       int64    `json:"id"`
-	Type     string   `json:"type"`
-	Results  []Result `json:"results"`
-	Bookmark string   `json:"bookmark"`
-	Error    *struct {
-		Code      ErrorCode `json:"code"`
-		Message   string    `json:"message"`
-		Statement int       `json:"statement"`
-		SQLState  string    `json:"sqlstate"`
-	} `json:"error"`
-	Transaction bool `json:"transaction"`
+	ID          int64           `json:"id"`
+	Type        string          `json:"type"`
+	Results     []Result        `json:"results"`
+	Bookmark    string          `json:"bookmark"`
+	Error       *sqlSocketError `json:"error"`
+	Transaction *bool           `json:"transaction"`
 	err         error
+}
+
+type sqlSocketError struct {
+	Code      ErrorCode `json:"code"`
+	Message   string    `json:"message"`
+	Statement int       `json:"statement"`
+	SQLState  string    `json:"sqlState"`
+}
+
+func (e *sqlSocketError) refusal() *SQLError {
+	return &SQLError{Code: e.Code, Message: e.Message, Statement: e.Statement, SQLState: e.SQLState}
 }
 
 func (d *Database) Connect(ctx context.Context) (*SQLSession, error) {
 	s := &SQLSession{d: d}
-	conn, err := s.dial(ctx)
-	if err != nil {
+	if _, err := s.connection(ctx, ""); err != nil {
 		return nil, err
 	}
-	s.conn = conn
 	return s, nil
 }
 
@@ -191,7 +195,7 @@ func (s *SQLSession) send(ctx context.Context, typ string, statements []Statemen
 		return sqlAnswer{}, err
 	}
 	if e := answer.Error; e != nil {
-		return sqlAnswer{}, &SQLError{Code: e.Code, Message: e.Message, Statement: e.Statement, SQLState: e.SQLState}
+		return sqlAnswer{}, e.refusal()
 	}
 	return answer, nil
 }
@@ -204,10 +208,6 @@ func (s *SQLSession) connection(ctx context.Context, typ string) (*sqlConn, erro
 	}
 	if s.closed {
 		return nil, ErrSQLSessionClosed
-	}
-	if s.conn != nil && s.conn.dead() {
-		s.lostTx = s.lostTx || s.inTx
-		s.conn, s.inTx = nil, false
 	}
 	if s.lostTx {
 		if typ == "rollback" {
@@ -283,7 +283,7 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 			_ = ws.Close(websocket.StatusProtocolError, "")
 			return nil, fmt.Errorf("terrabase: server did not select the %s subprotocol", SQLSubprotocol)
 		}
-		ws.SetReadLimit(c.maxResponse)
+		ws.SetReadLimit(DefaultMaxResponseBytes)
 		conn := &sqlConn{ws: ws, sending: make(chan struct{}, 1), pending: map[int64]sqlPending{}}
 		go s.receive(conn)
 		return conn, nil
@@ -297,14 +297,13 @@ func (s *SQLSession) receive(conn *sqlConn) {
 			err = errors.New("terrabase: SQL session received a binary frame")
 		}
 		var answer sqlAnswer
-		if err == nil && (decodeExact(data, &answer) != nil || (answer.Type != "result" && answer.Type != "error") || (answer.Type == "error") != (answer.Error != nil)) {
-			err = &SQLProtocolError{}
-		}
-		if err == nil && s.d.causal.Observe(answer.Bookmark) != nil {
+		if err == nil && (decodeExact(data, &answer) != nil || answer.Transaction == nil ||
+			(answer.Type != "result" && answer.Type != "error") || (answer.Type == "error") != (answer.Error != nil) ||
+			s.d.causal.Observe(answer.Bookmark) != nil) {
 			err = &SQLProtocolError{}
 		}
 		if err == nil && answer.ID == 0 && answer.Error != nil {
-			err = &SQLError{Code: answer.Error.Code, Message: answer.Error.Message, Statement: answer.Error.Statement, SQLState: answer.Error.SQLState}
+			err = answer.Error.refusal()
 		}
 		if err != nil {
 			s.fail(conn, fmt.Errorf("terrabase: SQL session socket closed: %w", err))
@@ -314,12 +313,12 @@ func (s *SQLSession) receive(conn *sqlConn) {
 		s.mu.Lock()
 		conn.mu.Lock()
 		if s.conn == conn {
-			s.inTx = answer.Transaction
+			s.inTx = *answer.Transaction
 		}
 		if answer.ID != 0 {
 			if pending, ok := conn.pending[answer.ID]; ok {
 				if e := answer.Error; e != nil && (e.Code == ErrWriteOutcomeUnknown || e.Code == ErrCommitUncertain) {
-					s.uncertain = &SQLError{Code: e.Code, Message: e.Message, Statement: e.Statement, SQLState: e.SQLState}
+					s.uncertain = e.refusal()
 				}
 				pending.answer <- answer
 				delete(conn.pending, answer.ID)
@@ -405,14 +404,8 @@ func (s *SQLSession) fail(c *sqlConn, err error) {
 	if s.uncertain != nil {
 		failure = s.uncertain
 	}
-	for id, pending := range c.pending {
+	for _, pending := range c.pending {
 		pending.answer <- sqlAnswer{err: failure}
-		delete(c.pending, id)
 	}
-}
-
-func (c *sqlConn) dead() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.err != nil
+	clear(c.pending)
 }

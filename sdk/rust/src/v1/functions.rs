@@ -21,7 +21,9 @@ pub struct FunctionDeployment {
 #[serde(rename_all = "camelCase")]
 pub struct Function {
     pub name: String,
+    #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
     pub cron: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -38,6 +40,7 @@ pub struct FunctionLog {
     #[serde(deserialize_with = "duration_ms")]
     pub duration_ms: u64,
     pub lines: Vec<String>,
+    #[serde(default)]
     pub error: Option<String>,
     #[serde(default)]
     pub sql_calls: u64,
@@ -89,44 +92,23 @@ pub struct FunctionInvocation {
 }
 
 fn duration_ms<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Wire {
-        Integer(u64),
-        Decimal(String),
-    }
-    match Wire::deserialize(d)? {
-        Wire::Integer(n) => Ok(n),
-        Wire::Decimal(s) => super::types::u64_string::parse_canonical_u64(&s).ok_or_else(|| {
-            serde::de::Error::custom("durationMs must be a nonnegative decimal integer")
-        }),
-    }
+    super::types::decimal_u64(
+        d,
+        u64::MAX,
+        "durationMs must be a nonnegative decimal integer",
+    )
 }
 
 impl Database {
     /// Lists functions without their source code.
     pub async fn list_functions(&self) -> Result<Vec<Function>> {
-        self.management(
-            Method::GET,
-            &["functions"],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["functions"], &[]).await
     }
 
     /// Returns one function including its source code.
     pub async fn get_function(&self, name: &str) -> Result<Function> {
         check_name("function", name)?;
-        self.management(
-            Method::GET,
-            &["functions", name],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["functions", name], &[]).await
     }
 
     /// Deploys or replaces a function. The server validates source and cron.
@@ -202,14 +184,7 @@ impl Database {
     /// Returns recent invocation logs.
     pub async fn list_function_logs(&self, name: &str) -> Result<Vec<FunctionLog>> {
         check_name("function", name)?;
-        self.management(
-            Method::GET,
-            &["functions", name, "logs"],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["functions", name, "logs"], &[]).await
     }
 
     /// Returns aggregated invocation metrics. The window is `1h`, `24h` or `7d`;
@@ -228,13 +203,6 @@ impl Database {
         let query = window
             .map(|window| vec![("window", window.to_string())])
             .unwrap_or_default();
-        self.management(
-            Method::GET,
-            &["functions", name, "stats"],
-            &query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["functions", name, "stats"], &query).await
     }
 }

@@ -65,7 +65,6 @@ export const V1ErrorCode = Object.freeze({
   mustRefetch: "must_refetch", payloadTooLarge: "payload_too_large",
   unsupportedMediaType: "unsupported_media_type", uriTooLong: "uri_too_long", shapeBusy: "shape_busy",
   internalError: "internal_error", capacity: "capacity",
-  replicaNotReady: "replica_not_ready", moveInProgress: "move_in_progress", moveUnresolved: "move_unresolved",
   serializationConflict: "serialization_conflict", schemaMismatch: "schema_mismatch", invalidBookmark: "invalid_bookmark",
 });
 
@@ -181,7 +180,7 @@ export function isTerraBaseV1Error(error, code) {
  * @param {Headers} headers
  * @returns {number | undefined} Seconds.
  */
-export function parseRetryAfter(headers) {
+function parseRetryAfter(headers) {
   const value = headers.get("retry-after")?.trim();
   if (value === undefined || value === "") return undefined;
   if (/^\d{1,9}$/u.test(value)) return Number(value);

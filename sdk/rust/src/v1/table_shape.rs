@@ -107,7 +107,9 @@ struct Page {
     next_offset: String,
     up_to_date: bool,
     changes: Vec<Change>,
+    #[serde(default)]
     provisional: Option<Vec<Pending>>,
+    #[serde(default)]
     local: Option<String>,
 }
 
@@ -130,8 +132,9 @@ struct Pending {
 struct Op {
     op: String,
     key: String,
+    #[serde(default)]
     row: Option<OrderedRow>,
-    #[serde(rename = "move")]
+    #[serde(default, rename = "move")]
     movement: Option<String>,
 }
 

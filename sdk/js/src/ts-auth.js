@@ -14,8 +14,8 @@ export { verifyAgentToken } from "./ts-auth-agents.js";
  * the ts-auth service routes — not the TerraScale product /api/v1 producer
  * contract. The deployment's public origin is `apiBaseUrl`.
  * @typedef {Omit<TsAuthRuntimeConfig, "apiBaseUrl" | "accessToken"> & {
- *   readonly apiBaseUrl: string; // The ts-auth deployment's public origin; there is no default.
- *   readonly instanceSlug: string; // The instance whose OIDC routes the client calls.
+ *   readonly apiBaseUrl: string;
+ *   readonly instanceSlug: string;
  * }} TsAuthClientConfig
  */
 
@@ -124,7 +124,7 @@ export { verifyAgentToken } from "./ts-auth-agents.js";
  *   readonly token_type: "Bearer";
  *   readonly expires_in: number;
  *   readonly scope: string;
- *   readonly refresh_token?: string | null | undefined; // Omitted for client_credentials; nullable for user code/device issuance.
+ *   readonly refresh_token?: string | null | undefined;
  *   readonly id_token?: string | undefined;
  * }} TsAuthOidcTokenResponse
  */
@@ -269,8 +269,6 @@ export class TsAuthOidcClient {
     const projectScope = request.grant_type === "client_credentials" && "project" in request ? request.scope : undefined;
     const pending = this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form, options);
     return oauthResponse(
-      // TokenBody follows RFC 6749 §5.1: omitted scope equals the explicit requested scope.
-      // Snapshot it before dispatch; never infer a default or normalize other grant contracts.
       projectScope === undefined ? pending : pending.then(result =>
         result.ok && oauthRecord(result.value) && !Object.hasOwn(result.value, "scope")
           ? { ...result, value: { ...result.value, scope: projectScope } } : result),

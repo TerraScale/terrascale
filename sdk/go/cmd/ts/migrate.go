@@ -34,9 +34,6 @@ type migration struct {
 	name, checksum, sql string
 }
 
-// migrations reads migrationsDir in version order.
-func migrations() ([]migration, error) { return readMigrations(migrationsDir) }
-
 func readMigrations(dir string) ([]migration, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -71,10 +68,8 @@ func migrationVersion(name string) uint64 {
 	return n
 }
 
-// newMigration writes the next empty migration file.
-func newMigration(name string, out io.Writer) error { return newMigrationIn(migrationsDir, name, out) }
-
-func newMigrationIn(dir, name string, out io.Writer) error {
+func newMigration(name string, out io.Writer) error {
+	dir := migrationsDir
 	slug := strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(name), "_"), "_")
 	if slug == "" {
 		return errors.New("migration name needs a letter or digit")
@@ -114,7 +109,8 @@ func newMigrationIn(dir, name string, out io.Writer) error {
 // applied returns the checksum of each migration the database recorded.
 func applied(ctx context.Context, db *v1.Database) (map[string]string, error) {
 	rows, err := db.Query(ctx, "SELECT name, checksum FROM "+historyTable)
-	if noTable(err) {
+	var refusal *v1.SQLError
+	if errors.Is(err, v1.ErrUndefinedTable) || errors.As(err, &refusal) && refusal.SQLState == "42P01" {
 		return map[string]string{}, nil
 	}
 	if err != nil {
@@ -129,23 +125,13 @@ func applied(ctx context.Context, db *v1.Database) (map[string]string, error) {
 	return out, nil
 }
 
-// noTable reports TerraBase's answer for a missing table.
-func noTable(err error) bool {
-	sqlErr := (*v1.SQLError)(nil)
-	return errors.Is(err, v1.ErrUndefinedTable) || errors.As(err, &sqlErr) && strings.Contains(sqlErr.Message, "no such table")
-}
-
 // migrateUp applies each pending migration in its own transaction together
 // with its history row. Earlier migrations can remain committed if a later one fails.
 func migrateUp(ctx context.Context, db *v1.Database, out io.Writer) error {
-	ms, err := migrations()
+	ms, err := readMigrations(migrationsDir)
 	if err != nil {
 		return err
 	}
-	return applyMigrations(ctx, db, ms, out)
-}
-
-func applyMigrations(ctx context.Context, db *v1.Database, ms []migration, out io.Writer) error {
 	items := []string{}
 	if _, err := db.Execute(ctx, "CREATE TABLE IF NOT EXISTS "+historyTable+
 		" (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"); err != nil {
@@ -198,14 +184,10 @@ func applyMigrations(ctx context.Context, db *v1.Database, ms []migration, out i
 }
 
 func migrateStatus(ctx context.Context, db *v1.Database, out io.Writer) error {
-	ms, err := migrations()
+	ms, err := readMigrations(migrationsDir)
 	if err != nil {
 		return err
 	}
-	return migrationStatus(ctx, db, ms, out)
-}
-
-func migrationStatus(ctx context.Context, db *v1.Database, ms []migration, out io.Writer) error {
 	type entry struct {
 		Name  string `json:"name"`
 		State string `json:"state"`

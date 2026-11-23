@@ -88,7 +88,7 @@ func (c *Client) ProjectPrometheusMetrics(ctx context.Context, project string) (
 	invalid := &PrometheusProtocolError{Status: res.StatusCode}
 	contentType := res.Header.Get("Content-Type")
 	media, params, parseErr := mime.ParseMediaType(contentType)
-	limit := min(int64(8<<20), c.maxResponse)
+	const limit = 8 << 20
 	if res.StatusCode != http.StatusOK || parseErr != nil || !strings.EqualFold(media, "text/plain") || params["version"] != "0.0.4" || !strings.EqualFold(params["charset"], "utf-8") || res.ContentLength > limit {
 		return nil, invalid
 	}

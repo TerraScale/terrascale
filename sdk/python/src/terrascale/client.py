@@ -58,8 +58,8 @@ from .auth import (
     verify_user_api_key_call,
 )
 from .custom_tokens import ClaimValue, CustomToken, mint_custom_token_call
-from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, error_for
-from .ids import is_valid_id, validate_id
+from .errors import APIError, error_for
+from .ids import validate_id
 from .session import SqlSession
 from .shapes import Shape
 from .sql import Args, Row, Statement, StatementResult
@@ -67,6 +67,18 @@ from .sql import Args, Row, Statement, StatementResult
 __all__ = ["TerraScale", "Database"]
 
 T = TypeVar("T")
+
+
+def _tenant(client: Any, project: str | None) -> tuple[str | None, str]:
+    return client._issuer, client.project if project is None else project
+
+
+def _apply(client: Any, err: APIError, action: _spec.Next, token: str) -> _spec.Next:
+    if action.kind == "reject" and client._source is not None:
+        client._source.reject(err)
+    elif action.kind == "refresh" and client._source is not None:
+        client._source.invalidate(token)
+    return action
 
 
 def _settings(api_key: str | None, project: str | None, token: Any, base_url: str | None,
@@ -165,54 +177,34 @@ class TerraScale:
         conflicts = 0
         while True:
             direct = "Authorization" in call.headers
-            project_key = (
-                self._api_key
-                if call.base_url is not None and len(call.path) > 1 and call.path[0] == "v1"
-                and is_valid_id(call.path[1])
-                else None
-            )
+            project_key = _spec.project_bearer(self._api_key, call)
             token = "" if direct or call.anonymous else project_key or self._bearer()
-            headers = dict(call.headers) if direct else {**self._headers, **call.causal_headers(self._bookmarks), **call.headers}
-            if not direct and not call.anonymous:
-                headers["Authorization"] = f"Bearer {token}"
-            if content is not None:
-                headers["Content-Type"] = call.content_type
+            headers = _spec.request_headers(self._headers, call, self._bookmarks, direct=direct, token=token,
+                                            has_body=content is not None)
             try:
                 if direct:
-                    request = httpx.Request(call.method, url, headers=headers, content=content)
-                    response = self._http.send(request, auth=None, follow_redirects=False)
+                    response = self._http.send(httpx.Request(call.method, url, headers=headers, content=content),
+                                               auth=None, follow_redirects=False)
                 else:
                     response = self._http.request(
                         call.method, url, params=call.params or None, headers=headers, content=content,
                         timeout=call.timeout if call.timeout is not None else httpx.USE_CLIENT_DEFAULT)
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
-                if not call.replay_safe and not isinstance(exc, _spec.NOT_SENT):
-                    raise CommitUncertainError(0, "commit_uncertain", "transport failure; the write may have committed") from exc
-                if isinstance(exc, httpx.DecodingError):
-                    raise InvalidResponseError(0, "invalid_response", "invalid response encoding") from exc
-                if attempt >= self._max_attempts:
-                    raise _spec.transport_failure(call.method, attempt, exc) from exc
-                time.sleep(_spec.backoff(attempt, None))
+                time.sleep(_spec.after_transport(call, exc, attempt, self._max_attempts))
                 continue
             if 200 <= response.status_code < 300:
                 return call.accept(response, self._bookmarks)
             err = _error(response, mutation=not call.replay_safe)
-            if response.status_code == 401 and err.code in {"key_revoked", "key_expired"}:
-                if self._source is not None:
-                    self._source.reject(err)
-                raise err
-            if response.status_code == 401 and self._source is not None and not refreshed and not direct and project_key is None:
-                self._source.invalidate(token)
+            action = _apply(self, err, _spec.after_status(
+                call, err, attempt=attempt, conflicts=conflicts, max_attempts=self._max_attempts, refreshed=refreshed,
+                direct=direct, has_source=self._source is not None, project_key=project_key is not None), token)
+            if action.kind == "refresh":
                 refreshed = True
                 continue
-            if isinstance(err, SqlError) and err.code in _spec.RETRY_CONFLICTS and conflicts < 2:
-                conflicts += 1
-                time.sleep(_spec.backoff(conflicts, None))
-                continue
-            attempt += 1
-            if call.replay_safe and attempt < self._max_attempts and _spec.retryable(err.status, err.code):
-                time.sleep(_spec.backoff(attempt, err.retry_after))
+            if action.kind == "sleep":
+                attempt, conflicts = action.attempt, action.conflicts
+                time.sleep(action.seconds)
                 continue
             raise err
 
@@ -223,7 +215,7 @@ class TerraScale:
         refreshed = False
         while True:
             token = self._bearer()
-            headers = {**self._headers, **call.headers, "Authorization": f"Bearer {token}"}
+            headers = _spec.request_headers(self._headers, call, self._bookmarks, direct=False, token=token, has_body=False)
             request = httpx.Request(call.method, url, headers=headers)
             try:
                 response = self._http.send(request, auth=None, stream=True, follow_redirects=False)
@@ -237,17 +229,15 @@ class TerraScale:
                 break
             err = _error(response)
             response.close()
-            if response.status_code == 401 and err.code in {"key_revoked", "key_expired"}:
-                if self._source is not None:
-                    self._source.reject(err)
-                raise err
-            if response.status_code == 401 and self._source is not None and not refreshed:
-                self._source.invalidate(token)
+            action = _apply(self, err, _spec.after_status(
+                call, err, attempt=attempt, conflicts=2, max_attempts=self._max_attempts, refreshed=refreshed,
+                direct=False, has_source=self._source is not None, project_key=False), token)
+            if action.kind == "refresh":
                 refreshed = True
                 continue
-            attempt += 1
-            if attempt < self._max_attempts and _spec.retryable(err.status, err.code):
-                time.sleep(_spec.backoff(attempt, err.retry_after))
+            if action.kind == "sleep":
+                attempt = action.attempt
+                time.sleep(action.seconds)
                 continue
             raise err
         try:
@@ -341,12 +331,12 @@ class TerraScale:
     ) -> models.ScopedKey:
         """Mint a key for one database ULID, using this client's API key; the default lifetime is 3600 seconds."""
         return self._send(_scoped_key_call(
-            self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
+            self._api_key, *_tenant(self, project), database, access, ttl_seconds))
 
     def mint_custom_token(self, user_id: str, *, database: str | None = None,
                           claims: Mapping[str, ClaimValue] | None = None, project: str | None = None) -> CustomToken:
         return self._send(mint_custom_token_call(
-            self._api_key, self._issuer, project if project is not None else self.project, user_id, database, claims))
+            self._api_key, *_tenant(self, project), user_id, database, claims))
 
     def create_api_key(
         self, organization: str, name: str, scopes: Sequence[str], *,
@@ -376,22 +366,22 @@ class TerraScale:
 
     def set_user_api_key_policy(self, scopes: Sequence[str], *, project: str | None = None) -> models.UserApiKeyPolicy:
         return self._send(set_user_api_key_policy_call(
-            self._issuer, project if project is not None else self.project, scopes))
+            *_tenant(self, project), scopes))
 
     def create_user_api_key(self, user: str, name: str, scopes: Sequence[str], *,
                               expires_at: str | None = None, project: str | None = None) -> models.UserApiKey:
-        return self._send(create_user_api_key_call(self._issuer, project if project is not None else self.project,
+        return self._send(create_user_api_key_call(*_tenant(self, project),
                                                    user, name, scopes, expires_at))
 
     def list_user_api_keys(self, user: str, *, project: str | None = None) -> models.UserApiKeyPage:
-        return self._send(list_user_api_keys_call(self._issuer, project if project is not None else self.project, user))
+        return self._send(list_user_api_keys_call(*_tenant(self, project), user))
 
     def revoke_user_api_key(self, user: str, key: str, *, project: str | None = None) -> None:
         return self._send(revoke_user_api_key_call(
-            self._issuer, project if project is not None else self.project, user, key))
+            *_tenant(self, project), user, key))
 
     def verify_user_api_key(self, key: str, *, project: str | None = None) -> models.UserApiKeyVerification:
-        return self._send(verify_user_api_key_call(self._issuer, project if project is not None else self.project, key))
+        return self._send(verify_user_api_key_call(*_tenant(self, project), key))
 
     def create_project_client(
         self, name: str, client_type: str, redirect_uris: Sequence[str], *, step_up_proof: str,
@@ -400,12 +390,12 @@ class TerraScale:
     ) -> models.ProjectClient:
         """Register a public or confidential OAuth client; a confidential secret is answered once."""
         return self._send(create_project_client_call(
-            self._issuer, project if project is not None else self.project, name, client_type, redirect_uris,
+            *_tenant(self, project), name, client_type, redirect_uris,
             step_up_proof, allowed_scopes, allowed_audiences, token_lifetime_minutes))
 
     def list_project_clients(self, *, project: str | None = None) -> models.ProjectClientPage:
         """List every registered client of the project in one page, without secrets."""
-        return self._send(list_project_clients_call(self._issuer, project if project is not None else self.project))
+        return self._send(list_project_clients_call(*_tenant(self, project)))
 
     def update_project_client(
         self, client_id: str, name: str, redirect_uris: Sequence[str], *, step_up_proof: str,
@@ -414,7 +404,7 @@ class TerraScale:
     ) -> models.ProjectClient:
         """Rename a client and replace its redirect URIs; the id, type and secret stay unchanged."""
         return self._send(update_project_client_call(
-            self._issuer, project if project is not None else self.project, client_id, name, redirect_uris,
+            *_tenant(self, project), client_id, name, redirect_uris,
             step_up_proof, allowed_scopes, allowed_audiences, token_lifetime_minutes))
 
     def rotate_project_client_secret(
@@ -422,40 +412,40 @@ class TerraScale:
     ) -> models.ProjectClientSecret:
         """Issue a new secret for a confidential client; the previous one keeps working for grace_seconds (0 to 86400)."""
         return self._send(rotate_project_client_secret_call(
-            self._issuer, project if project is not None else self.project, client_id, grace_seconds, step_up_proof))
+            *_tenant(self, project), client_id, grace_seconds, step_up_proof))
 
     def delete_project_client(self, client_id: str, *, project: str | None = None) -> None:
         """Delete a registered client."""
-        self._send(delete_project_client_call(self._issuer, project if project is not None else self.project,
+        self._send(delete_project_client_call(*_tenant(self, project),
                                               client_id))
 
 
     def create_project_invitation(self, email: str, *, redirect_url: str | None = None,
                                         project: str | None = None) -> models.ProjectInvitation:
         return self._send(create_project_invitation_call(
-            self._issuer, project if project is not None else self.project, email, redirect_url))
+            *_tenant(self, project), email, redirect_url))
 
     def list_project_invitations(self, *, limit: int | None = None, after: str | None = None,
                                  project: str | None = None) -> models.ProjectInvitationPage:
         return self._send(list_project_invitations_call(
-            self._issuer, project if project is not None else self.project, limit, after))
+            *_tenant(self, project), limit, after))
 
     def revoke_project_invitation(self, invitation: str, *, project: str | None = None) -> None:
         self._send(revoke_project_invitation_call(
-            self._issuer, project if project is not None else self.project, invitation))
+            *_tenant(self, project), invitation))
 
     def list_project_waitlist(self, *, limit: int | None = None, after: str | None = None,
                                  project: str | None = None) -> models.ProjectWaitlistPage:
         return self._send(list_project_waitlist_call(
-            self._issuer, project if project is not None else self.project, limit, after))
+            *_tenant(self, project), limit, after))
 
     def approve_project_waitlist(self, entry: str, *, project: str | None = None) -> None:
         self._send(approve_project_waitlist_call(
-            self._issuer, project if project is not None else self.project, entry))
+            *_tenant(self, project), entry))
 
     def reject_project_waitlist(self, entry: str, *, project: str | None = None) -> None:
         self._send(reject_project_waitlist_call(
-            self._issuer, project if project is not None else self.project, entry))
+            *_tenant(self, project), entry))
 
     def create_organization(self, project: str, request: _organizations.OrganizationRequest) -> _organizations.Organization:
         """POST /v1/{project}/organizations."""
@@ -539,76 +529,76 @@ class TerraScale:
 
     def get_settings(self, *, project: str | None = None) -> models.ProjectSettings:
         """Read the project's end-user sign-in settings; viewer access with the caller's sign-in token."""
-        return self._send(get_settings_call(self._issuer, project if project is not None else self.project))
+        return self._send(get_settings_call(*_tenant(self, project)))
 
     def update_settings(self, update: models.ProjectSettingsUpdate, *, project: str | None = None,
                        ) -> models.ProjectSettings:
         """Update settings; omitted parts stay unchanged and admin access is required."""
-        return self._send(update_settings_call(self._issuer, project if project is not None else self.project, update))
+        return self._send(update_settings_call(*_tenant(self, project), update))
 
     def list_users(self, *, search: str | None = None, limit: int | None = None, after: str | None = None,
                    project: str | None = None) -> models.ProjectUserPage:
         """List the project's end users in creation order; ``search`` matches an email substring."""
-        return self._send(list_users_call(self._issuer, project if project is not None else self.project, search,
+        return self._send(list_users_call(*_tenant(self, project), search,
                                           limit, after))
 
     def create_user(self, request: models.CreateProjectUser, *, project: str | None = None) -> models.ProjectUser:
-        return self._send(create_user_call(self._issuer, project if project is not None else self.project, request))
+        return self._send(create_user_call(*_tenant(self, project), request))
 
     def update_user(self, user_id: str, request: models.UpdateProjectUser, *, project: str | None = None) -> models.ProjectUser:
-        return self._send(update_user_call(self._issuer, project if project is not None else self.project, user_id, request))
+        return self._send(update_user_call(*_tenant(self, project), user_id, request))
 
     def import_users(
         self, users: list[models.ImportProjectUser], *, project: str | None = None
     ) -> models.ImportProjectUsersResult:
-        return self._send(import_users_call(self._issuer, project if project is not None else self.project, users))
+        return self._send(import_users_call(*_tenant(self, project), users))
 
     def get_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Read one end user by id."""
-        return self._send(get_user_call(self._issuer, project if project is not None else self.project, user_id))
+        return self._send(get_user_call(*_tenant(self, project), user_id))
 
     def disable_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Disable a user; every session ends and refresh tokens stop at once."""
-        return self._send(disable_user_call(self._issuer, project if project is not None else self.project, user_id))
+        return self._send(disable_user_call(*_tenant(self, project), user_id))
 
     def enable_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
         """Re-enable a disabled user."""
-        return self._send(enable_user_call(self._issuer, project if project is not None else self.project, user_id))
+        return self._send(enable_user_call(*_tenant(self, project), user_id))
 
     def delete_user(self, user_id: str, *, project: str | None = None) -> None:
         """Delete a user's account; the address can sign up again."""
-        self._send(delete_user_call(self._issuer, project if project is not None else self.project, user_id))
+        self._send(delete_user_call(*_tenant(self, project), user_id))
 
     def export_users(self, *, limit: int | None = None, after: str | None = None,
                      project: str | None = None) -> models.ProjectUserExportPage:
         """Fetch one audited directory-export page; pass the previous page's ``next_cursor`` as ``after``."""
-        return self._send(export_users_call(self._issuer, project if project is not None else self.project, limit,
+        return self._send(export_users_call(*_tenant(self, project), limit,
                                             after))
 
     def set_provider(self, provider: str, update: models.ProjectProviderUpdate, *,
                      project: str | None = None) -> models.ProjectSettings:
         """Configure a supported federated sign-in provider; an omitted secret is kept."""
-        return self._send(set_provider_call(self._issuer, project if project is not None else self.project, provider,
+        return self._send(set_provider_call(*_tenant(self, project), provider,
                                             update))
 
     def delete_provider(self, provider: str, *, project: str | None = None) -> models.ProjectSettings:
         """Remove a federated sign-in provider; the answered settings no longer carry it."""
-        return self._send(delete_provider_call(self._issuer, project if project is not None else self.project,
+        return self._send(delete_provider_call(*_tenant(self, project),
                                                provider))
 
     def list_sessions(self, *, user_id: str | None = None, limit: int | None = None, after: str | None = None,
                       project: str | None = None) -> models.ProjectSessionPage:
         """List live sessions, optionally of one user, in creation order."""
-        return self._send(list_sessions_call(self._issuer, project if project is not None else self.project, user_id,
+        return self._send(list_sessions_call(*_tenant(self, project), user_id,
                                              limit, after))
 
     def sign_out_user(self, user_id: str, *, project: str | None = None) -> None:
         """End all of a project user's sessions and refresh tokens (admin)."""
-        self._send(sign_out_user_call(self._issuer, project if project is not None else self.project, user_id))
+        self._send(sign_out_user_call(*_tenant(self, project), user_id))
 
     def revoke_session(self, session_id: str, *, project: str | None = None) -> None:
         """Revoke one session; the session is signed out at once."""
-        self._send(revoke_session_call(self._issuer, project if project is not None else self.project, session_id))
+        self._send(revoke_session_call(*_tenant(self, project), session_id))
 
 
 def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:

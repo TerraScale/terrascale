@@ -7,17 +7,16 @@ package sdk
 import (
 	"bytes"
 	"cmp"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
+	"terrascale.tech/sdk/internal/httpx"
 	"terrascale.tech/sdk/internal/origin"
 )
 
@@ -367,77 +366,24 @@ func defaultErrorCode(status int) string {
 }
 
 func (c *Client) retryDelayFor(headers http.Header, attempt int) time.Duration {
-	if headers != nil {
-		if d, ok := parseRetryAfter(headers.Get("Retry-After")); ok {
-			return d
-		}
+	if d, ok := rootRetryAfter(headers); ok {
+		return d
 	}
 	d := retryBackoff << attempt
 	if d <= 0 {
 		return retryBackoff
 	}
-	if d > MaxRetryAfter {
-		return MaxRetryAfter
-	}
-	return d
+	return min(d, MaxRetryAfter)
 }
 
-// retryAfterFromHeader exposes the Retry-After the server sent (delta-seconds
-// or HTTP-date) on APIError and retry scheduling. Nil when absent or unparseable.
 func retryAfterFromHeader(headers http.Header) *time.Duration {
-	value := strings.TrimSpace(headers.Get("Retry-After"))
-	if value == "" {
-		return nil
-	}
-	if secs, err := strconv.ParseUint(value, 10, 64); err == nil || isDecimal(value) {
-		// An out-of-range delta is still a delta: clamp to the largest
-		// representable duration instead of wrapping.
-		if err != nil || secs > uint64(math.MaxInt64)/uint64(time.Second) {
-			secs = uint64(math.MaxInt64 / int64(time.Second))
-		}
-		d := time.Duration(secs) * time.Second
-		return &d
-	}
-	if t, err := http.ParseTime(value); err == nil {
-		d := time.Until(t)
-		if d < 0 {
-			d = 0
-		}
+	if d, ok := rootRetryAfter(headers); ok {
 		return &d
 	}
 	return nil
 }
 
-func parseRetryAfter(value string) (time.Duration, bool) {
-	duration := retryAfterFromHeader(http.Header{"Retry-After": {value}})
-	if duration == nil {
-		return 0, false
-	}
-	return *duration, true
-}
-
-func isDecimal(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func sleepContext(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+func rootRetryAfter(headers http.Header) (time.Duration, bool) {
+	const maxDelta = (math.MaxInt64 / int64(time.Second)) * int64(time.Second)
+	return httpx.RetryAfter(headers.Get("Retry-After"), time.Duration(maxDelta))
 }

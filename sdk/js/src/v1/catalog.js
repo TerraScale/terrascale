@@ -3,6 +3,7 @@ import { array, boolean, malformed, object, string } from "./decode.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
 import { ExactDecimal, stringifyExactJson } from "./json.js";
 import { requireConsistency } from "./bookmark.js";
+import { members, pageQuery } from "./management-validation.js";
 /**
  * @import { JsonValue } from "./json.js"
  * @import { V1Transport } from "./transport.js"
@@ -33,21 +34,6 @@ import { requireConsistency } from "./bookmark.js";
 /** @typedef {{ readonly after?: string | undefined; readonly limit?: number | undefined }} V1DatabaseListRequest */
 /** @typedef {{ readonly items: readonly V1ManagedDatabase[]; readonly next: string | null }} V1DatabasePage */
 
-/** @param {unknown} value @param {readonly string[]} allowed @returns {void} */
-function members(value, allowed) {
-  if (typeof value !== "object" || value === null || Array.isArray(value) ||
-      ![Object.prototype, null].includes(Object.getPrototypeOf(value)))
-    throw new TypeError("A catalog request must be a plain object.");
-  for (const key of Object.keys(value))
-    if (!allowed.includes(key)) throw new TypeError(`Unknown catalog request member ${key}.`);
-}
-
-/** @param {object} options @returns {void} */
-function mutationOptions(options) {
-  if ("idempotencyKey" in options)
-    throw new TypeError("The current producer does not support Idempotency-Key; mutations are never automatically retried.");
-}
-
 /** @param {unknown} value @returns {string} */
 export function region(value) {
   if (typeof value !== "string" || !/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(value))
@@ -73,7 +59,7 @@ export function decodeManagedDatabase(value) {
   const raw = object(value, "managed database");
   const createdAt = string(raw.createdAt, "database createdAt");
   if (!/^\d{4}-\d{2}-\d{2}T/u.test(createdAt) || !Number.isFinite(Date.parse(createdAt))) malformed("database createdAt");
-  if (raw.expiresAt !== undefined && raw.expiresAt !== null &&
+  if (raw.expiresAt != null &&
       (typeof raw.expiresAt !== "string" || !Number.isFinite(Date.parse(raw.expiresAt)))) malformed("database expiresAt");
   const defaultConsistency = raw.defaultConsistency === "fast" || raw.defaultConsistency === "strong" ? raw.defaultConsistency : malformed("database defaultConsistency");
   const version = raw.placementVersion;
@@ -83,7 +69,7 @@ export function decodeManagedDatabase(value) {
     ...(raw.expiresAt === undefined ? {} : { expiresAt: raw.expiresAt }),
     id: requireId(raw.id, "Database ID"), projectId: requireId(raw.projectId, "Project ID"),
     name: requireName("database", raw.name),
-    branchedFrom: raw.branchedFrom === null ? null : requireId(raw.branchedFrom, "Source database ID"),
+    branchedFrom: raw.branchedFrom == null ? null : requireId(raw.branchedFrom, "Source database ID"),
     createdAt, region: region(raw.region),
     regions: Object.freeze((raw.regions === undefined ? [] : array(raw.regions, "database regions").map(region)).toSorted()),
     placementVersion,
@@ -110,7 +96,6 @@ export class V1Databases {
     const placement = requirePlacement(request);
     if (request.ttlSeconds !== undefined) requireTtlSeconds(request.ttlSeconds);
     const defaultConsistency = requireConsistency(request.defaultConsistency);
-    mutationOptions(options);
     const name = requireName("database", request.name);
     const response = await this.#transport.call("createDatabase", { database: name }, {
       body: stringifyExactJson({ name,
@@ -124,20 +109,11 @@ export class V1Databases {
 
   /** @param {V1DatabaseListRequest} [request] @param {V1RequestOptions} [options] @returns {Promise<V1DatabasePage>} */
   async list(request = {}, options = {}) {
-    members(request, ["after", "limit"]);
-    const query = new URLSearchParams();
-    if (request.after !== undefined) {
-      if (typeof request.after !== "string") throw new TypeError("Database after must be a string.");
-      query.set("after", request.after);
-    }
-    if (request.limit !== undefined) {
-      if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 100) throw new TypeError("Database list limit is 1-100.");
-      query.set("limit", String(request.limit));
-    }
-    const response = await this.#transport.call("listDatabases", {}, { query, signal: options.signal });
+    const response = await this.#transport.call("listDatabases", {}, { query: pageQuery(request), signal: options.signal });
     const raw = object(response.value, "database page");
-    if (raw.next !== null && (typeof raw.next !== "string" || raw.next === "")) malformed("database next");
-    return Object.freeze({ items: Object.freeze(array(raw.items, "databases").map(decodeManagedDatabase)), next: raw.next });
+    const next = raw.next ?? null;
+    if (next !== null && (typeof next !== "string" || next === "")) malformed("database next");
+    return Object.freeze({ items: Object.freeze(array(raw.items, "databases").map(decodeManagedDatabase)), next });
   }
 
   /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
@@ -159,7 +135,6 @@ export class V1Databases {
    * @returns {Promise<V1ManagedDatabase>}
    */
   async rename(databaseId, name, options = {}) {
-    mutationOptions(options);
     const response = await this.#transport.call("updateDatabase", { database: requireDatabaseSelector(databaseId) }, {
       body: stringifyExactJson({ name: requireName("database", name) }, "database rename"), signal: options.signal,
     });
@@ -171,7 +146,6 @@ export class V1Databases {
    * @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>}
    */
   async delete(name, options = {}) {
-    mutationOptions(options);
     await this.#transport.call("deleteDatabase", { database: requireDatabaseSelector(name) }, { signal: options.signal });
   }
 
@@ -180,7 +154,6 @@ export class V1Databases {
    * @param {string} name @param {string} expectedId @param {V1RequestOptions} [options] @returns {Promise<void>}
    */
   async deleteIfId(name, expectedId, options = {}) {
-    mutationOptions(options);
     await this.#transport.call("deleteDatabaseIfId", { database: requireDatabaseSelector(name), expectedId: requireId(expectedId) },
       { signal: options.signal });
   }
@@ -188,7 +161,6 @@ export class V1Databases {
   /** @param {string} name @param {V1DatabaseBranchRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
   async branch(name, request, options = {}) {
     members(request, ["name"]);
-    mutationOptions(options);
     const response = await this.#transport.call("branchDatabase", { database: requireDatabaseSelector(name) }, {
       body: stringifyExactJson({ name: requireName("database", request.name) }, "database branch"), signal: options.signal,
     });
@@ -201,7 +173,6 @@ export class V1Databases {
    */
   async branchIfId(name, request, expectedId, options = {}) {
     members(request, ["name"]);
-    mutationOptions(options);
     const response = await this.#transport.call("branchDatabaseIfId",
       { database: requireDatabaseSelector(name), expectedId: requireId(expectedId) }, {
         body: stringifyExactJson({ name: requireName("database", request.name) }, "database branch"), signal: options.signal,

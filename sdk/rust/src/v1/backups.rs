@@ -31,8 +31,10 @@ pub type BackupList = ManagementPage<Backup>;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupPolicy {
+    #[serde(default)]
     pub full_backup_cron: Option<String>,
     pub retention_days: i32,
+    #[serde(default)]
     pub updated_at: Option<String>,
 }
 
@@ -48,7 +50,9 @@ pub struct BackupPolicyRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreWindow {
+    #[serde(alias = "earliestRestorePointUtc")]
     pub earliest: String,
+    #[serde(alias = "latestRestorePointUtc")]
     pub latest: String,
 }
 
@@ -60,6 +64,7 @@ pub struct PointInTimePlan {
     pub window: RestoreWindow,
     pub point_in_time: String,
     pub snapshot_at: String,
+    #[serde(default)]
     pub latest_segment_at: Option<String>,
     pub segment_count: i32,
     pub history_check: String,
@@ -68,19 +73,57 @@ pub struct PointInTimePlan {
 /// A background restore started by a restore route; `database` names the
 /// restored database once `status` is `completed`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(from = "RestoreProgress")]
 pub struct RestoreOperation {
-    #[serde(deserialize_with = "super::ids::entity_id")]
-    pub id: String,
-    #[serde(deserialize_with = "super::ids::entity_id")]
     pub operation_id: String,
+    /// `pending`, `running`, `completed` or `failed`.
     pub status: String,
-    pub kind: String,
     pub database: String,
-    pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub created_at: String,
     pub finished_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreProgress {
+    #[serde(deserialize_with = "super::ids::entity_id")]
+    operation_id: String,
+    #[serde(deserialize_with = "super::ids::entity_id")]
+    target_database_id: String,
+    state: RestoreState,
+    started_at_utc: String,
+    updated_at_utc: String,
+    #[serde(default)]
+    failure_message: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RestoreState {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+impl From<RestoreProgress> for RestoreOperation {
+    fn from(progress: RestoreProgress) -> Self {
+        let (status, finished_at) = match progress.state {
+            RestoreState::Pending => ("pending", None),
+            RestoreState::Running => ("running", None),
+            RestoreState::Succeeded => ("completed", Some(progress.updated_at_utc)),
+            RestoreState::Failed => ("failed", Some(progress.updated_at_utc)),
+        };
+        Self {
+            operation_id: progress.operation_id,
+            status: status.into(),
+            database: progress.target_database_id,
+            error_message: progress.failure_message,
+            created_at: progress.started_at_utc,
+            finished_at,
+        }
+    }
 }
 
 /// Selects a restore instant and platform (default) or customer destination;
@@ -112,7 +155,7 @@ pub(crate) async fn await_restore_on(
     let database = Database::new(client, source.to_string());
     let operation = database.poll_restore(operation).await?;
     Database::new(database.client().clone(), operation.database)
-        .management::<ProjectDatabaseInfo>(Method::GET, &[], &[], None::<&()>, StatusCode::OK)
+        .get_json::<ProjectDatabaseInfo>(&[], &[])
         .await
 }
 
@@ -125,8 +168,10 @@ pub struct RestoredDatabase {
     #[serde(deserialize_with = "super::ids::entity_id")]
     pub project_id: String,
     pub name: String,
+    #[serde(default)]
     pub branched_from: Option<String>,
     pub created_at: String,
+    #[serde(default)]
     pub home_region: Option<String>,
     #[serde(deserialize_with = "restore_placement_version")]
     pub placement_version: i64,
@@ -153,74 +198,6 @@ fn restore_placement_version<'de, D: serde::Deserializer<'de>>(
     parsed.ok_or_else(|| serde::de::Error::custom("expected exact signed placement version"))
 }
 
-/// Customer bucket metadata without credentials.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectBackupDestination {
-    pub endpoint: String,
-    pub region: String,
-    pub bucket: String,
-    pub mode: String,
-    pub updated_at: String,
-}
-
-/// Replaces a destination; credentials are write-only and never logged.
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectBackupDestinationRequest {
-    pub endpoint: String,
-    pub region: String,
-    pub bucket: String,
-    pub mode: String,
-    pub access_key_id: String,
-    pub secret_key: String,
-}
-impl std::fmt::Debug for ProjectBackupDestinationRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProjectBackupDestinationRequest")
-            .field("endpoint", &self.endpoint)
-            .field("region", &self.region)
-            .field("bucket", &self.bucket)
-            .field("mode", &self.mode)
-            .field("access_key_id", &"<redacted>")
-            .field("secret_key", &"<redacted>")
-            .finish()
-    }
-}
-
-impl Client {
-    /// `GET P/backup-destination`; responses never contain credentials.
-    pub async fn get_backup_destination(&self) -> Result<ProjectBackupDestination> {
-        self.management(
-            Method::GET,
-            vec!["v1", "backup-destination"],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `PUT P/backup-destination`; credentials are sent only in the body.
-    pub async fn set_backup_destination(
-        &self,
-        body: &ProjectBackupDestinationRequest,
-    ) -> Result<ProjectBackupDestination> {
-        self.management(
-            Method::PUT,
-            vec!["v1", "backup-destination"],
-            &[],
-            Some(body),
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `DELETE P/backup-destination`.
-    pub async fn delete_backup_destination(&self) -> Result<()> {
-        self.send_project(Req::new(Method::DELETE, vec!["v1", "backup-destination"]))
-            .await?
-            .check_status(&[StatusCode::NO_CONTENT])
-    }
-}
 impl Database {
     /// `GET D/restores/{operation}`; one background restore's status.
     pub async fn get_restore_operation(&self, operation: &str) -> Result<RestoreOperation> {
@@ -229,19 +206,12 @@ impl Database {
                 "operation must be a canonical uppercase ULID".into(),
             ));
         }
-        self.management(
-            Method::GET,
-            &["restores", operation],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["restores", operation], &[]).await
     }
 
     async fn poll_restore(&self, mut operation: RestoreOperation) -> Result<RestoreOperation> {
         let deadline = Instant::now() + RESTORE_DEADLINE;
-        while operation.status == "running" {
+        while matches!(operation.status.as_str(), "pending" | "running") {
             if Instant::now() >= deadline {
                 return Err(Error::Api {
                     status: 504,
@@ -251,14 +221,12 @@ impl Database {
                 });
             }
             tokio::time::sleep(RESTORE_POLL_INTERVAL).await;
-            operation = self.get_restore_operation(&operation.id).await?;
+            operation = self.get_restore_operation(&operation.operation_id).await?;
         }
         if operation.status != "completed" {
             return Err(Error::Api {
                 status: 200,
-                code: operation
-                    .error_code
-                    .unwrap_or_else(|| "restore_failed".into()),
+                code: "restore_failed".into(),
                 message: Some(
                     operation
                         .error_message
@@ -273,7 +241,7 @@ impl Database {
     async fn await_restore(&self, operation: RestoreOperation) -> Result<RestoredDatabase> {
         let operation = self.poll_restore(operation).await?;
         Database::new(self.client().clone(), operation.database)
-            .management::<RestoredDatabase>(Method::GET, &[], &[], None::<&()>, StatusCode::OK)
+            .get_json::<RestoredDatabase>(&[], &[])
             .await
     }
 
@@ -290,14 +258,7 @@ impl Database {
     }
     /// `GET D/backups`; management after/next pagination.
     pub async fn list_backups(&self, query: &[(&str, String)]) -> Result<BackupList> {
-        self.management(
-            Method::GET,
-            &["backups"],
-            query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["backups"], query).await
     }
     /// `POST D/backups/{backup}/restore`; optional new database name. Waits for
     /// the background operation, then returns the restored database.
@@ -327,14 +288,7 @@ impl Database {
     }
     /// `GET D/backup-policy`.
     pub async fn get_backup_policy(&self) -> Result<BackupPolicy> {
-        self.management(
-            Method::GET,
-            &["backup-policy"],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["backup-policy"], &[]).await
     }
     /// `PUT D/backup-policy`; fullBackupCron and retentionDays.
     pub async fn set_backup_policy(&self, body: &BackupPolicyRequest) -> Result<BackupPolicy> {
@@ -349,14 +303,7 @@ impl Database {
     }
     /// `GET D/point-in-time`; optional destination=platform|customer.
     pub async fn get_restore_window(&self, query: &[(&str, String)]) -> Result<RestoreWindow> {
-        self.management(
-            Method::GET,
-            &["point-in-time"],
-            query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["point-in-time"], query).await
     }
     /// `POST D/point-in-time/plan`; read-only advisory metadata, never a restore.
     pub async fn plan_point_in_time(&self, body: &PointInTimeRequest) -> Result<PointInTimePlan> {
@@ -395,13 +342,15 @@ impl Database {
         &self,
         body: &PointInTimeRequest,
     ) -> Result<RestoredDatabase> {
-        self.management::<RestoredDatabase>(
-            Method::POST,
-            &["point-in-time", "rewind"],
-            &[],
-            Some(body),
-            StatusCode::OK,
-        )
-        .await
+        let operation = self
+            .management::<RestoreOperation>(
+                Method::POST,
+                &["point-in-time", "rewind"],
+                &[],
+                Some(body),
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        self.await_restore(operation).await
     }
 }

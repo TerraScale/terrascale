@@ -12,29 +12,29 @@ pub struct RulesSet {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RulesTable {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub writable: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validate: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set: Option<RulesValues>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RulesValues {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create: Option<BTreeMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<BTreeMap<String, String>>,
 }
 
@@ -51,7 +51,9 @@ pub struct RulesProblem {
 pub struct Rules {
     pub version: String,
     pub tables: BTreeMap<String, RulesTable>,
+    #[serde(default)]
     pub problems: Option<Vec<RulesProblem>>,
+    #[serde(default)]
     pub warnings: Option<Vec<RulesProblem>>,
     pub updated_at: String,
     pub updated_by: String,
@@ -67,6 +69,7 @@ pub struct RulesVersion {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RulesTestAuth {
     pub uid: String,
     pub claims: Option<BTreeMap<String, Value>>,
@@ -83,6 +86,7 @@ pub struct RulesTestRequest {
     pub row: Option<BTreeMap<String, Value>>,
     pub new: Option<BTreeMap<String, Value>>,
     pub time: Option<i64>,
+    #[serde(flatten)]
     pub rules: Option<RulesSet>,
 }
 
@@ -96,9 +100,13 @@ pub struct RulesTestValue {
 #[serde(rename_all = "camelCase")]
 pub struct RulesTestResult {
     pub allowed: bool,
+    #[serde(default)]
     pub decided_by: String,
+    #[serde(default, alias = "condition")]
     pub clause: Option<String>,
+    #[serde(default)]
     pub results: Vec<RulesTestValue>,
+    #[serde(default)]
     pub columns: Vec<String>,
     pub problems: Vec<RulesProblem>,
 }
@@ -113,8 +121,7 @@ fn precondition(version: Option<&str>) -> Result<(&'static str, String)> {
 
 impl Database {
     pub async fn get_rules(&self) -> Result<Rules> {
-        self.management(Method::GET, &["rules"], &[], None::<&()>, StatusCode::OK)
-            .await
+        self.get_json(&["rules"], &[]).await
     }
 
     pub async fn deploy_rules(
@@ -144,28 +151,14 @@ impl Database {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()));
         }
-        self.management(
-            Method::GET,
-            &["rules", "versions"],
-            &query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["rules", "versions"], &query).await
     }
 
     pub async fn get_rules_version(&self, version: &str) -> Result<Rules> {
         if !super::is_valid_id(version) {
             return Err(Error::InvalidInput("rules version must be a ULID".into()));
         }
-        self.management(
-            Method::GET,
-            &["rules", "versions", version],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(&["rules", "versions", version], &[]).await
     }
 
     pub async fn restore_rules(

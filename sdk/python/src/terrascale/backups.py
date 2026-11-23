@@ -33,7 +33,7 @@ def _terminal(operation: RestoreOperation) -> RestoreOperation:
 def _send_or_timeout(send: Callable[[Call], Any], project: str, source: str,
                      operation: RestoreOperation) -> RestoreOperation:
     deadline = time.monotonic() + DEADLINE_SECONDS
-    while operation.status == "running":
+    while operation.status in ("pending", "running"):
         if time.monotonic() >= deadline:
             raise APIError(504, "restore_timeout", "the restore operation did not finish within ten minutes")
         time.sleep(POLL_SECONDS)
@@ -44,7 +44,7 @@ def _send_or_timeout(send: Callable[[Call], Any], project: str, source: str,
 async def _send_or_timeout_async(send: Callable[[Call], Any], project: str, source: str,
                                  operation: RestoreOperation) -> RestoreOperation:
     deadline = time.monotonic() + DEADLINE_SECONDS
-    while operation.status == "running":
+    while operation.status in ("pending", "running"):
         if time.monotonic() >= deadline:
             raise APIError(504, "restore_timeout", "the restore operation did not finish within ten minutes")
         await asyncio.sleep(POLL_SECONDS)
@@ -74,7 +74,7 @@ class BackupPage:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> BackupPage:
-        return cls([Backup.from_json(x) for x in b["items"]], b["next"])
+        return cls([Backup.from_json(x) for x in b["items"]], b.get("next"))
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,11 @@ class RestoreWindow:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> RestoreWindow:
-        return cls(b["earliest"], b["latest"])
+        earliest = b.get("earliestRestorePointUtc", b.get("earliest"))
+        latest = b.get("latestRestorePointUtc", b.get("latest"))
+        if not isinstance(earliest, str) or not isinstance(latest, str):
+            raise ValueError("invalid restore window")
+        return cls(earliest, latest)
 
 
 @dataclass(frozen=True)
@@ -99,7 +103,7 @@ class PointInTimePlan:
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> PointInTimePlan:
         return cls(RestoreWindow.from_json(b["window"]), b["pointInTime"], b["snapshotAt"],
-                   b["latestSegmentAt"], int(b["segmentCount"]), b["historyCheck"])
+                   b.get("latestSegmentAt"), int(b["segmentCount"]), b["historyCheck"])
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,7 @@ class RestoredDatabase:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> RestoredDatabase:
-        return cls(b["id"], b["projectId"], b["name"], b["branchedFrom"], b["createdAt"], b)
+        return cls(b["id"], b["projectId"], b["name"], b.get("branchedFrom"), b["createdAt"], b)
 
 
 class _Requests:
@@ -126,8 +130,8 @@ class _Requests:
 
     def _call(self, method: str, suffix: list[str], parse: Callable[[dict[str, Any]], Any], *,
               body: dict[str, Any] | None = None, params: dict[str, str] | None = None) -> Call:
-        restore = method == "POST" and suffix[-1] == "restore"
-        immediate = suffix in (["point-in-time", "plan"], ["point-in-time", "rewind"])
+        restore = method == "POST" and suffix[-1] in ("restore", "rewind")
+        immediate = suffix == ["point-in-time", "plan"]
         success = (202,) if restore else (201,) if method == "POST" and not immediate else (200,)
         return Call(method, [*self._path, *suffix], lambda r: parse(r.json()), body=body,
                     params=params or {}, replay_safe=method == "GET" or suffix == ["point-in-time", "plan"],
@@ -157,8 +161,7 @@ class _Requests:
         body = {"pointInTime": point_in_time, **self._destination(destination)}
         if new_name is not None:
             body["name"] = database_name(new_name)
-        parse = (PointInTimePlan.from_json if operation == "plan" else RestoredDatabase.from_json
-                 if operation == "rewind" else RestoreOperation.from_json)
+        parse = PointInTimePlan.from_json if operation == "plan" else RestoreOperation.from_json
         return self._call("POST", ["point-in-time", operation], parse, body=body)
 
     @staticmethod
@@ -204,7 +207,9 @@ class DatabaseBackups(_Requests):
         return self._client._send(self._restored(done.database))
 
     def rewind_point_in_time(self, point_in_time: str, *, destination: Destination = "platform") -> RestoredDatabase:
-        return self._client._send(self._recovery("rewind", point_in_time, destination))
+        operation = self._client._send(self._recovery("rewind", point_in_time, destination))
+        done = _send_or_timeout(self._client._send, self._project, self._database, operation)
+        return self._client._send(self._restored(done.database))
 
 
 class AsyncDatabaseBackups(_Requests):
@@ -243,4 +248,6 @@ class AsyncDatabaseBackups(_Requests):
         return await self._client._send(self._restored(done.database))
 
     async def rewind_point_in_time(self, point_in_time: str, *, destination: Destination = "platform") -> RestoredDatabase:
-        return await self._client._send(self._recovery("rewind", point_in_time, destination))
+        operation = await self._client._send(self._recovery("rewind", point_in_time, destination))
+        done = await _send_or_timeout_async(self._client._send, self._project, self._database, operation)
+        return await self._client._send(self._restored(done.database))

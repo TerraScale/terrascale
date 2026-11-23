@@ -3,7 +3,7 @@ use std::fmt;
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
-use super::client::{Client, Req};
+use super::client::Client;
 use super::database::ProjectDatabaseInfo;
 use super::errors::{Error, Result};
 use super::ids::{check_database_selector, check_name, is_valid_id};
@@ -150,36 +150,26 @@ impl Client {
             #[serde(flatten)]
             options: &'a ForkDatabaseOptions,
         }
-        let point_in_time = options.point_in_time.is_some();
-        let mut segments = vec!["v1", "databases", source];
-        if point_in_time {
-            segments.extend(["point-in-time", "restore"]);
-        } else {
-            segments.push("branches");
-        }
-        let status = if point_in_time {
-            StatusCode::ACCEPTED
-        } else {
-            StatusCode::CREATED
-        };
-        if !point_in_time {
-            return self
+        let body = Body { name, options };
+        let source_db = self.database(source);
+        if options.point_in_time.is_none() {
+            return source_db
                 .management(
                     Method::POST,
-                    segments,
+                    &["branches"],
                     &[],
-                    Some(&Body { name, options }),
-                    status,
+                    Some(&body),
+                    StatusCode::CREATED,
                 )
                 .await;
         }
-        let operation = self
+        let operation = source_db
             .management::<super::backups::RestoreOperation>(
                 Method::POST,
-                segments,
+                &["point-in-time", "restore"],
                 &[],
-                Some(&Body { name, options }),
-                status,
+                Some(&body),
+                StatusCode::ACCEPTED,
             )
             .await?;
         super::backups::await_restore_on(self.clone(), source, operation).await
@@ -227,10 +217,7 @@ impl Client {
     }
 
     pub async fn delete_database(&self, database: &str) -> Result<()> {
-        check_database_selector(database)?;
-        self.send_project(Req::new(Method::DELETE, vec!["v1", "databases", database]))
-            .await?
-            .check_status(&[StatusCode::NO_CONTENT])
+        self.database(database).delete_database().await
     }
 
     pub async fn create_scoped_key(&self, options: &ScopedKeyOptions) -> Result<ScopedKey> {

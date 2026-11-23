@@ -5,10 +5,6 @@ export function members(request, allowed) {
       ![Object.prototype, null].includes(Object.getPrototypeOf(request))) throw new TypeError("Expected a plain request object.");
   for (const key of Object.keys(request)) if (!allowed.includes(key)) throw new TypeError(`Unknown request member ${key}.`);
 }
-/** @param {object} options */
-export function mutationOptions(options) {
-  if ("idempotencyKey" in options) throw new TypeError("The producer does not support Idempotency-Key; mutations are never replayed.");
-}
 /** @param {V1DatabaseListRequest} request */
 export function pageQuery(request) {
   members(request, ["after", "limit"]);

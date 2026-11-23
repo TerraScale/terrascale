@@ -31,7 +31,7 @@ func (d *Database) path(extra ...string) ([]string, error) {
 	if err := checkDatabaseSelector(d.name); err != nil {
 		return nil, err
 	}
-	return append([]string{"v1", "projects", d.project, "databases", d.name}, extra...), nil
+	return databasePath(d.project, d.name, extra...), nil
 }
 
 type DatabaseInfo struct {

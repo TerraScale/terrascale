@@ -183,7 +183,6 @@ function platformCaller(config, provider, credential = signInToken) {
   const apiBaseUrl = serviceOrigin(config.apiBaseUrl, "apiBaseUrl", authService);
   if (provider !== undefined && typeof provider !== "function") credential(provider);
   const base = { apiBaseUrl, ...(config.fetch === undefined ? {} : { fetch: config.fetch }) };
-  // Validate the shared transport's origin policy before the first request.
   new TsAuthHttp(base);
 
   /**
@@ -207,16 +206,12 @@ function platformCaller(config, provider, credential = signInToken) {
     const proof = stepUp === undefined ? undefined : stepUpProof(options.stepUpProof);
     const path = route.pathTemplate.replace(/\{(organization|project|user|key|invitation|provider)\}/gu,
       (_match, name) => encodeURIComponent(name === "provider" ? providerName(selectors.provider) : requireId(Reflect.get(selectors, name), name)));
-    // Resolve once per request, under TsAuthHttp's deadline/cancellation.
-    // The shared transport does not refresh credentials or replay auth failures.
     /** @type {Promise<string> | undefined} */
     let token;
     const http = new TsAuthHttp({ ...base, ...(provider === undefined ? {} : { accessToken: () => token ??= Promise.resolve().then(async () => {
       try {
         return credential(typeof provider === "function" ? await provider() : provider);
       } catch {
-        // A caller's provider can throw a credential-bearing diagnostic. Never
-        // forward that exception or its cause into a public transport result.
         throw new Error(credential === signInToken ? "Could not resolve the platform sign-in token." : "Could not resolve the project API key.");
       }
     }) }) });
@@ -227,8 +222,6 @@ function platformCaller(config, provider, credential = signInToken) {
       ...(proof === undefined ? {} : { stepUpProof: proof }),
       ...(options.signal === undefined ? {} : { signal: options.signal }) });
     if (!result.ok) {
-      // Provider and fetch implementations are caller code. Transport exceptions
-      // can echo request credentials; retain only our fixed provider diagnostics.
       if (result.error.kind === "transport") return err(result.routeName, { kind: "transport", code: result.error.code,
         message: ["Could not resolve the platform sign-in token.", "Could not resolve the project API key."].includes(result.error.message)
           ? result.error.message : "The platform identity request failed before a response was received." });

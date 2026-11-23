@@ -30,8 +30,6 @@ use crate::consistency::{ConsistencyMode, BOOKMARK_HEADER, CONSISTENCY_HEADER};
 /// The SQL WebSocket subprotocol: frames carry causal bookmarks and
 /// `fast` / `strong` consistency.
 pub const SQL_SUBPROTOCOL: &str = "terrascale.sql.v2";
-/// The earlier SQL WebSocket subprotocol, without bookmarks in answers.
-pub const SQL_SUBPROTOCOL_V1: &str = "terrascale.sql.v1";
 /// Maximum bytes of one client frame.
 pub const MAX_SQL_FRAME_BYTES: usize = 1 << 20;
 
@@ -50,9 +48,11 @@ struct Frame<'a> {
 
 #[derive(Deserialize)]
 struct Answer {
+    #[serde(default)]
     id: Option<u64>,
     #[serde(default)]
     results: Vec<SqlStatementResult>,
+    #[serde(default)]
     error: Option<SqlError>,
     transaction: bool,
     #[serde(default)]
@@ -521,7 +521,7 @@ impl SqlSession {
         }
         let socket = db
             .client()
-            .open_socket_with(
+            .open_socket(
                 vec!["v1", "databases", db.name(), "sql", "ws"],
                 &[],
                 &headers,

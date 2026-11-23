@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"terrascale.tech/sdk/internal/httpx"
 )
 
 type ShapeOptions struct {
@@ -285,7 +286,7 @@ func (s *Shape) run(ctx context.Context, c *Client, path []string, filter url.Va
 			if api != nil && api.retryAfterSet {
 				pause = api.RetryAfter
 			}
-			if err := sleep(ctx, pause); err != nil {
+			if err := httpx.Wait(ctx, pause); err != nil {
 				return err
 			}
 			attempt++
@@ -354,7 +355,7 @@ func (c *Client) waitShapeHint(ctx context.Context, path []string, filter url.Va
 		cancel()
 		if err != nil {
 			if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
-				body, readErr := io.ReadAll(io.LimitReader(resp.Body, c.maxResponse))
+				body, readErr := io.ReadAll(io.LimitReader(resp.Body, DefaultMaxResponseBytes))
 				_ = resp.Body.Close()
 				api := parseAPIError(resp.StatusCode, resp.Header, body)
 				api.cause = readErr

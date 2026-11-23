@@ -10,12 +10,14 @@ pub struct Organization {
     /// slug.
     pub slug: String,
     /// image url.
+    #[serde(default)]
     pub image_url: Option<String>,
     /// public metadata.
     pub public_metadata: serde_json::Map<String, Value>,
     /// private metadata.
     pub private_metadata: serde_json::Map<String, Value>,
     /// max members.
+    #[serde(default)]
     pub max_members: Option<i32>,
     /// domain join.
     pub domain_join: String,
@@ -31,14 +33,19 @@ pub struct OrganizationRequest {
     /// slug.
     pub slug: String,
     /// admin user id.
+    #[serde(default)]
     pub admin_user_id: Option<String>,
     /// image url.
+    #[serde(default)]
     pub image_url: Option<String>,
     /// public metadata.
+    #[serde(default)]
     pub public_metadata: Option<serde_json::Map<String, Value>>,
     /// private metadata.
+    #[serde(default)]
     pub private_metadata: Option<serde_json::Map<String, Value>>,
     /// max members.
+    #[serde(default)]
     pub max_members: Option<i32>,
     /// domain join.
     pub domain_join: String,
@@ -63,6 +70,7 @@ pub struct OrganizationMembership {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizationMembershipRequest {
     /// user id.
+    #[serde(default)]
     pub user_id: Option<String>,
     /// role.
     pub role: String,
@@ -89,6 +97,7 @@ pub struct OrganizationInvitation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizationInvitationRequest {
     /// Optional plain-text inviter name.
+    #[serde(default)]
     pub inviter_name: Option<String>,
     /// email.
     pub email: String,
@@ -106,6 +115,7 @@ pub struct OrganizationDomain {
     /// record value.
     pub record_value: String,
     /// verified at.
+    #[serde(default)]
     pub verified_at: Option<String>,
 }
 
@@ -122,6 +132,7 @@ pub struct OrganizationPage {
     /// Returned records.
     pub items: Vec<Organization>,
     /// Next page cursor.
+    #[serde(default)]
     pub next: Option<String>,
 }
 
@@ -131,6 +142,7 @@ pub struct OrganizationMembershipPage {
     /// Returned records.
     pub items: Vec<OrganizationMembership>,
     /// Next page cursor.
+    #[serde(default)]
     pub next: Option<String>,
 }
 
@@ -140,6 +152,7 @@ pub struct OrganizationInvitationPage {
     /// Returned records.
     pub items: Vec<OrganizationInvitation>,
     /// Next page cursor.
+    #[serde(default)]
     pub next: Option<String>,
 }
 

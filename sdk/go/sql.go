@@ -433,7 +433,7 @@ func (q *QueryBuilder) OrderBy(exprs ...string) *QueryBuilder {
 			q.setError(fmt.Errorf("sdk: invalid ORDER BY expression %q", expr))
 			continue
 		}
-		q.orderBy = append(q.orderBy, normalizeOrderExpression(expr))
+		q.orderBy = append(q.orderBy, strings.TrimSpace(expr))
 	}
 	return q
 }
@@ -540,10 +540,4 @@ func validOrderExpression(value string) bool {
 		return false
 	}
 	return len(parts) == 1 || strings.EqualFold(parts[1], "ASC") || strings.EqualFold(parts[1], "DESC")
-}
-
-func normalizeOrderExpression(value string) string {
-	// Keep the original spelling for compatibility with the original builder;
-	// validOrderExpression has already excluded SQL fragments and operators.
-	return strings.TrimSpace(value)
 }

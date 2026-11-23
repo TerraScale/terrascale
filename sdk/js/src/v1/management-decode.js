@@ -7,7 +7,7 @@ export const flag = /** @type {Decoder<boolean>} */ (value => boolean(value, "bo
 /** @type {Decoder<number | ExactDecimal>} */
 export const numeric = value => typeof value === "number" && Number.isFinite(value) || value instanceof ExactDecimal ? value : malformed("number");
 /** @template T @param {Decoder<T>} decode @returns {Decoder<T | null>} */
-export const nullable = decode => value => value === null ? null : decode(value);
+export const nullable = decode => value => value == null ? null : decode(value);
 /** @template T @param {Decoder<T>} decode @returns {Decoder<T | undefined>} */
 export const optional = decode => value => value === undefined ? undefined : decode(value);
 /** @template T @param {T} fallback @param {Decoder<T>} decode @returns {Decoder<T>} */

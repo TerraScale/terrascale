@@ -1,11 +1,11 @@
 package causal
 
 import (
-	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -92,16 +92,16 @@ func decode(bookmark string) ([]entry, error) {
 	return entries, nil
 }
 
-func encode(entries []entry) string {
-	if len(entries) == 0 {
+func encode(sequences map[string]uint64) string {
+	if len(sequences) == 0 {
 		return ""
 	}
 	out := []byte{formatVersion}
-	out = binary.AppendUvarint(out, uint64(len(entries)))
-	for _, e := range entries {
-		out = binary.AppendUvarint(out, uint64(len(e.region)))
-		out = append(out, e.region...)
-		out = binary.AppendUvarint(out, e.sequence)
+	out = binary.AppendUvarint(out, uint64(len(sequences)))
+	for _, region := range slices.Sorted(maps.Keys(sequences)) {
+		out = binary.AppendUvarint(out, uint64(len(region)))
+		out = append(out, region...)
+		out = binary.AppendUvarint(out, sequences[region])
 	}
 	return base64.RawURLEncoding.EncodeToString(out)
 }
@@ -122,12 +122,7 @@ func Merge(bookmarks ...string) (string, error) {
 			newest[e.region] = max(newest[e.region], e.sequence)
 		}
 	}
-	entries := make([]entry, 0, len(newest))
-	for region, sequence := range newest {
-		entries = append(entries, entry{region: region, sequence: sequence})
-	}
-	slices.SortFunc(entries, func(a, b entry) int { return cmp.Compare(a.region, b.region) })
-	merged := encode(entries)
+	merged := encode(newest)
 	if len(merged) > MaxBookmarkLength {
 		return "", ErrInvalidBookmark
 	}

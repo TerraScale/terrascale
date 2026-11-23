@@ -11,7 +11,6 @@ export function generateId() {
 
 /** @param {unknown} value @returns {value is EntityId} */
 export function isValidId(value) {
-  // The library also accepts lowercase and 130-bit overflow; the public contract does not.
   return typeof value === "string" && isValid(value) && value === value.toUpperCase() && /^[0-7]/u.test(value);
 }
 

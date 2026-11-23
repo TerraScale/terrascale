@@ -24,7 +24,7 @@ function policy(value) {
 /** @param {JsonValue | undefined} value @returns {FileAccessRules} */
 function rules(value) {
   const v = object(value, "file access rules");
-  return { owner: v.owner === null ? null : string(v.owner, "owner pointer"), read: policy(v.read), write: policy(v.write) };
+  return { owner: v.owner == null ? null : string(v.owner, "owner pointer"), read: policy(v.read), write: policy(v.write) };
 }
 /** @param {JsonValue | undefined} value @returns {FileBucketInfo} */
 function bucketInfo(value) {
@@ -55,7 +55,6 @@ function signed(value) {
   /** @type {Record<string, string>} */
   const headers = {};
   for (const [key, val] of Object.entries(object(v.headers, "signed headers"))) {
-    // Object-store capabilities must never carry the project's authorization or cookies.
     if (!["content-type", "content-length", "x-amz-checksum-sha256"].includes(key.toLowerCase())) malformed("signed upload header");
     headers[key] = string(val, "signed header value");
   }
@@ -81,7 +80,7 @@ export class V1FileStorage {
   /** @param {FileListOptions} [options] @returns {Promise<{items: FileBucketInfo[], next: string | null}>} */
   async listBuckets(options = {}) {
     const v = object((await this.#transport.call("listFileBuckets", {}, { query: pageQuery(options), signal: options.signal })).value, "bucket page");
-    return { items: array(v.items, "bucket items").map(bucketInfo), next: v.next === null ? null : requireId(v.next) };
+    return { items: array(v.items, "bucket items").map(bucketInfo), next: v.next == null ? null : requireId(v.next) };
   }
   /** @param {string} id @returns {V1FileBucket} */
   bucket(id) { return new V1FileBucket(this.#transport, this.#fetch, requireId(id)); }
@@ -113,7 +112,7 @@ export class V1FileBucket {
   /** @param {FileListOptions} [options] @returns {Promise<{items: StoredFile[], next: string | null}>} */
   async list(options = {}) {
     const v = object((await this.#transport.call("listBucketFiles", { bucket: this.#bucket }, { query: pageQuery(options), signal: options.signal })).value, "file page");
-    return { items: array(v.items, "file items").map(storedFile), next: v.next === null ? null : requireId(v.next) };
+    return { items: array(v.items, "file items").map(storedFile), next: v.next == null ? null : requireId(v.next) };
   }
   /** @param {string} id @param {FileRequestOptions} [options] @returns {Promise<SignedFileUrl>} */
   async downloadUrl(id, options = {}) {
@@ -132,12 +131,10 @@ export class V1FileBucket {
     const sha256 = btoa(String.fromCharCode(...hash));
     const capability = await this.createUpload({ name, contentType: options.contentType ?? "application/octet-stream", size, sha256, metadata: options.metadata }, options);
     const headers = new Headers(capability.headers);
-    // Fetch computes Content-Length from the body; browsers prohibit setting it explicitly.
     headers.delete("Content-Length");
     /** @type {RequestInit & { duplex?: "half" }} */
     const init = { method: "PUT", headers, body: bytes, credentials: "omit", redirect: "error", signal: options.signal ?? null };
     if (typeof process !== "undefined" && process.release?.name === "node") {
-      // A one-shot stream prevents Node fetch from replaying the signed PUT on HTTP 421.
       headers.set("Content-Length", String(size));
       init.body = new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
       init.duplex = "half";

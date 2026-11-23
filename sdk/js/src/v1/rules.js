@@ -1,7 +1,7 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector } from "./ids.js";
 import { dictionary, flag, list, nullable, optional, record, text } from "./management-decode.js";
-import { members, mutationOptions, pageQuery } from "./management-validation.js";
+import { members, pageQuery } from "./management-validation.js";
 import { assertJsonObject, stringifyExactJson } from "./json.js";
 import { object } from "./decode.js";
 /** @import { V1Transport } from "./transport.js" */
@@ -82,7 +82,6 @@ export class V1DatabaseRules {
   }
   /** Deploys a rules set over `currentVersion`. @param {V1RulesSet} rules @param {string | null} currentVersion @param {V1RequestOptions} [options] @returns {Promise<V1Rules>} */
   async deploy(rules, currentVersion, options = {}) {
-    mutationOptions(options);
     return rulesBody((await this.#transport.call("putDatabaseRules", this.#params,
       { body: rulesJson(rules), headers: precondition(currentVersion), signal: options.signal })).value);
   }
@@ -98,7 +97,6 @@ export class V1DatabaseRules {
   }
   /** Deploys a kept version's body as a new version over `currentVersion`. @param {string} version @param {string | null} currentVersion @param {V1RequestOptions} [options] @returns {Promise<V1Rules>} */
   async restore(version, currentVersion, options = {}) {
-    mutationOptions(options);
     return rulesBody((await this.#transport.call("restoreDatabaseRulesVersion", { ...this.#params, version: requireId(version, "rules version") },
       { headers: precondition(currentVersion), signal: options.signal })).value);
   }

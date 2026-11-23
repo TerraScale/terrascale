@@ -134,10 +134,11 @@ class ProjectUsage:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> ProjectUsage:
+        file_bytes = b.get("fileBytes")
         return cls(b["projectId"], int(b["databases"]), int(b["storageBytes"]), int(b["logicalBytes"]),
                    int(b["reads"]), int(b["writes"]), UsagePeriod.from_json(b["period"]),
                    [UsagePoint.from_json(p) for p in b["series"]], [DatabaseUsage.from_json(x) for x in b["items"]],
-                   UsageMonth.from_json(b["month"]), int(b["fileBytes"]) if b.get("fileBytes") is not None else None, b)
+                   UsageMonth.from_json(b["month"]), int(file_bytes) if file_bytes is not None else None, b)
 
 
 @dataclass(frozen=True)
@@ -178,9 +179,10 @@ class AnalyticsPoint:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> AnalyticsPoint:
+        storage_bytes = b.get("storageBytes")
         return cls(b["start"], _counts(b["requests"]), _counts(b["operations"]), int(b["errors"]),
                    LatencyPercentiles.from_json(b["latency"]),
-                   int(b["storageBytes"]) if b.get("storageBytes") is not None else None,
+                   int(storage_bytes) if storage_bytes is not None else None,
                    Bandwidth.from_json(b["clientBandwidth"]), Bandwidth.from_json(b["replicationBandwidth"]))
 
 

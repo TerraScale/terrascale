@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
+
+import httpx
 
 from . import _spec
 from .auth import _cursor, _origin, _page_limit, _tenant_path
@@ -23,7 +26,8 @@ class Organization:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Organization:
-        return cls(**{key: body[key] for key in cls.__dataclass_fields__})
+        return cls(body["id"], body["name"], body["slug"], body.get("image_url"), body["public_metadata"],
+                   body["private_metadata"], body.get("max_members"), body["domain_join"], body["created_at"])
 
 
 @dataclass(frozen=True)
@@ -99,7 +103,7 @@ class OrganizationDomain:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> OrganizationDomain:
-        return cls(**{key: body[key] for key in cls.__dataclass_fields__})
+        return cls(body["domain"], body["record_name"], body["record_value"], body.get("verified_at"))
 
 
 @dataclass(frozen=True)
@@ -118,7 +122,7 @@ class OrganizationPage:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> OrganizationPage:
-        return cls(tuple(Organization.from_json(item) for item in body["items"]), body["next"])
+        return cls(tuple(Organization.from_json(item) for item in body["items"]), body.get("next"))
 
 
 @dataclass(frozen=True)
@@ -130,7 +134,7 @@ class OrganizationMembershipPage:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> OrganizationMembershipPage:
-        return cls(tuple(OrganizationMembership.from_json(item) for item in body["items"]), body["next"])
+        return cls(tuple(OrganizationMembership.from_json(item) for item in body["items"]), body.get("next"))
 
 
 @dataclass(frozen=True)
@@ -142,7 +146,7 @@ class OrganizationInvitationPage:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> OrganizationInvitationPage:
-        return cls(tuple(OrganizationInvitation.from_json(item) for item in body["items"]), body["next"])
+        return cls(tuple(OrganizationInvitation.from_json(item) for item in body["items"]), body.get("next"))
 
 
 @dataclass(frozen=True)
@@ -156,181 +160,101 @@ class OrganizationDomainPage:
         return cls(tuple(OrganizationDomain.from_json(item) for item in body["items"]))
 
 
+def _call(method: str, path: list[str], parse: Callable[[httpx.Response], Any], issuer: str | None, *,
+          body: Any = None, params: dict[str, str] | None = None, success: tuple[int, ...] = (200,),
+          replay_safe: bool = False) -> _spec.Call:
+    return _spec.Call(method, path, parse, body=body, params=params or {}, base_url=_origin(issuer),
+                      success=success, replay_safe=replay_safe)
+
+
+def _json(parse: Callable[[dict[str, Any]], Any]) -> Callable[[httpx.Response], Any]:
+    return lambda response: parse(response.json())
+
+
+def _page(limit: int | None, after: str | None) -> dict[str, str]:
+    return _spec._page_params(_page_limit(limit), _cursor(after))
+
+
 def create_organization_call(issuer: str | None, project: str, request: OrganizationRequest) -> _spec.Call:
-    return _spec.Call(
-        "POST",
-        _tenant_path(project, "organizations"),
-        lambda response: Organization.from_json(response.json()),
-        body=asdict(request),
-        base_url=_origin(issuer),
-        success=(201,),
-    )
+    return _call("POST", _tenant_path(project, "organizations"), _json(Organization.from_json), issuer,
+                 body=asdict(request), success=(201,))
 
 
 def list_organizations_call(issuer: str | None, project: str, limit: int | None, after: str | None) -> _spec.Call:
-    return _spec.Call(
-        "GET",
-        _tenant_path(project, "organizations"),
-        lambda response: OrganizationPage.from_json(response.json()),
-        params=_spec._page_params(_page_limit(limit), _cursor(after)),
-        base_url=_origin(issuer),
-        success=(200,),
-        replay_safe=True,
-    )
+    return _call("GET", _tenant_path(project, "organizations"), _json(OrganizationPage.from_json), issuer,
+                 params=_page(limit, after), replay_safe=True)
 
 
 def get_organization_call(issuer: str | None, project: str, org: str) -> _spec.Call:
-    return _spec.Call(
-        "GET",
-        _tenant_path(project, "organizations", org),
-        lambda response: Organization.from_json(response.json()),
-        base_url=_origin(issuer),
-        success=(200,),
-        replay_safe=True,
-    )
+    return _call("GET", _tenant_path(project, "organizations", org), _json(Organization.from_json), issuer,
+                 replay_safe=True)
 
 
 def update_organization_call(issuer: str | None, project: str, org: str, request: OrganizationRequest) -> _spec.Call:
-    return _spec.Call(
-        "PUT",
-        _tenant_path(project, "organizations", org),
-        lambda response: Organization.from_json(response.json()),
-        body=asdict(request),
-        base_url=_origin(issuer),
-        success=(200,),
-    )
+    return _call("PUT", _tenant_path(project, "organizations", org), _json(Organization.from_json), issuer,
+                 body=asdict(request))
 
 
 def delete_organization_call(issuer: str | None, project: str, org: str) -> _spec.Call:
-    return _spec.Call(
-        "DELETE", _tenant_path(project, "organizations", org), _spec._none, base_url=_origin(issuer), success=(204,)
-    )
+    return _call("DELETE", _tenant_path(project, "organizations", org), _spec._none, issuer, success=(204,))
 
 
-def add_organization_member_call(
-    issuer: str | None, project: str, org: str, request: OrganizationMembershipRequest
-) -> _spec.Call:
-    return _spec.Call(
-        "POST",
-        _tenant_path(project, "organizations", org, "memberships"),
-        lambda response: OrganizationMembership.from_json(response.json()),
-        body=asdict(request),
-        base_url=_origin(issuer),
-        success=(201,),
-    )
+def add_organization_member_call(issuer: str | None, project: str, org: str,
+                                 request: OrganizationMembershipRequest) -> _spec.Call:
+    return _call("POST", _tenant_path(project, "organizations", org, "memberships"),
+                 _json(OrganizationMembership.from_json), issuer, body=asdict(request), success=(201,))
 
 
-def list_organization_members_call(
-    issuer: str | None, project: str, org: str, limit: int | None, after: str | None
-) -> _spec.Call:
-    return _spec.Call(
-        "GET",
-        _tenant_path(project, "organizations", org, "memberships"),
-        lambda response: OrganizationMembershipPage.from_json(response.json()),
-        params=_spec._page_params(_page_limit(limit), _cursor(after)),
-        base_url=_origin(issuer),
-        success=(200,),
-        replay_safe=True,
-    )
+def list_organization_members_call(issuer: str | None, project: str, org: str, limit: int | None,
+                                   after: str | None) -> _spec.Call:
+    return _call("GET", _tenant_path(project, "organizations", org, "memberships"),
+                 _json(OrganizationMembershipPage.from_json), issuer, params=_page(limit, after), replay_safe=True)
 
 
-def update_organization_member_call(
-    issuer: str | None, project: str, org: str, user: str, request: OrganizationMembershipRequest
-) -> _spec.Call:
-    return _spec.Call(
-        "PUT",
-        _tenant_path(project, "organizations", org, "memberships", user),
-        lambda response: OrganizationMembership.from_json(response.json()),
-        body=asdict(request),
-        base_url=_origin(issuer),
-        success=(200,),
-    )
+def update_organization_member_call(issuer: str | None, project: str, org: str, user: str,
+                                    request: OrganizationMembershipRequest) -> _spec.Call:
+    return _call("PUT", _tenant_path(project, "organizations", org, "memberships", user),
+                 _json(OrganizationMembership.from_json), issuer, body=asdict(request))
 
 
 def delete_organization_member_call(issuer: str | None, project: str, org: str, user: str) -> _spec.Call:
-    return _spec.Call(
-        "DELETE",
-        _tenant_path(project, "organizations", org, "memberships", user),
-        _spec._none,
-        base_url=_origin(issuer),
-        success=(204,),
-    )
+    return _call("DELETE", _tenant_path(project, "organizations", org, "memberships", user), _spec._none, issuer,
+                 success=(204,))
 
 
-def create_organization_invitation_call(
-    issuer: str | None, project: str, org: str, request: OrganizationInvitationRequest
-) -> _spec.Call:
-    return _spec.Call(
-        "POST",
-        _tenant_path(project, "organizations", org, "invitations"),
-        lambda response: OrganizationInvitation.from_json(response.json()),
-        body=asdict(request),
-        base_url=_origin(issuer),
-        success=(201,),
-    )
+def create_organization_invitation_call(issuer: str | None, project: str, org: str,
+                                        request: OrganizationInvitationRequest) -> _spec.Call:
+    return _call("POST", _tenant_path(project, "organizations", org, "invitations"),
+                 _json(OrganizationInvitation.from_json), issuer, body=asdict(request), success=(201,))
 
 
-def list_organization_invitations_call(
-    issuer: str | None, project: str, org: str, limit: int | None, after: str | None
-) -> _spec.Call:
-    return _spec.Call(
-        "GET",
-        _tenant_path(project, "organizations", org, "invitations"),
-        lambda response: OrganizationInvitationPage.from_json(response.json()),
-        params=_spec._page_params(_page_limit(limit), _cursor(after)),
-        base_url=_origin(issuer),
-        success=(200,),
-        replay_safe=True,
-    )
+def list_organization_invitations_call(issuer: str | None, project: str, org: str, limit: int | None,
+                                       after: str | None) -> _spec.Call:
+    return _call("GET", _tenant_path(project, "organizations", org, "invitations"),
+                 _json(OrganizationInvitationPage.from_json), issuer, params=_page(limit, after), replay_safe=True)
 
 
 def revoke_organization_invitation_call(issuer: str | None, project: str, org: str, invitation: str) -> _spec.Call:
-    return _spec.Call(
-        "DELETE",
-        _tenant_path(project, "organizations", org, "invitations", invitation),
-        _spec._none,
-        base_url=_origin(issuer),
-        success=(204,),
-    )
+    return _call("DELETE", _tenant_path(project, "organizations", org, "invitations", invitation), _spec._none,
+                 issuer, success=(204,))
 
 
-def add_organization_domain_call(issuer: str | None, project: str, org: str, request: OrganizationDomainRequest) -> _spec.Call:
-    return _spec.Call(
-        "POST",
-        _tenant_path(project, "organizations", org, "domains"),
-        lambda response: OrganizationDomain.from_json(response.json()),
-        body=asdict(request),
-        base_url=_origin(issuer),
-        success=(201,),
-    )
+def add_organization_domain_call(issuer: str | None, project: str, org: str,
+                                 request: OrganizationDomainRequest) -> _spec.Call:
+    return _call("POST", _tenant_path(project, "organizations", org, "domains"), _json(OrganizationDomain.from_json),
+                 issuer, body=asdict(request), success=(201,))
 
 
 def list_organization_domains_call(issuer: str | None, project: str, org: str) -> _spec.Call:
-    return _spec.Call(
-        "GET",
-        _tenant_path(project, "organizations", org, "domains"),
-        lambda response: OrganizationDomainPage.from_json(response.json()),
-        base_url=_origin(issuer),
-        success=(200,),
-        replay_safe=True,
-    )
+    return _call("GET", _tenant_path(project, "organizations", org, "domains"), _json(OrganizationDomainPage.from_json),
+                 issuer, replay_safe=True)
 
 
 def verify_organization_domain_call(issuer: str | None, project: str, org: str, domain: str) -> _spec.Call:
-    return _spec.Call(
-        "POST",
-        _tenant_path(project, "organizations", org, "domains", domain, "verify"),
-        lambda response: OrganizationDomain.from_json(response.json()),
-        base_url=_origin(issuer),
-        success=(200,),
-    )
+    return _call("POST", _tenant_path(project, "organizations", org, "domains", domain, "verify"),
+                 _json(OrganizationDomain.from_json), issuer)
 
 
 def delete_organization_domain_call(issuer: str | None, project: str, org: str, domain: str) -> _spec.Call:
-    return _spec.Call(
-        "DELETE",
-        _tenant_path(project, "organizations", org, "domains", domain),
-        _spec._none,
-        base_url=_origin(issuer),
-        success=(204,),
-    )
+    return _call("DELETE", _tenant_path(project, "organizations", org, "domains", domain), _spec._none, issuer,
+                 success=(204,))

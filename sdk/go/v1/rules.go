@@ -161,7 +161,20 @@ func (d *Database) TestRules(ctx context.Context, input RulesTestRequest) (*Rule
 	if err != nil {
 		return nil, err
 	}
+	body := struct {
+		RulesTestRequest
+		Tables map[string]RulesTable `json:"tables,omitzero"`
+	}{RulesTestRequest: input}
+	body.Rules = nil
+	if input.Rules != nil {
+		body.Tables = input.Rules.Tables
+	}
 	var out RulesTestResult
-	_, err = d.c.call(ctx, request{method: http.MethodPost, path: p}, input, &out)
+	answer := struct {
+		*RulesTestResult
+		Condition *string `json:"condition"`
+	}{RulesTestResult: &out}
+	_, err = d.c.call(ctx, request{method: http.MethodPost, path: p}, body, &answer)
+	out.Clause = answer.Condition
 	return &out, err
 }

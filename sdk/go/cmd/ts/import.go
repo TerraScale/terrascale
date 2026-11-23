@@ -40,9 +40,7 @@ func dbImport(ctx context.Context, db *v1.Database, path string, from int, input
 		statements = statements[1 : len(statements)-1]
 	}
 	total := len(statements)
-	if from < 1 {
-		from = 1
-	}
+	from = max(from, 1)
 	if from > total {
 		if total == 0 {
 			return nil
@@ -73,7 +71,7 @@ func runImportBatches(ctx context.Context, db *v1.Database, statements []string,
 	for len(statements) > 0 {
 		count := min(len(statements), maxImportStatementsPerBatch)
 		size := 0
-		for i := 0; i < count; i++ {
+		for i := range count {
 			if size+len(statements[i]) > maxImportBatchBytes && i > 0 {
 				count = i
 				break

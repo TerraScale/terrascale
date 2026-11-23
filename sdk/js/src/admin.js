@@ -1,4 +1,3 @@
-export { TerraScaleCapabilityUnavailableError } from "./management-contracts.js";
 import { createTerraBaseSystemClient } from "./v1/system.js";
 
 /** @typedef {import("./v1/system.js").TerraBaseSystemClientConfig & {readonly token: string}} TerraScaleAdministrationClientConfig */
@@ -17,10 +16,3 @@ export function createTerraScaleAdministrationClient(config) {
   return createTerraBaseSystemClient(config).platform;
 }
 
-/**
- * @deprecated Use createTerraScaleAdministrationClient with explicit administrator credentials.
- * @param {TerraScaleAdministrationClientConfig} config
- */
-export function requireTerraScaleAdministration(config) {
-  return createTerraScaleAdministrationClient(config);
-}

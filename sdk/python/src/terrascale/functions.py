@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -34,7 +34,11 @@ class Function:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> Function:
-        return cls(b["name"], b["source"], b["cron"], b["createdAt"], b["updatedAt"])
+        updated = b.get("updatedAtUtc", b.get("updatedAt"))
+        created = b.get("createdAt", updated)
+        if not isinstance(b.get("name"), str) or not isinstance(created, str) or not isinstance(updated, str):
+            raise ValueError("invalid function")
+        return cls(b["name"], b.get("source"), b.get("schedule", b.get("cron")), created, updated)
 
 
 @dataclass(frozen=True)
@@ -55,9 +59,10 @@ class FunctionLog:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> FunctionLog:
-        return cls(b["id"], b["at"], b["trigger"], b["status"], int(b["durationMs"]), b["lines"], b["error"],
+        http_status = b.get("httpStatus")
+        return cls(b["id"], b["at"], b["trigger"], b["status"], int(b["durationMs"]), b["lines"], b.get("error"),
                    int(b.get("sqlCalls", 0)), int(b.get("sqlMs", 0)), int(b.get("rowsRead", 0)), int(b.get("rowsWritten", 0)),
-                   int(b.get("responseBytes", 0)), None if b.get("httpStatus") is None else int(b["httpStatus"]))
+                   int(b.get("responseBytes", 0)), int(http_status) if http_status is not None else None)
 
 
 @dataclass(frozen=True)
@@ -107,6 +112,10 @@ class _FunctionCall(Call):
         return content
 
 
+def _function_list(body: Any) -> list[Function]:
+    return [Function.from_json(item) for item in body]
+
+
 class _Requests:
     def __init__(self, project: str, database: str):
         self._database = name(database, "database")
@@ -127,9 +136,10 @@ class _Requests:
                     return None
                 value = r.text if suffix == "invoke" and r.headers.get("content-type", "").startswith("text/") else (
                     r.json() if r.content else None)
-                if method == "GET" and (function is None or suffix == "logs"):
-                    if not isinstance(value, list):
-                        raise ValueError("expected an array")
+                if method == "GET" and function is None and isinstance(value, dict):
+                    value = value.get("functions")
+                if method == "GET" and (function is None or suffix == "logs") and not isinstance(value, list):
+                    raise ValueError("expected an array")
                 return parse(value)
             except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
                 error = APIError if method == "GET" else CommitUncertainError
@@ -143,7 +153,10 @@ class _Requests:
     def _deploy(self, function: str, deployment: FunctionDeployment) -> Call:
         if not isinstance(deployment.source, str) or not deployment.source or len(deployment.source.encode()) > 256 * 1024:
             raise ValueError("function source must contain 1 to 256 KiB of JavaScript")
-        return self._call("PUT", function, Function.from_json, body=asdict(deployment))
+        body: dict[str, Any] = {"source": deployment.source}
+        if deployment.cron is not None:
+            body["schedule"] = deployment.cron
+        return self._call("PUT", function, Function.from_json, body=body)
 
     def _logs(self, function: str, limit: int | None) -> Call:
         if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100):
@@ -164,7 +177,7 @@ class DatabaseFunctions(_Requests):
         self._client = database._c
 
     def list_functions(self) -> list[Function]:
-        return self._client._send(self._call("GET", None, lambda b: [Function.from_json(x) for x in b]))
+        return self._client._send(self._call("GET", None, _function_list))
 
     def get_function(self, function: str) -> Function:
         return self._client._send(self._call("GET", function, Function.from_json))
@@ -191,7 +204,7 @@ class AsyncDatabaseFunctions(_Requests):
         self._client = database._c
 
     async def list_functions(self) -> list[Function]:
-        return await self._client._send(self._call("GET", None, lambda b: [Function.from_json(x) for x in b]))
+        return await self._client._send(self._call("GET", None, _function_list))
 
     async def get_function(self, function: str) -> Function:
         return await self._client._send(self._call("GET", function, Function.from_json))

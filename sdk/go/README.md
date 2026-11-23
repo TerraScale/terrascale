@@ -176,10 +176,8 @@ once.
 ### Placement
 
 Every region that holds a database is equal. `CreateDatabaseOptions` accepts
-`Regions` (at least one region id, no duplicates) and `AllRegions`; unset options
-are not sent. TerraBase picks which region writes and moves that on its own when
-the set changes. `Database.Regions` reads each region's pull progress; an entry's
-`Role` is `writer` for the region that commits writes.
+`Regions` (one to nine distinct region IDs) or `AllRegions`. `Database.Regions`
+reports each region's health, replication lag and applied bookmark.
 
 ```go
 db, err := c.CreateDatabase(ctx, projectID, "orders", tb.CreateDatabaseOptions{Regions: []string{"gru", "sjc"}})
@@ -192,14 +190,10 @@ database, sorted by region id; the order has no meaning) and `AllRegions`.
 All-regions placement (`AllRegions`) holds the database
 in every serving region, including regions added later (`ts db placement ... -all-regions`).
 
-A region can accept a local SQL REST write and TerraBase applies it once. The default `TerraScale-Durability` is `local`. The server forwards a timed-out local publish with
-`TerraBase-Publish-Id` set to the same transaction id, and applies that write once.
-A push stream that returns NATS error 10074 is not retried, because the stream wants more copies than the cluster has.
-REST reads can use a ready local region. Copies are eventually
-consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
-preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
-placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
-serving region; otherwise set an explicit region list.
+Any serving region can accept SQL reads and writes. Fast writes commit locally
+and replicate asynchronously. Strong writes require a quorum. Pass a bookmark
+with `WithBookmark` when a SQL read must observe a write made through another
+client or database handle.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
@@ -374,18 +368,11 @@ collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
 the management service credential on the admin listener.
 A rejected token or credential is `ErrInvalidKey`.
 
-Every region that holds a database is equal. TerraBase picks which region writes.
-The public region IDs are `gru`, `sjc` and `fra`. `ManagedDatabase` reports `Region` (the
-answering node) and `Regions`.
+The public region IDs are `gru`, `sjc` and `fra`. `ManagedDatabase` reports the
+answering region in `Region` and the placement set in `Regions`.
 `CreateDatabaseIn(ctx, org, project, name, "gru")` (or `Database.CreateIn`)
 creates a database in that region; an empty region uses the called region.
 Deleting a database leaves its branches independent.
-Source-only, unreleased server behavior: a request reaching a region without a copy is
-served through one proxy hop by a region that holds the database. A region pin selects
-only the entry region and has no effect on the serving region for these calls; the proxy
-removes it. An unreachable destination or stale forwarded placement returns `503 unavailable`.
-See [release scope and proxy behavior](../region-proxy.md). Customer
-placement/residency does not enable or disable serving regions.
 
 ### Analytics (TS-762)
 
@@ -744,15 +731,11 @@ See the [agent databases guide](https://docs.terrascale.tech/guides/agent-databa
 
 ## Region-set placement
 
-Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
-and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
-with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
-Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
-`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint proxies to a region that holds the database in the unreleased server contract;
-see [source-only proxy behavior](../region-proxy.md). Use the global API origin.
+The server returns the region set in sorted order. `placementVersion` changes
+with membership and stays the same for an identical set. Use the global API
+origin.
 
-Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
+Removing a region can return `503 replica_not_ready` while newly added regions catch up.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
 A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
 The SDK exposes `*tb.APIError.Code` with `tb.ErrReplicaNotReady` and `tb.ErrMoveInProgress` (also `errors.Is`). Neither code is automatically retried;

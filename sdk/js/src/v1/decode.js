@@ -1,4 +1,3 @@
-// Typed decoding of TerraBase v1 response bodies.
 import { isJsonObject } from "./json.js";
 /** @import { JsonObject, JsonValue } from "./json.js" */
 

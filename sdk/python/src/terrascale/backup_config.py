@@ -70,7 +70,7 @@ def _redacted(error: TerraScaleError) -> TerraScaleError:
     safe_codes = {"invalid_response", "invalid_request", "invalid_key", "forbidden_scope", "forbidden_role", "not_found",
                   "rate_limited", "capacity", "storage_unavailable", "dependencies_unavailable", "commit_uncertain",
                   "write_outcome_unknown", "invalid_cursor", "name_taken", "conflict",
-                  "unknown_database", "unknown_route", "storage_busy", "unavailable", "misdirected_request", "wrong_region"}
+                  "unknown_database", "unknown_route", "storage_busy", "unavailable"}
     code = error.code if error.code in safe_codes else f"http_{error.status}"
     return type(error)(error.status, code, "configuration request failed; reconcile uncertain writes",
                        request_id=error.request_id, retry_after=error.retry_after)
@@ -99,9 +99,9 @@ class BackupPolicy:
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> BackupPolicy:
         retention = _integer(b["retentionDays"], 32)
-        if not 1 <= retention <= 35:
+        if not 1 <= retention <= 3650:
             raise ValueError("retention outside contract range")
-        return cls(_optional_text(b["fullBackupCron"]), retention, _optional_text(b["updatedAt"]))
+        return cls(_optional_text(b.get("fullBackupCron")), retention, _optional_text(b.get("updatedAt")))
 
 
 @dataclass(frozen=True)
@@ -111,8 +111,8 @@ class BackupPolicyUpdate:
 
     def body(self) -> dict[str, Any]:
         cron = _optional_text(self.full_backup_cron)
-        if type(self.retention_days) is not int or not 1 <= self.retention_days <= 35:
-            raise ValueError("retention_days must be an integer from 1 to 35")
+        if type(self.retention_days) is not int or not 1 <= self.retention_days <= 3650:
+            raise ValueError("retention_days must be an integer from 1 to 3650")
         return {"fullBackupCron": cron, "retentionDays": self.retention_days}
 
 

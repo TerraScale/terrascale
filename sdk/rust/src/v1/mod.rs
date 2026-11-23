@@ -50,8 +50,7 @@ pub use agent::{
 };
 pub use backups::{
     Backup, BackupList, BackupPolicy, BackupPolicyRequest, PointInTimePlan, PointInTimeRequest,
-    ProjectBackupDestination, ProjectBackupDestinationRequest, RestoreOperation, RestoreWindow,
-    RestoredDatabase,
+    RestoreOperation, RestoreWindow, RestoredDatabase,
 };
 pub use buckets::{BucketRules, FileBucket, FileBucketPage, ReadWriteGrants};
 pub use client::{
@@ -78,7 +77,7 @@ pub use sql_exec::{
     sql_error_codes, Sql, SqlBatchOutcome, SqlColumn, SqlColumnIndex, SqlRecord, SqlStatement,
     SqlStatementResult, SqlValue, MAX_SQL_BYTES, MAX_SQL_STATEMENTS,
 };
-pub use sql_session::{SqlSession, MAX_SQL_FRAME_BYTES, SQL_SUBPROTOCOL, SQL_SUBPROTOCOL_V1};
+pub use sql_session::{SqlSession, MAX_SQL_FRAME_BYTES, SQL_SUBPROTOCOL};
 pub use system::HealthResponse;
 pub use table_shape::{Shape, ShapeStatus, ShapeView};
-pub use types::{opt_u64_string, u64_string, Number};
+pub use types::Number;

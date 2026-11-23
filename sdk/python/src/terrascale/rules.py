@@ -29,7 +29,7 @@ class OperationGrants:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> OperationGrants:
-        grant = cls(b["owner"], b["public"], b["roles"])
+        grant = cls(b["owner"], b["public"], b.get("roles"))
         grant.body()
         return grant
 
@@ -49,7 +49,7 @@ class BucketRules:
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> BucketRules:
-        owner, read, write = b["owner"], b["read"], b["write"]
+        owner, read, write = b.get("owner"), b.get("read"), b.get("write")
         if owner is not None and not isinstance(owner, str):
             raise ValueError("invalid owner pointer")
         return cls(owner, OperationGrants.from_json(read) if read is not None else None,

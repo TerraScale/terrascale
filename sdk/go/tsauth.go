@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"unicode"
+
+	"terrascale.tech/sdk/internal/httpx"
 )
 
 // TSAuthClient calls a hosted ts-auth deployment's OpenID Connect provider
@@ -144,7 +146,7 @@ func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, 
 		}
 		if err != nil && responseErr == nil {
 			if retryable && attempt < maxRetries && requestCtx.Err() == nil {
-				if sleepErr := sleepContext(requestCtx, c.retryDelayFor(nil, attempt)); sleepErr != nil {
+				if sleepErr := httpx.Wait(requestCtx, c.retryDelayFor(nil, attempt)); sleepErr != nil {
 					return sleepErr
 				}
 				attempt++

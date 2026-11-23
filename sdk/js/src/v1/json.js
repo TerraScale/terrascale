@@ -1,11 +1,3 @@
-// Lossless JSON for the TerraBase v1 API.
-//
-// TerraBase numbers are exact decimals with up to 128 significant digits
-// (api-v1.md). Responses are parsed with JSON.parse source text access, so a
-// number is returned as a JavaScript number only when that number denotes the
-// same decimal value as the wire text; every other number becomes an
-// ExactDecimal holding the original text. Requests are encoded with
-// JSON.rawJSON, so ExactDecimal and bigint values reach the server unchanged.
 
 const decimalGrammar = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u;
 const maximumIntegerExponent = 4096n;
@@ -246,7 +238,7 @@ function requireProducerNumber(text, where) {
  * @param {string} where
  * @returns {void}
  */
-export function assertJsonValue(value, where) {
+function assertJsonValue(value, where) {
   assertJsonInput(value, 0, where, { nodes: 0 });
 }
 

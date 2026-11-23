@@ -1,4 +1,4 @@
-//! The v1 HTTPS client: configuration, retry policy and the request loop.
+//! The project HTTPS client: configuration, retry policy and the request loop.
 
 use std::collections::HashMap;
 use std::env;
@@ -7,7 +7,6 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
@@ -28,7 +27,7 @@ pub const MAX_REQUEST_BYTES: usize = 4 << 20;
 /// Default bound on one response body (64 MiB).
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 << 20;
 
-/// Retry policy for the v1 client.
+/// Retry policy for the project client.
 ///
 /// * `429 rate_limited` and `429 tenant_busy` are always retried (the request
 ///   was not admitted), after `Retry-After` capped at `max_retry_after`. A
@@ -376,7 +375,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SocketIo for T {}
 
 pub(crate) type WebSocket = tokio_tungstenite::WebSocketStream<Box<dyn SocketIo>>;
 
-/// A v1 client for one key. Cheap to clone; safe for concurrent use.
+/// A project client for one key. Cheap to clone; safe for concurrent use.
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<Inner>,
@@ -544,13 +543,10 @@ impl Resp {
         if allowed.contains(&self.status) {
             Ok(())
         } else if !self.status.is_success() && self.status != StatusCode::NOT_MODIFIED {
-            let retry_after = self
-                .header("Retry-After")
-                .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()));
             Err(errors::from_project_response(
                 self.status.as_u16(),
-                retry_after,
-                self.header("X-Request-ID"),
+                retry_after(&self.headers),
+                header(&self.headers, "X-Request-ID"),
                 &self.body,
                 self.mutation,
             ))
@@ -568,20 +564,17 @@ impl Resp {
         } else {
             Error::Decode(message)
         };
-        Error::Response {
-            status: self.status.as_u16(),
-            error: Box::new(error),
-            mutation: self.mutation,
-            retry_after: self
-                .header("Retry-After")
-                .and_then(|v| parse_retry_after(v, std::time::SystemTime::now())),
-            body: self.body.clone(),
-            request_id: self.header("X-Request-ID").map(str::to_owned),
-        }
+        wrap_response(
+            error,
+            self.status,
+            &self.headers,
+            self.body.clone(),
+            self.mutation,
+        )
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.get(name).and_then(|v| v.to_str().ok())
+        header(&self.headers, name)
     }
 }
 
@@ -612,32 +605,9 @@ impl Client {
             .map_err(|e| Error::Transport(describe(&e)))?;
         let status = response.status();
         let headers = response.headers().clone();
-        let mut body = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                self.response_error(
-                    Error::Transport(describe(&e)),
-                    status,
-                    &headers,
-                    body.clone(),
-                    true,
-                )
-            })?;
-            if body.len() + chunk.len() > self.inner.max_response {
-                return Err(self.response_error(
-                    Error::ResponseTooLarge {
-                        limit: self.inner.max_response,
-                        status: status.as_u16(),
-                        may_have_applied: !status.is_client_error(),
-                    },
-                    status,
-                    &headers,
-                    body,
-                    true,
-                ));
-            }
-            body.extend_from_slice(&chunk);
+        let (body, failed) = read_body(response, self.inner.max_response, true).await;
+        if let Some(error) = failed {
+            return Err(wrap_response(error, status, &headers, body, true));
         }
         let response = Resp {
             status,
@@ -649,11 +619,10 @@ impl Client {
             #[derive(serde::Deserialize)]
             struct Refusal {
                 error: String,
+                #[serde(default)]
                 error_description: Option<String>,
             }
-            let retry_after = response
-                .header("Retry-After")
-                .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()));
+            let retry_after = retry_after(&response.headers);
             if let Ok(refusal) = serde_json::from_slice::<Refusal>(&response.body) {
                 let error = if status == StatusCode::TOO_MANY_REQUESTS {
                     Error::RateLimited { retry_after }
@@ -665,7 +634,7 @@ impl Client {
                         details: None,
                     }
                 };
-                return Err(self.response_error(
+                return Err(wrap_response(
                     error,
                     status,
                     &response.headers,
@@ -684,12 +653,17 @@ impl Client {
         Ok(response)
     }
 
-    pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
-        if self.inner.project.is_none() {
-            return Err(Error::InvalidInput(
-                "this operation requires a C# TerraBase project client".into(),
-            ));
+    fn require_project(&self) -> Result<()> {
+        match self.inner.project {
+            Some(_) => Ok(()),
+            None => Err(Error::InvalidInput(
+                "this operation requires a project client".into(),
+            )),
         }
+    }
+
+    pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
+        self.require_project()?;
         self.send(req).await
     }
 
@@ -733,34 +707,14 @@ impl Client {
                 Ok(response) => {
                     let status = response.status();
                     let headers = response.headers().clone();
-                    let retry_after = headers
-                        .get(RETRY_AFTER)
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
-                    let mut body = Vec::new();
-                    let mut stream = response.bytes_stream();
-                    let failed = loop {
-                        match stream.next().await {
-                            Some(Ok(chunk)) => {
-                                if body.len() + chunk.len() > self.inner.max_response {
-                                    break Some(Error::ResponseTooLarge {
-                                        limit: self.inner.max_response,
-                                        status: status.as_u16(),
-                                        may_have_applied: false,
-                                    });
-                                }
-                                body.extend_from_slice(&chunk);
-                            }
-                            Some(Err(e)) => break Some(Error::Transport(describe(&e))),
-                            None => break None,
-                        }
-                    };
+                    let retry_after = retry_after(&headers);
+                    let (body, failed) = read_body(response, self.inner.max_response, false).await;
                     let error = match failed {
-                        Some(error) => self.response_error(error, status, &headers, body, false),
+                        Some(error) => wrap_response(error, status, &headers, body, false),
                         None => errors::from_project_response(
                             status.as_u16(),
                             retry_after,
-                            headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+                            header(&headers, "X-Request-ID"),
                             &body,
                             false,
                         ),
@@ -774,36 +728,10 @@ impl Client {
             {
                 error = Error::Transport("stream failed in transit".into());
             }
-            let transport = matches!(&error, Error::Transport(_));
-            let refusal = matches!(
-                (error.status(), error.code()),
-                (Some(429), Some("rate_limited" | "tenant_busy" | "http_429"))
-                    | (
-                        Some(503),
-                        Some(
-                            "capacity"
-                                | "commit_uncertain"
-                                | "storage_unavailable"
-                                | "dependencies_unavailable"
-                                | "storage_busy"
-                                | "not_primary"
-                                | "auth_unavailable",
-                        )
-                    )
-            );
-            let gateway = matches!(
-                (error.status(), error.code()),
-                (Some(status @ 502..=504), Some(code))
-                    if code.strip_prefix("http_") == Some(status.to_string().as_str())
-            );
-            let retry = attempt < policy.max_retries && (transport || refusal || gateway);
-            if !retry {
+            if attempt >= policy.max_retries || !retryable(&error, &Method::GET, true) {
                 return Err(error);
             }
-            let delay = retry_after
-                .map(|d| d.min(policy.max_retry_after))
-                .unwrap_or_else(|| backoff(policy, attempt));
-            tokio::time::sleep(delay).await;
+            tokio::time::sleep(retry_delay(policy, retry_after, attempt)).await;
             attempt += 1;
         }
     }
@@ -842,23 +770,11 @@ impl Client {
     }
 
     /// Opens a project WebSocket at `segments` (ws/wss from the base URL's
-    /// http/https) with the bearer credential, the region pin and
-    /// `subprotocol`, which the server must select. A refused upgrade maps
+    /// http/https) with the bearer credential, the region pin, any
+    /// `extra_headers` and `subprotocol`, which the server must select. A refused upgrade maps
     /// to the same errors as a REST response with that status; a `401` to
     /// an API-key client is retried once with a fresh token, as on REST.
-    pub(super) async fn open_socket_query(
-        &self,
-        segments: Vec<&str>,
-        query: &[(&str, String)],
-        subprotocol: &'static str,
-        max_message: usize,
-    ) -> Result<WebSocket> {
-        self.open_socket_with(segments, query, &[], subprotocol, max_message)
-            .await
-    }
-
-    /// [`Self::open_socket_query`] with extra upgrade request headers.
-    pub(super) async fn open_socket_with(
+    pub(super) async fn open_socket(
         &self,
         segments: Vec<&str>,
         query: &[(&str, String)],
@@ -866,11 +782,7 @@ impl Client {
         subprotocol: &'static str,
         max_message: usize,
     ) -> Result<WebSocket> {
-        if self.inner.project.is_none() {
-            return Err(Error::InvalidInput(
-                "this operation requires a C# TerraBase project client".into(),
-            ));
-        }
+        self.require_project()?;
         let mut url = self.url(&self.inner.base, &segments, query)?;
         let tls = url.scheme() == "https";
         url.set_scheme(if tls { "wss" } else { "ws" })
@@ -933,14 +845,11 @@ impl Client {
                         Err(tungstenite::Error::Http(response)) => response,
                         Err(e) => return Err(Error::Transport(format!("WebSocket: {e}"))),
                     };
-                let header =
-                    |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok());
-                let retry_after = header("Retry-After")
-                    .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
+                let retry_after = retry_after(response.headers());
                 let error = errors::from_project_response(
                     response.status().as_u16(),
                     retry_after,
-                    header("X-Request-ID"),
+                    header(response.headers(), "X-Request-ID"),
                     response.body().as_deref().unwrap_or_default(),
                     false,
                 );
@@ -1076,15 +985,7 @@ impl Client {
         if req.segments.first() != Some(&"v1")
             || !matches!(
                 req.segments.get(1).copied(),
-                Some(
-                    "platform"
-                        | "databases"
-                        | "metrics"
-                        | "buckets"
-                        | "backup-destination"
-                        | "usage"
-                        | "analytics"
-                )
+                Some("platform" | "databases" | "metrics" | "buckets" | "usage" | "analytics")
             )
             || (self.inner.project.is_none() && req.segments.get(1) != Some(&"platform"))
         {
@@ -1116,49 +1017,10 @@ impl Client {
             {
                 Attempt::Done(resp) => return Ok(resp),
                 Attempt::Failed(err, retry_after) => {
-                    let retry = attempt < policy.max_retries
-                        && ((matches!(err, Error::Transport(_))
-                            || matches!(&err, Error::Response { status, error, .. } if !(400..500).contains(status) && matches!(**error, Error::Transport(_))))
-                            && replay_safe
-                            || match (err.status(), err.code()) {
-                                // The producer sends both codes before admission
-                                // (rate limit and organization QoS budget). Quota
-                                // refusals such as `operation_allowance` stay terminal.
-                                (Some(429), Some("rate_limited" | "tenant_busy")) => true,
-                                // An uncoded (edge) 429 grants no mutation retry.
-                                (Some(429), Some("http_429")) => replay_safe,
-                                (Some(503), Some("commit_uncertain")) => {
-                                    replay_safe && req.method == Method::GET
-                                }
-                                // A gateway answer without a TerraBase error code
-                                // never reached a handler that names its outcome.
-                                (Some(status @ 502..=504), Some(code))
-                                    if code.strip_prefix("http_")
-                                        == Some(status.to_string().as_str()) =>
-                                {
-                                    replay_safe
-                                }
-                                (
-                                    Some(503),
-                                    Some(
-                                        "capacity"
-                                        | "storage_unavailable"
-                                        | "dependencies_unavailable"
-                                        | "storage_busy"
-                                        | "not_primary"
-                                        | "auth_unavailable",
-                                    ),
-                                ) => replay_safe,
-                                _ => false,
-                            });
-                    if !retry {
+                    if attempt >= policy.max_retries || !retryable(&err, &req.method, replay_safe) {
                         return Err(err);
                     }
-                    let delay = match retry_after {
-                        Some(d) => d.min(policy.max_retry_after),
-                        None => backoff(policy, attempt),
-                    };
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep(retry_delay(policy, retry_after, attempt)).await;
                     attempt += 1;
                 }
             }
@@ -1206,40 +1068,12 @@ impl Client {
                 let mut values = headers.get_all("X-TerraBase-Region").iter();
                 values.next().and_then(|h| h.to_str().ok()) != Some(r) || values.next().is_some()
             });
-        let mut body = Vec::new();
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(chunk) => {
-                    if body.len() + chunk.len() > self.inner.max_response {
-                        let error = Error::ResponseTooLarge {
-                            limit: self.inner.max_response,
-                            status: status.as_u16(),
-                            // A mutation answered with anything but a
-                            // client error may have been applied.
-                            may_have_applied: !req.replay_safe && !status.is_client_error(),
-                        };
-                        body.extend_from_slice(&chunk[..self.inner.max_response - body.len()]);
-                        return Attempt::Failed(
-                            self.response_error(error, status, &headers, body, !req.replay_safe),
-                            None,
-                        );
-                    }
-                    body.extend_from_slice(&chunk);
-                }
-                Err(e) => {
-                    return Attempt::Failed(
-                        self.response_error(
-                            Error::Transport(describe(&e)),
-                            status,
-                            &headers,
-                            body,
-                            !req.replay_safe,
-                        ),
-                        None,
-                    )
-                }
-            }
+        let (body, failed) = read_body(resp, self.inner.max_response, !req.replay_safe).await;
+        if let Some(error) = failed {
+            return Attempt::Failed(
+                wrap_response(error, status, &headers, body, !req.replay_safe),
+                None,
+            );
         }
         if wrong_region {
             let response = Resp {
@@ -1261,14 +1095,11 @@ impl Client {
                 mutation: !req.replay_safe,
             });
         }
-        let retry_after = headers
-            .get(RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
+        let retry_after = retry_after(&headers);
         let err = errors::from_project_response(
             status.as_u16(),
             retry_after,
-            headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+            header(&headers, "X-Request-ID"),
             &body,
             !req.replay_safe,
         );
@@ -1296,7 +1127,7 @@ impl Client {
                 .bearer(&self.inner.http, rejected.as_ref(), &self.inner.retry)
                 .await?;
             let replay = request.try_clone();
-            let mut response = request
+            let response = request
                 .header(AUTHORIZATION, token.as_ref().clone())
                 .send()
                 .await
@@ -1305,21 +1136,14 @@ impl Client {
                 return Ok(response);
             }
             let headers = response.headers().clone();
-            let mut body = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(transport)? {
-                if body.len() + chunk.len() > self.inner.max_response {
-                    return Err(Error::ResponseTooLarge {
-                        limit: self.inner.max_response,
-                        status: 401,
-                        may_have_applied: false,
-                    });
-                }
-                body.extend_from_slice(&chunk);
+            let (body, failed) = read_body(response, self.inner.max_response, false).await;
+            if let Some(error) = failed {
+                return Err(error);
             }
             let error = errors::from_project_response(
                 401,
                 None,
-                headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+                header(&headers, "X-Request-ID"),
                 &body,
                 false,
             );
@@ -1345,30 +1169,114 @@ impl Client {
             return Err(error);
         }
     }
+}
 
-    fn response_error(
-        &self,
-        error: Error,
-        status: StatusCode,
-        headers: &HeaderMap,
-        body: Vec<u8>,
-        mutation: bool,
-    ) -> Error {
-        Error::Response {
-            status: status.as_u16(),
-            mutation,
-            retry_after: headers
-                .get("Retry-After")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| parse_retry_after(v, std::time::SystemTime::now())),
-            error: Box::new(error),
-            body,
-            request_id: headers
-                .get("X-Request-ID")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned),
+/// Wraps `error` with the HTTP diagnostics of the response that caused it.
+fn wrap_response(
+    error: Error,
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: Vec<u8>,
+    mutation: bool,
+) -> Error {
+    Error::Response {
+        status: status.as_u16(),
+        mutation,
+        retry_after: retry_after(headers),
+        error: Box::new(error),
+        body,
+        request_id: header(headers, "X-Request-ID").map(str::to_owned),
+    }
+}
+
+fn header<'h>(headers: &'h HeaderMap, name: &str) -> Option<&'h str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    header(headers, RETRY_AFTER.as_str())
+        .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()))
+}
+
+/// Reads a response body up to `limit` bytes. On failure it returns the bytes
+/// read so far with the error; a `mutation` answered with anything but a
+/// client error may have been applied.
+pub(super) async fn read_body(
+    mut response: reqwest::Response,
+    limit: usize,
+    mutation: bool,
+) -> (Vec<u8>, Option<Error>) {
+    let status = response.status();
+    let mut body = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if body.len() + chunk.len() > limit => {
+                body.extend_from_slice(&chunk[..limit - body.len()]);
+                let error = Error::ResponseTooLarge {
+                    limit,
+                    status: status.as_u16(),
+                    may_have_applied: mutation && !status.is_client_error(),
+                };
+                return (body, Some(error));
+            }
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            Ok(None) => return (body, None),
+            Err(e) => return (body, Some(Error::Transport(describe(&e)))),
         }
     }
+}
+
+/// Whether a failed attempt may be sent again under the retry policy.
+fn retryable(error: &Error, method: &Method, replay_safe: bool) -> bool {
+    let transport = match error {
+        Error::Transport(_) => true,
+        Error::Response { status, error, .. } => {
+            !(400..500).contains(status) && matches!(**error, Error::Transport(_))
+        }
+        _ => false,
+    };
+    if transport {
+        return replay_safe;
+    }
+    match (error.status(), error.code()) {
+        // The producer sends both codes before admission (rate limit and
+        // organization QoS budget). Quota refusals such as
+        // `operation_allowance` stay terminal.
+        (Some(429), Some("rate_limited" | "tenant_busy")) => true,
+        // An uncoded (edge) 429 grants no mutation retry.
+        (Some(429), Some("http_429")) => replay_safe,
+        (Some(503), Some("commit_uncertain")) => replay_safe && method == Method::GET,
+        // A gateway answer without a TerraBase error code never reached a
+        // handler that names its outcome.
+        (Some(status @ 502..=504), Some(code))
+            if code.strip_prefix("http_") == Some(status.to_string().as_str()) =>
+        {
+            replay_safe
+        }
+        (
+            Some(503),
+            Some(
+                "capacity"
+                | "storage_unavailable"
+                | "dependencies_unavailable"
+                | "storage_busy"
+                | "auth_unavailable",
+            ),
+        ) => replay_safe,
+        _ => false,
+    }
+}
+
+/// The server's `Retry-After` capped by the policy, else jittered backoff.
+pub(super) fn retry_delay(
+    policy: &RetryPolicy,
+    retry_after: Option<Duration>,
+    attempt: u32,
+) -> Duration {
+    retry_after.map_or_else(
+        || backoff(policy, attempt),
+        |delay| delay.min(policy.max_retry_after),
+    )
 }
 
 /// Parses `Retry-After` as delay-seconds or an HTTP-date; a past date is

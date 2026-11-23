@@ -92,11 +92,11 @@ class DatabaseRegions:
             healthy = item["healthy"]
             if not isinstance(healthy, bool):
                 raise ValueError("invalid replica healthy")
-            lag = item["lagMs"]
-            if type(lag) is not int:
+            lag = item.get("lagMs")
+            if lag is not None and type(lag) is not int:
                 raise ValueError("invalid replica lagMs")
             statuses.append(ReplicaStatus(region=item["region"], applied_bookmark=applied, healthy=healthy,
-                                          lag_ms=lag if lag >= 0 else None))
+                                          lag_ms=lag if lag is not None and lag >= 0 else None))
         return cls(database_id=validate_id(body["databaseId"]), observed_at=body["observedAtUtc"], regions=statuses)
 
 
@@ -122,9 +122,14 @@ class Database:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
-        if any(not isinstance(body[k], str) or not body[k] for k in ("name", "createdAt", "region")):
+        created = body.get("createdAtUtc", body.get("createdAt"))
+        home = body.get("region") or ""
+        if not isinstance(body.get("name"), str) or not body["name"] or not isinstance(created, str) or not created:
             raise ValueError("invalid database metadata")
-        if body.get("expiresAt") is not None and (not isinstance(body["expiresAt"], str) or not body["expiresAt"]):
+        if not isinstance(home, str):
+            raise ValueError("invalid database metadata")
+        expires_at = body.get("expiresAt")
+        if expires_at is not None and (not isinstance(expires_at, str) or not expires_at):
             raise ValueError("invalid database expiry")
         regions = body.get("regions", [])
         if not isinstance(regions, list) or any(not isinstance(r, str) or not r for r in regions):
@@ -133,22 +138,23 @@ class Database:
             raise ValueError("invalid database regions")
         if not isinstance(body.get("allRegions", False), bool):
             raise ValueError("invalid database allRegions")
-        version = body["placementVersion"]
+        version = body.get("placementVersion", 0)
         if not isinstance(version, int) or isinstance(version, bool):
             raise ValueError("invalid database placementVersion")
         mode = body.get("defaultConsistency", "fast")
         if mode not in ("fast", "strong"):
             raise ValueError("invalid database defaultConsistency")
+        conflict_of = body.get("conflictOf")
         return cls(
             id=validate_id(body["id"]),
             project_id=validate_id(body["projectId"]),
             name=body["name"],
-            created_at=body["createdAt"],
-            region=body["region"],
+            created_at=created,
+            region=home,
             branched_from=body.get("branchedFrom"),
             previous_name=body.get("previousName"),
-            conflict_of=validate_id(body["conflictOf"]) if body.get("conflictOf") is not None else None,
-            expires_at=body.get("expiresAt"),
+            conflict_of=validate_id(conflict_of) if conflict_of is not None else None,
+            expires_at=expires_at,
             regions=sorted(regions),
             all_regions=body.get("allRegions", False),
             placement_version=version,
@@ -173,15 +179,18 @@ class RestoreOperation:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> RestoreOperation:
-        fields = ("id", "operationId", "status", "kind", "database", "createdAt")
-        if any(not isinstance(body[k], str) or not body[k] for k in fields):
+        state = body.get("state")
+        if state is None:
             raise ValueError("invalid restore operation")
-        if body["status"] not in ("running", "completed", "failed"):
-            raise ValueError("invalid restore operation status")
-        return cls(id=validate_id(body["id"]), operation_id=validate_id(body["operationId"]), status=body["status"],
-                   kind=body["kind"], database=body["database"], error_code=body.get("errorCode"),
-                   error_message=body.get("errorMessage"), created_at=body["createdAt"],
-                   finished_at=body.get("finishedAt"))
+        if state not in ("pending", "running", "succeeded", "failed"):
+            raise ValueError("invalid restore operation state")
+        if any(not isinstance(body.get(key), str) or not body[key] for key in ("startedAtUtc", "updatedAtUtc")):
+            raise ValueError("invalid restore operation timestamps")
+        operation_id = validate_id(body["operationId"])
+        return cls(id=operation_id, operation_id=operation_id, status="completed" if state == "succeeded" else state,
+                   kind="", database=validate_id(body["targetDatabaseId"]), error_code=None,
+                   error_message=body.get("failureMessage"), created_at=body["startedAtUtc"],
+                   finished_at=body["updatedAtUtc"] if state in ("succeeded", "failed") else None)
 
 
 @dataclass(frozen=True)
@@ -210,10 +219,10 @@ class DatabasePage:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> DatabasePage:
-        return cls(
-            items=[Database.from_json(d) for d in body.get("items") or []],
-            next_cursor=body.get("next") or None,
-        )
+        rows = body.get("items")
+        if rows is None:
+            rows = body.get("databases") or []
+        return cls(items=[Database.from_json(d) for d in rows], next_cursor=body.get("next") or None)
 
 
 def _strings(body: dict[str, Any], key: str, what: str) -> list[str]:
@@ -245,6 +254,8 @@ class ApiKey:
         for key in ("id", "name", "organization_id", "created_by", "created_at"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid api key metadata")
+        project_id = body.get("project_id")
+        database = body.get("database")
         return cls(
             id=validate_id(body["id"]),
             name=body["name"],
@@ -252,8 +263,8 @@ class ApiKey:
             scopes=_strings(body, "scopes", "api key scopes"),
             created_by=validate_id(body["created_by"]),
             created_at=body["created_at"],
-            project_id=validate_id(body["project_id"]) if body.get("project_id") is not None else None,
-            database=validate_id(body["database"]) if body.get("database") is not None else None,
+            project_id=validate_id(project_id) if project_id is not None else None,
+            database=validate_id(database) if database is not None else None,
             expires_at=body.get("expires_at"),
             previous_secret_expires_at=body.get("previous_secret_expires_at"),
             last_used_at=body.get("last_used_at"),
@@ -486,13 +497,14 @@ class ProjectSettingsProvider:
         for key in ("provider", "callback_url"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project provider")
+        oauth2 = body.get("oauth2")
         return cls(provider=body["provider"], configured=_bool(body, "configured", "project provider state"),
                    client_id=_text(body, "client_id", "project provider client id"),
                    issuer=_text(body, "issuer", "project provider issuer"),
                    team_id=_text(body, "team_id", "project provider team id"),
                    key_id=_text(body, "key_id", "project provider key id"),
                    callback_url=body["callback_url"], tenant=_text(body, "tenant", "Microsoft tenant"),
-                   oauth2=ProjectOAuth2(**body["oauth2"]) if body.get("oauth2") else None)
+                   oauth2=ProjectOAuth2(**oauth2) if oauth2 else None)
 
 
 @dataclass(frozen=True)
@@ -541,8 +553,9 @@ class ProjectSettings:
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError("invalid project settings")
         configuration = body.get("configuration")
+        restrictions = body.get("restrictions")
         return cls(
-            restrictions=ProjectRestrictions.from_json(body["restrictions"]) if body.get("restrictions") is not None else None,
+            restrictions=ProjectRestrictions.from_json(restrictions) if restrictions is not None else None,
             organization_picker=body.get("organization_picker", False),
             project_id=validate_id(body["project_id"]),
             issuer=body["issuer"],
@@ -849,7 +862,7 @@ class ProjectInvitation:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectInvitation:
-        return cls(validate_id(body["id"]), body["email"], body["redirect_url"],
+        return cls(validate_id(body["id"]), body["email"], body.get("redirect_url"),
                    body["created_at"], body["expires_at"], body["status"])
 
 
@@ -860,7 +873,7 @@ class ProjectInvitationPage:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectInvitationPage:
-        return cls([ProjectInvitation.from_json(entry) for entry in body["items"]], body["next"])
+        return cls([ProjectInvitation.from_json(entry) for entry in body["items"]], body.get("next"))
 
 
 @dataclass(frozen=True)
@@ -884,7 +897,7 @@ class ProjectWaitlistPage:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> ProjectWaitlistPage:
-        return cls([ProjectWaitlistEntry.from_json(entry) for entry in body["items"]], body["next"])
+        return cls([ProjectWaitlistEntry.from_json(entry) for entry in body["items"]], body.get("next"))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -974,7 +987,7 @@ class UserApiKey:
     def from_json(cls, body: dict[str, Any]) -> UserApiKey:
         return cls(validate_id(body["id"], "key"), validate_id(body["user_id"], "user"),
                    body["name"], body["prefix"], _strings(body, "scopes", "user key scopes"),
-                   body["created_at"], body["expires_at"], body.get("key"))
+                   body["created_at"], body.get("expires_at"), body.get("key"))
 
 
 @dataclass(frozen=True)
@@ -998,7 +1011,7 @@ class UserApiKeyVerification:
     def from_json(cls, body: dict[str, Any]) -> UserApiKeyVerification:
         if not isinstance(body["valid"], bool):
             raise ValueError("invalid user key verification")
-        return cls(body["valid"], body["user_id"], body["scopes"], body["key_id"], body["expires_at"])
+        return cls(body["valid"], body.get("user_id"), body.get("scopes"), body.get("key_id"), body.get("expires_at"))
 
 @dataclass(frozen=True)
 class UserApiKeyPolicy:

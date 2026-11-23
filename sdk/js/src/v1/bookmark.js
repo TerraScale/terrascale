@@ -8,7 +8,7 @@
 /** @typedef {{ readonly current: () => string; readonly observe: (bookmark: string | null | undefined) => void }} V1BookmarkTracker */
 
 export const bookmarkHeader = "TerraScale-Bookmark";
-export const consistencyHeader = "TerraScale-Consistency";
+const consistencyHeader = "TerraScale-Consistency";
 const maximumBookmarkLength = 1024;
 const maximumRegionBytes = 64;
 const maximumSequence = 0x7fff_ffff_ffff_ffffn;

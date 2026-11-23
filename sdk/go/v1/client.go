@@ -9,18 +9,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"terrascale.tech/sdk/internal/entityid"
+	"terrascale.tech/sdk/internal/httpx"
 	"terrascale.tech/sdk/internal/origin"
 	"terrascale.tech/sdk/tsauth"
 )
@@ -52,8 +53,6 @@ type Client struct {
 	token       string
 	tokenSource TokenSource
 	hc          *http.Client
-	maxRetries  int
-	maxResponse int64
 	regionPin   string
 	bookmarks   *sync.Map
 }
@@ -138,7 +137,7 @@ func newClient(cfg Config) (*Client, error) {
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes, regionPin: strings.TrimSpace(cfg.RegionPin), bookmarks: new(sync.Map)}
+	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, regionPin: strings.TrimSpace(cfg.RegionPin), bookmarks: new(sync.Map)}
 	if cfg.APIKey != "" {
 		source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: authOrigin + "/terrascale", Key: cfg.APIKey, HTTPClient: hc})
 		if err != nil {
@@ -214,16 +213,13 @@ func parseBaseURL(raw string) (*url.URL, error) {
 }
 
 type request struct {
-	method      string
-	path        []string
-	query       url.Values
-	body        []byte
-	contentType string
-	header      http.Header
-	token       string
-	replaySafe  bool
-	readOnly    bool
-	timeout     time.Duration
+	method     string
+	path       []string
+	query      url.Values
+	body       []byte
+	header     http.Header
+	token      string
+	replaySafe bool
 }
 
 type response struct {
@@ -257,7 +253,7 @@ func (c *Client) url(ctx context.Context, segments []string, query url.Values) (
 }
 
 func (c *Client) do(ctx context.Context, req request) (*response, error) {
-	ctx, cancel := context.WithTimeout(ctx, cmp.Or(req.timeout, OperationTimeout))
+	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
 	defer cancel()
 	if len(req.path) >= 3 && req.path[0] == "v1" && req.path[1] == "projects" {
 		var err error
@@ -273,7 +269,7 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 	if err != nil {
 		return nil, err
 	}
-	readOnly := req.method == http.MethodGet || req.readOnly
+	readOnly := req.method == http.MethodGet
 	refreshed := false
 	for attempt := 0; ; attempt++ {
 		outbound := req
@@ -291,10 +287,10 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			if !readOnly {
 				return nil, fmt.Errorf("%w: %w", ErrCommitUncertain, err)
 			}
-			if ctx.Err() != nil || !req.replaySafe || attempt >= c.maxRetries {
+			if ctx.Err() != nil || !req.replaySafe || attempt >= DefaultMaxRetries {
 				return nil, err
 			}
-			if err := sleep(ctx, backoff(attempt)); err != nil {
+			if err := httpx.Wait(ctx, backoff(attempt)); err != nil {
 				return nil, err
 			}
 			continue
@@ -302,15 +298,15 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 		if resp.status >= 200 && resp.status < 300 {
 			return resp, nil
 		}
-		if resp.status == http.StatusUnauthorized && req.token == "" && c.invalidateToken(outbound.token, parseAPIError(resp.status, resp.header, resp.body), refreshed) {
+		apiErr := parseAPIError(resp.status, resp.header, resp.body)
+		if resp.status == http.StatusUnauthorized && req.token == "" && c.invalidateToken(outbound.token, apiErr, refreshed) {
 			refreshed = true
 			continue
 		}
-		apiErr := parseAPIError(resp.status, resp.header, resp.body)
 		if !readOnly && errors.Is(apiErr, ErrCommitUncertain) {
 			return resp, apiErr
 		}
-		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe, readOnly); ok && attempt < c.maxRetries {
+		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe, readOnly); ok && attempt < DefaultMaxRetries {
 			if err := waitRetry(ctx, delay, apiErr); err != nil {
 				return nil, err
 			}
@@ -335,8 +331,7 @@ func isTransient503(e *APIError) bool {
 		return false
 	}
 	switch e.Code {
-	case ErrCapacity, ErrStorageUnavailable, ErrDependenciesUnavail,
-		ErrRemoteRegionUnavailable, ErrConfirmationBusy, ErrCatalogStale, ErrAuthUnavailable:
+	case ErrCapacity, ErrStorageUnavailable, ErrDependenciesUnavail, ErrCatalogStale, ErrAuthUnavailable:
 		return true
 	}
 	return false
@@ -357,20 +352,6 @@ func (c *Client) pin(h http.Header) {
 	}
 }
 
-func sleep(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		return ctx.Err()
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
-}
-
 func (c *Client) send(ctx context.Context, req request, target string) (*response, error) {
 	method := req.method
 	var rd io.Reader
@@ -381,32 +362,28 @@ func (c *Client) send(ctx context.Context, req request, target string) (*respons
 	if err != nil {
 		return nil, fmt.Errorf("terrabase: build request: %w", err)
 	}
-	for k, v := range req.header {
-		hr.Header[k] = v
-	}
-	if req.header.Get("X-TerraBase-Peer-Credential") == "" {
-		if token := cmp.Or(req.token, c.token); token != "" {
-			hr.Header.Set("Authorization", "Bearer "+token)
-		}
+	maps.Copy(hr.Header, req.header)
+	if req.token != "" && req.header.Get("X-TerraBase-Peer-Credential") == "" {
+		hr.Header.Set("Authorization", "Bearer "+req.token)
 	}
 	hr.Header.Set("Accept", "application/json")
 	c.pin(hr.Header)
 	if req.body != nil {
-		hr.Header.Set("Content-Type", cmp.Or(req.contentType, "application/json"))
+		hr.Header.Set("Content-Type", "application/json")
 	}
 	res, err := c.hc.Do(hr)
 	if err != nil {
 		return nil, fmt.Errorf("terrabase: %s %s: %w", method, hr.URL.Path, err)
 	}
 	defer res.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(res.Body, c.maxResponse+1))
+	data, err := io.ReadAll(io.LimitReader(res.Body, DefaultMaxResponseBytes+1))
 	resp := &response{status: res.StatusCode, header: res.Header, body: data}
 	if err != nil {
 		return resp, fmt.Errorf("terrabase: read %s %s response: %w", method, hr.URL.Path, err)
 	}
-	if int64(len(data)) > c.maxResponse {
-		resp.body = data[:c.maxResponse]
-		return resp, fmt.Errorf("terrabase: %s %s response exceeds %d bytes", method, hr.URL.Path, c.maxResponse)
+	if int64(len(data)) > DefaultMaxResponseBytes {
+		resp.body = data[:DefaultMaxResponseBytes]
+		return resp, fmt.Errorf("terrabase: %s %s response exceeds %d bytes", method, hr.URL.Path, DefaultMaxResponseBytes)
 	}
 	return resp, nil
 }
@@ -448,24 +425,4 @@ func decodeExact(data []byte, v any) error {
 		return errors.New("trailing data after JSON value")
 	}
 	return nil
-}
-
-func parseRetryAfter(h http.Header) (time.Duration, bool) {
-	v := strings.TrimSpace(h.Get("Retry-After"))
-	if v == "" {
-		return 0, false
-	}
-	if s, err := strconv.ParseUint(v, 10, 64); err == nil {
-		if s > uint64((1<<63-1)/int64(time.Second)) {
-			return time.Duration(1<<63 - 1), true
-		}
-		return time.Duration(s) * time.Second, true
-	}
-	if strings.Trim(v, "0123456789") == "" {
-		return time.Duration(1<<63 - 1), true
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		return max(time.Until(t), 0), true
-	}
-	return 0, false
 }

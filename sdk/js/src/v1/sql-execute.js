@@ -128,7 +128,7 @@ function sqlResult(raw, typeKey, affected, rowid) {
 }
 
 /** @param {JsonValue | undefined} value @returns {V1SqlExecuteResult} */
-export function decodeSqlResult(value) {
+function decodeSqlResult(value) {
   const raw = object(value, "SQL statement result");
   return sqlResult(raw, "decltype", raw.rows_affected, raw.last_insert_rowid ?? null);
 }

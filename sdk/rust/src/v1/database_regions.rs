@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use super::{Database, Result};
-use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 
 /// The replication status of every peer region of one database, as seen by
@@ -32,22 +31,13 @@ impl DatabaseRegions {
     }
 }
 
-/// One peer region of a database. Every region accepts reads and writes;
-/// `role` is only reported by servers that still distinguish one.
+/// One peer region of a database. Every region accepts reads and writes.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplicaStatus {
     pub region: String,
     #[serde(default)]
-    pub role: Option<String>,
-    #[serde(default)]
     pub lag_ms: Option<f64>,
-    #[serde(default)]
-    pub last_pulled_at: Option<String>,
-    #[serde(default)]
-    pub last_verified: Option<String>,
-    #[serde(default)]
-    pub revision: Option<String>,
     /// The causal bookmark this region has applied.
     #[serde(default)]
     pub applied_bookmark: Option<String>,
@@ -77,7 +67,6 @@ impl Database {
     /// `GET P/databases/{database}/regions`: replication status of every
     /// peer region. Requires `databases:read`.
     pub async fn get_database_regions(&self) -> Result<DatabaseRegions> {
-        self.management(Method::GET, &["regions"], &[], None::<&()>, StatusCode::OK)
-            .await
+        self.get_json(&["regions"], &[]).await
     }
 }

@@ -39,7 +39,7 @@ class FileBucketPage:
     def from_json(cls, b: dict[str, Any]) -> FileBucketPage:
         if not isinstance(b["items"], list):
             raise ValueError("bucket items must be an array")
-        cursor = b["next"]
+        cursor = b.get("next")
         return cls([FileBucket.from_json(x) for x in b["items"]],
                    validate_id(cursor, "bucket cursor") if cursor is not None else None)
 

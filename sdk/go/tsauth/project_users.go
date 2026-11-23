@@ -60,17 +60,8 @@ func (v *ProjectUserPage) UnmarshalJSON(data []byte) error {
 
 func decodeProjectDirectory(data []byte, out any, members string, page bool) error {
 	invalid := errors.New("tsauth: invalid project directory response")
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(data, &fields) != nil {
-		return invalid
-	}
-	for _, name := range strings.Fields(members) {
-		value := bytes.TrimSpace(fields[name])
-		if len(value) == 0 || bytes.Equal(value, []byte("null")) {
-			return invalid
-		}
-	}
-	if page && fields["next"] == nil {
+	fields, ok := authResponseFields(data, members)
+	if !ok || page && fields["next"] == nil {
 		return invalid
 	}
 	if json.Unmarshal(data, out) != nil || entityid.Model(out) != nil {

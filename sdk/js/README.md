@@ -1,17 +1,8 @@
 # @terrascale/sdk
 
-The JavaScript/JSDoc SDK for the project-scoped C#/.NET TerraBase server
-(`TerraScale/terrascale`): SQL over HTTPS and WebSocket, live SQL table shapes and the database catalog.
-The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and Edge.
-Plain ES modules ship as written; `nice -n 19 npm run build` generates the
-TypeScript declarations in `types/`.
-The latest published standard is [ECMAScript 2026](https://ecma-international.org/publications-and-standards/standards/ecma-262/).
-The compiler uses [`ESNext`](https://www.typescriptlang.org/tsconfig/target.html),
-its latest supported ECMAScript target. Source stays
-in `.js` files; JSDoc supplies types through `allowJs` and `checkJs`. JSDoc typing
-is a [tooling feature](https://www.typescriptlang.org/docs/handbook/jsdoc-supported-types.html),
-independent of the ECMAScript edition. Published runtime
-support remains Node.js 22/24 and the browser targets listed above.
+The JavaScript SDK for TerraScale: TerraBase SQL over HTTPS and WebSocket, live SQL table shapes, the database
+catalog and hosted identity (ts-auth). Plain ES modules ship as written with JSDoc types; `npm run build` emits the
+TypeScript declarations in `types/`. The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari and Edge.
 
 ```sh
 npm install @terrascale/sdk
@@ -101,10 +92,6 @@ The key is returned once. Revoking or rotating its parent revokes it. Database m
 scoped keys cannot manage databases or mint more keys. Mutations are sent once, and ts-auth refusals preserve
 `TerraBaseV1Error` status, code, body and Retry-After.
 
-The [agent route manifest](sdk-agent-route-manifest.json) and synthetic recorded contract fixtures cover encoding,
-decoding and refusals against [the shared contract](../SQL-API.md#databases-for-agents). Live producer qualification
-for these methods has not run; this evidence does not establish deployed TTL deletion or key isolation.
-
 ## Placement
 
 ```js
@@ -112,58 +99,54 @@ const db = await client.createDatabase(project, "orders", { regions: ["gru", "sj
 await client.setDatabasePlacement(project, db.id, { regions: ["fra", "gru", "sjc"] });
 ```
 
-Every region that holds a database is equal. Databases carry `regions` (every region that holds it, sorted by region
-id; the order has no meaning) and `allRegions`. `createDatabase` and `setDatabasePlacement` take `regions` (at least
-one, no duplicates) or `allRegions`, and not both. TerraBase picks which region writes and moves that on its own when
-the set changes. `db.regions` reads each region's pull progress; an entry's `role` is `writer` for the region that
-commits writes. Encoding and decoding are covered by the
-[recorded placement fixtures](../dotnet/contracts/terrabase/placement/); live producer qualification has not run.
+A database lives in the regions you choose. Every region is an equal peer: each accepts reads and writes and commits
+them where you called. There is no home region, writer region or forwarding. Databases carry `regions` (sorted by
+region id; the order has no meaning), `allRegions` and an integer `placementVersion` that changes with membership and
+stays unchanged for an identical set. `createDatabase` and `setDatabasePlacement` take one to nine distinct `regions`
+or `allRegions: true`, not both; all-regions placement includes regions added later. `db.regions.regions()` reports
+each region's `healthy`, `lagMs` and `appliedBookmark`.
 
-All-regions placement (`allRegions`) holds the database in every serving region, including regions added later.
-These ship from the next published release; the current npm release predates them.
+## Consistency and bookmarks
 
-## Atlas and endpoint selection
+Each SQL request runs `fast` or `strong`. A fast write commits in the region you called and reaches the peer regions
+right after. A strong transaction is serializable across regions: it commits on two of three regions or fails with
+the retryable `serialization_conflict`. Pass `{ consistency: "strong" }` to `execute`, `query`, `batch`, `connect` or
+`transaction`; the database's `defaultConsistency` applies when a request names none. The SDK sends the choice as
+`TerraScale-Consistency`.
 
-The [zero-configuration operating contract](https://docs.terrascale.tech/guides/zero-configuration)
-requires first-party services to discover every eligible serving region and
-receive production credentials automatically, without regional activation or
-manual endpoint/secret wiring. Customer project/database scope and authorized
-access tokens remain required. This release has not implemented automatic Atlas
-integration (TS-507); the endpoint examples show the current API boundary and
-are not a first-party production setup recipe. No new resolver API is implied.
-
-Without `baseUrl` or `endpointResolver` the client sends to
-`https://api.terrascale.tech`; passing both is refused. In these examples, `discoveredOrigin` is a trusted HTTPS
-origin supplied by an authorized integration, not an SDK-created value.
-A resolver receives
-`{ project, database?, signal }` and returns the service URL, synchronously or asynchronously.
-Project catalog operations omit `database`; each project or database session
-resolves once and reuses its URL.
-Shared resolution expires after 30 seconds and supplies a cancellation signal
-to the resolver; a later operation can retry an expired or failed resolution.
-Cancelling one operation leaves other callers' shared resolution running.
-HTTPS is required except for loopback HTTP in isolated tests; no regional
-host is hardcoded. With an `apiKey`, a `baseUrl` other than
-`https://api.terrascale.tech` or an `endpointResolver` needs `authBaseUrl`, the
-bare ts-auth origin that exchanges the key; without it the client throws before
-any request instead of sending the key to `https://auth.terrascale.tech`.
+Every SQL answer carries a `TerraScale-Bookmark`. The client keeps the newest bookmark per database, merging each one
+it sees, and sends it on every later SQL request and WebSocket frame, so reads see earlier writes in whichever region
+answers. `db.bookmark` reads it; pass `{ bookmark }` to carry one across processes, and `mergeBookmarks(a, b)` combines
+two.
 
 ```js
-import { createTerraBaseV1Client, staticBaseUrlResolver } from "@terrascale/sdk";
-
-const client = createTerraBaseV1Client({
-  project: process.env.TERRABASE_PROJECT,
-  token: process.env.TERRABASE_ACCESS_TOKEN,
-  endpointResolver: staticBaseUrlResolver(discoveredOrigin),
-});
-const db = client.database("app");
+await db.execute("UPDATE orders SET status = 'paid' WHERE id = ?", ["o_42"]);
+await queue.send({ orderId: "o_42", bookmark: db.bookmark });
+const rows = await db.query("SELECT status FROM orders WHERE id = ?", ["o_42"], { bookmark: job.bookmark });
+await db.execute("UPDATE accounts SET balance = balance - ? WHERE id = ?", [25, account], { consistency: "strong" });
 ```
 
-Atlas discovers the closest eligible
-region and the location of a project/database. The resolver seam allows that
-choice to stay pinned for the session. Atlas discovery integration is deferred
-to TS-507; this release sends to `https://api.terrascale.tech` unless a URL or
-resolver is supplied.
+## Endpoint selection
+
+Without `baseUrl` or `endpointResolver` the client sends to `https://api.terrascale.tech`; passing both is refused.
+A resolver receives `{ project, database?, signal }` and returns the service URL, synchronously or asynchronously.
+Project catalog operations omit `database`; each project or database session resolves once and reuses its URL.
+Shared resolution expires after 30 seconds and supplies a cancellation signal to the resolver; a later operation can
+retry an expired or failed resolution, and cancelling one operation leaves other callers' resolution running. HTTPS
+is required except for loopback HTTP. With an `apiKey`, a `baseUrl` other than `https://api.terrascale.tech` or an
+`endpointResolver` needs `authBaseUrl`, the bare ts-auth origin that exchanges the key; without it the client throws
+before any request instead of sending the key to `https://auth.terrascale.tech`. A `region` pins the entry region
+with `X-TerraScale-Region-Pin`.
+
+```js
+import { createTerraBaseClient, staticBaseUrlResolver } from "@terrascale/sdk";
+
+const client = createTerraBaseClient({
+  project: process.env.TERRASCALE_PROJECT_ID,
+  token: process.env.TERRASCALE_ACCESS_TOKEN,
+  endpointResolver: staticBaseUrlResolver(origin),
+});
+```
 
 ## Rules (unreleased)
 
@@ -262,20 +245,15 @@ reads an authorized snapshot then live changes. Close the returned subscription 
 A `409 must_refetch`, including after a Rules deploy, discards its handle and refetches with current authorization.
 Close subscriptions and discard displayed data when changing users or signing out.
 
-A `421 wrong_region` means nothing was applied. Row operations follow its `error.url` once when it names the same
-route on an HTTPS TerraScale regional API; explicit region pins stay pinned. No uncertain write is replayed.
-Chrome and Edge can resend a buffered request once after 421;
-the browser SDK cannot prevent that native resend. A timeout or `503 write_outcome_unknown` can mean a write
-committed: never automatically replay it. For creates that need reconciliation, choose a client ULID in a writable,
-UNIQUE `id` column instead of `set.create.id: request.ulid`. A subsequent `409 row_exists` identifies that create;
-`details.key` is included only when the conflicting row is readable.
+A timeout or `503 write_outcome_unknown` can mean a write committed: never automatically replay it. For creates that
+need reconciliation, choose a client ULID in a writable, UNIQUE `id` column instead of `set.create.id: request.ulid`.
+A subsequent `409 row_exists` identifies that create; `details.key` is included only when the conflicting row is
+readable.
 
 ## SQL and catalog
 
-The database catalog routes are in [sdk-v1-route-manifest.json](sdk-v1-route-manifest.json), checked against the
-pinned producer handler sources; the full public route inventory is
-[sdk-public-v1-route-manifest.json](sdk-public-v1-route-manifest.json). Current generated OpenAPI and immutable
-release qualification remain open gates.
+Every route the SDK calls is listed in [sdk-v1-route-manifest.json](sdk-v1-route-manifest.json), generated from
+`src/v1/routes.js` (`npm run check:v1-route-manifest`).
 
 | Surface | Public methods |
 | --- | --- |
@@ -293,12 +271,12 @@ release qualification remain open gates.
 
 `db.listDatabaseLogs(status?)` reads the newest 100 recorded requests within 24 hours; `status` is `2xx`, `3xx`, `4xx` or `5xx`. Recording is best effort, without a cursor or export guarantee. `client.metrics.metrics()` returns the project's Prometheus 0.0.4 text exposition.
 
-Current project routes authenticate ts-auth project access JWTs. Legacy C# `tb_` keys remain accepted for their
-narrower data scopes; they cannot grant `databases:read` or `databases:write`. Credentials travel as
+Project routes authenticate ts-auth project access JWTs. TerraBase `tb_` keys are accepted for their narrower data
+scopes; they cannot grant `databases:read` or `databases:write`. Credentials travel as
 `Authorization: Bearer <token>` and are held privately. The SDK validates header-safe syntax; authentication and
 authorization belong to the producer. SQL reads need the data read scope; writes and DDL also need the data write
 scope, checked per statement. Keep service credentials private and out of logs and browser bundles.
-`createTerraBaseClient` is an alias of `createTerraBaseV1Client`. A region sends `X-TerraScale-Region-Pin`, and a missing, empty, or whitespace region omits it.
+`createTerraBaseClient` is an alias of `createTerraBaseV1Client`.
 On a server, `createTerraBaseClientFromEnvironment(overrides?)` reads `TERRASCALE_PROJECT_ID`, `TERRASCALE_API_KEY` and
 `TERRASCALE_BASE_URL`. Without that variable, a `baseUrl` or an `endpointResolver` it sends to
 `https://api.terrascale.tech`; passing both `baseUrl` and `endpointResolver` is refused. With a
@@ -306,19 +284,14 @@ On a server, `createTerraBaseClientFromEnvironment(overrides?)` reads `TERRASCAL
 
 `client.databases.create({ name })` uses the called region; `regions` names the regions that hold the database.
 
-Every region that holds a database is equal.
-A region can accept a local SQL REST write; TerraBase applies it once. The server forwards a timed-out local publish with TerraBase-Publish-Id set to the same transaction id and applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more copies than the cluster has. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
-consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
-preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
-placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
-serving region; otherwise set an explicit region list.
+Every region that holds a database accepts reads and writes; see [Placement](#placement) and
+[Consistency and bookmarks](#consistency-and-bookmarks).
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
 
 Project and database IDs are canonical uppercase 26-character ULIDs. `generateId()`, `isValidId()` and `requireId()`
-retain that entity-ID contract; use `generateId()` for primary keys of tables that take local writes.
+retain that entity-ID contract.
 
 `execute` runs one statement, given as SQL text with its arguments or as one `{ sql, args }` or `{ sql, named }`
 statement value (on the database, a session and inside `transaction`; any other value is refused before sending),
@@ -343,20 +316,15 @@ SDK decodes such a value (a row value or `lastInsertRowid`) as an `ExactDecimal`
 with `BigInt(String(value))`. Pass large integer arguments as `bigint`. `ExactDecimal` and bigint serialization
 require Node.js 22+ or a current browser.
 
-The C# producer rejects `Idempotency-Key`. Do not replay mutations after an uncertain result; this release does not
-promise mutation deduplication. Validation, authentication and authorization failures are not automatically retried.
+Mutations are sent once; do not replay one after an uncertain result. Validation, authentication and authorization failures are not automatically retried.
 
 Failures throw `TerraBaseV1Error` with status, code, parsed `body`, raw `responseText`, response `headers`, and a
 received `X-Request-ID` as `requestId`; a refused statement throws its `SqlError` subclass. The producer uses
 `application/json` `{error:{code,message,details}}`. Cancellation preserves the supplied `AbortSignal` reason.
 
-**Browser gate remains red:** Chrome and Edge native fetch resend a buffered mutation once after HTTP 421. Node uses
-one-shot request streams to prevent that replay. Browser Fetch has no retry-control option; its one-wire assertions
-remain failing in this draft.
-
 ## Live SQL table shapes
 
-Read changing data with a live shape. The React and Svelte bindings below describe the next SDK release.
+Read changing data with a live shape.
 
 ```jsx
 import { useQuery } from "@terrascale/sdk/react";
@@ -410,14 +378,10 @@ todos.close();
 `shape(table).subscribe()` loads every row of the table, then keeps it current with each committed change. The
 listener runs on delivery status changes, after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
 `upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
-In a region that holds the database, writes made there show at once; `provisional` holds the keys of rows whose values the
-database's writer has not confirmed yet (such inserts have keys starting with `~`). A write the writer rejects disappears
-from `rows`.
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
 with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token the database rules let read the selected table.
 Database rules authorize access; shape filters do not replace authorization.
 Snapshots and sealed catch-up chunks use the manifest’s CDN URLs. The client checks the object size, SHA-256, TBS1 header, AES-GCM frames and handle/offset binding before applying data. Epoch keys stay in the subscription and CDN requests carry no credentials. The live tail uses the authenticated origin. An unavailable or invalid cached object falls back to that offset at the origin. Browsers that hide the bootstrap redirect must fetch the first snapshot page from the origin.
-
 
 ```js
 const open = db.shape("todos", { where: "done = 0", columns: ["id", "title"] }).subscribe(({ rows }) => render(rows));
@@ -427,35 +391,17 @@ const open = db.shape("todos", { where: "done = 0", columns: ["id", "title"] }).
 that starts matching moves in and one that stops matching moves out, so `rows` always holds exactly the matching
 rows.
 
-## Ouroboros and qualification
+## Development
 
-Ouroboros means TerraScale services store their data in the same production
-TerraBase that customers use. Qualification requires an authorized, isolated
-real-service allocation, independently verified producer release provenance,
-and current generated-contract and route-manifest parity. Local SQLite and
-typed builds cannot establish deployed producer compatibility.
-
-The package downloads and launches no TerraBase binary. The journey in the
-monorepo's `e2e/` drives this SDK against the TerraBase, ts-auth and dashboard
-built from the same commit.
-
-Existing live tests consume `TB_V1_URL`, `TB_V1_PROJECT`, `TB_V1_DATA_KEY` and
-optionally `TB_V1_DATABASE` (default `app`) from an independently provisioned
-allocation. Denial checks use `TB_V1_READ_KEY` and `TB_V1_WRITE_KEY`. Supply
-credentials privately; never commit keys, cookies, environment files or real
-tenant data. Local checks below do not substitute for this live gate.
-
-Local checks run at low CPU priority:
+The package downloads and launches no TerraBase binary. The journey in the monorepo's `e2e/` drives this SDK against
+the TerraBase, ts-auth and dashboard built from the same commit. Local checks:
 
 ```sh
-nice -n 19 npm ci
-nice -n 19 npm run typecheck
-nice -n 19 npm run lint
-nice -n 19 npm run build
+npm ci
+npm run typecheck
+npm run build
+npm run check:v1-route-manifest
 ```
-
-`lint` reuses the strict TypeScript/JSDoc check, including unused-code checks,
-without adding a linter dependency. CI runs these commands at normal priority.
 
 ## Named entrypoints
 
@@ -514,10 +460,7 @@ Authorize trusted claims on the backend and keep the project key there.
 
 `@terrascale/sdk/admin` exports `createTerraScaleAdministrationClient({ baseUrl,
 token })` with a named `databases` read.
-The Database service requires `platform_role=admin`. The old `requireTerraScaleManagement`
-and `requireTerraScaleAdministration` names are deprecated construction aliases
-that now require the corresponding client configuration.
-Durable schema plans, public billing REST
+The Database service requires `platform_role=admin`. Durable schema plans, public billing REST
 and administration mutations still need their owning public contracts.
 
 `@terrascale/sdk/ts-auth` exports the ts-auth OIDC and project client, with its
@@ -525,8 +468,6 @@ own origin and instance. A server-only Better Auth
 database adapter is planned; the package exports no `./better-auth` entrypoint.
 `@terrascale/sdk/ts-auth/webhooks` exports the server-only `verifyWebhook`, which checks
 a Standard Webhooks `v1` delivery and returns the parsed event or throws `TsAuthWebhookError`.
-The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:read`
-in addition to `TB_V1_URL` and `TB_V1_PROJECT`; data-only keys are insufficient.
 Entity pages reject null and primitive records.
 
 `tsAuth.projects` administers one project's hosted sign-in tenant over `/v1/{project}`
@@ -548,8 +489,7 @@ Drizzle batch is one atomic `batch` request. `drizzle-kit push` and schema
 introspection are not supported.
 
 `@terrascale/sdk/prisma` exports `PrismaTerraScale`, a Prisma driver-adapter
-factory over a root database handle. It ships in the next SDK release; until
-then install it from source (this monorepo's `sdk/js`). The SDK takes no
+factory over a root database handle. The SDK takes no
 `@prisma/*` dependency. Use it as Prisma's SQLite adapter:
 
 ```prisma
@@ -611,8 +551,7 @@ keeps its own abort reason.
 
 A replay-safe read is resent at most three times after a connection failure
 before any response, `429 tenant_busy`/`tenant_memory`/`shape_busy`, `503
-storage_busy`/`unavailable`/`auth_unavailable`/`catalog_stale`/
-`remote_region_unavailable`/`confirmation_busy`, or a body-less 502, 503 or 504.
+storage_busy`/`unavailable`/`auth_unavailable`, or a body-less 502, 503 or 504.
 It waits at least `Retry-After`, plus exponential backoff with full jitter (up to
 2 seconds), so clients refused together do not return in lockstep. A wait the
 deadline cannot cover surfaces the refusal at once. Each attempt asks the token
@@ -626,38 +565,6 @@ makes its outcome uncertain, and restores and branches can run long.
 Built-in project API-key tokens renew in the background from 60 seconds before expiry
 (or at half-life for short tokens). Concurrent callers share one exchange and continue
 using a valid token; only missing, actually expired, or refused tokens require a wait.
-
-## Region-set placement
-
-Create and update with one to nine distinct serving region ids in `regions`, separately from `allRegions: true`
-and from a rename. Response `regions` are sorted without ordering meaning; integer `placementVersion` changes
-with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
-Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
-`lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-An SDK needs no knowledge of a database's region: it can connect to any region. A region that does not hold the
-database authenticates the client and proxies to a region that holds it, which authenticates again. This adds one
-inter-region round trip (about 170 ms between the current regions) and passes two request admissions, one in each
-region. Completed requests and bytes are attributed to the final destination. A terminal forwarding failure is counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
-
-A writer move closes pinned WebSocket sessions with 1012 and PostgreSQL sessions with 57P01; an open transaction is
-rolled back. Reconnect for later requests. If the proxy leg drops while a statement or commit is in flight, its
-outcome is unknown (`write_outcome_unknown` for REST/WebSocket, SQLSTATE 08007 for PostgreSQL). The proxy never
-replays that request. Check the committed state before deciding whether to send a new write.
-
-Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
-Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).
-A repeat during that move returns the same 503; a different change returns `409 move_in_progress`.
-The SDK exposes `TerraBaseV1Error.code` with `V1ErrorCode.replicaNotReady` and `V1ErrorCode.moveInProgress`. Neither code is automatically retried;
-general transient-503 retries do not include `replica_not_ready`, so callers can distinguish it from an outage.
-The caller bounds this repeat loop to 90 seconds and propagates other errors:
-
-`replica_not_ready` means the regions you added are stored; send the same request again. `move_unresolved` means an earlier move is unresolved; send the same request again later.
-
-```js
-const signal = AbortSignal.timeout(90_000);
-for (;;) { try { await client.setDatabasePlacement(project, database, { regions: ["fra"] }, { signal }); break; }
-  catch (e) { if (e.code !== "replica_not_ready") throw e; await new Promise(resolve => setTimeout(resolve, 1000)); } }
-```
 
 ## Project Authentication management
 
@@ -675,7 +582,7 @@ User-owned API key creation, listing, revocation and backend verification are av
 An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
 open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an
 autocommit statement or batch) may have left the client and its answer is lost, the outcome is uncertain.
-The SDK returns `write_outcome_unknown` (SQLSTATE `08007`) or its existing commit-uncertain error, retains that
+The SDK returns `write_outcome_unknown` (SQLSTATE `08007`), retains that
 failure for every later call on the session, and closes the connection. It never reconnects or automatically
 retries an uncertain request. If the client cannot prove no request byte left, it treats the request as sent.
 An execute outside a confirmed transaction, or behind unanswered transaction control, is potentially committing.
@@ -713,7 +620,6 @@ Project management provides `createAgent`, `listAgents`, `listUserAgents`, `getA
 `revokeAgent`, `addAgentKey`, `revokeAgentKey`, `getAgentPolicy` and `setAgentPolicy` through `auth.projects`.
 Reads require a viewer sign-in or an unrestricted project key with `auth:read`. Mutations require
 an administrator sign-in or an unrestricted project key with `auth:write`.
-
 
 To rotate an agent key, create a replacement signer, register its public JWK, obtain a token with
 its returned key ID, then revoke the original key:

@@ -32,7 +32,6 @@ for (const lockfile of inventory.stdout.split("\0").filter(Boolean)) {
     process.exit(1);
   }
 
-  // Preserve every severity and reject incomplete/error responses, even on exit 0.
   console.log(result.stdout);
   if (result.stderr.trim()) console.error(result.stderr.trim());
   const counts = report.metadata?.vulnerabilities;

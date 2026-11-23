@@ -43,7 +43,6 @@ export function validateTsAuthIds(value, route, entity = false) {
       if (id !== null || field !== "sid") requireId(id, field);
     }
   }
-  // `data` objects in audit events are customer payloads; only page arrays contain DTOs.
   if (Object.hasOwn(value, "data") && Array.isArray(Reflect.get(value, "data")))
     validateTsAuthIds(Reflect.get(value, "data"), route);
   for (const field of ["organization", "user"]) {

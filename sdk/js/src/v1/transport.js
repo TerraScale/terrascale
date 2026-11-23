@@ -1,7 +1,6 @@
-// Internal typed transport for the TerraBase v1 client. It is not exported
-// from any package entrypoint: callers reach it only through named operations.
 import { parseV1Error } from "./errors.js";
-import { requireDatabaseSelector, requireProject } from "./ids.js";
+import { requireDatabaseSelector } from "./ids.js";
+import { requireId } from "../ids.js";
 import { object } from "./decode.js";
 import { parseExactJson } from "./json.js";
 import { region as regionId } from "./catalog.js";
@@ -19,12 +18,8 @@ import { mergeBookmarks } from "./bookmark.js";
  * @import { V1BookmarkTracker, V1Consistency } from "./bookmark.js"
  */
 
-/** Server request body limit (api-v1.md). */
-export const maximumRequestBytes = 4 * 1024 * 1024;
-// Query budgets count stored JSON before wrappers and serializer escaping.
+const maximumRequestBytes = 4 * 1024 * 1024;
 const defaultMaximumResponseBytes = 64 * 1024 * 1024;
-// Validate header-safe credential syntax only; the producer validates JWT claims/signatures.
-// Retain C# keys; current project routes also authenticate project access JWTs.
 const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|tb_[A-Za-z0-9_-]{43})$/u;
 const publicBaseUrl = "https://api.terrascale.tech";
 const publicAuthOrigin = "https://auth.terrascale.tech";
@@ -35,6 +30,19 @@ const publicAuthOrigin = "https://auth.terrascale.tech";
 /** @typedef {(context: V1EndpointContext) => string | Promise<string>} V1EndpointResolver */
 /** A fresh access token for each authenticated request, including stream reconnects. @typedef {() => string | Promise<string>} V1TokenProvider */
 /** @typedef {new (url: string, init: string[] | { protocols: string[]; headers: Record<string, string> }) => import("./sql-socket.js").SqlSocketLike} SqlSocketConstructor */
+/**
+ * @typedef {object} TerraBaseV1ClientConfig
+ * @property {string} project
+ * @property {string | undefined} [apiKey]
+ * @property {string | V1TokenProvider | undefined} [token]
+ * @property {string | undefined} [baseUrl]
+ * @property {string | undefined} [authBaseUrl]
+ * @property {string | undefined} [region]
+ * @property {V1EndpointResolver | undefined} [endpointResolver]
+ * @property {FetchLike | undefined} [fetch]
+ * @property {SqlSocketConstructor | undefined} [WebSocket]
+ * @property {number | undefined} [maxResponseBytes]
+ */
 /**
  * @typedef {object} V1CallOptions
  * @property {string | Uint8Array} [body]
@@ -50,7 +58,6 @@ const publicAuthOrigin = "https://auth.terrascale.tech";
  * @property {number} status
  * @property {Headers} headers
  * @property {JsonValue | undefined} value
- * @property {string | undefined} [redirectedTo] The final URL after a followed redirect.
  */
 
 /**
@@ -145,7 +152,7 @@ export class V1Transport {
   /** @param {TerraBaseV1ClientConfig | (import("./system.js").TerraBaseSystemClientConfig & { project?: undefined; endpointResolver?: undefined })} config */
   constructor(config) {
     if (typeof config !== "object" || config === null) throw new TypeError("TerraBase v1 client config is required.");
-    this.#project = config.project === undefined ? undefined : requireProject(config.project);
+    this.#project = config.project === undefined ? undefined : requireId(config.project);
     if (config.baseUrl !== undefined && config.endpointResolver !== undefined)
       throw new TypeError("Supply at most one of baseUrl or endpointResolver.");
     if (config.endpointResolver !== undefined && typeof config.endpointResolver !== "function")
@@ -163,8 +170,6 @@ export class V1Transport {
     } else if (authBaseUrl !== undefined) throw new TypeError("authBaseUrl exchanges an apiKey; set apiKey or remove authBaseUrl.");
     if (apiKey === undefined && (config.project !== undefined || config.token !== undefined) && typeof config.token !== "function")
       requireToken(config.token);
-    if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
-      throw new TypeError("Unsupported client configuration member.");
     const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
     if (typeof fetchHandler !== "function") throw new TypeError("TerraBase v1 client requires a fetch implementation.");
     const maxResponseBytes = config.maxResponseBytes ?? defaultMaximumResponseBytes;
@@ -238,9 +243,6 @@ export class V1Transport {
     return ShapeHints.open(new WebSocketClass(url.href, [shapeHintProtocol]), signal, token);
   }
 
-  /** Internal credential lifetime metadata; never exposes the bearer value. */
-  get hasTokenProvider() { return typeof this.#token === "function" || this.#apiKeyBasic !== undefined; }
-
   /** @param {AbortSignal | undefined} signal @returns {Promise<string>} */
   async #accessToken(signal) {
     signal?.throwIfAborted();
@@ -252,8 +254,6 @@ export class V1Transport {
       if (valid && now < cached.refreshAt) return cached.token;
       if (this.#tokenFlight === undefined) {
         this.#tokenFlight = Promise.resolve().then(() => this.#exchangeKey()).finally(() => { this.#tokenFlight = undefined; });
-        // A failed background exchange is observed. Missing/expired callers
-        // still await the same result, independently of caller cancellation.
         void this.#tokenFlight.catch(() => {});
       }
       if (valid) return cached.token;
@@ -271,7 +271,6 @@ export class V1Transport {
           signal?.throwIfAborted();
           return provider();
         }).then(resolve, () => {
-          // Provider errors may contain credentials; do not retain their message or cause.
           reject(new Error("TerraBase token provider failed."));
         });
       });
@@ -287,7 +286,7 @@ export class V1Transport {
     const started = performance.now();
     try {
       const response = await this.#authRequest("/terrascale/oauth/token", new URLSearchParams({
-        grant_type: "client_credentials", project: requireProject(this.#project),
+        grant_type: "client_credentials", project: requireId(this.#project),
       }).toString(), "application/x-www-form-urlencoded", undefined);
       const raw = object(response, "API key token");
       if (typeof raw.expires_in !== "number" || !Number.isSafeInteger(raw.expires_in) || raw.expires_in <= 0)
@@ -387,13 +386,11 @@ export class V1Transport {
       });
       base = { promise, timer, waiters: 0 };
       this.#bases.set(session, base);
-      // A failed resolution is not a session; a later operation may resolve again.
       void promise.catch(() => { if (this.#bases.get(session) === base) this.#bases.delete(session); });
     }
     base.waiters++;
     if (typeof base.timer === "object") base.timer.ref();
     try {
-      // Each caller cancels its own wait; one caller cannot abort shared session resolution.
       const resolved = signal === undefined ? await base.promise : await new Promise((resolve, reject) => {
         const abort = () => reject(signal.reason);
         signal.addEventListener("abort", abort, { once: true });
@@ -409,7 +406,6 @@ export class V1Transport {
       if (v1Route(operation).pathTemplate.includes("{project}") && this.#project === undefined) throw new TypeError("This operation requires a project client.");
       return `${resolved}${v1RoutePath(v1Route(operation), { ...params, ...(this.#project === undefined ? {} : { project: this.#project }) })}`;
     } finally {
-      // Keep Node alive only while callers are waiting for this resolution.
       if (--base.waiters === 0 && typeof base.timer === "object") base.timer.unref();
     }
   }
@@ -528,8 +524,7 @@ export class V1Transport {
     try {
       const scoped = { ...options, signal: deadline.signal };
       const response = await this.#send(operation, params, scoped, deadline.expiresAt);
-      return { status: response.status, headers: response.headers, value: response.status === 307 ? undefined : await this.readJson(response, scoped.signal),
-        ...(response.redirected ? { redirectedTo: response.url } : {}) };
+      return { status: response.status, headers: response.headers, value: response.status === 307 ? undefined : await this.readJson(response, scoped.signal) };
     } finally {
       deadline.clear();
     }
@@ -634,19 +629,17 @@ export class V1Transport {
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
     const path = await this.url(operation, params, signal);
     const url = options.query !== undefined && options.query.size > 0 ? `${path}?${options.query}` : path;
-    // Shape reads publish stale state and resume through their own recovery; they are not resent here.
     const replaySafe = isReplaySafe(operation) && !selfRecovering.has(operation);
     for (let attempt = 0; ; attempt++) {
       const headers = new Headers(options.headers);
-      // Resolve the credential per attempt so a retry never sends a token the provider has replaced.
-      if (route.permission !== "anonymous" && (this.#token !== undefined || this.#apiKeyBasic !== undefined))
+      if (route.access !== "anonymous" && (this.#token !== undefined || this.#apiKeyBasic !== undefined))
         headers.set("authorization", `Bearer ${await this.#accessToken(signal)}`);
-      if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
+      if (route.accept !== "") headers.set("accept", route.accept);
       if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
       if (this.#regionPin !== "") headers.set("X-TerraScale-Region-Pin", this.#regionPin);
       /** @type {RequestInit & { duplex?: "half" }} */
       const init = { method: route.method, headers, redirect: options.redirect ?? "manual" };
-      if (route.permission.endsWith(":write")) {
+      if (route.access === "write") {
         init.body = new ReadableStream({ start(controller) { if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
         init.duplex = "half";
       } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
@@ -657,7 +650,6 @@ export class V1Transport {
       try { response = await this.#fetch(url, init); }
       catch (error) {
         signal?.throwIfAborted();
-        // No response arrived. Only a read may be resent; a mutation's outcome is unknown.
         if (!replaySafe || attempt >= maximumReadRetries) throw new RequestTransportError(error);
         await waitForRetry(backoff(attempt), signal);
         continue;
@@ -674,8 +666,6 @@ export class V1Transport {
           if (headers.get("authorization") === `Bearer ${this.#cachedKeyToken?.token}`) this.#cachedKeyToken = undefined;
         }
         if (!replaySafe || attempt >= maximumReadRetries || !transientRefusal(error)) throw error;
-        // Wait at least Retry-After, plus jitter so clients refused together do not return in lockstep.
-        // A wait the deadline cannot cover surfaces the refusal now.
         const delay = (error.retryAfter ?? 0) * 1000 + backoff(attempt);
         if (delay > expiresAt - Date.now()) throw error;
         await waitForRetry(delay, signal);
@@ -695,9 +685,7 @@ const selfRecovering = new Set(["readTableShape"]);
 /** Producer refusals before execution that clear on their own (429 budgets, 503 busy/unavailable). */
 const transientCodes = new Map([
   [429, new Set(["tenant_busy", "tenant_memory", "shape_busy"])],
-  [503, new Set(["storage_busy", "unavailable", "auth_unavailable", "catalog_stale",
-    "remote_region_unavailable", "confirmation_busy", "http_503"])],
-  // Gateway failures carry no producer body.
+  [503, new Set(["storage_busy", "unavailable", "auth_unavailable", "http_503"])],
   [502, new Set(["http_502"])],
   [504, new Set(["http_504"])],
 ]);

@@ -16,7 +16,7 @@ from urllib.parse import quote
 import httpx
 
 from . import models
-from .errors import CommitUncertainError, InvalidResponseError, TerraScaleError, response_request_id
+from .errors import CommitUncertainError, InvalidResponseError, SqlError, TerraScaleError, response_request_id
 from .ids import is_valid_id, validate_id
 from .sql import results as sql_results
 
@@ -296,6 +296,61 @@ def causality(consistency_mode: str | None, bookmark_value: str | None) -> dict[
     return headers
 
 
+@dataclass(frozen=True, slots=True)
+class Next:
+    """What a client does with one refused response."""
+
+    kind: Literal["reject", "refresh", "sleep", "raise"]
+    seconds: float = 0.0
+    attempt: int = 0
+    conflicts: int = 0
+
+
+def after_transport(call: Call, exc: Exception, attempt: int, max_attempts: int) -> float:
+    """Seconds to wait, or the terminal error for this transport failure. ``attempt`` is already incremented."""
+    if not call.replay_safe and not isinstance(exc, NOT_SENT):
+        raise CommitUncertainError(0, "commit_uncertain", "transport failure; the write may have committed") from exc
+    if isinstance(exc, httpx.DecodingError):
+        raise InvalidResponseError(0, "invalid_response", "invalid response encoding") from exc
+    if attempt >= max_attempts:
+        raise transport_failure(call.method, attempt, exc) from exc
+    return backoff(attempt, None)
+
+
+def after_status(call: Call, err: Any, *, attempt: int, conflicts: int, max_attempts: int, refreshed: bool,
+                 direct: bool, has_source: bool, project_key: bool) -> Next:
+    """Classify a non-2xx response. SQL conflict retries stop after two; pass ``conflicts`` >= 2 to disable them."""
+    if err.status == 401 and err.code in {"key_revoked", "key_expired"}:
+        return Next("reject")
+    if err.status == 401 and has_source and not refreshed and not direct and not project_key:
+        return Next("refresh")
+    if isinstance(err, SqlError) and err.code in RETRY_CONFLICTS and conflicts < 2:
+        conflicts += 1
+        return Next("sleep", backoff(conflicts, None), attempt, conflicts)
+    attempt += 1
+    if call.replay_safe and attempt < max_attempts and retryable(err.status, err.code):
+        return Next("sleep", backoff(attempt, err.retry_after), attempt, conflicts)
+    return Next("raise", attempt=attempt, conflicts=conflicts)
+
+
+def project_bearer(api_key: str | None, call: Call) -> str | None:
+    """An auth route addressed by project id is sent with the API key, not an exchanged access token."""
+    if (api_key and call.base_url is not None and len(call.path) > 1 and call.path[0] == "v1"
+            and is_valid_id(call.path[1])):
+        return api_key
+    return None
+
+
+def request_headers(base: Mapping[str, str], call: Call, bookmarks: Bookmarks, *, direct: bool, token: str,
+                    has_body: bool) -> dict[str, str]:
+    headers = dict(call.headers) if direct else {**base, **call.causal_headers(bookmarks), **call.headers}
+    if not direct and not call.anonymous:
+        headers["Authorization"] = f"Bearer {token}"
+    if has_body:
+        headers["Content-Type"] = call.content_type
+    return headers
+
+
 @dataclass
 class Call:
     method: str
@@ -311,6 +366,7 @@ class Call:
     timeout: httpx.Timeout | None = None
     anonymous: bool = False
     causal: str | None = None
+    body_bookmark: bool = False
 
     def causal_headers(self, bookmarks: Bookmarks) -> dict[str, str]:
         if self.causal is None or BOOKMARK in self.headers:
@@ -318,13 +374,28 @@ class Call:
         known = bookmarks.get(self.causal)
         return {BOOKMARK: known} if known else {}
 
+    def _json_bookmark(self, response: httpx.Response) -> str | None:
+        if not self.body_bookmark or not response.content:
+            return None
+        if not response.headers.get("content-type", "").startswith("application/json"):
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if not isinstance(body, dict) or "bookmark" not in body or body["bookmark"] is None:
+            return None
+        if not isinstance(body["bookmark"], str):
+            raise ValueError("invalid bookmark")
+        return body["bookmark"] or None
+
     def accept(self, response: httpx.Response, bookmarks: Bookmarks) -> Any:
         if self.causal is not None:
             values = response.headers.get_list(BOOKMARK)
             try:
                 if len(values) > 1:
                     raise ValueError("repeated bookmark")
-                bookmarks.observe(self.causal, values[0] if values else None)
+                bookmarks.observe(self.causal, values[0] if values else self._json_bookmark(response))
             except ValueError:
                 cls = InvalidResponseError if self.replay_safe else CommitUncertainError
                 raise cls(response.status_code, "invalid_response", "invalid bookmark; reconcile writes before retrying",
@@ -553,7 +624,8 @@ def export_database(project: str, db: str) -> Call:
 def execute(project: str, db: str, statements: list[dict[str, Any]], consistency_mode: str | None = None,
             bookmark_value: str | None = None) -> Call:
     return Call("POST", _db(project, db, "sql", "execute"), lambda r: sql_results(r.json(), len(statements)),
-                headers=causality(consistency_mode, bookmark_value), body={"statements": statements}, causal=db)
+                headers=causality(consistency_mode, bookmark_value), body={"statements": statements}, causal=db,
+                body_bookmark=True)
 
 
 def read_table_shape(project: str, db: str, table: str) -> Call:

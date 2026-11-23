@@ -1,4 +1,4 @@
-//! Typed v1 errors.
+//! Typed project API errors.
 
 use std::time::Duration;
 
@@ -6,10 +6,10 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use thiserror::Error;
 
-/// Result alias for the v1 client.
+/// Result alias for the project client.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// A v1 client error.
+/// A project client error.
 ///
 /// Well-known server codes map to dedicated variants; every other non-2xx
 /// response is [`Error::Api`]. Project failures wrap the decoded error in
@@ -50,9 +50,6 @@ pub enum Error {
     /// `404 not_found`.
     #[error("terrabase: 404 not_found")]
     NotFound,
-    /// The request must reach the region that orders the database's writes.
-    #[error("terrabase: 421 home_region_required")]
-    HomeRegionRequired,
     /// `503 commit_uncertain`: read state to reconcile the unknown outcome.
     #[error("terrabase: 503 commit_uncertain")]
     CommitUncertain,
@@ -212,7 +209,6 @@ impl Error {
             | Self::ResponseTooLarge { status, .. }
             | Self::UndecodableAck { status, .. } => *status,
             Self::NotFound => 404,
-            Self::HomeRegionRequired => 421,
             Self::CommitUncertain => 503,
             Self::RateLimited { .. } => 429,
             Self::Forbidden => 403,
@@ -234,7 +230,6 @@ impl Error {
             Self::TokenExchange { code, .. } => code,
             Self::Response { error, .. } => return error.code(),
             Self::NotFound => "not_found",
-            Self::HomeRegionRequired => "home_region_required",
             Self::CommitUncertain => "commit_uncertain",
             Self::RateLimited { .. } => "rate_limited",
             Self::Forbidden => "forbidden_scope",
@@ -400,13 +395,15 @@ pub(crate) fn from_project_response(
 
 #[derive(Deserialize)]
 struct Envelope<'a> {
-    #[serde(borrow)]
+    #[serde(default, borrow)]
     error: Option<&'a RawValue>,
 }
 
 #[derive(Deserialize)]
 struct Body {
+    #[serde(default)]
     code: Option<String>,
+    #[serde(default)]
     message: Option<String>,
 }
 
@@ -462,7 +459,6 @@ pub(crate) fn from_response(status: u16, retry_after: Option<Duration>, body: &[
             }
         }
         (404, "not_found") => Error::NotFound,
-        (421, "home_region_required") => Error::HomeRegionRequired,
         (503, "commit_uncertain") => Error::CommitUncertain,
         (429, "rate_limited") => Error::RateLimited { retry_after },
         (403, "forbidden_scope") => Error::Forbidden,

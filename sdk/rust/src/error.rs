@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-/// Machine-readable failure kinds returned by [`Error`].
+/// Machine-readable failure kinds returned by [`Error`](struct@Error).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
     Authentication,

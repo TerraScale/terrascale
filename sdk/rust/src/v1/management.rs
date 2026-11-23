@@ -13,6 +13,7 @@ use super::ids::{check_database_selector, check_name, is_valid_id};
 #[derive(Debug, Clone, Deserialize)]
 pub struct ManagementPage<T> {
     pub items: Vec<T>,
+    #[serde(default)]
     pub next: Option<String>,
 }
 
@@ -41,6 +42,16 @@ impl Client {
             req = req.json(body)?;
         }
         self.send_project(req).await?.decode_status(&[status])
+    }
+
+    /// `GET` of a project route expecting `200 OK`.
+    pub(crate) async fn get_json<T: DeserializeOwned>(
+        &self,
+        segments: Vec<&str>,
+        query: &[(&str, String)],
+    ) -> Result<T> {
+        self.management(Method::GET, segments, query, None::<&()>, StatusCode::OK)
+            .await
     }
 
     /// Renames by immutable ULID or current name (`PATCH P/databases/{database_id}`).
@@ -73,14 +84,7 @@ impl Client {
         &self,
         query: &[(&str, String)],
     ) -> Result<ManagementPage<ProjectDatabaseInfo>> {
-        self.management(
-            Method::GET,
-            vec!["v1", "databases"],
-            query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
+        self.get_json(vec!["v1", "databases"], query).await
     }
 }
 
@@ -113,8 +117,7 @@ impl Database {
 
     /// `GET D`; selectors accept a current name or immutable ULID.
     pub async fn get_database(&self) -> Result<ProjectDatabaseInfo> {
-        self.management(Method::GET, &[], &[], None::<&()>, StatusCode::OK)
-            .await
+        self.get_json(&[], &[]).await
     }
 
     /// `DELETE D` in the region that orders the database's writes. HTTP 204
@@ -190,6 +193,16 @@ impl Database {
         segments.extend_from_slice(suffix);
         self.client()
             .management(method, segments, query, body, status)
+            .await
+    }
+
+    /// `GET` of a database route expecting `200 OK`.
+    pub(crate) async fn get_json<T: DeserializeOwned>(
+        &self,
+        suffix: &[&str],
+        query: &[(&str, String)],
+    ) -> Result<T> {
+        self.management(Method::GET, suffix, query, None::<&()>, StatusCode::OK)
             .await
     }
 }

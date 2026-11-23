@@ -1,322 +1,71 @@
-{
-  "manifestVersion": 5,
-  "contractVersion": "terrabase-csharp-v1",
-  "currentSource": {
-    "producer": "TerraScale/terrascale",
-    "revision": "1c569494df18212d1f2f071e72be73f09d587c13",
-    "sdkBaseRevision": "eac7e3fca1178d30d81eb18ff35d8629e5f454e4",
-    "evidence": "Read-only source snapshot; not generated OpenAPI or runtime qualification. Imports excluded.",
-    "routes": {
-      "createDatabase": "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs",
-      "listDatabases": "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs",
-      "getDatabase": "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs",
-      "updateDatabase": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs",
-      "deleteDatabase": "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs",
-      "branchDatabase": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
-      "branchDatabaseIfId": "src/TerraBase/Features/Management/BranchManagedDatabaseIfIdEndpoint.cs",
-      "deleteDatabaseIfId": "src/TerraBase/Features/Management/DeleteManagedDatabaseIfIdEndpoint.cs"
-    },
-    "inputs": {
-      "src/TerraBase/Features/ApiKeys/IApiKeyStore.cs": {
-        "sha256": "9abef21398dc79aaa4be21398d2db18d306d8f68e81007c191241b993881ce73"
-      },
-      "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs": {
-        "sha256": "52383c3d82bb9535229f0924503768c3cf9b2cfd217dcaf1107a470b74bd3b8c"
-      },
-      "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs": {
-        "sha256": "d7e2149c748bb964a9bdb49b4d4bba29531a3207d3004f2d410324e39c9c0a28"
-      },
-      "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs": {
-        "sha256": "4a36f8acee3751514942d35db87f75b6c201eed98239768e23e8a63dda78144d"
-      },
-      "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs": {
-        "sha256": "c0c5703228ea622ea45dee7a44431bcda955b7889c8df65351a225318d585949"
-      },
-      "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs": {
-        "sha256": "5ed3ea5dda2cbc57d0f894b09a8d9983d741723bf1a0e395b9fdd1c27bd77e7f"
-      },
-      "src/TerraBase/Features/Management/ProjectApiRoute.cs": {
-        "sha256": "7f6d0ead448c1042ac15d4a451ac8e6f2cae483181dffb7e9f8676a1365ca930"
-      },
-      "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs": {
-        "sha256": "b954951ef904a2205184b8878a26d94b820eebf526ee7d4149d9cb53d3e9f61f"
-      },
-      "src/TerraBase/Features/Management/BranchManagedDatabaseIfIdEndpoint.cs": {
-        "sha256": "cf9cfb1e60857fec7e81efa82121ef2915a19c1da86602e05b58931f43d32441"
-      },
-      "src/TerraBase/Features/Management/DeleteManagedDatabaseIfIdEndpoint.cs": {
-        "sha256": "177c500a4bb5d790c122eeeeb65edb7b9cba45218a244fe5d4c5079faf5c7db9"
-      }
-    }
-  },
-  "currentRouteEvidence": [
-    {
-      "operation": "createDatabase",
-      "producerOperationId": "createDatabase",
-      "sourcePath": "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs",
-      "sha256": "d7e2149c748bb964a9bdb49b4d4bba29531a3207d3004f2d410324e39c9c0a28",
-      "method": "POST",
-      "pathTemplate": "/v1/projects/{project}/databases",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        201
-      ]
-    },
-    {
-      "operation": "listDatabases",
-      "producerOperationId": "listDatabases",
-      "sourcePath": "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs",
-      "sha256": "5ed3ea5dda2cbc57d0f894b09a8d9983d741723bf1a0e395b9fdd1c27bd77e7f",
-      "method": "GET",
-      "pathTemplate": "/v1/projects/{project}/databases",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesRead",
-      "permission": "databases:read",
-      "requestMediaTypes": [],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        200
-      ]
-    },
-    {
-      "operation": "getDatabase",
-      "producerOperationId": "getDatabase",
-      "sourcePath": "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs",
-      "sha256": "c0c5703228ea622ea45dee7a44431bcda955b7889c8df65351a225318d585949",
-      "method": "GET",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesRead",
-      "permission": "databases:read",
-      "requestMediaTypes": [],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        200
-      ]
-    },
-    {
-      "operation": "updateDatabase",
-      "producerOperationId": "updateDatabase",
-      "sourcePath": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs",
-      "sha256": "b954951ef904a2205184b8878a26d94b820eebf526ee7d4149d9cb53d3e9f61f",
-      "method": "PATCH",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        200
-      ]
-    },
-    {
-      "operation": "deleteDatabase",
-      "producerOperationId": "deleteDatabase",
-      "sourcePath": "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs",
-      "sha256": "4a36f8acee3751514942d35db87f75b6c201eed98239768e23e8a63dda78144d",
-      "method": "DELETE",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
-      "permission": "databases:write",
-      "requestMediaTypes": [],
-      "responseMediaType": "",
-      "successStatuses": [
-        204
-      ]
-    },
-    {
-      "operation": "deleteDatabaseIfId",
-      "producerOperationId": "deleteDatabaseIfId",
-      "sourcePath": "src/TerraBase/Features/Management/DeleteManagedDatabaseIfIdEndpoint.cs",
-      "sha256": "177c500a4bb5d790c122eeeeb65edb7b9cba45218a244fe5d4c5079faf5c7db9",
-      "method": "DELETE",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}/if-id/{expectedId}",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
-      "permission": "databases:write",
-      "requestMediaTypes": [],
-      "responseMediaType": "",
-      "successStatuses": [
-        204
-      ]
-    },
-    {
-      "operation": "branchDatabase",
-      "producerOperationId": "branchDatabase",
-      "sourcePath": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
-      "sha256": "52383c3d82bb9535229f0924503768c3cf9b2cfd217dcaf1107a470b74bd3b8c",
-      "method": "POST",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}/branches",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        201
-      ]
-    },
-    {
-      "operation": "branchDatabaseIfId",
-      "producerOperationId": "branchDatabaseIfId",
-      "sourcePath": "src/TerraBase/Features/Management/BranchManagedDatabaseIfIdEndpoint.cs",
-      "sha256": "cf9cfb1e60857fec7e81efa82121ef2915a19c1da86602e05b58931f43d32441",
-      "method": "POST",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}/branches/if-id/{expectedId}",
-      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        201
-      ]
-    }
-  ],
-  "currentGeneratedOpenApi": "Unavailable: current route parity is source-bound, not runtime qualification.",
-  "routeCount": 8,
-  "routes": [
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "createDatabase",
-      "method": "POST",
-      "pathTemplate": "/v1/projects/{project}/databases",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        201
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": false,
-      "evidence": "current-handler-source"
-    },
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "listDatabases",
-      "method": "GET",
-      "pathTemplate": "/v1/projects/{project}/databases",
-      "permission": "databases:read",
-      "requestMediaTypes": [],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        200
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": true,
-      "evidence": "current-handler-source"
-    },
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "getDatabase",
-      "method": "GET",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}",
-      "permission": "databases:read",
-      "requestMediaTypes": [],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        200
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": true,
-      "evidence": "current-handler-source"
-    },
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "updateDatabase",
-      "method": "PATCH",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        200
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": false,
-      "evidence": "current-handler-source"
-    },
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "deleteDatabase",
-      "method": "DELETE",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}",
-      "permission": "databases:write",
-      "requestMediaTypes": [],
-      "responseMediaType": "",
-      "successStatuses": [
-        204
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": false,
-      "evidence": "current-handler-source"
-    },
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "deleteDatabaseIfId",
-      "method": "DELETE",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}/if-id/{expectedId}",
-      "permission": "databases:write",
-      "requestMediaTypes": [],
-      "responseMediaType": "",
-      "successStatuses": [
-        204
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": false,
-      "evidence": "current-handler-source"
-    },
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "branchDatabase",
-      "method": "POST",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}/branches",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        201
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": false,
-      "evidence": "current-handler-source"
-    },
-    {
-      "producer": "terrabase-csharp",
-      "client": "TerraBaseV1Client",
-      "operation": "branchDatabaseIfId",
-      "method": "POST",
-      "pathTemplate": "/v1/projects/{project}/databases/{database}/branches/if-id/{expectedId}",
-      "permission": "databases:write",
-      "requestMediaTypes": [
-        "application/json"
-      ],
-      "responseMediaType": "application/json",
-      "successStatuses": [
-        201
-      ],
-      "idempotencyKey": "none",
-      "replaySafe": false,
-      "evidence": "current-handler-source"
-    }
-  ]
-}
+[
+  {"operation":"healthz","method":"GET","pathTemplate":"/healthz","access":"anonymous","accept":"application/json","successStatuses":[200]},
+  {"operation":"readyz","method":"GET","pathTemplate":"/readyz","access":"anonymous","accept":"application/json","successStatuses":[200,503]},
+  {"operation":"backupz","method":"GET","pathTemplate":"/backupz","access":"anonymous","accept":"application/json","successStatuses":[200,503]},
+  {"operation":"listRegions","method":"GET","pathTemplate":"/v1/regions","access":"anonymous","accept":"application/json","successStatuses":[200]},
+  {"operation":"listPlatformDatabases","method":"GET","pathTemplate":"/v1/platform/databases","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"createDatabase","method":"POST","pathTemplate":"/v1/projects/{project}/databases","access":"write","accept":"application/json","successStatuses":[201]},
+  {"operation":"listDatabases","method":"GET","pathTemplate":"/v1/projects/{project}/databases","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getDatabase","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"updateDatabase","method":"PATCH","pathTemplate":"/v1/projects/{project}/databases/{database}","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"deleteDatabase","method":"DELETE","pathTemplate":"/v1/projects/{project}/databases/{database}","access":"write","accept":"","successStatuses":[204]},
+  {"operation":"deleteDatabaseIfId","method":"DELETE","pathTemplate":"/v1/projects/{project}/databases/{database}/if-id/{expectedId}","access":"write","accept":"","successStatuses":[204]},
+  {"operation":"branchDatabase","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/branches","access":"write","accept":"application/json","successStatuses":[201]},
+  {"operation":"branchDatabaseIfId","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/branches/if-id/{expectedId}","access":"write","accept":"application/json","successStatuses":[201]},
+  {"operation":"setDatabaseTtl","method":"PUT","pathTemplate":"/v1/projects/{project}/databases/{database}/ttl","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"clearDatabaseTtl","method":"DELETE","pathTemplate":"/v1/projects/{project}/databases/{database}/ttl","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"getDatabaseRegions","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/regions","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"executeSql","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/sql/execute","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"connectSql","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/sql/ws","access":"read","accept":"","successStatuses":[101]},
+  {"operation":"exportDatabase","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/export","access":"read","accept":"text/plain","successStatuses":[200]},
+  {"operation":"getRow","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"createRow","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/rows","access":"write","accept":"application/json","successStatuses":[201]},
+  {"operation":"updateRow","method":"PATCH","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"deleteRow","method":"DELETE","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}","access":"write","accept":"","successStatuses":[204]},
+  {"operation":"batchRows","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/rows:batch","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"readTableShape","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/shape","access":"read","accept":"application/json","successStatuses":[200,307]},
+  {"operation":"getShapeManifest","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getShapeKey","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/shape/keys","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"connectShapeHints","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/tables/{table}/shape/ws","access":"read","accept":"","successStatuses":[101]},
+  {"operation":"createBackup","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/backups","access":"write","accept":"application/json","successStatuses":[201]},
+  {"operation":"listBackups","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/backups","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"restoreBackup","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/backups/{backup}/restore","access":"write","accept":"application/json","successStatuses":[202]},
+  {"operation":"getRestoreOperation","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/restores/{operation}","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getBackupPolicy","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/backup-policy","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"setBackupPolicy","method":"PUT","pathTemplate":"/v1/projects/{project}/databases/{database}/backup-policy","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"getRestoreWindow","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/point-in-time","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"planPointInTime","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/point-in-time/plan","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"restorePointInTime","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/point-in-time/restore","access":"write","accept":"application/json","successStatuses":[202]},
+  {"operation":"rewindPointInTime","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/point-in-time/rewind","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"getBackupDestination","method":"GET","pathTemplate":"/v1/projects/{project}/backup-destination","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"setBackupDestination","method":"PUT","pathTemplate":"/v1/projects/{project}/backup-destination","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"deleteBackupDestination","method":"DELETE","pathTemplate":"/v1/projects/{project}/backup-destination","access":"write","accept":"","successStatuses":[204]},
+  {"operation":"getProjectUsage","method":"GET","pathTemplate":"/v1/projects/{project}/usage","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getProjectAnalytics","method":"GET","pathTemplate":"/v1/projects/{project}/analytics","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getProjectMetrics","method":"GET","pathTemplate":"/v1/projects/{project}/metrics","access":"read","accept":"text/plain","successStatuses":[200]},
+  {"operation":"getDatabaseUsage","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/usage","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getDatabaseAnalytics","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/analytics","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"listDatabaseLogs","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/logs","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"listFunctions","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/functions","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getFunction","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/functions/{function}","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"deployFunction","method":"PUT","pathTemplate":"/v1/projects/{project}/databases/{database}/functions/{function}","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"deleteFunction","method":"DELETE","pathTemplate":"/v1/projects/{project}/databases/{database}/functions/{function}","access":"write","accept":"","successStatuses":[204]},
+  {"operation":"invokeFunction","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/functions/{function}/invoke","access":"read","accept":"","successStatuses":[200,201,202,203,204,205,206,207,208,226]},
+  {"operation":"listFunctionLogs","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/functions/{function}/logs","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getFunctionStats","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/functions/{function}/stats","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getDatabaseRules","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/rules","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"putDatabaseRules","method":"PUT","pathTemplate":"/v1/projects/{project}/databases/{database}/rules","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"testDatabaseRules","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/rules:test","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"listDatabaseRulesVersions","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/rules/versions","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"getDatabaseRulesVersion","method":"GET","pathTemplate":"/v1/projects/{project}/databases/{database}/rules/versions/{version}","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"restoreDatabaseRulesVersion","method":"POST","pathTemplate":"/v1/projects/{project}/databases/{database}/rules/versions/{version}/restore","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"createFileBucket","method":"POST","pathTemplate":"/v1/projects/{project}/buckets","access":"write","accept":"application/json","successStatuses":[201]},
+  {"operation":"listFileBuckets","method":"GET","pathTemplate":"/v1/projects/{project}/buckets","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"setFileBucketRules","method":"PUT","pathTemplate":"/v1/projects/{project}/buckets/{bucket}/rules","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"deleteFileBucket","method":"DELETE","pathTemplate":"/v1/projects/{project}/buckets/{bucket}","access":"write","accept":"","successStatuses":[204]},
+  {"operation":"createFileUpload","method":"POST","pathTemplate":"/v1/projects/{project}/buckets/{bucket}/files/upload","access":"write","accept":"application/json","successStatuses":[201]},
+  {"operation":"completeFileUpload","method":"POST","pathTemplate":"/v1/projects/{project}/buckets/{bucket}/files/{file}/complete","access":"write","accept":"application/json","successStatuses":[200]},
+  {"operation":"listBucketFiles","method":"GET","pathTemplate":"/v1/projects/{project}/buckets/{bucket}/files","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"createFileDownload","method":"POST","pathTemplate":"/v1/projects/{project}/buckets/{bucket}/files/{file}/download","access":"read","accept":"application/json","successStatuses":[200]},
+  {"operation":"deleteBucketFile","method":"DELETE","pathTemplate":"/v1/projects/{project}/buckets/{bucket}/files/{file}","access":"write","accept":"","successStatuses":[204]}
+]

@@ -185,14 +185,13 @@ pub(crate) fn decode_error(route_name: &str, response: &Response) -> Error {
         });
     let fix = details
         .as_ref()
-        .and_then(|body| body.fix.clone())
-        .filter(|fix| !fix.trim().is_empty())
-        .map(|fix| fix.trim().to_owned());
-    if let Some(fix) = fix.as_deref() {
-        if !fix.trim().is_empty() {
-            message.push_str(" Fix: ");
-            message.push_str(fix.trim());
-        }
+        .and_then(|body| body.fix.as_deref())
+        .map(str::trim)
+        .filter(|fix| !fix.is_empty())
+        .map(str::to_owned);
+    if let Some(fix) = &fix {
+        message.push_str(" Fix: ");
+        message.push_str(fix);
     }
     let mut error = Error::for_status(response.status, code, message);
     error.fix = fix.map(String::into_boxed_str);

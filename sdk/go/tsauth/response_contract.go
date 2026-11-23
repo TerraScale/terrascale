@@ -80,16 +80,11 @@ func validateAuthResponse(data []byte, t reflect.Type) error {
 	if required == "" {
 		return nil
 	}
-	var object map[string]json.RawMessage
-	if json.Unmarshal(data, &object) != nil || object == nil {
+	object, ok := authResponseFields(data, required)
+	if !ok {
 		return &ResponseContractError{}
 	}
-	for _, name := range strings.Fields(required) {
-		if raw := object[name]; len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return &ResponseContractError{}
-		}
-	}
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		field := t.Field(i)
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		raw := object[name]
@@ -101,4 +96,18 @@ func validateAuthResponse(data []byte, t reflect.Type) error {
 		}
 	}
 	return nil
+}
+
+func authResponseFields(data []byte, required string) (map[string]json.RawMessage, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil || fields == nil {
+		return nil, false
+	}
+	for name := range strings.FieldsSeq(required) {
+		raw := bytes.TrimSpace(fields[name])
+		if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+			return nil, false
+		}
+	}
+	return fields, true
 }

@@ -1,7 +1,7 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
-import { list, nullable, numeric, optional, record, text } from "./management-decode.js";
-import { members, mutationOptions, pageQuery } from "./management-validation.js";
+import { list, nullable, numeric, record, text } from "./management-decode.js";
+import { members, pageQuery } from "./management-validation.js";
 import { malformed, object } from "./decode.js";
 import { TerraBaseV1Error } from "./errors.js";
 import { stringifyExactJson } from "./json.js";
@@ -12,8 +12,7 @@ const backupPage = record({ items: list(backup), next: nullable(text) });
 const policy = record({ fullBackupCron: nullable(text), retentionDays: numeric, updatedAt: nullable(text) });
 const window = record({ earliest: text, latest: text });
 const plan = record({ window, pointInTime: text, snapshotAt: text, latestSegmentAt: nullable(text), segmentCount: numeric, historyCheck: text });
-const restored = record({ id: requireId, projectId: requireId, name: text, branchedFrom: nullable(requireId), createdAt: text,
-  homeRegion: optional(nullable(text)) });
+const restored = record({ id: requireId, projectId: requireId, name: text, branchedFrom: nullable(requireId), createdAt: text });
 const restoreOperation = record({ id: requireId, operationId: requireId, status: text, kind: text, database: text,
   errorCode: nullable(text), errorMessage: nullable(text), createdAt: text, finishedAt: nullable(text) });
 export { restoreOperation };
@@ -79,7 +78,6 @@ export class V1Backups {
   constructor(transport, database) { this.#transport = transport; this.#params = { database: requireDatabaseSelector(database) }; Object.freeze(this); }
   /** @param {V1RequestOptions} [options] @returns {Promise<V1Backup>} */
   async create(options = {}) {
-    mutationOptions(options);
     return backup((await this.#transport.call("createBackup", this.#params, { signal: options.signal })).value);
   }
   /** @param {import("./catalog.js").V1DatabaseListRequest} [request] @param {V1RequestOptions} [options] @returns {Promise<V1BackupPage>} */
@@ -88,7 +86,6 @@ export class V1Backups {
   async restore(id, request = {}, options = {}) {
     members(request, ["name"]);
     if (request.name !== undefined && request.name !== null) requireName("database", request.name);
-    mutationOptions(options);
     const operation = restoreOperation((await this.#transport.call("restoreBackup", { ...this.#params, backup: requireId(id) }, {
       body: stringifyExactJson(request, "restore"), signal: options.signal,
     })).value);
@@ -110,7 +107,6 @@ export class V1Backups {
   /** @param {V1BackupPolicyRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1BackupPolicy>} */
   async setPolicy(request, options = {}) {
     members(request, ["fullBackupCron", "retentionDays"]);
-    mutationOptions(options);
     return policy((await this.#transport.call("setBackupPolicy", this.#params, { body: stringifyExactJson(request, "backup policy"), signal: options.signal })).value);
   }
   /** @param {{readonly destination?: "platform" | "customer"}} [request] @param {V1RequestOptions} [options] @returns {Promise<V1RestoreWindow>} */
@@ -131,7 +127,6 @@ export class V1Backups {
     members(request, ["pointInTime", "destination", "name"]);
     pointInTime(request);
     if (request.name !== undefined && request.name !== null) requireName("database", request.name);
-    mutationOptions(options);
     const operation = restoreOperation((await this.#transport.call("restorePointInTime", this.#params, { body: stringifyExactJson(request, "point-in-time restore"), signal: options.signal })).value);
     return this.#awaitRestore(operation, options);
   }
@@ -139,7 +134,6 @@ export class V1Backups {
   async rewindPointInTime(request, options = {}) {
     members(request, ["pointInTime", "destination"]);
     pointInTime(request);
-    mutationOptions(options);
     return restored((await this.#transport.call("rewindPointInTime", this.#params, { body: stringifyExactJson(request, "point-in-time rewind"), signal: options.signal })).value);
   }
 }
@@ -154,11 +148,10 @@ export class V1BackupDestinationClient {
   /** @param {V1BackupDestinationRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1BackupDestination>} */
   async set(request, options = {}) {
     members(request, ["endpoint", "region", "bucket", "accessKeyId", "secretKey", "mode"]);
-    mutationOptions(options);
     const raw = object((await this.#transport.call("setBackupDestination", {}, { body: stringifyExactJson(request, "backup destination"), signal: options.signal })).value, "backup destination");
     if (raw.accessKeyId !== undefined || raw.secretKey !== undefined) malformed("write-only destination credentials");
     return destination(raw);
   }
   /** @param {V1RequestOptions} [options] @returns {Promise<void>} */
-  async delete(options = {}) { mutationOptions(options); await this.#transport.call("deleteBackupDestination", {}, { signal: options.signal }); }
+  async delete(options = {}) { await this.#transport.call("deleteBackupDestination", {}, { signal: options.signal }); }
 }

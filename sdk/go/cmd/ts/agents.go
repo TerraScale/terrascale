@@ -109,8 +109,6 @@ func agentRequest(ctx context.Context, method, path, credential string, body []b
 	return nil
 }
 
-func agentJSON(value any) ([]byte, error) { return json.Marshal(value) }
-
 func agentAssertion(key *ecdsa.PrivateKey, audience, agent, kid string) (string, error) {
 	header := map[string]string{"alg": "ES256", "typ": "JWT"}
 	if kid != "" {
@@ -167,7 +165,7 @@ func enrollAgent(ctx context.Context, project, name string, scopes []string, sel
 		return err
 	}
 	fingerprint := sha256.Sum256(canonical)
-	body, err := agentJSON(struct {
+	body, err := json.Marshal(struct {
 		Name   string   `json:"name"`
 		Scopes []string `json:"requested_scopes"`
 		Self   bool     `json:"allow_self_subject"`
@@ -207,7 +205,7 @@ func enrollAgent(ctx context.Context, project, name string, scopes []string, sel
 		if err != nil {
 			return err
 		}
-		body, err := agentJSON(struct {
+		body, err := json.Marshal(struct {
 			Proof string `json:"proof"`
 		}{proof})
 		if err != nil {
@@ -394,7 +392,7 @@ func dispatchAgentCommand(ctx context.Context, args []string, out, prompt io.Wri
 			var body []byte
 			if command == "policy set" {
 				method = "PUT"
-				body, err = agentJSON(agentPolicy{scopes})
+				body, err = json.Marshal(agentPolicy{scopes})
 				if err != nil {
 					return err
 				}

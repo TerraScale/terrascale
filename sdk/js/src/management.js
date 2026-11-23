@@ -1,7 +1,3 @@
-export {
-  terraScaleReleaseBlockers,
-  TerraScaleCapabilityUnavailableError,
-} from "./management-contracts.js";
 import { createTerraBaseV1Client } from "./v1/terrabase-v1.js";
 export { createTerraScaleIdentityManagementClient, createTerraScaleAccountDeletionClient, createTerraScaleProjectIdentityClient } from "./platform-management.js";
 /** @typedef {import("./platform-management.js").TerraScaleIdentityManagementClientConfig} TerraScaleIdentityManagementClientConfig */
@@ -33,10 +29,3 @@ export function createTerraScaleManagementClient(config) {
   });
 }
 
-/**
- * @deprecated Use createTerraScaleManagementClient with explicit project credentials.
- * @param {TerraScaleManagementClientConfig} config
- */
-export function requireTerraScaleManagement(config) {
-  return createTerraScaleManagementClient(config);
-}

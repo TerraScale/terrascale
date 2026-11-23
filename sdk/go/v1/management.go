@@ -175,7 +175,7 @@ func projectAPIPath(project string, extra ...string) []string {
 }
 
 func databasePath(project, databaseID string, extra ...string) []string {
-	return projectAPIPath(project, append([]string{"databases", databaseID}, extra...)...)
+	return append([]string{"v1", "projects", project, "databases", databaseID}, extra...)
 }
 
 func get[T any](ctx context.Context, u *ManagementUser, path []string, query url.Values) (*T, error) {
