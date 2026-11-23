@@ -1,6 +1,6 @@
 # TerraScale
 
-TerraScale is one monorepo for the platform: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), **TerraScale.Dashboard** (platform UI/API/MCP), shared .NET libraries (`TerraScale.Contracts`, `TerraScale.Endpoints*`, `TerraScale.Logging`), the C# Aspire local host (`TerraScale.Aspire`), the five SDKs in `sdk/` (.NET, Go, JS, Python, Rust), the public sites in `sites/` (`docs`, `landing`, `status`, `atlas`), the end-to-end journey (`e2e/`) and E2E benchmarks (`benchmark/`).
+TerraScale is one monorepo for the platform: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), **TerraScale.Dashboard** (platform UI/API/MCP), shared .NET libraries (`TerraScale.Contracts`, `TerraScale.Endpoints*`, `TerraScale.Logging`), the C# Aspire local host (`TerraScale.Aspire`), the five SDKs in `sdk/` (.NET, Go, JS, Python, Rust), the public sites in `sites/` (`docs`, `landing`, `status`), the end-to-end journey (`e2e/`) and E2E benchmarks (`benchmark/`).
 
 Contributor and agent rules live in [`AGENTS.md`](AGENTS.md).
 
@@ -10,7 +10,7 @@ Contributor and agent rules live in [`AGENTS.md`](AGENTS.md).
 |---|---|
 | `src/` | .NET services, shared libraries (`TerraScale.Contracts`, `TerraScale.Endpoints*`, `TerraScale.Logging`), vendored storage driver (`src/vendor/`) and local Aspire host (`src/TerraScale.Aspire`) |
 | `sdk/` | Customer SDKs: `dotnet`, `go`, `js`, `python`, `rust` |
-| `sites/` | Public Cloudflare Workers sites: `docs`, `landing`, `status`, `atlas` |
+| `sites/` | Public Cloudflare Workers sites: `docs`, `landing`, `status` |
 | `e2e/` | The journey, the only test: Playwright against the real services and all five SDKs ([`e2e/AGENTS.md`](e2e/AGENTS.md)) |
 | `benchmark/` | Full-E2E C#, Go and Rust benchmark suite (`ts-bench`), .NET microbenchmarks (`benchmark/dotnet/`) and saved reports (`benchmark/bench/`) |
 | `.github/` | CI/CD workflows, actions and helper scripts (`.github/scripts/`) |
@@ -32,7 +32,7 @@ Run targets from the repository root (`Makefile`):
 | `make dashboard-css`, `make dashboard-js` | Rebuild committed Dashboard CSS/JS assets |
 | `make aspire-build` | Build the local Aspire AppHost |
 | `make sdk-check`, `make sdk-<dotnet\|go\|js\|python\|rust>-check` | SDK build and type-checks |
-| `make docs-build`, `make landing-build`, `make status-build`, `make atlas-build` | Public site checks and builds |
+| `make docs-build`, `make landing-build`, `make status-build` | Public site checks and builds |
 
 ## Local development with Aspire
 
