@@ -3,7 +3,7 @@
 FROM rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS build
 WORKDIR /turso
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
-COPY benchmark/turso-sync-host/turso-pin.env /turso-pin.env
+COPY src/vendor/Turso.Native/turso-pin.env /turso-pin.env
 RUN . /turso-pin.env \
     && [[ $TURSO_COMMIT =~ ^[0-9a-f]{40}$ ]] \
     && [[ $TURSO_SHA256 =~ ^[0-9a-f]{64}$ ]] \

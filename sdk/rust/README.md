@@ -133,7 +133,6 @@ of `regions` or `all_regions`. `ManagedDatabase` carries `regions` (every region
 sorted by region id; the order has no meaning) and `all_regions`.
 `Database::get_database_regions` reads each region's pull progress; an entry's `role` is `Some("writer")`
 for the region that commits writes.
-Contract fixtures in `contracts/terrabase/placement/` qualify the HTTP boundary.
 
 ```rust,no_run
 use terrascale::v1::{Client, CreateDatabaseOptions, DatabasePlacement};
@@ -193,12 +192,9 @@ Refusals use the existing HTTP error types.
 
 A failed write is uncertain if no response arrives after sending, if a 5xx response has no server error code, or if the server code is `commit_uncertain`, `write_outcome_unknown` or `internal_error`. Other coded 5xx responses and SQL errors (the request rolled back) are definite refusals. Reads are never uncertain. Reconcile state before repeating an uncertain write; a malformed success acknowledgement is also uncertain.
 
-Qualification: this surface is checked against the local contract fixtures in
-`contracts/terrabase/agent/`, equivalent to the shared SQL API contract. Live server qualification is pending.
-
 ## Authentication
 
-See [API-key authentication](docs/api-key-auth.md) for error and refresh behavior. Project requests use
+Project requests use
 the public origin automatically. Customer credentials determine project, database and operation access;
 an endpoint does not grant authorization.
 
@@ -248,13 +244,12 @@ tokio::time::timeout(Duration::from_secs(90), async { loop { match client.set_da
 
 Pass the project secret API key as the credential to `client.projects()?.disable_user(secret_key, project_id, user_id).await`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
-Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
-Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.
+Project MFA/session policy fields and sign-out-everywhere source APIs are available in the source SDK; published package qualification follows release.
+Project invitation and waitlist management additions are not yet published.
 Project user profile creation, merge-patch updates, and partial password-hash imports
-are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
-for fields, scope requirements, hash encodings and the next-release API names.
-Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
-User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+are available in the source SDK.
+Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains.
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client.
 
 ### SQL session outcome rule
 
@@ -298,7 +293,7 @@ order without a projection. Views arrive after every snapshot page and applied d
 Status is `Loading`, `Live`, or `Reconnecting`; temporary failures back off and
 resume from the last applied offset. `must_refetch` clears the view and starts a
 new snapshot. Credential errors yield the existing SDK error and end the stream.
-Dropping the stream cancels its pending request. See the [wire contract](../../docs/terrabase/shape-reads.md).
+Dropping the stream cancels its pending request.
 
 ## Rules (unreleased)
 

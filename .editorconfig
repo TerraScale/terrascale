@@ -45,7 +45,7 @@ dotnet_separate_import_directive_groups = false
 csharp_using_directive_placement = outside_namespace:suggestion
 csharp_style_namespace_declarations = file_scoped:suggestion
 
-[{src/TerraScale.Authentication*,.github/scripts/auth}/**.cs]
+[src/TerraScale.Authentication*/**.cs]
 dotnet_diagnostic.CA2026.severity = silent
 dotnet_diagnostic.CA2027.severity = silent
 dotnet_diagnostic.IDE0005.severity = silent

@@ -95,6 +95,7 @@ jobs:
               - TerraScale.slnx
               - src/TerraScale.Endpoints*/**/!(AGENTS.md)
               - src/TerraScale.Logging/**/!(AGENTS.md)
+              - src/TerraScale.Analyzers/**/!(AGENTS.md)
             dotnet-sdk: &dotnet-sdk
               - sdk/dotnet/Directory.*
               - sdk/dotnet/NuGet.config
@@ -112,7 +113,8 @@ jobs:
               - .github/scripts/ci/image-payloads.sh
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
               - src/TerraScale.Authentication/platform-api.openapi.yaml
-              - .github/scripts/auth/{check-nuget-vulnerabilities{,.lib}.cs,export-openapi.sh,packages.lock.json}
+              - .github/scripts/auth/export-openapi.sh
+              - sdk/dotnet/scripts/{check-nuget-vulnerabilities{,.lib}.cs,packages.lock.json}
               - .github/scripts/check-design-host.py
             auth-server:
               - src/TerraBase/**/!(AGENTS.md)
@@ -127,11 +129,11 @@ jobs:
               - Dockerfile
               - src/vendor/**/!(*.md|*.patch)
               - src/vendor/Turso.Native/scripts/{download,verify}-turso-native.sh
-              - benchmark/turso-sync-host/turso-pin.env
+              - src/vendor/Turso.Native/turso-pin.env
               - .github/scripts/ci/image-payloads.sh
-              - src/TerraBase*/**/!(AGENTS.md)
+              - src/TerraBase/**/!(AGENTS.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
-              - landing-site/static/pricing.json
+              - sites/landing/static/pricing.json
             aspire:
               - *shared
               - src/TerraScale.Aspire/**/!(AGENTS.md)
@@ -151,12 +153,13 @@ jobs:
               - BannedSymbols.txt
               - TerraScale.slnx
               - src/vendor/Turso.Native/scripts/{download,verify}-turso-native.sh
-              - benchmark/turso-sync-host/turso-pin.env
+              - src/vendor/Turso.Native/turso-pin.env
               - src/TerraScale.Endpoints*/**/!(AGENTS.md)
               - src/TerraScale.Logging/**/!(AGENTS.md)
+              - src/TerraScale.Analyzers/**/!(AGENTS.md)
             journey-server: &journey-server
               - *journey-shared
-              - src/TerraBase*/**/!(AGENTS.md)
+              - src/TerraBase/**/!(AGENTS.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md)
               - src/vendor/**/!(*.md|*.patch)
             journey-browser: &journey-browser
@@ -164,7 +167,7 @@ jobs:
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
               - src/TerraScale.Dashboard*/**/!(AGENTS.md)
               - sdk/dotnet/**/!(AGENTS.md)
-              - landing-site/static/pricing.json
+              - sites/landing/static/pricing.json
               - e2e/journey/{setup,close}.spec.ts
               - e2e/pages/inventory.ts
             journey-desktop:
@@ -183,7 +186,7 @@ jobs:
               - e2e/clock/**
               - e2e/replication/push.mjs
               - e2e/storage/**
-              - status-site/**/!(AGENTS.md)
+              - sites/status/**/!(AGENTS.md)
               - e2e/social/**
               - e2e/billing/**
               - e2e/journey/{finish,invitation}.spec.ts
@@ -286,21 +289,23 @@ jobs:
               - Makefile
               - .github/workflows/ci.yml
             docs:
-              - docs-site/**/!(AGENTS.md)
-              - landing-site/static/{pricing,regions}.json
+              - sites/docs/**/!(AGENTS.md)
+              - sites/landing/static/{pricing,regions}.json
               - Makefile
               - .github/workflows/ci.yml
             landing:
-              - landing-site/**/!(AGENTS.md)
+              - sites/landing/**/!(AGENTS.md)
               - .github/workflows/ci.yml
             status:
-              - status-site/**/!(AGENTS.md)
+              - sites/status/**/!(AGENTS.md)
               - .github/workflows/ci.yml
             dashboard:
               - src/TerraScale.Dashboard*/**/!(AGENTS.md)
+              - src/TerraScale.Analyzers/**/!(AGENTS.md)
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - src/TerraScale.Endpoints/**/!(AGENTS.md)
               - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md)
+              - sites/landing/static/pricing.json
               - .github/scripts/dashboard/{check-simple-ui.py,check-stripe-dependency.py,verify-sdk.py,format.sh}
               - .github/scripts/check-design-host.py
               - .github/scripts/ci/release-only.sh
@@ -311,7 +316,6 @@ jobs:
               - global.json
               - NuGet.config
               - Makefile
-              - .github/workflows/dashboard-ci.yml
               - .github/workflows/ci.yml
       - id: areas
         env:
@@ -1004,7 +1008,34 @@ jobs:
   dashboard:
     needs: changes
     if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.dashboard == 'true'
-    uses: ./.github/workflows/dashboard-ci.yml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          global-json-file: global.json
+      - name: Restore the dashboard
+        run: make dashboard-restore
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
+      - name: Install the web asset build
+        run: npm ci --prefix src/TerraScale.Dashboard/web
+      - name: Checked build
+        run: |
+          make -o dashboard-restore dashboard-build CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
+      - name: Dashboard lint
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
+          make dashboard-lint CONFIGURATION=Release
 
   sdk:
     needs: changes
@@ -1060,7 +1091,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version-file: docs-site/.node-version
+          node-version-file: sites/docs/.node-version
           package-manager-cache: false
       - name: Build and check the docs site
         run: make docs-build
@@ -1076,14 +1107,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version-file: landing-site/.node-version
+          node-version-file: sites/landing/.node-version
           cache: npm
-          cache-dependency-path: landing-site/package-lock.json
+          cache-dependency-path: sites/landing/package-lock.json
       - name: Install dependencies
-        working-directory: landing-site
+        working-directory: sites/landing
         run: npm ci --no-audit --no-fund
       - name: Validate the static build
-        working-directory: landing-site
+        working-directory: sites/landing
         run: npm run build
 
   status:
@@ -1097,14 +1128,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version-file: status-site/.node-version
+          node-version-file: sites/status/.node-version
           cache: npm
-          cache-dependency-path: status-site/package-lock.json
+          cache-dependency-path: sites/status/package-lock.json
       - name: Install dependencies
-        working-directory: status-site
+        working-directory: sites/status
         run: npm ci --no-audit --no-fund
       - name: Check, lint and build
-        working-directory: status-site
+        working-directory: sites/status
         run: |
           npm run check
           npm run lint

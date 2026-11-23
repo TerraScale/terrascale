@@ -94,7 +94,7 @@ same error. If no committing request was sent, a lost open transaction throws `t
 `options.UseTerraBase(database)` with a `TerraBaseSqlDatabase`, or `options.UseTerraBase(connectionString)`.
 `SaveChangesAsync` sends the change set as one atomic `/sql/execute` request, explicit transactions run over the SQL
 WebSocket session, and `MigrateAsync`/`EnsureCreatedAsync` work against TerraBase. Setup, options, transactions,
-migrations and limits: [Entity Framework Core provider](docs/entity-framework-core.md).
+migrations and limits: [Entity Framework Core provider](src/TerraScale.EntityFrameworkCore/README.md).
 
 The ADO.NET types behind it follow SQLite's ADO.NET conventions: a command may hold several statements, which run as
 one request (or inside the open transaction) and read back as one result set per statement that returns columns;
@@ -360,8 +360,6 @@ commit.
 platform-admin pages: pass the signed-in admin's ts-auth access token through `AccessTokenProvider` (it must carry
 `platform_role: admin`). It is read-only.
 
-See [TerraBase consumers](docs/terrabase-consumers.md).
-
 ## ts-auth client
 
 `TerraScaleAuthClient` exposes shipped Platform, project sign-in configuration and OIDC
@@ -404,8 +402,7 @@ dotnet restore TerraScale.DotNet.slnx --locked-mode
 dotnet build TerraScale.DotNet.slnx --configuration Release --no-restore
 ```
 
-[Package release](docs/package-release.md) records the release procedure; it does not authorize
-publication. NuGet remains on hold. Source/local-pack consumers must verify the loaded SDK DLL
+NuGet remains on hold. Source/local-pack consumers must verify the loaded SDK DLL
 matches their pinned package, then qualify their actual service flow. Client-side validation does
 not establish server admission or plan enforcement; retain scope, role, region and quota errors.
 
@@ -442,13 +439,12 @@ for (;;) { try { await sql.SetDatabasePlacementAsync(projectId, databaseId, plac
 
 Pass the project secret API key to `client.Projects.DisableUserAsync(secretKey, projectId, userId)` and the other management methods. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
-Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
-Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.
+Project MFA/session policy fields and sign-out-everywhere source APIs are available in the source SDK; published package qualification follows release.
+Project invitation and waitlist management additions are not yet published.
 Project user profile creation, merge-patch updates, and partial password-hash imports
-are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
-for fields, scope requirements, hash encodings and the next-release API names.
-Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
-User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+are available in the source SDK.
+Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains.
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client.
 
 ### SQL session outcome rule
 
@@ -471,5 +467,5 @@ Pass the current version for `If-Match`, or `null` for `If-None-Match: *` on fir
 
 ## Custom tokens (source checkout)
 
-[Mint a token on your backend and hand it to a browser](docs/auth-custom-tokens.md) with
+Mint a token on your backend and hand it to a browser with
 `auth.Projects.MintCustomTokenAsync(projectKey, project, userId, database, claims)`.

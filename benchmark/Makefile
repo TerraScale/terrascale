@@ -1,22 +1,50 @@
 .DEFAULT_GOAL := help
-.PHONY: help build check fmt fmt-check insert-batch
+.PHONY: help build build-go build-csharp build-rust check fmt fmt-check run
+
+TERRABASE_BIN ?=
+AUTH_DLL ?=
+DASHBOARD_DLL ?=
+CSHARP_BIN ?= $(CURDIR)/csharp/bin/Release/net11.0/TerraScale.Benchmark.dll
+RUST_BIN ?= $(CURDIR)/rust/target/release/ts-bench-rust
+BENCH_ARGS ?=
+
 help:
-	@printf '%s\n' 'build: build the SQL replication tools' 'check: formatting, vet and build (no production calls)'
-build:
-	go build -trimpath -o bin/replica-lag ./cmd/replica-lag
-	go build -trimpath -o bin/region-sim ./cmd/region-sim
-	go build -trimpath -o bin/insert-bench ./cmd/insert-bench
+	@printf '%s\n' \
+		'build: build Go orchestrator plus C# and Rust SDK runners' \
+		'check: format, vet, lint, clippy and Release build for Go, C#, and Rust' \
+		'run: boot local TerraBase + ts-auth + Dashboard and run C#, Go, and Rust E2E benchmarks'
+
+build: build-go build-csharp build-rust
+
+build-go:
+	go build -trimpath -o bin/ts-bench ./go/cmd/ts-bench
+
+build-csharp:
+	dotnet build csharp/TerraScale.Benchmark.csproj -c Release
+
+build-rust:
+	cargo build --manifest-path rust/Cargo.toml --release --locked
+
 fmt:
-	gofmt -w cmd
+	gofmt -w go
+	cargo fmt --manifest-path rust/Cargo.toml
+
 fmt-check:
-	@test -z "$$(gofmt -l cmd)" || { gofmt -l cmd; exit 1; }
+	@test -z "$$(gofmt -l go)" || { gofmt -l go; exit 1; }
+	dotnet format whitespace csharp/TerraScale.Benchmark.csproj --verify-no-changes
+	cargo fmt --manifest-path rust/Cargo.toml --check
+
 check: fmt-check
 	go vet ./...
-	$(MAKE) build
+	$(MAKE) build-go
+	$(MAKE) build-csharp
+	cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings
 
-# Batched INSERT throughput against one local TerraBase node, over SQL REST and the Postgres wire.
-TERRABASE_BINARY ?= $(CURDIR)/../src/TerraBase/bin/Debug/net11.0/terrabase
-INSERT_BATCH_OUT ?= $(CURDIR)/bench/insert-batch-$(shell date -u +%Y-%m-%d).md
-insert-batch:
-	go build -trimpath -o bin/insert-bench ./cmd/insert-bench
-	bin/insert-bench -terrabase $(TERRABASE_BINARY) -out $(INSERT_BATCH_OUT)
+run: build
+	bin/ts-bench \
+		$(if $(TERRABASE_BIN),--terrabase-bin $(TERRABASE_BIN)) \
+		$(if $(AUTH_DLL),--auth-dll $(AUTH_DLL)) \
+		$(if $(DASHBOARD_DLL),--dashboard-dll $(DASHBOARD_DLL)) \
+		--csharp-bin $(CSHARP_BIN) \
+		--rust-bin $(RUST_BIN) \
+		$(BENCH_ARGS)

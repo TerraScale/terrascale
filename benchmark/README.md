@@ -1,73 +1,63 @@
-# TerraScale SQL benchmarks
+# TerraScale E2E Benchmark Suite
 
-The maintained tools measure SQL replication, table-shape subscriptions and
-endpoint and logging overhead. Results and raw measurement evidence belong in
-[`bench/`](bench/). Historical results describe the revision and environment
-measured; they do not qualify current capacity.
+End-to-end benchmarks driving real **TerraBase**, **ts-auth**, and **TerraScale.Dashboard** processes through the **C#**, **Go**, and **Rust** SDKs.
 
-Run builds, checks and measurements on a dev host (delta, mariogk-dev, beta or rafael-dev).
-`make -C benchmark check` checks the formatting of the Go SQL tools, vets and
-builds them. `make benchmark-build` also builds the
-.NET endpoint and logging benchmarks.
+## Quick start
 
-- [`cmd/replica-lag`](cmd/replica-lag/main.go) measures SQL write acknowledgement
-  to replica visibility, optionally timing replication notices.
-- [`cmd/insert-bench`](cmd/insert-bench/main.go) measures batched multi-row INSERT
-  throughput of one local TerraBase node over SQL REST and the Postgres wire
-  (`make -C benchmark insert-batch`).
-- `region-sim` drives a local SQL cluster with the real CLI.
-- `shape-tails` measures SQL subscription delivery.
-- `overlay-proof` proves sjc provisional, confirmed
-  and revert states; [`cmd/overlay-bench`](cmd/overlay-bench/main.go) measures
-  forwarded-write visibility on a region's live shape tail.
-- [`orm-matrix`](orm-matrix/) exercises PostgreSQL clients and ORMs.
-- [`dotnet`](dotnet/README.md) holds endpoint, logging and engine diagnostics.
+Run the full self-hosted benchmark suite from the repository root:
 
-Credentials stay in stdin or private files and never enter reports or logs.
-Live runs own and clean up their synthetic accounts and databases.
+```bash
+make bench
+```
 
-## F10 SQL shape free reads
+Or directly inside `benchmark/`:
 
-[`scripts/free-reads.mjs`](scripts/free-reads.mjs) uses the JavaScript SDK's
-table-shape subscriptions against the production CDN. It measures table and
-filtered shapes at 1, 10, 100 and 1,000 listeners, with three repeats per cell.
-After F12, identical listeners on one SDK client share one upstream stream;
-this workload does not qualify independent-client fan-out.
-Run it on a dev host after installing the locked `sdk/js` dependencies.
-The host needs its existing regional SSH access and a mode-0600 stdin
-file containing a throwaway account's `project` and `apiKey`. The key needs
-`sql:read`, `sql:write`, `databases:read` and `databases:write`; never pass it
-in arguments. An optional `completed` array contains cohort names already
-proven by retained receipts when resuming a stopped run.
+```bash
+make -C benchmark run
+```
 
-The driver stops on gru TerraBase CPU above 70% of its cgroup/affinity
-capacity, or unavailable process/capacity observations. A
-180-second cohort deadline records incomplete reader delivery without
-reporting percentiles from the successful subset. The origin control plane
-and live tail remain part of request accounting.
+This builds `bin/ts-bench`, the C# runner (`benchmark/csharp`), and the Rust runner (`benchmark/rust`), boots ephemeral loopback instances of `TerraBase`, `ts-auth`, and `TerraScale.Dashboard` in a temporary directory, provisions a real project and API key in `ts-auth`, executes every scenario sequentially across C#, Go, and Rust, tears down all processes cleanly, and prints a Markdown comparison table.
 
-[`scripts/free-reads-analytics.py`](scripts/free-reads-analytics.py) reads a
-Cloudflare analytics token from stdin and queries R2 operations for each
-recorded reader window. Pass it cleaned JSON-object records, then pass both
-receipt files to [`scripts/free-reads-report.py`](scripts/free-reads-report.py).
-Unavailable analytics remain unavailable. The method, limits and results are
-in `bench/2026-11-04-f10-free-reads.md`.
-The F12 rerun and CPU comparison are in
-`bench/2026-11-04-f10-post-f12.md`; its
-[`report generator`](scripts/free-reads-post-f12-report.py) takes the new
-cohorts, original cohorts, new R2 receipts and live deployment receipts in
-that order. The rerun calls `runFreeReads({ holdMs: 2000 })` from the shipped
-driver, retaining a two-second idle tail before each measured update.
+Save a report to disk or tune iterations:
 
-## Cloud benchmark boundary
+```bash
+make -C benchmark run BENCH_ARGS="--iterations=100 --warmup=10 --batch-size=25 --out=bench/e2e-$(date -u +%Y-%m-%d).md"
+```
 
-Production runs on OCI under `ts-orch`. Region codes map to OCI regions: `gru` → `sa-saopaulo-1`, `sjc` → `us-sanjose-1`, `fra` → `eu-frankfurt-1`. CI uses GitHub-hosted runners and GHCR.
+## External target mode
 
-Production secrets belong in OCI Vault; authorized hosts read narrowly granted secrets with instance principals. Do not copy production credentials into benchmark reports or target files. See the orchestrator's [secrets contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md).
+Run the exact same C#, Go, and Rust benchmarks against an already-running TerraScale stack:
 
-Local replication runs are local evidence. Cloud runs must record verified per-region endpoints and measured host limits.
+```bash
+benchmark/bin/ts-bench \
+  --terrabase-url https://api.terrascale.tech \
+  --auth-url https://auth.terrascale.tech \
+  --dashboard-url https://dash.terrascale.tech \
+  --api-key "$TERRASCALE_API_KEY" \
+  --project "$TERRASCALE_PROJECT_ID" \
+  --runners=csharp,go,rust \
+  --iterations=50 \
+  --warmup=5 \
+  --batch-size=25
+```
 
-## Two-region replica simulation
+## Scenarios
 
-region-sim starts a gru home node and an sjc replica node locally and drives them with the
-real `ts` CLI. It reports pass/fail and replica lag for each scenario (`make region-sim`).
+| Scenario | Runners | What it measures |
+| --- | --- | --- |
+| `auth_token_exchange` | C#, Go, Rust | Real `ts-auth` OAuth2 `client_credentials` token exchange (`POST /terrascale/oauth/token`). |
+| `db_lifecycle` | C#, Go, Rust | Create database, run `CREATE TABLE`, and delete database via TerraBase management + SQL APIs. |
+| `sql_rest_write` | C#, Go, Rust | Parameterized single-row `INSERT` over SQL REST (`POST .../sql/execute`). |
+| `sql_rest_read` | C#, Go, Rust | Parameterized point `SELECT` over SQL REST. |
+| `sql_rest_batch` | C#, Go, Rust | Multi-statement transactional `INSERT` batch (`--batch-size` statements per request). |
+| `sql_ws_transaction` | C#, Go, Rust | Persistent WebSocket SQL session (`terrascale.sql.v1`), `INSERT` + `SELECT` inside `Transaction`. |
+| `dashboard_roundtrip` | C#, Go, Rust | HTTP `GET /health/live` + `GET /.well-known/oauth-authorization-server` against `TerraScale.Dashboard`. |
+| `efcore_roundtrip` | C# | `TerraScale.EntityFrameworkCore` insert (`SaveChangesAsync`) + read (`AsNoTracking().SingleAsync`). |
+
+## Library microbenchmarks
+
+BenchmarkDotNet microbenchmarks for shared .NET libraries remain under `benchmark/dotnet/`:
+
+- `benchmark/dotnet/TerraScale.Endpoints.Benchmarks`
+- `benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks`
+- `benchmark/dotnet/TerraScale.Logging.Benchmarks`

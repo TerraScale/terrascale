@@ -308,8 +308,7 @@ uv venv && uv pip install -e '.[dev]'
 ruff check src && mypy
 ```
 
-`contracts/openapi-routes.json` is the published route list
-(`python scripts/refresh-contract.py` updates it). Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z` and publish a
+Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z` and publish a
 GitHub release for it; the publish workflow uploads to PyPI with trusted publishing.
 
 `401 key_revoked` and `401 key_expired` raise `KeyRevokedError` and
@@ -364,13 +363,12 @@ while True:
 
 Construct `TerraScale(api_key=secret_key, project=project_id)` or `AsyncTerraScale`; project management calls send the secret directly to ts-auth. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
-Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
-Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.
+Project MFA/session policy fields and sign-out-everywhere source APIs are available in the source SDK; published package qualification follows release.
+Project invitation and waitlist management additions are not yet published.
 Project user profile creation, merge-patch updates, and partial password-hash imports
-are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
-for fields, scope requirements, hash encodings and the next-release API names.
-Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
-User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+are available in the source SDK.
+Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains.
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client.
 
 ### SQL session outcome rule
 

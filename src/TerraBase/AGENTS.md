@@ -6,9 +6,9 @@ TerraBase is a SQL-only, multi-region database. Clients query with SQL over the 
 
 ## Structure and storage
 
-- Never fork the Turso database: use upstream `tursodatabase/turso` at a pinned commit, tarball verified by SHA-256 at build time (`benchmark/turso-sync-host/turso-pin.env`). Only the Turso client may be forked (today: the vendored driver in `src/vendor/Turso.Data.Sqlite`), and only when upstream cannot do what we need.
+- Never fork the Turso database: use upstream `tursodatabase/turso` at a pinned commit, tarball verified by SHA-256 at build time (`src/vendor/Turso.Native/turso-pin.env`). Only the Turso client may be forked (today: the vendored driver in `src/vendor/Turso.Data.Sqlite`), and only when upstream cannot do what we need.
 - Ship one self-contained JIT binary, `terrabase`. No native AOT or trimming. Stay single-file compatible: no `Assembly.Location` or dependence on adjacent assembly files; preserve the single-file analyzer.
-- Keep one server project, `src/TerraBase`. Analyzers live in `src/TerraBase.Analyzers`. Separate projects require a real boundary (native interop, generated gRPC contracts or an externally consumed library).
+- Keep one server project, `src/TerraBase`. Analyzers live in `src/TerraScale.Analyzers`. Separate projects require a real boundary (native interop, generated gRPC contracts or an externally consumed library).
 - Group related endpoints, records, services, options, storage, metrics and registration by feature under `Features/<Feature>/` (Sql, Postgres, Shapes, Management, Backup, FileStorage, UserAuth, Regions, Replicas, Sync, etc.). Namespaces follow folders under `TerraBase`. Features communicate through small public types; keep unused internals internal. Share primitives only when two features need them.
 - Consume services, stores, engines and adapters through DI interfaces; implementations are internal and swappable without changing callers. `Program.cs` is the sole composition root, using top-level statements and `WebApplication.CreateSlimBuilder` (no `App` or `Startup` class). One shared process per node serves every listener.
 - Storage engine is Turso, with one database file per database. All storage goes through `Engine/` interfaces; engine-specific types stay inside their implementation directory. Do not build a TerraBase B-tree or LSM engine.

@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/libs/">
+    <Project Path="src/TerraScale.Analyzers/TerraScale.Analyzers.csproj" />
     <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
     <Project Path="src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" />
     <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
@@ -12,7 +13,6 @@
     <Project Path="src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
   </Folder>
   <Folder Name="/terrabase/">
-    <Project Path="src/TerraBase.Analyzers/TerraBase.Analyzers.csproj" />
     <Project Path="src/TerraBase/TerraBase.csproj" />
     <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
     <Project Path="src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
@@ -24,6 +24,7 @@
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </Folder>
   <Folder Name="/benchmark/">
+    <Project Path="benchmark/csharp/TerraScale.Benchmark.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
@@ -33,7 +34,6 @@
     <Project Path="sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
   </Folder>
   <Folder Name="/dashboard/">
-    <Project Path="src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj" />
     <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <Project Path="src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj" />
   </Folder>

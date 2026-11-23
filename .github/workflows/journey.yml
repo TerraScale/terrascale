@@ -289,11 +289,11 @@ jobs:
         id: status-npm
         if: contains(matrix.projects, 'interactions')
         with:
-          path: status-site/node_modules
-          key: status-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('status-site/package-lock.json') }}
+          path: sites/status/node_modules
+          key: status-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sites/status/package-lock.json') }}
       - name: Install the status site
         if: contains(matrix.projects, 'interactions')
-        working-directory: status-site
+        working-directory: sites/status
         run: if [ "${{ steps.status-npm.outputs.cache-hit }}" != true ]; then npm ci --no-audit --no-fund; fi
       - name: Install the suite, its browser and the runners
         working-directory: e2e
@@ -506,7 +506,7 @@ jobs:
         id: keyring-baseline
         with:
           path: ${{ runner.temp }}/services/keyring-baseline
-          key: keyring-baseline-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/keyring/build.sh', 'global.json', 'benchmark/turso-sync-host/turso-pin.env') }}
+          key: keyring-baseline-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/keyring/build.sh', 'global.json', 'src/vendor/Turso.Native/turso-pin.env') }}
       - name: Build the single-key baseline
         if: steps.keyring-baseline.outputs.cache-hit != 'true'
         run: bash e2e/keyring/build.sh

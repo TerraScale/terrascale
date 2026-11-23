@@ -10,6 +10,4 @@ TestResults/
 .env.*
 .secrets/
 secrets/
-
-# Results are not build inputs; publishing measurements must not invalidate compilation layers.
 benchmark/bench/

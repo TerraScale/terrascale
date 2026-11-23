@@ -22,6 +22,7 @@ if (Directory.Exists(dataDirectory))
 Directory.CreateDirectory(dataDirectory);
 
 var peerSecret = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+var terrabaseMasterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 var authMasterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 var dashboardClientSecret = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
 var sessionEncryptionKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -44,6 +45,7 @@ var terrabase = builder.AddDotnetProject("terrabase", "../TerraBase/TerraBase.cs
     .WithEnvironment("TERRABASE_METRICS_PORT", Port(9091).ToString(CultureInfo.InvariantCulture))
     .WithEnvironment("TERRABASE_POSTGRES_PORT", Port(5432).ToString(CultureInfo.InvariantCulture))
     .WithEnvironment("TERRABASE_PEER_SECRET", peerSecret)
+    .WithEnvironment("TERRABASE_MASTER_KEY", terrabaseMasterKey)
     .WithHttpEndpoint(port: Port(8080), targetPort: Port(8080), name: "http", isProxied: false)
     .WithHttpEndpoint(port: Port(8081), targetPort: Port(8081), name: "internal", isProxied: false)
     .WithHttpEndpoint(port: Port(9091), targetPort: Port(9091), name: "metrics", isProxied: false)
@@ -65,7 +67,7 @@ var auth = builder.AddDotnetProject("auth", "../TerraScale.Authentication/TerraS
     .WithHttpHealthCheck("/readyz", endpointName: "http")
     .WaitFor(terrabase);
 
-builder.AddDotnetProject("dashboard", "../TerraScale.Dashboard/TerraScale.Dashboard.csproj")
+var dashboard = builder.AddDotnetProject("dashboard", "../TerraScale.Dashboard/TerraScale.Dashboard.csproj")
     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
     .WithEnvironment("ASPNETCORE_URLS", dashboardListen)
     .WithEnvironment("TERRABASE_PEER_SECRET", peerSecret)
@@ -78,5 +80,11 @@ builder.AddDotnetProject("dashboard", "../TerraScale.Dashboard/TerraScale.Dashbo
     .WithHttpHealthCheck("/healthz", endpointName: "http")
     .WaitFor(terrabase)
     .WaitFor(auth);
+
+builder.AddExecutable("dashboard-css", "node", "../TerraScale.Dashboard/web", "build/build-css.mjs", "--watch", "--dev")
+    .WaitFor(dashboard);
+
+builder.AddExecutable("dashboard-js", "node", "../TerraScale.Dashboard/web", "build/build-js.mjs", "--watch")
+    .WaitFor(dashboard);
 
 await builder.Build().RunAsync().ConfigureAwait(false);

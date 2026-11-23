@@ -31,10 +31,9 @@ snapshot = {
                "412": "version_mismatch", "428": "precondition_required"},
     "retry": "mutations sent once; reconcile uncertain outcomes by reading current rules",
 }
-for sdk in ("dotnet", "go", "python", "rust"):
-    target = root / "sdk" / sdk / "contracts/terrabase/rules.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("{\n" + ",\n".join(" " + json.dumps(k) + ": " + json.dumps(v) for k, v in snapshot.items()) + "\n}\n")
+target = root / "sdk/dotnet/contracts/terrabase/rules.json"
+target.parent.mkdir(parents=True, exist_ok=True)
+target.write_text("{\n" + ",\n".join(" " + json.dumps(k) + ": " + json.dumps(v) for k, v in snapshot.items()) + "\n}\n")
 inventory = root / "sdk/dotnet/contracts/terrabase/routes.json"
 body = json.loads(inventory.read_text())
 names = {op["operation"] for op in operations}
@@ -50,5 +49,3 @@ if len(sys.argv) > 1:
                           for path, methods in sorted(openapi["paths"].items()) for method, operation in sorted(methods.items())
                           if method in ("get", "put", "post", "delete", "patch", "head")]
     current.write_text(json.dumps(body, indent=2) + "\n")
-    subprocess.run([sys.executable, str(root / "sdk/python/scripts/refresh-contract.py"), sys.argv[1],
-                    "TerraBase " + body["serverCommit"] + " /openapi/v1.json (local stack)"], check=True)

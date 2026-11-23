@@ -191,7 +191,7 @@ stale version answers `412 version_mismatch`. The simulator evaluates deployed o
 
 The following API is in the next SDK release. A project admin registers a public tenant OAuth client with the
 app's exact origin in `allowed_origins`, its callback in `redirect_uris`, and guest admission when needed.
-Deploy [Rules](../../docs/terrabase/rules.md) before serving data; no rules denies end users.
+Deploy Rules before serving data; no rules denies end users.
 The browser needs the public project and client IDs. Keep project keys out of the app.
 
 For this guest todo app, an administrator creates a database and runs this SQL once in the dashboard:
@@ -241,7 +241,7 @@ and expire after ten minutes. Access tokens refresh thirty seconds before `exp`,
 request; concurrent refresh calls share one rotation. A refused or failed refresh clears the local sign-in.
 `await auth.signOut()` clears local credentials and revokes the refresh family. Navigate to `auth.logoutUrl`
 to end the separate hosted cookie session through ts-auth's confirmation page. Already issued access tokens
-remain usable until their expiry, subject to the [revocation limits](../../docs/terrabase/rules.md#35-revocation).
+remain usable until their expiry, subject to revocation limits.
 
 `storage` and `pkceStorage` accept replaceable `BrowserAuthStorage` adapters with `getItem`, `setItem` and
 `removeItem` (synchronous or asynchronous). The default keeps credentials only in memory and PKCE in session
@@ -352,7 +352,7 @@ received `X-Request-ID` as `requestId`; a refused statement throws its `SqlError
 
 **Browser gate remains red:** Chrome and Edge native fetch resend a buffered mutation once after HTTP 421. Node uses
 one-shot request streams to prevent that replay. Browser Fetch has no retry-control option; its one-wire assertions
-remain failing in this draft. See the [HTTP 421 assessment](docs/fetch-421-assessment-20261013.md).
+remain failing in this draft.
 
 ## Live SQL table shapes
 
@@ -456,7 +456,6 @@ nice -n 19 npm run build
 
 `lint` reuses the strict TypeScript/JSDoc check, including unused-code checks,
 without adding a linter dependency. CI runs these commands at normal priority.
-See [CHANGELOG.md](CHANGELOG.md) for the 0.0.1 migration and breaking changes.
 
 ## Named entrypoints
 
@@ -518,8 +517,7 @@ token })` with a named `databases` read.
 The Database service requires `platform_role=admin`. The old `requireTerraScaleManagement`
 and `requireTerraScaleAdministration` names are deprecated construction aliases
 that now require the corresponding client configuration.
-See the [operation map](docs/evidence/management-operation-map.md) for contract
-pins and omitted producer operations. Durable schema plans, public billing REST
+Durable schema plans, public billing REST
 and administration mutations still need their owning public contracts.
 
 `@terrascale/sdk/ts-auth` exports the ts-auth OIDC and project client, with its
@@ -665,13 +663,12 @@ for (;;) { try { await client.setDatabasePlacement(project, database, { regions:
 
 Pass the project secret API key as the first credential argument to `client.projects.disableUser(secretKey, projectId, userId)`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
-Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
-Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.
+Project MFA/session policy fields and sign-out-everywhere source APIs are available in the source SDK; published package qualification follows release.
+Project invitation and waitlist management additions are not yet published.
 Project user profile creation, merge-patch updates, and partial password-hash imports
-are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
-for fields, scope requirements, hash encodings and the next-release API names.
-Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
-User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+are available in the source SDK.
+Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains.
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client.
 
 ### SQL session outcome rule
 
@@ -710,7 +707,7 @@ Keep this signer in the agent process. The helpers support the package runtimes,
 and browsers with WebCrypto when the deployment permits requests from the browser origin.
 Tokens are cached in memory and refreshed thirty seconds before expiry. Agent tokens have no audience;
 passing an audience to verification requires that audience and refuses these tokens. Offline verification
-cannot detect revocation until the token expires, within five minutes. See the [agent contract](../../docs/auth/agent-identities.md).
+cannot detect revocation until the token expires, within five minutes.
 
 Project management provides `createAgent`, `listAgents`, `listUserAgents`, `getAgent` (including its keys),
 `revokeAgent`, `addAgentKey`, `revokeAgentKey`, `getAgentPolicy` and `setAgentPolicy` through `auth.projects`.

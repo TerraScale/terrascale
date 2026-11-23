@@ -40,14 +40,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../TerraBase.Analyzers/TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Include="../TerraScale.Analyzers/TerraScale.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
     <ProjectReference Include="../TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
-    <EmbeddedResource Include="../../landing-site/static/pricing.json" LogicalName="TerraBase.pricing.json" />
+    <EmbeddedResource Include="../../sites/landing/static/pricing.json" LogicalName="TerraBase.pricing.json" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" />

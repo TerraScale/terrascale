@@ -12,7 +12,8 @@
     <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Common/Accounts/pricing.json" />
+    <EmbeddedResource Include="../../sites/landing/static/pricing.json" LogicalName="TerraScale.Dashboard.Common.Accounts.pricing.json" />
+    <Content Include="../../sites/landing/static/pricing.json" Link="Common/Accounts/pricing.json" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Cronos" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />

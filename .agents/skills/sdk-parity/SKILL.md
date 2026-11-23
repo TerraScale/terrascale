@@ -39,4 +39,4 @@ Add the operation to `e2e/sdk/operations.json` and its step to all five runners 
 
 ## 5. Docs
 
-Update the SDK README's operation list and the docs-site page for the feature, if one exists.
+Update the SDK README's operation list and the `sites/docs` page for the feature, if one exists.

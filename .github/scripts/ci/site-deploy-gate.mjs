@@ -113,11 +113,11 @@ async function appQualified(revision) {
 
 function inputs(thing) {
   const common = ['.github/scripts/ci/site-deploy-gate.mjs', ':(exclude,glob)**/AGENTS.md'];
-  if (!services[thing]) return [...common, `${thing}-site`, '.github/workflows/sites.yml', '.github/scripts/ci/prove-worker-deploy.mjs', ...(thing === 'docs' ? ['Makefile', 'landing-site/static/pricing.json', 'landing-site/static/regions.json'] : [])];
-  const shared = ['Directory.*', 'global.json', 'NuGet.config', '.editorconfig', 'BannedSymbols.txt', 'Makefile', 'Dockerfile', 'sdk/dotnet', ':(glob)src/TerraScale.Endpoints*/**', '.github/scripts/ci/image-payloads.sh', '.github/scripts/ci/reconcile-image.sh', '.github/scripts/ci/inspect-app-image.sh', '.github/scripts/ci/app-image-regions.sh', '.github/scripts/ci/release-app.sh', '.github/scripts/ci/wait-app-rollout.sh', '.github/scripts/ci/fetch-ts-orch.sh', '.github/scripts/ci/publish-ocir.sh', '.github/scripts/ci/publish-image.sh', '.github/scripts/ci/attach-image-bundles.sh', '.github/scripts/ci/ocir-repositories.sh', '.github/scripts/ci/prove-image-publication.sh', '.github/scripts/ci/release-only.sh', '.github/scripts/check-design-host.py'];
+  if (!services[thing]) return [...common, `sites/${thing}`, '.github/workflows/sites.yml', '.github/scripts/ci/prove-worker-deploy.mjs', ...(thing === 'docs' ? ['Makefile', 'sites/landing/static/pricing.json', 'sites/landing/static/regions.json'] : [])];
+  const shared = ['Directory.*', 'global.json', 'NuGet.config', '.editorconfig', 'BannedSymbols.txt', 'Makefile', 'Dockerfile', 'sdk/dotnet', ':(glob)src/TerraScale.Endpoints*/**', 'src/TerraScale.Analyzers', '.github/scripts/ci/image-payloads.sh', '.github/scripts/ci/reconcile-image.sh', '.github/scripts/ci/inspect-app-image.sh', '.github/scripts/ci/app-image-regions.sh', '.github/scripts/ci/release-app.sh', '.github/scripts/ci/wait-app-rollout.sh', '.github/scripts/ci/fetch-ts-orch.sh', '.github/scripts/ci/publish-ocir.sh', '.github/scripts/ci/publish-image.sh', '.github/scripts/ci/attach-image-bundles.sh', '.github/scripts/ci/ocir-repositories.sh', '.github/scripts/ci/prove-image-publication.sh', '.github/scripts/ci/release-only.sh', '.github/scripts/check-design-host.py'];
   return [...common, ...shared, ...(thing === 'auth'
     ? [':(glob)src/TerraScale.Authentication*/**', 'src/TerraScale.Logging', '.github/scripts/auth', '.github/workflows/ci.yml']
-    : [':(glob)src/TerraScale.Dashboard*/**', 'src/TerraScale.TerraBase.Contracts', '.github/scripts/dashboard', '.github/workflows/images-ghcr.yml', '.github/workflows/dashboard-ci.yml'])];
+    : [':(glob)src/TerraScale.Dashboard*/**', 'src/TerraScale.TerraBase.Contracts', 'sites/landing/static/pricing.json', '.github/scripts/dashboard', '.github/workflows/images-ghcr.yml', '.github/workflows/ci.yml'])];
 }
 
 function work(kind, name, deployed, revision) {

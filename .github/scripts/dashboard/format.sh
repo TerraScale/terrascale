@@ -3,7 +3,7 @@ set -euo pipefail
 
 projects=(
   src/TerraScale.Dashboard/TerraScale.Dashboard.csproj
-  src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj
+  src/TerraScale.Analyzers/TerraScale.Analyzers.csproj
   src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj
 )
 
