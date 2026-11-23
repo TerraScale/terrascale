@@ -7,7 +7,7 @@ and the dashboard behind an edge that serves the production host names (Caddy fo
 `pg.terrascale.tech`), a per-run CA, Mailpit as the SMTP server, a Cloudflare send-API sink that must stay empty, a
 Stripe stand-in for the API and Checkout and an R2 stand-in for customer file storage. CI runs it through `.github/workflows/journey.yml` on the
 merge commit GitHub tests for a pull request, unless every file the pull request changes is a `*.md` file or sits
-under `docs/`, `docs-site/`, `status-site/` or `landing-site/` other than `landing-site/static/pricing.json` (the
+under `docs/`, `sites/docs/`, `sites/status/` or `sites/landing/` other than `sites/landing/static/pricing.json` (the
 `journey` filter of `.github/workflows/ci.yml`). Pushes to `main` and dispatches of `CI` never run it on a local stack;
 after each release the same specs run against production ("The production target" below).
 

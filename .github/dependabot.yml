@@ -26,11 +26,12 @@ updates:
         patterns: ["*"]
   - package-ecosystem: npm
     directories:
-      - /docs-site
-      - /docs-site/create-terrascale-app
-      - /docs-site/examples/server-token-provider
-      - /landing-site
-      - /status-site
+      - /sites/docs
+      - /sites/docs/create-terrascale-app
+      - /sites/docs/examples/server-token-provider
+      - /sites/landing
+      - /sites/status
+      - /sites/atlas
       - /sdk/js
     schedule:
       interval: weekly
@@ -49,7 +50,9 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: cargo
-    directory: /sdk/rust
+    directories:
+      - /sdk/rust
+      - /benchmark/rust
     schedule:
       interval: weekly
     open-pull-requests-limit: 0

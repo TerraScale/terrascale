@@ -19,7 +19,8 @@ library. The historical pure-Rust/softaes release remains immutable.
 ## Pinned inputs and native behavior
 
 - Turso v0.8.2, commit `5c168be5ef6a32ac966daf5983502a4f694b37ad`, archive SHA-256
-  `7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb`.
+  `7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb` (pinned in
+  `src/vendor/Turso.Native/turso-pin.env`).
 - Rust `1.88.0-bookworm`, multiarch image digest
   `sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0`;
   locked Cargo dependencies, `lib-release`, fixed `SOURCE_DATE_EPOCH=1791270348`

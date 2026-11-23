@@ -1,6 +1,6 @@
 ---
 name: simple-ui
-description: TerraScale UI standard — simple purpose, architecture, design and implementation, like Linear or Apple Notes. No taglines, helper text or secondary labels. Use whenever you create, change, review or write copy for any TerraScale page, screen, dialog, email or component (dashboard, ts-auth hosted pages, landing-site, docs-site chrome).
+description: TerraScale UI standard — simple purpose, architecture, design and implementation, like Linear or Apple Notes. No taglines, helper text or secondary labels. Use whenever you create, change, review or write copy for any TerraScale page, screen, dialog, email or component (dashboard, ts-auth hosted pages, sites/landing, sites/docs chrome).
 ---
 
 # Simple UI

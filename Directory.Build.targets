@@ -61,12 +61,8 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(IsDashboardArea)' == 'true'">
-    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" Condition="'$(MSBuildProjectName)' != 'TerraScale.Dashboard.Analyzers'" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.Analyzers/TerraScale.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
   </ItemGroup>
-
-  <PropertyGroup Condition="'$(IsDashboardArea)' == 'true' and '$(TargetFramework)' == 'netstandard2.0'">
-    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
-  </PropertyGroup>
 </Project>

@@ -19,7 +19,7 @@ import sys
 
 root = str(next(pathlib.Path("src/TerraBase/Engine").glob("*/storage-format.lock")).parent) + "/"
 client = str(next(pathlib.Path("src/vendor").glob("*.Data.Sqlite"))) + "/"
-pin = str(next(pathlib.Path("benchmark").glob("*-sync-host/*-pin.env")))
+pin = "src/vendor/Turso.Native/turso-pin.env"
 base = sys.argv[1]
 storage = re.compile("|".join([
     "^" + re.escape(root),

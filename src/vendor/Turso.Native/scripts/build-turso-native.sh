@@ -8,7 +8,7 @@ case "$(uname -m):$arch" in
   *) echo 'Native publication requires a real host of the requested architecture; emulation is not accepted.' >&2; exit 1 ;;
 esac
 root=$(git rev-parse --show-toplevel)
-source "$root/benchmark/turso-sync-host/turso-pin.env"
+source "$root/src/vendor/Turso.Native/turso-pin.env"
 [[ $TURSO_COMMIT =~ ^[0-9a-f]{40}$ ]]
 [[ $TURSO_SHA256 =~ ^[0-9a-f]{64}$ ]]
 if command -v docker >/dev/null; then
@@ -19,10 +19,11 @@ else
   echo 'Docker or Podman is required to build the pinned native core' >&2
   exit 1
 fi
+native_root="$root/src/vendor/Turso.Native"
 "$builder" buildx build --platform "linux/$arch" --no-cache --target native \
-  --file "$root/src/vendor/Turso.Native/scripts/Dockerfile.turso-native" \
-  --output "type=local,dest=$output" "$root"
+  --file "$native_root/scripts/Dockerfile.turso-native" \
+  --output "type=local,dest=$output" "$native_root"
 (cd "$output" && sha256sum --check SHA256SUMS-*)
 "$builder" buildx build --platform "linux/$arch" --no-cache --target native \
-  --file "$root/src/vendor/Turso.Native/scripts/Dockerfile.router-parser" \
-  --output "type=local,dest=$output" "$root"
+  --file "$native_root/scripts/Dockerfile.router-parser" \
+  --output "type=local,dest=$output" "$native_root"

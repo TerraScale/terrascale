@@ -198,7 +198,7 @@ async Task EventAsync(BillingBinding binding, string eventId)
     var body = JsonSerializer.Serialize(new EventInput(eventId, "2026-09-30.endive", new(new("subscription", binding.SubscriptionId, binding.CustomerId)), false, "customer.subscription.updated", clock.Now.ToUnixTimeSeconds()), BillingJson.Default.EventInput);
     var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
     var signature = Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secrets[7]), Encoding.UTF8.GetBytes(timestamp + "." + body)));
-    await billing.HandleWebhookAsync(body, "t=" + timestamp + ",v1=" + signature, cancellationToken);
+    _ = await billing.HandleWebhookAsync(body, "t=" + timestamp + ",v1=" + signature, cancellationToken);
 }
 
 try

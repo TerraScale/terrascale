@@ -27,7 +27,7 @@ export function ulid(): string {
 }
 
 export async function startStatusSite(sql: string, vars: Record<string, string>, listen = 8791): Promise<StatusSite> {
-  const root = join(e2eRoot, '..', 'status-site');
+  const root = join(e2eRoot, '..', 'sites', 'status');
   const persist = join(root, '.wrangler', 'state');
   const log = join(stateDir, `status-site-${listen}.log`);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });

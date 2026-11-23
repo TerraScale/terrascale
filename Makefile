@@ -21,20 +21,22 @@ AUTH_FORMAT_PROJECTS := src/TerraScale.Authentication/TerraScale.Authentication.
 
 TERRABASE_PROJECT := src/TerraBase/TerraBase.csproj
 TERRABASE_FORMAT_PROJECTS := src/TerraBase/TerraBase.csproj \
-	src/TerraBase.Analyzers/TerraBase.Analyzers.csproj \
 	src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj \
 	src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj
 
 DASHBOARD_PROJECT := src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj
+DASHBOARD_HOST_DLL := src/TerraScale.Dashboard/bin/$(CONFIGURATION)/net11.0/TerraScale.Dashboard.dll
 DASHBOARD_WEB := src/TerraScale.Dashboard/web
 
 ASPIRE_PROJECT := src/TerraScale.Aspire/TerraScale.Aspire.csproj
 
-LIBS_STYLE_PROJECTS := src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
+LIBS_STYLE_PROJECTS := src/TerraScale.Analyzers/TerraScale.Analyzers.csproj \
+	src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
 	src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj \
 	src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj \
 	src/TerraScale.Logging/TerraScale.Logging.csproj
-LIBS_BUILD_PROJECTS := src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj \
+LIBS_BUILD_PROJECTS := src/TerraScale.Analyzers/TerraScale.Analyzers.csproj \
+	src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj \
 	src/TerraScale.Logging/TerraScale.Logging.csproj \
 	benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
@@ -52,8 +54,8 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	terrabase-restore terrabase-fmt-check terrabase-build terrabase-run terrabase-publish \
 	dashboard-restore dashboard-build dashboard-lint dashboard-security dashboard-check dashboard-css dashboard-check-css dashboard-js \
 	aspire-restore aspire-fmt-check aspire-build \
-	benchmark-build benchmark-fmt-check benchmark-check region-sim \
-	docs-build landing-build status-build \
+	benchmark-build benchmark-fmt-check benchmark-check bench \
+	docs-build landing-build status-build atlas-build \
 	sdk-check sdk-dotnet-check sdk-js-check sdk-go-check sdk-python-check sdk-rust-check
 
 restore:
@@ -108,7 +110,7 @@ auth-build: auth-restore
 	$(DOTNET) build $(AUTH_PROJECT) --configuration $(CONFIGURATION) --no-restore --nologo -m
 
 auth-audit: auth-restore
-	$(DOTNET) run .github/scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj
+	$(DOTNET) run sdk/dotnet/scripts/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj
 
 auth-openapi-check: auth-build
 	mkdir -p artifacts
@@ -182,17 +184,21 @@ benchmark-fmt-check:
 benchmark-check:
 	$(MAKE) -C benchmark check
 
-REGION_SIM_OUT ?= $(CURDIR)/benchmark/bench/region-sim/$(shell date -u +%Y-%m-%d-%H%M).md
-region-sim: terrabase-build
-	cd sdk/go && go build -trimpath -o $(CURDIR)/benchmark/bin/ts ./cmd/ts
-	cd benchmark && go build -trimpath -o bin/region-sim ./cmd/region-sim
-	benchmark/bin/region-sim -terrabase $(TERRABASE_BINARY) -ts benchmark/bin/ts -out $(REGION_SIM_OUT) $(REGION_SIM_ARGS)
+bench: terrabase-build auth-build dashboard-build
+	$(MAKE) -C benchmark run TERRABASE_BIN=$(TERRABASE_BINARY) AUTH_DLL=$(CURDIR)/$(AUTH_HOST_DLL) DASHBOARD_DLL=$(CURDIR)/$(DASHBOARD_HOST_DLL)
+
+docs-build:
+	cd sites/docs && npm ci --no-audit --no-fund && node scripts/generate-pricing.mjs --check && node scripts/generate-llms.mjs --check \
+		&& node scripts/i18n-sync.mjs --check && npm run build
 
 landing-build:
-	cd landing-site && npm ci --no-audit --no-fund && npm run build
+	cd sites/landing && npm ci --no-audit --no-fund && npm run build
 
 status-build:
-	cd status-site && npm ci --no-audit --no-fund && npm run check && npm run lint && npm run build
+	cd sites/status && npm ci --no-audit --no-fund && npm run check && npm run lint && npm run build
+
+atlas-build:
+	cd sites/atlas && npm ci --no-audit --no-fund && npm run check && npm run lint && npm run build
 
 sdk-check: sdk-dotnet-check sdk-js-check sdk-go-check sdk-python-check sdk-rust-check
 
@@ -214,9 +220,3 @@ sdk-python-check:
 
 sdk-rust-check:
 	cd sdk/rust && cargo build --locked --all-targets
-
-docs-build:
-	cmp docs-site/data/canonical/pricing.json landing-site/static/pricing.json
-	cmp docs-site/data/canonical/regions.json landing-site/static/regions.json
-	cd docs-site && npm ci --no-audit --no-fund && node scripts/generate-pricing.mjs --check && node scripts/generate-llms.mjs --check \
-		&& node scripts/i18n-sync.mjs --check && npm run build

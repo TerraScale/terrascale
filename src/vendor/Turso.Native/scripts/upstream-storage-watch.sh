@@ -30,7 +30,7 @@ if [[ ${1:-} == --self-test ]]; then
   exit 0
 fi
 
-source "$root/benchmark/turso-sync-host/turso-pin.env"
+source "$root/src/vendor/Turso.Native/turso-pin.env"
 [[ $TURSO_COMMIT =~ ^[0-9a-f]{40}$ ]]
 printf 'pin %s\n' "$TURSO_COMMIT"
 since=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)

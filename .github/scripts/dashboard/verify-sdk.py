@@ -17,7 +17,7 @@ solution_projects = {item.get("Path") for item in solution.iter("Project")}
 expected = {
     "sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj",
     "sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj",
-    "src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj",
+    "src/TerraScale.Analyzers/TerraScale.Analyzers.csproj",
     "src/TerraScale.Dashboard/TerraScale.Dashboard.csproj",
     "src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj",
     "src/TerraScale.Endpoints/TerraScale.Endpoints.csproj",

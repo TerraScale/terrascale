@@ -2,7 +2,7 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
 output=${1:?usage: verify-turso-native.sh <native-directory>}
-source "$root/benchmark/turso-sync-host/turso-pin.env"
+source "$root/src/vendor/Turso.Native/turso-pin.env"
 [[ $TURSO_COMMIT =~ ^[0-9a-f]{40}$ ]]
 [[ $TURSO_SHA256 =~ ^[0-9a-f]{64}$ ]]
 pins="$root/src/vendor/Turso.Native/SHA256SUMS"

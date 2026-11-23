@@ -10,7 +10,7 @@ output = pathlib.Path(sys.argv[2]).resolve() / 'receipt-import'
 with tempfile.TemporaryDirectory(prefix='journey-receipts-') as directory:
     source = pathlib.Path(directory)
     tracked = subprocess.check_output(
-        ['git', 'ls-files', '-z', '--', 'src', 'sdk/dotnet', 'landing-site/static', ':/*.*'], cwd=repo
+        ['git', 'ls-files', '-z', '--', 'src', 'sdk/dotnet', 'sites/landing/static', ':/*.*'], cwd=repo
     ).decode().split('\0')
     for name in filter(None, tracked):
         path = repo / name

@@ -22,8 +22,7 @@ should use ULID keys from `v1.NewID()` and avoid `AUTOINCREMENT`.
 
 Install the module with `go get terrascale.tech/sdk@v0.0.27`; the tag carries the
 current SQL API (`Database.Execute`, `Query`, `Batch` and the WebSocket session).
-Follow the [CLI installation instructions](docs/cli-releases.md) for the released
-executable. The historical `history/ts-go/*` releases predate the SQL-only API;
+The historical `history/ts-go/*` releases predate the SQL-only API;
 use them only with that revision's contracts. Releases remain `0.0.X`.
 
 ## Zero-configuration operating contract
@@ -37,7 +36,7 @@ Customer tenant/project scope and authorized access credentials remain required.
 The examples describe SDK boundaries; deployed issuer trust still requires
 qualification. See the [zero-configuration contract](https://docs.terrascale.tech/guides/zero-configuration).
 
-`Client.ListRegions(ctx)` reads the anonymous [serving-region catalog](contracts/regions.md)
+`Client.ListRegions(ctx)` reads the anonymous serving-region catalog
 for database placement. It sends one request, accepts future valid region IDs, and
 adds no routing, cache or background discovery. No credentials are required.
 
@@ -172,8 +171,7 @@ and accept 60–2,592,000 seconds. They never outlive the parent; revoking or ro
 the parent revokes them. `Project` is required for organization keys. The key
 is returned once and cannot manage databases or mint more keys. Scoped key calls
 preserve `*tb.APIError`, including auth refusal codes and `RetryAfter`, and send
-once. [Contract fixtures](contracts/terrabase/agent/) qualify the HTTP boundary;
-live server behavior remains unqualified.
+once.
 
 ### Placement
 
@@ -191,8 +189,7 @@ db, err = c.SetDatabasePlacement(ctx, projectID, db.ID, tb.DatabasePlacement{Reg
 `SetDatabasePlacement` needs exactly one of `Regions` (at least one region) or
 `AllRegions`. `ManagedDatabase` carries `Regions` (every region that holds the
 database, sorted by region id; the order has no meaning) and `AllRegions`.
-[Contract fixtures](contracts/terrabase/placement/)
-qualify the HTTP boundary. All-regions placement (`AllRegions`) holds the database
+All-regions placement (`AllRegions`) holds the database
 in every serving region, including regions added later (`ts db placement ... -all-regions`).
 
 A region can accept a local SQL REST write and TerraBase applies it once. The default `TerraScale-Durability` is `local`. The server forwards a timed-out local publish with
@@ -229,8 +226,7 @@ a file ID, like the JS `downloadUrl`. Files are immutable; size is 1-100 MiB per
 
 ### Relational SQL
 
-The SQL API follows the shared shape in [`sdk/SQL-API.md`](../SQL-API.md) and the
-[REST contract](contracts/terrabase/sql-execute.md). Every call is one
+The SQL API follows the shared shape in [`sdk/SQL-API.md`](../SQL-API.md). Every call is one
 `POST /v1/projects/{project}/databases/{database}/sql/execute` request and one
 transaction, all or nothing.
 
@@ -283,8 +279,7 @@ if errors.As(err, &sqlErr) && errors.Is(err, v1.ErrUniqueViolation) {
 - Errors: a refused statement returns `*v1.SQLError` with `Code`, `Message`,
   `Statement`, `SQLState` and `Status`; it wraps the `*APIError`, so
   `errors.Is(err, v1.ErrSerializationConflict)` and every other code constant
-  match. Codes are in [error-codes.json](contracts/terrabase/sql/error-codes.json).
-  `IsTransient` is true for `serialization_conflict` and `tenant_busy`.
+  match. `IsTransient` is true for `serialization_conflict` and `tenant_busy`.
 - Retries: `409 serialization_conflict` is resent at most twice with jitter
   (the request rolled back), plus the client's existing pre-execution refusals
   (429 and transient 503 with Retry-After). A lost response returns
@@ -340,7 +335,7 @@ not billing evidence.
 `db.RequestLogs(ctx, "2xx")` reads recent authorized request observations; pass `""`
 for all status classes. The typed response preserves `DatabaseID`, `Items`, `Truncated`,
 `RecordingLimited` and nullable `RequestID`. The server returns at most 100 observations
-from the last 24 hours; recording is best effort. See the [pinned contract](contracts/request-logs.md).
+from the last 24 hours; recording is best effort.
 
 ### Legacy Management API
 
@@ -395,8 +390,7 @@ placement/residency does not enable or disable serving regions.
 ### Analytics (TS-762)
 
 `Analytics` reads TerraBase's `/v1/projects` routes using a ts-auth
-**project access token**. Project and database IDs are plain ULIDs. See
-[the contract](contracts/analytics.md).
+**project access token**. Project and database IDs are plain ULIDs.
 
 ```go
 m, err := tb.NewManagement(tb.Config{BaseURL: origin})
@@ -610,8 +604,7 @@ producer's pagination and optional `User` filter, `RevokeProjectSession`),
 OAuth clients (`ListProjectOAuthClients`, `CreateProjectOAuthClient`,
 `DeleteProjectOAuthClient`) and the tenant's hosted-auth settings and social
 providers. Session and user records carry canonical ULIDs; revocations are
-sent once, never automatically replayed. See `contracts/project-directory.md`
-and `contracts/project-oauth-clients.md` for the pinned producer contracts.
+sent once, never automatically replayed.
 
 ```go
 c, err := tsauth.New(tsauth.Config{})
@@ -689,7 +682,7 @@ if err != nil {
 Import `net/url` for this example. Function management needs the read and write
 scopes; invocation needs the read scope.
 Invocation is sent once, including handler 401/429/503 responses, and cancellation
-can leave its outcome unknown. [Pinned public contract](contracts/function-invocation.md).
+can leave its outcome unknown.
 With `TERRASCALE_API_KEY` set (CI), database commands act as that API key in
 its project instead of the stored sign-in. `ts migrate up` applies each
 pending `migrations/NNNN_<name>.sql` file in one transaction together with its
@@ -708,8 +701,7 @@ nice -n 19 go build ./...
 
 The module requires Go 1.25 and has no CGO dependency. CI and CLI releases use
 the patched compiler pinned in `.go-version`, separately from the supported
-consumer floor. See [release toolchain checks](contracts/release-toolchain.md)
-for advisory scanning, artifact qualification and consumer compilation.
+consumer floor.
 
 PostgreSQL passwords and API key token sources use
 `<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`
@@ -728,13 +720,12 @@ Token endpoint `invalid_client` is a terminal `*tsauth.Error`.
 `503 auth_unavailable` matches `v1.ErrAuthUnavailable` and follows the existing
 replay-safe request backoff and `Retry-After` policy, keeping the token cache.
 
-Preview workflows: [CLI database branches](docs/cli-branches.md) covers create, list, guarded delete and scoped connection URLs.
+Preview workflows: CLI database branches cover create, list, guarded delete and scoped connection URLs.
 
 ### Rules in the CLI
 
 The source CLI provides `ts rules pull <database>`, `ts rules deploy <database>`
-and `ts rules test <database>`. See [Rules commands](docs/cli-rules.md) for version
-state, diff confirmation, draft simulation and JSON output.
+and `ts rules test <database>`.
 
 ### Declarative schema in the CLI
 
@@ -780,13 +771,12 @@ for { _, err := client.SetDatabasePlacement(ctx, project, database, tb.DatabaseP
 
 Use `client.WithToken(secretKey)` for `ProjectUsers`, `DisableProjectUser` and `EnableProjectUser`. Reads require `auth:read` and changes require `auth:write`. Step-up operations require a person’s sign-in token. Keep keys in the backend.
 
-Project MFA/session policy fields and sign-out-everywhere source APIs follow the [producer contract](../../docs/auth/mfa-sessions.md); published package qualification follows release.
-Project invitation and waitlist management on this branch is described in [the auth contract](../../docs/auth/signup-restrictions.md). These additions are not yet published.
+Project MFA/session policy fields and sign-out-everywhere source APIs are available in the source SDK; published package qualification follows release.
+Project invitation and waitlist management additions are not yet published.
 Project user profile creation, merge-patch updates, and partial password-hash imports
-are available in the source SDK. See [user profiles](../../docs/auth/user-profiles.md)
-for fields, scope requirements, hash encodings and the next-release API names.
-Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains. See [the project organizations contract](../../docs/auth/project-organizations.md).
-User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client. See [the API contract](../../docs/auth/machine-tokens-and-user-api-keys.md).
+are available in the source SDK.
+Project organization management supports CRUD, memberships, emailed invitations and DNS verified domains.
+User-owned API key creation, listing, revocation and backend verification are available in the in-repository auth client.
 
 ### SQL session outcome rule
 

@@ -2,12 +2,12 @@ FROM rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8f
 ENV SOURCE_DATE_EPOCH=1791270348 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/parser-target
 ENV RUSTFLAGS="--remap-path-prefix=/repo=/usr/src/terrascale"
 WORKDIR /repo
-COPY src/vendor/Turso.Native/sql src/vendor/Turso.Native/sql
-COPY benchmark/turso-sync-host/turso-pin.env benchmark/turso-sync-host/turso-pin.env
-COPY src/vendor/Turso.Native/scripts/prepare-router-parser-source.sh src/vendor/Turso.Native/scripts/prepare-router-parser-source.sh
+COPY sql src/vendor/Turso.Native/sql
+COPY turso-pin.env src/vendor/Turso.Native/turso-pin.env
+COPY scripts/prepare-router-parser-source.sh src/vendor/Turso.Native/scripts/prepare-router-parser-source.sh
 RUN bash src/vendor/Turso.Native/scripts/prepare-router-parser-source.sh \
     && cargo build --manifest-path src/vendor/Turso.Native/sql/Cargo.toml --locked --release
-COPY src/vendor/Turso.Native/scripts/router-parser-smoke.c /smoke.c
+COPY scripts/router-parser-smoke.c /smoke.c
 RUN cc -Wall -Wextra -Werror -Isrc/vendor/Turso.Native/sql /smoke.c -L/parser-target/release -lterrascale_sql_parser -o /smoke \
     && LD_LIBRARY_PATH=/parser-target/release /smoke > /smoke.txt
 ARG TARGETARCH
