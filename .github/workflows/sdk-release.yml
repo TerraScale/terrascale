@@ -55,8 +55,8 @@ jobs:
         run: |
           latest=$(git for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' 'refs/tags/sdk/go/v0.0.*')
           if git merge-base --is-ancestor "$latest" HEAD; then
-            git diff-tree --quiet -r "$latest" HEAD -- sdk/go scripts/sdk .github/workflows/sdk-release.yml \
-              ':(exclude,glob)**/AGENTS.md' ':(exclude,glob)**/CLAUDE.md' || echo due=true >> "$GITHUB_OUTPUT"
+            git diff-tree --quiet -r "$latest" HEAD -- sdk/go .github/scripts/sdk-release.py .github/workflows/sdk-release.yml \
+              ':(exclude,glob)**/AGENTS.md' || echo due=true >> "$GITHUB_OUTPUT"
           elif ! git merge-base --is-ancestor HEAD "$latest"; then
             echo "::error::The newest Go tag $latest is neither an ancestor nor a descendant of $(git rev-parse HEAD); no Go release can follow it until it is deleted or moved onto main."
             exit 1
@@ -108,7 +108,7 @@ jobs:
       - name: Build the release artifacts with their release gates
         id: qualified
         if: github.event_name != 'workflow_run' || steps.due.outputs.due == 'true'
-        run: python3 scripts/sdk/build-release.py go "$RUNNER_TEMP/qualified"
+        run: python3 .github/scripts/sdk-release.py go "$RUNNER_TEMP/qualified"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'workflow_run' || steps.due.outputs.due == 'true'
         with:
@@ -226,7 +226,7 @@ jobs:
         id: qualified
         env:
           SDK: ${{ steps.tag.outputs.sdk }}
-        run: python3 scripts/sdk/build-release.py "$SDK" "$RUNNER_TEMP/qualified"
+        run: python3 .github/scripts/sdk-release.py "$SDK" "$RUNNER_TEMP/qualified"
       - name: Require the tagged package version
         env:
           SDK: ${{ steps.tag.outputs.sdk }}

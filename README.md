@@ -1,81 +1,45 @@
 # TerraScale
 
-TerraScale is one monorepo for the platform's core code: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), the dashboard, the shared .NET libraries (endpoints, logging), the SDKs in `sdk/` (dotnet, go, js, python, rust), the docs site, the landing site and the benchmarks.
+TerraScale is one monorepo for the platform: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), **TerraScale.Dashboard** (platform UI/API/MCP), shared .NET libraries (`TerraScale.Endpoints*`, `TerraScale.Logging`), the C# Aspire local host (`TerraScale.Aspire`), the five SDKs in `sdk/` (.NET, Go, JS, Python, Rust), the public sites (`docs-site/`, `landing-site/`, `status-site/`), the end-to-end journey (`e2e/`) and benchmarks (`benchmark/`).
 
-Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping: [pull request to main](docs/dev/shipping.md).
+Contributor and agent rules live in [`AGENTS.md`](AGENTS.md).
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/` | Projects: libs (`TerraScale.Endpoints*`, `TerraScale.Logging`), auth (`TerraScale.Authentication*`), terrabase (`TerraBase*`) |
+| `src/` | .NET services, libraries, vendored storage driver (`src/vendor/`) and local Aspire host (`src/TerraScale.Aspire`) |
+| `sdk/` | Customer SDKs: `dotnet`, `go`, `js`, `python`, `rust` |
 | `e2e/` | The journey, the only test: Playwright against the real services and all five SDKs ([`e2e/AGENTS.md`](e2e/AGENTS.md)) |
-| `benchmark/` | Go benchmark code and `benchmark/bench/` results; `benchmark/dotnet/` for .NET library benchmarks |
-| `docs/` | `docs/terrabase/` and `docs/auth/`, each with a `README.md` |
-| `scripts/` | `scripts/libs`, `scripts/auth`, `scripts/terrabase` |
-| `.github/workflows/` | CI (GitHub Actions, GitHub-hosted runners); `Dockerfile` holds the publish and runtime stages |
+| `docs-site/`, `landing-site/`, `status-site/` | Public Cloudflare Workers sites |
+| `benchmark/` | Go benchmarks, .NET library benchmarks (`benchmark/dotnet/`) and results (`benchmark/bench/`) |
+| `ops/` | Secret inventory (`ops/secrets/secrets.json`) |
+| `.github/` | CI/CD workflows, actions and helper scripts (`.github/scripts/`) |
 
-## Production
+## Commands
 
-Production is moving to OCI `gru` (`sa-saopaulo-1`, host `ts-gru-1`) under
-[`ts-orch`](https://github.com/TerraScale/ts-orchestrator). The regional footprint also includes
-`sjc` (`us-sanjose-1`) and `fra` (`eu-frankfurt-1`); a region token alone does not prove a service is ready.
-GitHub Actions builds and checks on GitHub-hosted runners and publishes images to GHCR.
-The orchestrator owns artifact admission and rollout authority, private NetBird networking, and
-OCI Vault credential delivery using instance principals. See its
-[region contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/automatic-regions.md) and
-[secret delivery contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md)
-for implementation limits and operational ownership. Tigris backup storage retains its Fly organization
-connection and `fly.storage.tigris.dev` endpoint; compute ownership does not change that integration.
+Run targets from the repository root (`Makefile`):
 
-## Make targets
-
-Run them from the repository root. Locally, prefix each with `nice -n 19`.
-
-| Command | What it does |
+| Command | What |
 |---|---|
-| `make build` | Build the solution |
-| `make check` | Formatting, build, libs style, the auth audit and OpenAPI check and the benchmark checks; CI is the gate, so running it locally is optional |
-| `make dev` | Run TerraBase and ts-auth locally under Aspire (see below) |
-| `make libs-*`, `make auth-*`, `make terrabase-*`, `make dashboard-*`, `make benchmark-*`, `make sdk-<sdk>-check`, `make docs-build`, `make landing-build`, `make status-build` | Per-area targets |
+| `make dev` | Start TerraBase, ts-auth and Dashboard locally under Aspire (`src/TerraScale.Aspire`) |
+| `make build` | Restore `TerraScale.slnx`, fetch pinned native libraries and build |
+| `make check` | Formatting, full build, libs style, auth audit + OpenAPI lint, dashboard check and benchmark check |
+| `make libs-build`, `make libs-check` | Shared .NET libraries |
+| `make auth-build`, `make auth-check` | ts-auth build, NuGet audit and OpenAPI lint |
+| `make terrabase-build`, `make terrabase-run` | TerraBase build and standalone run |
+| `make dashboard-build`, `make dashboard-lint`, `make dashboard-check` | Dashboard build, asset/UI/format lint and security checks |
+| `make dashboard-css`, `make dashboard-js` | Rebuild committed Dashboard CSS/JS assets |
+| `make aspire-build` | Build the local Aspire AppHost |
+| `make sdk-check`, `make sdk-<dotnet\|go\|js\|python\|rust>-check` | SDK build and type-checks |
+| `make docs-build`, `make landing-build`, `make status-build` | Public site checks and builds |
 
 ## Local development with Aspire
 
-`make dev` runs TerraBase and ts-auth on this machine through the [Aspire](https://aspire.dev) TypeScript AppHost in
-`aspire/apphost.mts`, with the Aspire dashboard for their logs, traces and health. It is local development only; nothing
-here deploys or touches production.
+`make dev` runs TerraBase, ts-auth and the Dashboard locally through the C# Aspire AppHost in [`src/TerraScale.Aspire`](src/TerraScale.Aspire), with the Aspire dashboard for logs, traces and health. Local development only; nothing touches production.
 
-- Needs Node.js 20.19+ and ts-dotnet at the revision pinned in `.github/workflows/ci.yml` (`TS_DOTNET_REV`). The Aspire
-  CLI is a local dotnet tool (`dotnet-tools.json`), run as `dotnet aspire` after `dotnet tool restore` (`make dev` runs
-  it). The dashboard is HTTPS: trust the development certificate once with `dotnet aspire certs trust`.
-- From a worktree, or when `../ts-dotnet` is on another revision, clone the pinned revision on its own instead of moving
-  that checkout, and point `TS_DOTNET_DIR` at it:
-
-  ```sh
-  git clone --no-checkout ../ts-dotnet /tmp/ts-dotnet-pinned   # or the GitHub repository
-  git -C /tmp/ts-dotnet-pinned checkout --detach <TS_DOTNET_REV>
-  nice -n 19 make dev TS_DOTNET_DIR=/tmp/ts-dotnet-pinned
-  ```
-
-  Direct `dotnet` and `make` commands take the same checkout as `TsDotnetRoot` (`-p:TsDotnetRoot=<dir>` or the
-  environment variable).
-- Every listener stays on loopback: TerraBase binds `127.0.0.1` in Development (8080 public, 8081 internal,
-  9091 metrics) and ts-auth listens on `127.0.0.1:8090` (metrics 9092). Locally, ts-auth stores in the TerraBase at
-  `127.0.0.1:8081`.
-- `TS_DEV_INSTANCE=1 make dev` runs a second stack beside the first: every fixed port becomes `base + 100 × instance`
-  (so 8080/8081/8090 → 8180/8181/8190, metrics 9091/9092 → 9191/9192, Postgres 5432 → 5532) and TerraBase's data
-  directory gets an `-<instance>` suffix; instance 0 (the default) keeps the ports above.
-- Each run is disposable: TerraBase starts from an empty data directory (`$TMPDIR/terrascale-aspire-terrabase`, emptied
-  at the start of every run), and ts-auth gets a new master key that is never written to disk.
-- ts-auth answers `/readyz` 503 ("no signing keys") until the platform issuer has a signing key. The `auth-signing-key`
-  resource runs `ts-auth provision-signing-key` against that run's local TerraBase only; it never starts by itself
-  (start it from the dashboard). See [docs/auth/signing-keys.md](docs/auth/signing-keys.md).
-- Agents: `.mcp.json` registers the Aspire MCP server (`dotnet aspire agent mcp`, stdio) for Claude Code; it asks for
-  approval the first time.
-
-## Docs
-
-- Application publishing and release qualification: [docs/dev/app-publication.md](docs/dev/app-publication.md)
-- TerraBase: [`docs/terrabase/README.md`](docs/terrabase/README.md)
-- ts-auth: [`docs/auth/README.md`](docs/auth/README.md)
-- Benchmarks: [`benchmark/README.md`](benchmark/README.md)
+- Requires the .NET SDK pinned in [`global.json`](global.json). The Aspire CLI is a local tool in [`dotnet-tools.json`](dotnet-tools.json) (`make dev` restores it). Trust the local HTTPS certificate once with `dotnet aspire certs trust`.
+- Every listener binds loopback: Dashboard on `127.0.0.1:8070`, TerraBase on `127.0.0.1:8080` (internal `8081`, metrics `9091`, Postgres `5432`) and ts-auth on `127.0.0.1:8090` (metrics `9092`).
+- Set `TS_DEV_INSTANCE=1 make dev` to run an isolated second stack (`base + 100 * instance` for every port and `-<instance>` on the data directory).
+- Every run is disposable: TerraBase starts from a clean `$TMPDIR/terrascale-aspire-terrabase` directory and all local secrets are freshly generated in memory.
+- `.mcp.json` registers the Aspire MCP server (`dotnet aspire agent mcp`).

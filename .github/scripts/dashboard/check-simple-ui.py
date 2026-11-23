@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Reject helper-text classes removed by the simple-ui standard (.agents/skills/simple-ui/SKILL.md).
+
+Cards have titles, fields have labels, stats have values: no subtitles, hints, captions or eyebrows.
+Also reject a Datastar attribute, in single or double quotes, whose Razor value is a C# conditional with a branch that is
+null, null!, null as T, default, default(T) or default!, also in a conditional nested in a branch, a lambda body or a
+switch arm: Razor renders that branch as an empty value and Datastar throws on it. That check skips Razor and HTML comments.
+"""
+import html
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+SOURCES = [ROOT / 'src/TerraScale.Dashboard', ROOT / 'src/TerraScale.Authentication/Features']
+SUFFIXES = {'.cshtml', '.cs', '.js', '.mjs', '.css'}
+SKIP = ('node_modules', 'bin', 'obj', 'static', 'vendor')
+BANNED = re.compile(r'\bts-(hint|card-description|empty-detail|stat-detail|eyebrow|lede)\b')
+DATASTAR_NAMES = r'(?:init|text|show|effect)(?:__[\w.-]+)*|(?:on|attr|class|computed|style)[-:][\w:.-]+'
+DATASTAR_VALUE = re.compile(rf'\s(data-(?:{DATASTAR_NAMES}))=(["\'])@\(')
+OPENERS = {'(': ')', '[': ']', '{': '}'}
+NULL = re.compile(r'(\([\w.?<>, ]+\)\s*)?null!?|null\s+as\s+[\w.?<>, ]+|default(\([\w.?<>, ]+\))?!?')
+COMMENT = re.compile(r'@\*.*?\*@|<!--.*?-->', re.DOTALL)
+
+
+def is_literal(text, index):
+    return text[index] in '"\'' or text[index] in '$@' and text[index + 1:index + 3].lstrip('$@')[:1] == '"'
+
+
+def literal_end(text, start):
+    if text[start] == "'":
+        return text.index("'", start + (3 if text[start + 1] == '\\' else 2)) + 1
+    quote = start
+    while text[quote] in '$@':
+        quote += 1
+    interpolated = '$' in text[start:quote]
+    verbatim = '@' in text[start:quote]
+    index = quote + 1
+    while index < len(text):
+        char = text[index]
+        if char == '\\' and not verbatim or char == '"' and verbatim and text[index + 1:index + 2] == '"':
+            index += 2
+        elif char == '"':
+            return index + 1
+        elif interpolated and char == '{' and text[index + 1:index + 2] == '{':
+            index += 2
+        elif interpolated and char == '{':
+            index = closing(text, index + 1, '}') + 1
+        else:
+            index += 1
+    raise ValueError(f'unterminated literal at offset {start}')
+
+
+def closing(text, start, close):
+    index = start
+    while index < len(text):
+        char = text[index]
+        if is_literal(text, index):
+            index = literal_end(text, index)
+        elif char in OPENERS:
+            index = closing(text, index + 1, OPENERS[char]) + 1
+        elif char == close:
+            return index
+        else:
+            index += 1
+    raise ValueError(f'no {close} after offset {start}')
+
+
+def skeleton(expression):
+    parts = []
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if is_literal(expression, index):
+            index = literal_end(expression, index)
+            parts.append('""')
+        elif expression.startswith('/*', index):
+            index = expression.index('*/', index + 2) + 2
+        elif char in OPENERS:
+            end = closing(expression, index + 1, OPENERS[char])
+            parts.append(char + skeleton(expression[index + 1:end]) + OPENERS[char])
+            index = end + 1
+        else:
+            parts.append(char)
+            index += 1
+    return ''.join(parts)
+
+
+def top_level(expression):
+    depth = 0
+    for index, char in enumerate(expression):
+        if char in OPENERS:
+            depth += 1
+        elif char in OPENERS.values():
+            depth -= 1
+        elif depth == 0:
+            yield index, char
+
+
+def unwrapped(branch):
+    branch = branch.strip()
+    while branch.startswith('(') and closing(branch, 1, ')') == len(branch) - 1:
+        branch = branch[1:-1].strip()
+    return branch
+
+
+def conditional(expression, index):
+    following = expression[index + 1:index + 2]
+    return expression[index] == '?' and following not in ('?', '.', '[') and expression[index - 1:index] != '?'
+
+
+def has_null_branch(expression):
+    expression = unwrapped(expression)
+    question = None
+    nested = 0
+    for index, char in top_level(expression):
+        if question is None:
+            question = index if conditional(expression, index) else None
+        elif conditional(expression, index):
+            nested += 1
+        elif char == ':' and ':' not in (expression[index - 1:index], expression[index + 1:index + 2]):
+            if nested:
+                nested -= 1
+                continue
+            branches = [unwrapped(expression[question + 1:index]), unwrapped(expression[index + 1:])]
+            return any(NULL.fullmatch(branch) or has_null_branch(branch) for branch in branches)
+    return any(NULL.fullmatch(body) or has_null_branch(body) for body in nested_bodies(expression))
+
+
+def nested_bodies(expression):
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if is_literal(expression, index):
+            index = literal_end(expression, index)
+            continue
+        if expression.startswith('=>', index):
+            body = unwrapped(expression[index + 2:])
+            if body.startswith('{'):
+                yield body[1:closing(body, 1, '}')]
+            else:
+                yield body
+            return
+        if expression.startswith('switch', index) and expression[index + 6:index + 7] in (' ', '(', '{'):
+            brace = expression.find('{', index + 6)
+            if brace != -1 and not any(char for _, char in top_level(expression[index + 6:brace]) if not char.isspace()):
+                body = expression[brace + 1:closing(expression, brace + 1, '}')]
+                for arm in switch_arms(body):
+                    if NULL.fullmatch(arm) or has_null_branch(arm):
+                        yield arm
+                index = brace + len(body) + 2
+                continue
+        if char in OPENERS:
+            end = closing(expression, index + 1, OPENERS[char])
+            yield from nested_bodies(expression[index + 1:end])
+            index = end + 1
+            continue
+        index += 1
+
+
+def switch_arms(body):
+    arm = []
+    depth = 0
+    for index, char in enumerate(body):
+        if char in OPENERS:
+            depth += 1
+        elif char in OPENERS.values():
+            depth -= 1
+        if depth == 0 and char == ',':
+            yield from arm_expression(arm)
+            arm = []
+            continue
+        arm.append(char)
+    yield from arm_expression(arm)
+
+
+def arm_expression(chars):
+    text = ''.join(chars)
+    arrow = None
+    depth = 0
+    for index, char in enumerate(text):
+        if char in OPENERS:
+            depth += 1
+        elif char in OPENERS.values():
+            depth -= 1
+        elif depth == 0 and text.startswith('=>', index):
+            arrow = index
+    if arrow is not None:
+        yield unwrapped(text[arrow + 2:])
+
+
+def null_datastar_values(text):
+    text = COMMENT.sub(lambda comment: '\n' * comment.group(0).count('\n'), text)
+    for match in DATASTAR_VALUE.finditer(text):
+        end = closing(text, match.end(), ')')
+        if text[end + 1:end + 2] == match.group(2) and has_null_branch(skeleton(text[match.end():end])):
+            yield text.count('\n', 0, match.start(1)) + 1, match.group(1)
+
+
+def attribute(tag, name):
+    match = re.search(rf'\s{re.escape(name)}\s*=\s*(["\'])(.*?)\1', tag, re.DOTALL | re.IGNORECASE)
+    return match.group(2) if match else ''
+
+
+def form_policy(text):
+    text = COMMENT.sub(lambda match: re.sub(r'[^\n]', ' ', match.group()), text)
+    for match in re.finditer(r'\sstyle\s*=\s*["\']', text, re.IGNORECASE):
+        yield text.count('\n', 0, match.start() + match.group().lower().index('style')) + 1, 'no-inline-style: use classes, hidden or CSSOM'
+    for form in re.finditer(r'<form\b[^>]*>.*?</form\s*>', text, re.DOTALL | re.IGNORECASE):
+        body = form.group()
+        tag = body[:body.index('>') + 1]
+        classes = attribute(tag, 'class').split()
+        line = text.count('\n', 0, form.start()) + 1
+        if 'ts-row' in classes and attribute(tag, 'method').lower() in ('', 'get'):
+            yield line, 'filter-form-layout: use ts-filters instead of ts-row'
+        if (
+            re.search(r'<(?:input|button|select|textarea)\b[^>]*\sname\s*=\s*(["\'])action\1', body, re.IGNORECASE)
+            and re.search(r'@@?post\s*\(\s*el\.action\b', body)
+        ):
+            yield line, "form-action-shadow: use el.getAttribute('action') when a field is named action"
+        if 'ts-filters' in classes:
+            for button in re.finditer(r'<button\b([^>]*)>(.*?)</button\s*>|<input\b([^>]*)>', body, re.DOTALL | re.IGNORECASE):
+                attrs = ' ' + (button.group(1) if button.group(1) is not None else button.group(3))
+                kind = attribute(attrs, 'type').lower()
+                if kind != 'submit' and (kind or button.group(3) is not None):
+                    continue
+                label = attribute(attrs, 'aria-label') or button.group(2) or attribute(attrs, 'value')
+                label = html.unescape(re.sub(r'<[^>]+>|@Icons\.Render\([^)]*\)', '', label)).strip()
+                if re.match(r'^(apply|filter|search)\b', label, re.IGNORECASE):
+                    yield text.count('\n', 0, form.start() + button.start()) + 1, 'filters-on-change: remove the submit button and apply filters on change'
+
+
+failures = []
+datastar = []
+forms = []
+for source in SOURCES:
+    for path in source.rglob('*'):
+        if path.suffix not in SUFFIXES or any(part in SKIP for part in path.relative_to(ROOT).parts):
+            continue
+        text = path.read_text(encoding='utf-8')
+        for number, line in enumerate(text.splitlines(), 1):
+            if match := BANNED.search(line):
+                failures.append(f'{path.relative_to(ROOT)}:{number}: {match.group(0)}')
+        if path.suffix == '.cshtml':
+            if path.is_relative_to(ROOT / 'src/TerraScale.Dashboard/Features'):
+                forms.extend(f'{path.relative_to(ROOT)}:{number}: {rule}' for number, rule in form_policy(text))
+            datastar.extend(f'{path.relative_to(ROOT)}:{number}: {name}' for number, name in null_datastar_values(text))
+
+if failures:
+    print('Helper text is banned by the simple-ui standard; fix the layout instead:', file=sys.stderr)
+    print('\n'.join(failures), file=sys.stderr)
+if datastar:
+    print('A Datastar attribute that needs a value gets null from a C# conditional;', file=sys.stderr)
+    print('Razor renders that branch as an empty value and Datastar throws on it:', file=sys.stderr)
+    print('\n'.join(datastar), file=sys.stderr)
+if forms:
+    print('\n'.join(forms), file=sys.stderr)
+if failures or datastar or forms:
+    sys.exit(1)

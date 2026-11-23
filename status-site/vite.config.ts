@@ -33,6 +33,6 @@ export default defineConfig((): ViteConfig & Pick<UserConfig, "fmt"> => ({
     // Template whitespace is rendered output, so html`` stays as written.
     embeddedLanguageFormatting: "off",
     // Human-owned rule files, and the design system's generated tokens file (kept verbatim).
-    ignorePatterns: ["AGENTS.md", "CLAUDE.md", "src/styles/tokens.css"],
+    ignorePatterns: ["AGENTS.md", "src/styles/tokens.css"],
   },
 }));

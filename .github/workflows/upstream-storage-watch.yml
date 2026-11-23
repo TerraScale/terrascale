@@ -19,4 +19,4 @@ jobs:
       - name: List upstream storage-risk commits from the last 7 days
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/vendor/upstream-storage-watch.sh
+        run: src/vendor/Turso.Native/scripts/upstream-storage-watch.sh

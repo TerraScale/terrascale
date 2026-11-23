@@ -5,7 +5,6 @@ updates:
       - /
       - /src/**
       - /benchmark/**
-      - /aspire/**
       - /sdk/dotnet/**
     schedule:
       interval: weekly
@@ -27,7 +26,6 @@ updates:
         patterns: ["*"]
   - package-ecosystem: npm
     directories:
-      - /aspire
       - /docs-site
       - /docs-site/create-terrascale-app
       - /docs-site/examples/server-token-provider
@@ -71,9 +69,7 @@ updates:
   - package-ecosystem: docker
     directories:
       - /
-      - /scripts/dashboard
-      - /scripts/dashboard/ci
-      - /scripts/vendor
+      - /src/vendor/Turso.Native/scripts
     schedule:
       interval: weekly
     open-pull-requests-limit: 0

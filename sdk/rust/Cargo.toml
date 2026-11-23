@@ -4,7 +4,7 @@ version = "0.0.5"
 edition = "2021"
 description = "Typed Rust client for TerraBase SQL databases and TerraScale authentication"
 repository = "https://github.com/TerraScale/terrascale"
-exclude = ["AGENTS.md", "CLAUDE.md", ".agents/"]
+exclude = ["AGENTS.md", ".agents/"]
 
 [features]
 default = []

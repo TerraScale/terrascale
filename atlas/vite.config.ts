@@ -7,6 +7,6 @@ export default defineConfig((): ViteConfig & Pick<UserConfig, "fmt"> => ({
   server: { cors: false },
   fmt: {
     printWidth: 120,
-    ignorePatterns: ["AGENTS.md", "CLAUDE.md"],
+    ignorePatterns: ["AGENTS.md"],
   },
 }));
