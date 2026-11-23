@@ -55,7 +55,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	dashboard-restore dashboard-build dashboard-lint dashboard-security dashboard-check dashboard-css dashboard-check-css dashboard-js \
 	aspire-restore aspire-fmt-check aspire-build \
 	benchmark-build benchmark-fmt-check benchmark-check bench \
-	docs-build landing-build status-build atlas-build \
+	docs-build landing-build status-build \
 	sdk-check sdk-dotnet-check sdk-js-check sdk-go-check sdk-python-check sdk-rust-check
 
 restore:
@@ -196,9 +196,6 @@ landing-build:
 
 status-build:
 	cd sites/status && npm ci --no-audit --no-fund && npm run check && npm run lint && npm run build
-
-atlas-build:
-	cd sites/atlas && npm ci --no-audit --no-fund && npm run check && npm run lint && npm run build
 
 sdk-check: sdk-dotnet-check sdk-js-check sdk-go-check sdk-python-check sdk-rust-check
 

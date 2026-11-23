@@ -31,7 +31,6 @@ updates:
       - /sites/docs/examples/server-token-provider
       - /sites/landing
       - /sites/status
-      - /sites/atlas
       - /sdk/js
     schedule:
       interval: weekly
