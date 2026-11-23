@@ -2,13 +2,15 @@ using TerraBase.Cluster;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Health;
+using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using ZLogger;
 
 namespace TerraBase.Hosting;
 
 internal sealed class SystemBootstrap(
-    SystemDatabase system, PlatformCatalog platform, ClusterOptions cluster, NodeReadiness readiness, IHostApplicationLifetime lifetime, ILogger<SystemBootstrap> logger)
+    SystemDatabase system, PlatformCatalog platform, ManagementService management, ClusterOptions cluster, NodeReadiness readiness, IHostApplicationLifetime lifetime,
+    ILogger<SystemBootstrap> logger)
     : IHostedService
 {
     public ConfigurationError? Failure { get; private set; }
@@ -35,6 +37,12 @@ internal sealed class SystemBootstrap(
 
         var (node, region, bootstrap) = (cluster.NodeId, cluster.Region, cluster.IsBootstrapNode);
         logger.ZLogInformation($"System catalog open on {node}.{region} (bootstrap node: {bootstrap})");
+        var shredded = await management.SweepDeletedAsync(cancellationToken);
+        if (shredded > 0)
+        {
+            logger.ZLogInformation($"Finished {shredded:@Shredded} interrupted database deletions");
+        }
+
         lifetime.ApplicationStarted.Register(readiness.Ready);
     }
 

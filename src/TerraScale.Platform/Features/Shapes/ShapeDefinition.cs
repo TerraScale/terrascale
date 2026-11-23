@@ -76,8 +76,7 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
     public static bool IsTable(string? table) =>
         table is { Length: > 0 and <= 63 } && !char.IsAsciiDigit(table[0]) && table.All(static character => char.IsAsciiLetterOrDigit(character) || character == '_')
-        && !table.StartsWith("_tb_", StringComparison.OrdinalIgnoreCase) && !table.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase)
-        && !table.StartsWith("turso_", StringComparison.OrdinalIgnoreCase);
+        && !table.StartsWith("_tb_", StringComparison.OrdinalIgnoreCase) && !table.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase);
 
     public static IReadOnlyList<string>? ColumnList(string columns)
     {

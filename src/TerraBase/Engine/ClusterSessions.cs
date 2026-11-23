@@ -1,6 +1,6 @@
 using TerraBase.Continuity;
 using TerraBase.Features.Catalog;
-using TerraScale.Contracts.ControlPlane;
+using TerraBase.Features.Management;
 
 namespace TerraBase.Engine;
 
@@ -13,6 +13,8 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     private SystemDatabase System => services.GetRequiredService<SystemDatabase>();
 
     private CatalogStore Catalog => services.GetRequiredService<CatalogStore>();
+
+    private ManagementService Management => services.GetRequiredService<ManagementService>();
 
     public async ValueTask<Result<ISqlDatabaseSession, NotFound, Unavailable>> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken) =>
         await PlacementAsync(databaseId, cancellationToken) switch
@@ -36,7 +38,7 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
             Unavailable => null,
         } is { Count: > 0 } page)
         {
-            active.AddRange(page.Where(static record => record.State != ControlDatabaseState.Deleted).Select(static record => record.Id));
+            active.AddRange(page.Select(static record => record.Id));
             after = page[^1].Id.ToString();
         }
 
@@ -58,6 +60,9 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     public async ValueTask DatabaseReplacedAsync(Ulid databaseId, CancellationToken cancellationToken) =>
         await Databases.EvictAsync(databaseId);
 
+    public async ValueTask<Result<Done, Unavailable>> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        await Management.DiscardCopyAsync(databaseId, cancellationToken);
+
     private async ValueTask<Result<DatabasePlacement, NotFound, Unavailable>> PlacementAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         if (databaseId == SystemDatabase.Id)
@@ -67,7 +72,6 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
 
         return await Catalog.GetDatabaseAsync(databaseId, cancellationToken) switch
         {
-            DatabaseRecord { State: ControlDatabaseState.Deleted } => new NotFound("the database was deleted", "database_deleted"),
             DatabaseRecord record => new DatabasePlacement(record.KeyId, record.Strict),
             NotFound missing => missing,
             Unavailable unavailable => unavailable,

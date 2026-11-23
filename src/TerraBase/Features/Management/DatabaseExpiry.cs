@@ -14,6 +14,12 @@ internal sealed class DatabaseExpiry(ManagementService management, TimeProvider 
             {
                 logger.ZLogInformation($"Deleted {deleted:@Deleted} expired databases");
             }
+
+            var shredded = await management.SweepDeletedAsync(stoppingToken);
+            if (shredded > 0)
+            {
+                logger.ZLogInformation($"Finished {shredded:@Shredded} interrupted database deletions");
+            }
         }
     }
 }

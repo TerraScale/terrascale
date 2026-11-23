@@ -81,6 +81,10 @@ public sealed record DatabaseReplicationBody(string DatabaseId, DateTimeOffset O
 
 public sealed record CountBody(long Count);
 
+public sealed record ProjectClosureInput(string? Project, int? Version, string? ClosureId, string? AuthorityOrganizationId);
+
+public sealed record ProjectClosureBody(string Status, string ClosureId, int PendingHolders, int EvidenceVersion);
+
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(OrganizationBody))]
 [JsonSerializable(typeof(ProjectBody))]
@@ -97,4 +101,6 @@ public sealed record CountBody(long Count);
 [JsonSerializable(typeof(DatabaseReplicationBody))]
 [JsonSerializable(typeof(CountBody))]
 [JsonSerializable(typeof(AdminInput))]
+[JsonSerializable(typeof(ProjectClosureInput))]
+[JsonSerializable(typeof(ProjectClosureBody))]
 internal sealed partial class ManagementJsonContext : JsonSerializerContext;

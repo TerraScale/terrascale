@@ -489,7 +489,6 @@ jobs:
           {
             echo "E2E_BUILD=$RUNNER_TEMP/services"
             echo "E2E_STATE=$RUNNER_TEMP/keyring-state"
-            echo "E2E_KEYRING_BASELINE=$RUNNER_TEMP/services/keyring-baseline/terrabase.dll"
             echo "E2E_KEYRING_DRIVER=$RUNNER_TEMP/services/keyring/TerraBase.LiveRestoreDrill.dll"
           } >> "$GITHUB_ENV"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -501,14 +500,6 @@ jobs:
         working-directory: e2e
         run: npm ci --no-audit --no-fund
         if: steps.e2e-npm.outputs.cache-hit != 'true'
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        id: keyring-baseline
-        with:
-          path: ${{ runner.temp }}/services/keyring-baseline
-          key: keyring-baseline-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/keyring/build.sh', 'global.json', 'native/native-pin.env', 'native/build-native.sh') }}
-      - name: Build the single-key baseline
-        if: steps.keyring-baseline.outputs.cache-hit != 'true'
-        run: bash e2e/keyring/build.sh
       - name: Prove key retention, rotation and promotion recovery
         env:
           GITHUB_TOKEN: ${{ github.token }}

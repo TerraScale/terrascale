@@ -159,25 +159,8 @@ internal sealed class BackupFlow(DatabaseAccess access, ManagementService manage
         request.Target is { } target ? RestoreTargets.Parse(target.PointInTime, target.Bookmark) : RestoreTargets.Parse(request.PointInTime, request.Bookmark);
 
     private async ValueTask<Result<Accepted<RestoreOperationBody>, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable>> RestoreIntoAsync(
-        ResolvedDatabase source, BackupInput request, RestoreTarget target, CancellationToken cancellationToken)
-    {
-        if (!DatabaseNames.IsValid(request.Name))
-        {
-            return new Validation("name must be a lowercase database name of at most 63 characters", "invalid_name");
-        }
-
-        return await management.CreatePlacedAsync(source.Project, request.Name, source.Database.Regions, source.Database.AllRegions, source.Database.DefaultConsistency,
-            source.Database.Strict, request.TtlSeconds, source.Database.Id, cancellationToken) switch
-        {
-            DatabaseRecord restored => Operation(source,
-                await continuity.RestoreAsync(new PointInTimeRestoreRequest(source.Database.Id, restored.Id, target), cancellationToken)),
-            Validation invalid => invalid,
-            Forbidden forbidden => forbidden,
-            Conflict conflict => conflict,
-            QuotaExceeded quota => new Conflict(quota.Message, quota.Code),
-            Unavailable unavailable => unavailable,
-        };
-    }
+        ResolvedDatabase source, BackupInput request, RestoreTarget target, CancellationToken cancellationToken) =>
+        Operation(source, await management.CopyAsync(source.Project, source.Database, request.Name, request.TtlSeconds, target, branch: false, cancellationToken));
 
     private static Result<Accepted<RestoreOperationBody>, Validation, Unauthorized, Forbidden, NotFound, Conflict, Unavailable> Operation(
         ResolvedDatabase source, Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable> started) => started switch

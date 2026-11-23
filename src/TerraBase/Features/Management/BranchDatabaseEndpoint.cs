@@ -27,7 +27,7 @@ internal sealed class BranchDatabaseEndpoint(BranchFlow flow) : Endpoint<Databas
         await flow.BranchAsync(HttpContext.Caller, request, cancellationToken);
 }
 
-internal sealed class BranchFlow(DatabaseAccess access, ManagementService management, IBackupContinuity continuity, TerraBaseOptions options, TimeProvider time)
+internal sealed class BranchFlow(DatabaseAccess access, ManagementService management, TerraBaseOptions options, TimeProvider time)
 {
     public async ValueTask<BranchDatabaseResponse> BranchAsync(Caller caller, DatabaseInput request, CancellationToken cancellationToken)
     {
@@ -78,31 +78,15 @@ internal sealed class BranchFlow(DatabaseAccess access, ManagementService manage
             Unavailable unavailable => unavailable,
         };
 
-    private async ValueTask<BranchDatabaseResponse> ArchiveAsync(ResolvedDatabase source, DatabaseInput request, RestoreTarget target, CancellationToken cancellationToken)
-    {
-        if (!DatabaseNames.IsValid(request.Name))
+    private async ValueTask<BranchDatabaseResponse> ArchiveAsync(ResolvedDatabase source, DatabaseInput request, RestoreTarget target, CancellationToken cancellationToken) =>
+        await management.CopyAsync(source.Project, source.Database, request.Name, request.TtlSeconds, target, branch: true, cancellationToken) switch
         {
-            return new Validation("name must be a lowercase database name of at most 63 characters", "invalid_name");
-        }
-
-        return await management.CreatePlacedAsync(source.Project, request.Name, source.Database.Regions, source.Database.AllRegions, source.Database.DefaultConsistency,
-            source.Database.Strict, request.TtlSeconds, source.Database.Id, cancellationToken) switch
-        {
-            DatabaseRecord branch => await continuity.BranchAsync(new BranchRequest(source.Database.Id, branch.Id, target), cancellationToken) switch
-            {
-                RestoreOperation operation => new Accepted<RestoreOperationBody>(
-                    string.Concat("/v1/projects/", source.Project.Id.ToString(), "/databases/", source.Database.Id.ToString(), "/restores/", operation.OperationId.ToString()),
-                    RestoreOperationBody.From(operation)),
-                NotFound missing => missing,
-                Validation invalid => invalid,
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
-            },
+            RestoreOperation operation => new Accepted<RestoreOperationBody>(
+                string.Concat("/v1/projects/", source.Project.Id.ToString(), "/databases/", source.Database.Id.ToString(), "/restores/", operation.OperationId.ToString()),
+                RestoreOperationBody.From(operation)),
+            NotFound missing => missing,
             Validation invalid => invalid,
-            Forbidden forbidden => forbidden,
             Conflict conflict => conflict,
-            QuotaExceeded quota => quota,
             Unavailable unavailable => unavailable,
         };
-    }
 }

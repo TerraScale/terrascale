@@ -122,7 +122,7 @@ internal sealed class CatalogStore(SystemDatabase system)
     public async ValueTask<Result<Done, Conflict, Unavailable>> DeleteProjectAsync(Ulid id, CancellationToken cancellationToken) =>
         await system.WriteAsync(
         [
-            SqlBuild.Statement("DELETE FROM projects WHERE id = ? AND NOT EXISTS (SELECT 1 FROM databases WHERE project_id = ?)", SqlBuild.Id(id), SqlBuild.Id(id)),
+            SqlBuild.Statement("DELETE FROM projects WHERE id = ? AND NOT EXISTS (SELECT 1 FROM databases WHERE project_id = ? AND state <> 'deleted')", SqlBuild.Id(id), SqlBuild.Id(id)),
             SqlBuild.Statement("DELETE FROM api_key_hashes WHERE key_id IN (SELECT id FROM api_keys WHERE project_id = ?) AND NOT EXISTS (SELECT 1 FROM projects WHERE id = ?)", SqlBuild.Id(id), SqlBuild.Id(id)),
             SqlBuild.Statement("DELETE FROM api_keys WHERE project_id = ? AND NOT EXISTS (SELECT 1 FROM projects WHERE id = ?)", SqlBuild.Id(id), SqlBuild.Id(id)),
         ], ConsistencyMode.Strong, cancellationToken) switch
@@ -136,8 +136,8 @@ internal sealed class CatalogStore(SystemDatabase system)
     public async ValueTask<Result<DatabaseRecord, NotFound, Unavailable>> FindDatabaseAsync(Ulid projectId, string reference, CancellationToken cancellationToken)
     {
         var statement = Ulid.TryParse(reference, out var id) && reference.Length == 26
-            ? SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ? AND id = ?"), SqlBuild.Id(projectId), SqlBuild.Id(id))
-            : SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ? AND name = ?"), SqlBuild.Id(projectId), SqlBuild.Text(reference));
+            ? SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ? AND id = ? AND state <> 'deleted'"), SqlBuild.Id(projectId), SqlBuild.Id(id))
+            : SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ? AND name = ? AND state <> 'deleted'"), SqlBuild.Id(projectId), SqlBuild.Text(reference));
         return await system.QueryAsync(statement, cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => Database(found[0]),
@@ -147,7 +147,7 @@ internal sealed class CatalogStore(SystemDatabase system)
     }
 
     public async ValueTask<Result<DatabaseRecord, NotFound, Unavailable>> GetDatabaseAsync(Ulid id, CancellationToken cancellationToken) =>
-        await system.QueryAsync(SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE id = ?"), SqlBuild.Id(id)), cancellationToken) switch
+        await system.QueryAsync(SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE id = ? AND state <> 'deleted'"), SqlBuild.Id(id)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => Database(found[0]),
             IReadOnlyList<IReadOnlyList<SqlValue>> => new NotFound("the database does not exist", "unknown_database"),
@@ -156,7 +156,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public async ValueTask<Result<CatalogPage<DatabaseRecord>, Unavailable>> ListDatabasesAsync(Ulid projectId, string? after, int limit, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ?1 AND (?2 IS NULL OR id > ?2) ORDER BY id LIMIT ?3"),
+            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ?1 AND state <> 'deleted' AND (?2 IS NULL OR id > ?2) ORDER BY id LIMIT ?3"),
             SqlBuild.Id(projectId), SqlBuild.OptionalText(after), SqlBuild.Integer(limit + 1)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Page(rows, limit, Database, static item => item.Id.ToString()),
@@ -165,7 +165,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public async ValueTask<Result<IReadOnlyList<DatabaseRecord>, Unavailable>> AllDatabasesAsync(string? after, int limit, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE (?1 IS NULL OR id > ?1) ORDER BY id LIMIT ?2"), SqlBuild.OptionalText(after), SqlBuild.Integer(limit)), cancellationToken) switch
+            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE state <> 'deleted' AND (?1 IS NULL OR id > ?1) ORDER BY id LIMIT ?2"), SqlBuild.OptionalText(after), SqlBuild.Integer(limit)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Records(rows),
             Unavailable unavailable => unavailable,
@@ -173,7 +173,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public async ValueTask<Result<IReadOnlyList<DatabaseRecord>, Unavailable>> ExpiredDatabasesAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at LIMIT ?"),
+            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE state <> 'deleted' AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at LIMIT ?"),
             SqlBuild.Time(now), SqlBuild.Integer(limit)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Records(rows),
@@ -182,7 +182,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public async ValueTask<Result<long, Unavailable>> CountOrganizationDatabasesAsync(Ulid organizationId, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            "SELECT count(*) FROM databases WHERE project_id IN (SELECT id FROM projects WHERE organization_id = ?)", SqlBuild.Id(organizationId)), cancellationToken) switch
+            "SELECT count(*) FROM databases WHERE state <> 'deleted' AND project_id IN (SELECT id FROM projects WHERE organization_id = ?)", SqlBuild.Id(organizationId)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => found[0].IntegerAt(0),
             IReadOnlyList<IReadOnlyList<SqlValue>> => 0,
@@ -226,7 +226,7 @@ internal sealed class CatalogStore(SystemDatabase system)
         }
 
         statements.Add(SqlBuild.Statement(
-            "UPDATE databases SET name = ?, regions = ?, all_regions = ?, default_consistency = ?, state = ?, previous_name = ?, expires_at = ?, version = ? WHERE id = ? AND version = ?",
+            "UPDATE databases SET name = ?, regions = ?, all_regions = ?, default_consistency = ?, state = ?, previous_name = ?, expires_at = ?, version = ? WHERE id = ? AND version = ? AND state <> 'deleted'",
             SqlBuild.Text(updated.Name), SqlBuild.Text(string.Join(',', updated.Regions)), SqlBuild.Bool(updated.AllRegions), SqlBuild.Text(ConsistencyHeaders.Format(updated.DefaultConsistency)),
             SqlBuild.Text(State(updated.State)), SqlBuild.OptionalText(updated.PreviousName), SqlBuild.OptionalTime(updated.ExpiresAt), SqlBuild.Integer(updated.Version),
             SqlBuild.Id(updated.Id), SqlBuild.Integer(current.Version)));
@@ -239,11 +239,27 @@ internal sealed class CatalogStore(SystemDatabase system)
         };
     }
 
+    public async ValueTask<Result<IReadOnlyList<DatabaseRecord>, Unavailable>> DeletedDatabasesAsync(int limit, CancellationToken cancellationToken) =>
+        await system.QueryAsync(SqlBuild.Statement(
+            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE state = 'deleted' ORDER BY id LIMIT ?"), SqlBuild.Integer(limit)), cancellationToken) switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => Records(rows),
+            Unavailable unavailable => unavailable,
+        };
+
+    public async ValueTask<Result<Done, Unavailable>> PurgeDatabaseAsync(Ulid id, CancellationToken cancellationToken) =>
+        await system.WriteAsync(SqlBuild.Statement("DELETE FROM databases WHERE id = ? AND state = 'deleted'", SqlBuild.Id(id)), ConsistencyMode.Strong, cancellationToken) switch
+        {
+            SqlWriteResult => new Done(),
+            Conflict conflict => new Unavailable(conflict.Message, conflict.Code),
+            Unavailable unavailable => unavailable,
+        };
+
     public async ValueTask<Result<Done, Unavailable>> DeleteDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken) =>
         await system.WriteAsync(
         [
             SqlBuild.Statement("DELETE FROM database_names WHERE database_id = ?", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("DELETE FROM databases WHERE id = ?", SqlBuild.Id(database.Id)),
+            SqlBuild.Statement("UPDATE databases SET state = 'deleted', expires_at = NULL WHERE id = ?", SqlBuild.Id(database.Id)),
             SqlBuild.Statement("DELETE FROM rules_current WHERE database_id = ?", SqlBuild.Id(database.Id)),
             SqlBuild.Statement("DELETE FROM rules_versions WHERE database_id = ?", SqlBuild.Id(database.Id)),
             SqlBuild.Statement("DELETE FROM backup_policies WHERE database_id = ?", SqlBuild.Id(database.Id)),

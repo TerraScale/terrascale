@@ -65,17 +65,15 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
             Unavailable error => error.Message,
         };
 
-    private async ValueTask<string?> CreateAsync(PlatformDatabase platform, DateTimeOffset now, CancellationToken cancellationToken) =>
-        await databases.CreateAsync(platform.Id, strict: false, cancellationToken) switch
+    private async ValueTask<string?> CreateAsync(PlatformDatabase platform, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var record = Record(platform, databases.ActiveKeyId, now);
+        return await catalog.UpsertDatabaseAsync(record, cancellationToken) switch
         {
-            OpenedDatabase opened => await catalog.UpsertDatabaseAsync(Record(platform, opened.KeyId, now), cancellationToken) switch
-            {
-                Done => null,
-                Unavailable error => error.Message,
-            },
-            Conflict => "a platform database file has no catalog record; the file is preserved for recovery",
+            Done => await LocalAsync(record, cancellationToken),
             Unavailable error => error.Message,
         };
+    }
 
     private DatabaseRecord Record(PlatformDatabase platform, string keyId, DateTimeOffset now) =>
         new(platform.Id, platform.ProjectId, platform.Name, [options.Region], AllRegions: true, ConsistencyMode.Strong, Strict: false,

@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Logs
             DELETE FROM log_drains WHERE project_id = @ProjectId AND organization_id = @OrganizationId;
             DELETE FROM background_jobs WHERE id LIKE @Prefix || '%'
             """;
-        private const string JobById = DashboardSql.BackgroundJobs.Select + " WHERE id = @Id";
+        private const string JobById = BackgroundJobs.Snapshot + " WHERE id = @Id";
 
         private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie", "idempotency-key", "x-terrascale-delivery"];
 
@@ -199,7 +199,7 @@ namespace TerraScale.Dashboard.Features.Logs
             {
                 var jobId = "log-drain/" + drain.ProjectId + "/" + drain.Revision + "/" + database.Id;
                 var snapshot = await db.QuerySingleOrDefaultAsync<BackgroundJobRow>(JobById, new { Id = jobId });
-                if (snapshot is not null && DateTime.SpecifyKind(snapshot.LeaseUntil, DateTimeKind.Utc) > clock.GetUtcNow().UtcDateTime)
+                if (snapshot is { Leased: true })
                 {
                     continue;
                 }

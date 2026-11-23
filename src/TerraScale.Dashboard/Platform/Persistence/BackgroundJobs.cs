@@ -10,10 +10,16 @@ public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clo
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan Renewal = TimeSpan.FromSeconds(20);
 
+    public const string Snapshot = """
+        SELECT id, attempted_at, available_at, checkpoint, cursor, delivery_id, failures, lease_until, next_cursor, owner, payload, succeeded_at,
+            strftime('%Y-%m-%d %H:%M:%f', 'now') AS database_now
+        FROM background_jobs
+        """;
+
     private const string Busy = """
         SELECT count(*) FROM background_jobs
-        WHERE id = @Id AND ((@Fence IS NOT NULL AND checkpoint <> @Fence) OR lease_until > @Now
-            OR (available_at > @Now AND (@Target IS NULL OR cursor = @Target OR cursor = @Target || '/projects')))
+        WHERE id = @Id AND ((@Fence IS NOT NULL AND checkpoint <> @Fence) OR lease_until > strftime('%Y-%m-%d %H:%M:%f', 'now')
+            OR (available_at > strftime('%Y-%m-%d %H:%M:%f', 'now') AND (@Target IS NULL OR cursor = @Target OR cursor = @Target || '/projects')))
         """;
 
     private const string Acquire = """
@@ -61,8 +67,7 @@ public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clo
     {
         ArgumentNullException.ThrowIfNull(work);
         await using var connection = await storage.OpenAsync(cancellationToken);
-        var now = clock.GetUtcNow().UtcDateTime;
-        if (await connection.ExecuteScalarAsync<long>(Busy, new { Id = id, Fence = fence, Now = now, Target = target }) > 0)
+        if (await connection.ExecuteScalarAsync<long>(Busy, new { Id = id, Fence = fence, Target = target }) > 0)
         {
             return false;
         }

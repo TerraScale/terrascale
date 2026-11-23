@@ -53,7 +53,11 @@ internal sealed class ControlSnapshotSync(CatalogStore catalog, TenantDatabases 
             {
                 Done => await databases.DeleteAsync(record.Id, cancellationToken) switch
                 {
-                    Done => null,
+                    Done => await catalog.PurgeDatabaseAsync(record.Id, cancellationToken) switch
+                    {
+                        Done => null,
+                        Unavailable error => error,
+                    },
                     Unavailable error => error,
                 },
                 Unavailable error => error,

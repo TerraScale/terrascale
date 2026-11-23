@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             """;
         private const string EventsOf = DashboardSql.AlertEvents.Select
             + " WHERE rule_id IN (SELECT id FROM alert_rules WHERE project_id = @ProjectId AND organization_id = @OrganizationId) ORDER BY id";
-        private const string JobById = DashboardSql.BackgroundJobs.Select + " WHERE id = @Id";
+        private const string JobById = BackgroundJobs.Snapshot + " WHERE id = @Id";
 
         public const int RuleLimit = 20;
         public const int WebhookAttempts = 3;
@@ -237,7 +237,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             await using (var snapshot = await storage.OpenAsync(cancellationToken))
             {
                 state = await snapshot.QuerySingleOrDefaultAsync<BackgroundJobRow>(JobById, new { Id = id });
-                if (state is not null && DateTime.SpecifyKind(state.LeaseUntil, DateTimeKind.Utc) > clock.GetUtcNow().UtcDateTime ||
+                if (state is { Leased: true } ||
                     !await ChangesDueAsync(snapshot, projectId, organization, project, units, cancellationToken))
                 {
                     return;

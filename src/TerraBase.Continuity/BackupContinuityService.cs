@@ -140,13 +140,26 @@ public sealed class BackupContinuityService(
         };
         return outcome switch
         {
-            CausalBookmark => await FinishAsync(work, null, cancellationToken).ConfigureAwait(false),
-            OperationFailed failed => await FinishAsync(work, failed.Message, cancellationToken).ConfigureAwait(false),
+            CausalBookmark => await FinishAsync(work, null, record: true, cancellationToken).ConfigureAwait(false),
+            OperationFailed failed => await FailAsync(work, failed.Message, cancellationToken).ConfigureAwait(false),
         };
     }
 
     internal async ValueTask<FinishedOperation> FaultAsync(OperationWork work, string message) =>
-        await FinishAsync(work, message, CancellationToken.None).ConfigureAwait(false);
+        await FailAsync(work, message, CancellationToken.None).ConfigureAwait(false);
+
+    private async ValueTask<FinishedOperation> FailAsync(OperationWork work, string message, CancellationToken cancellationToken) =>
+        work.Kind switch
+        {
+            OperationKind.Restore or OperationKind.Branch => await sessions.Catalog.DiscardCopyTargetAsync(work.TargetDatabaseId, CancellationToken.None).ConfigureAwait(false) switch
+            {
+                Done => await FinishAsync(work, message, record: false, cancellationToken).ConfigureAwait(false),
+                Unavailable unavailable => await FinishAsync(work, string.Concat(message, "; the target database could not be discarded: ", unavailable.Message), record: true,
+                    cancellationToken).ConfigureAwait(false),
+            },
+            OperationKind.Rewind => await FinishAsync(work, message, record: true, cancellationToken).ConfigureAwait(false),
+            _ => throw new UnreachableException(),
+        };
 
     private ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> EnqueueCopyAsync(
         OperationKind kind,
@@ -405,13 +418,13 @@ public sealed class BackupContinuityService(
             pendingSegments);
     }
 
-    private async ValueTask<FinishedOperation> FinishAsync(OperationWork work, string? failure, CancellationToken cancellationToken)
+    private async ValueTask<FinishedOperation> FinishAsync(OperationWork work, string? failure, bool record, CancellationToken cancellationToken)
     {
         var state = failure is null ? RestoreOperationState.Succeeded : RestoreOperationState.Failed;
         var operation = Transition(work.OperationId, state, failure);
         var kind = KindLabel(work.Kind);
         metrics.OperationFinished(kind, state);
-        var recordFailure = manifests.IsEnabled ? await RecordAsync(work, operation, kind, cancellationToken).ConfigureAwait(false) : null;
+        var recordFailure = record && manifests.IsEnabled ? await RecordAsync(work, operation, kind, cancellationToken).ConfigureAwait(false) : null;
         return new FinishedOperation(operation, kind, recordFailure);
     }
 

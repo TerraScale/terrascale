@@ -178,7 +178,6 @@ jobs:
               - e2e/hosted/**
               - e2e/interactions/**
               - e2e/clock/**
-              - e2e/replication/push.mjs
               - e2e/storage/**
               - sites/status/**/!(AGENTS.md)
               - e2e/social/**
@@ -224,7 +223,6 @@ jobs:
             keyring:
               - *journey-server
               - e2e/keyring/**
-              - e2e/interactions/keyring.spec.ts
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md)
               - src/TerraScale.Contracts/**/!(AGENTS.md)
@@ -308,7 +306,7 @@ jobs:
             ] | map(select(env.ALL_LANES == "true" or .selected == "true") | del(.selected)) as $shards
             | ($shards | length > 0) as $browser
             | ($browser or env.ALL_LANES == "true" or env.ENGINE == "true" or env.FRONTIER == "true" or env.KEYRING == "true") as $journey
-            | "shards=\($shards | tojson)\nservices=\((if $browser then ["terrabase", "ts-auth", "dashboard"] elif $journey then ["terrabase"] else [] end) | tojson)\njourney=\($journey)"
+            | "shards=\($shards | tojson)\nservices=\((if $browser then ["terrabase", "ts-platform", "ts-auth", "dashboard"] elif $journey then ["terrabase"] else [] end) | tojson)\njourney=\($journey)"
           ' -r >> "$GITHUB_OUTPUT"
 
   checks:

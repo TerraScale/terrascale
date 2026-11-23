@@ -16,6 +16,9 @@ public sealed record BackgroundJobRow
     public byte[]? Payload { get; set; }
     public string? OriginalOwner { get; set; }
     public string? OriginalCheckpoint { get; set; }
+    public DateTime DatabaseNow { get; init; }
 
     public string? PayloadHex => Payload is null ? null : Convert.ToHexString(Payload);
+
+    public bool Leased => LeaseUntil > DatabaseNow;
 }

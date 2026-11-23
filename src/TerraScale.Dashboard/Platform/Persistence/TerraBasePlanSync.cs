@@ -6,10 +6,10 @@ using TerraScale.Dashboard.Platform.Clients;
 namespace TerraScale.Dashboard.Platform.Persistence
 {
     public sealed class TerraBasePlanSync(ControlPlaneClient control, ILogger<TerraBasePlanSync> logger, BackgroundJobs jobs,
-        DashboardDb storage, TimeProvider time)
+        DashboardDb storage)
     {
-        private const string PlanJobs = DashboardSql.BackgroundJobs.Select + " WHERE id LIKE 'plan/%'";
-        private const string JobById = DashboardSql.BackgroundJobs.Select + " WHERE id = @Id";
+        private const string PlanJobs = BackgroundJobs.Snapshot + " WHERE id LIKE 'plan/%'";
+        private const string JobById = BackgroundJobs.Snapshot + " WHERE id = @Id";
         private const string LiveOrganization = "SELECT count(*) FROM organizations WHERE id = @Id AND erasure_id IS NULL";
         private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(30);
@@ -51,7 +51,6 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 states = (await connection.QueryAsync<BackgroundJobRow>(PlanJobs)).AsList();
             }
 
-            var now = time.GetUtcNow().UtcDateTime;
             foreach (var organization in organizations)
             {
                 if (PlatformDatabases.IsPlatform(organization.Id) || !TerraScaleIds.IsValid(organization.Id)) { continue; }
@@ -59,7 +58,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 try { plan = PlanFor(organization); }
                 catch (IOException) { continue; }
                 var state = states.SingleOrDefault(row => row.Id == "plan/" + organization.Id);
-                if (state is null || Due(state, plan, now))
+                if (state is null || Due(state, plan))
                 {
                     return true;
                 }
@@ -67,9 +66,8 @@ namespace TerraScale.Dashboard.Platform.Persistence
             return false;
         }
 
-        private static bool Due(BackgroundJobRow state, string plan, DateTime now) =>
-            DateTime.SpecifyKind(state.LeaseUntil, DateTimeKind.Utc) <= now
-            && (state.Cursor != plan && state.Cursor != plan + "/projects" || DateTime.SpecifyKind(state.AvailableAt, DateTimeKind.Utc) <= now);
+        private static bool Due(BackgroundJobRow state, string plan) =>
+            !state.Leased && (state.Cursor != plan && state.Cursor != plan + "/projects" || state.AvailableAt <= state.DatabaseNow);
 
         internal async Task PublishAsync(OrganizationRecord organization, bool reconcile, CancellationToken cancellationToken)
         {
@@ -86,7 +84,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                     state = await connection.QuerySingleOrDefaultAsync<BackgroundJobRow>(JobById, new { Id = id });
                 }
 
-                if (state is not null && !Due(state, plan, time.GetUtcNow().UtcDateTime))
+                if (state is not null && !Due(state, plan))
                 {
                     return;
                 }

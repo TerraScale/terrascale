@@ -47,8 +47,6 @@ internal sealed class DatabaseKeyring
             : new NotFound(string.Concat("master key '", keyId, "' is not configured"), "unknown_master_key");
     }
 
-    public DatabaseKey DeriveActive(Ulid databaseId) => Derive(databaseId, ActiveKeyId, _settings.Keys[ActiveKeyId]);
-
     private static DatabaseKey Derive(Ulid databaseId, string keyId, byte[] master)
     {
         var salt = databaseId.ToByteArray();

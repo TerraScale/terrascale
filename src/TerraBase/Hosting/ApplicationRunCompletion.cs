@@ -17,7 +17,12 @@ internal sealed class ApplicationRunCompletion
             Interlocked.Exchange(ref stoppingAt, Stopwatch.GetTimestamp());
             logger.ZLogInformation($"Shutdown started");
         });
-        await app.StartAsync();
+        if (!await StartedAsync(app))
+        {
+            await app.DisposeAsync();
+            return;
+        }
+
         BackgroundService[] background = [.. app.Services.GetServices<IHostedService>().OfType<BackgroundService>()];
         var observations = background.Where(static service => service.ExecuteTask is not null).Select(ObserveAsync).ToArray();
         await app.WaitForShutdownAsync();
@@ -36,6 +41,19 @@ internal sealed class ApplicationRunCompletion
                     logger.ZLogInformation($"Shutdown step {service.GetType().Name:@Step} completed after {Stopwatch.GetElapsedTime(at).TotalMilliseconds:@ElapsedMilliseconds} ms");
                 }
             }
+        }
+    }
+
+    private static async Task<bool> StartedAsync(WebApplication app)
+    {
+        try
+        {
+            await app.StartAsync();
+            return true;
+        }
+        catch (OperationCanceledException) when (app.Lifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            return false;
         }
     }
 }

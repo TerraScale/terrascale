@@ -43,11 +43,18 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
     {
         var keyFile = Path.Combine(options.DataDirectory, KeyIdFile);
         var keyId = KeyId;
-        return await databases.OpenOrCreateAsync(Id, keyId, strict: false, cancellationToken) switch
-        {
-            ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, cancellationToken),
-            Unavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
-        };
+        return File.Exists(keyFile)
+            ? await databases.OpenAsync(Id, keyId, cancellationToken) switch
+            {
+                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, cancellationToken),
+                NotFound => new ConfigurationError("the system catalog is missing from a data-directory that already holds one; restore it before starting"),
+                Unavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
+            }
+            : await databases.OpenOrCreateAsync(Id, keyId, strict: false, cancellationToken) switch
+            {
+                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, cancellationToken),
+                Unavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
+            };
     }
 
     private async ValueTask<Result<Done, ConfigurationError>> InitializeAsync(ISqlDatabaseSession session, string keyFile, string keyId, bool bootstrap, CancellationToken cancellationToken)

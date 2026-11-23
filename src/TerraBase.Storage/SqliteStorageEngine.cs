@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 
@@ -9,7 +10,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
     private readonly StorageEngineOptions _options;
     private readonly TimeProvider _time;
-    private readonly SemaphoreSlim _lifecycle = new(1, 1);
+    private readonly ConcurrentDictionary<Ulid, SemaphoreSlim> _gates = new();
+    private readonly Lock _sessionsGate = new();
     private readonly Dictionary<Ulid, DatabaseSession> _sessions = [];
 
     public SqliteStorageEngine(StorageEngineOptions options, TimeProvider time)
@@ -37,10 +39,11 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             return InvalidKey();
         }
 
-        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gate = Gate(request.DatabaseId);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_sessions.TryGetValue(request.DatabaseId, out var existing))
+            if (Tracked(request.DatabaseId) is { } existing)
             {
                 if (!CryptographicOperations.FixedTimeEquals(existing.RawKey, request.RawKey.Span))
                 {
@@ -65,7 +68,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
         finally
         {
-            _lifecycle.Release();
+            gate.Release();
         }
 
         static Result<ISqlDatabaseSession, NotFound, Validation, StorageCorrupted, StorageBusy> Session(ISqlDatabaseSession session) => session;
@@ -79,10 +82,11 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             return InvalidKey();
         }
 
-        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gate = Gate(request.DatabaseId);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_sessions.ContainsKey(request.DatabaseId) || File.Exists(DatabasePath(request.DatabaseId)))
+            if (Tracked(request.DatabaseId) is not null || File.Exists(DatabasePath(request.DatabaseId)))
             {
                 return new Conflict("database already exists");
             }
@@ -101,7 +105,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
         finally
         {
-            _lifecycle.Release();
+            gate.Release();
         }
 
         static Result<ISqlDatabaseSession, Conflict, Validation, StorageBusy> Session(ISqlDatabaseSession session) => session;
@@ -115,17 +119,19 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             return InvalidKey();
         }
 
-        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (Referenced(request.SourceDatabaseId) is not { } source)
+        {
+            return new NotFound("source database must be open to branch");
+        }
+
+        var gate = Gate(request.BranchDatabaseId);
+        await using var sourceLease = source.ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         DatabaseSession? branch = null;
         List<CommitMetadata> replay = [];
         try
         {
-            if (!_sessions.TryGetValue(request.SourceDatabaseId, out var source))
-            {
-                return new NotFound("source database must be open to branch");
-            }
-
-            if (_sessions.ContainsKey(request.BranchDatabaseId) || File.Exists(DatabasePath(request.BranchDatabaseId)))
+            if (Tracked(request.BranchDatabaseId) is not null || File.Exists(DatabasePath(request.BranchDatabaseId)))
             {
                 return new Conflict("branch database already exists");
             }
@@ -173,7 +179,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
         finally
         {
-            _lifecycle.Release();
+            gate.Release();
         }
 
         if (replay.Count > 0)
@@ -200,19 +206,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
     public async ValueTask<Result<DatabaseSnapshot, NotFound, StorageBusy>> SnapshotAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
-        DatabaseSession? session;
-        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            session = _sessions.GetValueOrDefault(databaseId);
-            session?.AddReference();
-        }
-        finally
-        {
-            _lifecycle.Release();
-        }
-
-        if (session is null)
+        if (Referenced(databaseId) is not { } session)
         {
             return new NotFound("database must be open to snapshot");
         }
@@ -249,7 +243,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
     public async ValueTask<Result<Done, NotFound, StorageBusy>> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
-        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gate = Gate(databaseId);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await CloseLockedAsync(databaseId).ConfigureAwait(false);
@@ -263,13 +258,14 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
         finally
         {
-            _lifecycle.Release();
+            gate.Release();
         }
     }
 
     public async ValueTask<Result<Done, NotFound, StorageBusy>> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
-        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var gate = Gate(databaseId);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await CloseLockedAsync(databaseId).ConfigureAwait(false);
@@ -291,28 +287,32 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
         finally
         {
-            _lifecycle.Release();
+            gate.Release();
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        await _lifecycle.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-        try
+        DatabaseSession[] sessions;
+        lock (_sessionsGate)
         {
-            foreach (var session in _sessions.Values.ToArray())
+            sessions = [.. _sessions.Values];
+            _sessions.Clear();
+        }
+
+        foreach (var session in sessions)
+        {
+            var gate = Gate(session.DatabaseId);
+            await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
             {
                 await session.CloseAsync().ConfigureAwait(false);
             }
-
-            _sessions.Clear();
+            finally
+            {
+                gate.Release();
+            }
         }
-        finally
-        {
-            _lifecycle.Release();
-        }
-
-        _lifecycle.Dispose();
     }
 
     private static Validation InvalidKey() =>
@@ -328,15 +328,40 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
     private static SqliteOpenOptions ConnectionOptions(SessionContext context) =>
         new(context.DatabasePath, false, context.RawKey, context.Options.ReaderCacheSizeKib, context.DatabaseId, context.Options.DeltaColumns);
 
+    private SemaphoreSlim Gate(Ulid databaseId) => _gates.GetOrAdd(databaseId, static _ => new SemaphoreSlim(1, 1));
+
+    private DatabaseSession? Tracked(Ulid databaseId)
+    {
+        lock (_sessionsGate)
+        {
+            return _sessions.GetValueOrDefault(databaseId);
+        }
+    }
+
+    private DatabaseSession? Referenced(Ulid databaseId)
+    {
+        lock (_sessionsGate)
+        {
+            var session = _sessions.GetValueOrDefault(databaseId);
+            session?.AddReference();
+            return session;
+        }
+    }
+
     private DatabaseSession Track(DatabaseSession session)
     {
-        _sessions[session.DatabaseId] = session;
+        lock (_sessionsGate)
+        {
+            _sessions[session.DatabaseId] = session;
+        }
+
         return session;
     }
 
     private async Task ReleaseAsync(DatabaseSession session)
     {
-        await _lifecycle.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        var gate = Gate(session.DatabaseId);
+        await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             if (session.References > 0)
@@ -344,22 +369,31 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return;
             }
 
-            if (_sessions.TryGetValue(session.DatabaseId, out var tracked) && ReferenceEquals(tracked, session))
+            lock (_sessionsGate)
             {
-                _ = _sessions.Remove(session.DatabaseId);
+                if (_sessions.TryGetValue(session.DatabaseId, out var tracked) && ReferenceEquals(tracked, session))
+                {
+                    _ = _sessions.Remove(session.DatabaseId);
+                }
             }
 
             await session.CloseAsync().ConfigureAwait(false);
         }
         finally
         {
-            _lifecycle.Release();
+            gate.Release();
         }
     }
 
     private async Task CloseLockedAsync(Ulid databaseId)
     {
-        if (_sessions.Remove(databaseId, out var session))
+        DatabaseSession? session;
+        lock (_sessionsGate)
+        {
+            _ = _sessions.Remove(databaseId, out session);
+        }
+
+        if (session is not null)
         {
             await session.CloseAsync().ConfigureAwait(false);
         }

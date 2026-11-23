@@ -3,6 +3,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Atlas;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.Platform;
 using TerraBase.Features.Regions;
 using TerraScale.Contracts.Continuity;
 using TerraScale.Contracts.ControlPlane;
@@ -124,40 +125,66 @@ internal sealed class ManagementService(
 
         return regions.Check(input.Regions ?? input.ReplicaRegions) switch
         {
-            IReadOnlyList<string> placed => await CreatePlacedAsync(project, input.Name, placed, input.AllRegions ?? false, mode, input.Strict ?? false,
-                input.TtlSeconds, null, cancellationToken),
+            IReadOnlyList<string> placed => await CreatePlacedAsync(
+                Record(project, input.Name, placed, input.AllRegions ?? false, mode, input.Strict ?? false, input.TtlSeconds, null, 0), cancellationToken),
             Validation invalid => invalid,
         };
     }
 
-    public async ValueTask<Result<DatabaseRecord, Validation, Forbidden, Conflict, QuotaExceeded, Unavailable>> CreatePlacedAsync(
-        ProjectRecord project, string name, IReadOnlyList<string> placed, bool allRegions, ConsistencyMode mode, bool strict, long? ttlSeconds, Ulid? branchedFrom,
-        CancellationToken cancellationToken)
+    public async ValueTask<Result<RestoreOperation, NotFound, Validation, Conflict, Unavailable>> CopyAsync(
+        ProjectRecord project, DatabaseRecord source, string? name, long? ttlSeconds, RestoreTarget target, bool branch, CancellationToken cancellationToken)
     {
-        var now = time.GetUtcNow();
-        var id = Ulid.NewUlid(now);
-        return await databases.CreateAsync(id, strict, cancellationToken) switch
+        ArgumentNullException.ThrowIfNull(source);
+        if (!DatabaseNames.IsValid(name))
         {
-            OpenedDatabase opened => await InsertAsync(new DatabaseRecord(id, project.Id, name, placed, allRegions, mode, strict, ControlDatabaseState.Active, opened.KeyId,
-                branchedFrom, null, now, ttlSeconds is { } ttl ? now.AddSeconds(ttl) : null, 1, 0), cancellationToken),
+            return new Validation("name must be a lowercase database name of at most 63 characters", "invalid_name");
+        }
+
+        var record = Record(project, name, source.Regions, source.AllRegions, source.DefaultConsistency, source.Strict, ttlSeconds, source.Id, source.StorageLimit);
+        return await catalog.InsertDatabaseAsync(record, cancellationToken) switch
+        {
+            DatabaseRecord reserved => await (branch
+                ? continuity.BranchAsync(new BranchRequest(source.Id, reserved.Id, target), cancellationToken)
+                : continuity.RestoreAsync(new PointInTimeRestoreRequest(source.Id, reserved.Id, target), cancellationToken)) switch
+            {
+                RestoreOperation operation => Started(reserved, operation),
+                NotFound missing => await DiscardAsync(reserved, missing),
+                Validation invalid => await DiscardAsync(reserved, invalid),
+                Conflict conflict => await DiscardAsync(reserved, conflict),
+                Unavailable unavailable => await DiscardAsync(reserved, unavailable),
+            },
             Conflict conflict => conflict,
             Unavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<Result<DatabaseRecord, Validation, Forbidden, Conflict, QuotaExceeded, Unavailable>> InsertAsync(DatabaseRecord record, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(record);
-        var inserted = await catalog.InsertDatabaseAsync(record, cancellationToken);
-        if (inserted switch { DatabaseRecord => false, Conflict or Unavailable => true })
+    public async ValueTask<Result<Done, Unavailable>> DiscardCopyAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        await catalog.GetDatabaseAsync(databaseId, cancellationToken) switch
         {
-            await databases.DeleteAsync(record.Id, CancellationToken.None);
+            DatabaseRecord record => await DeleteDatabaseAsync(record, cancellationToken),
+            NotFound => new Done(),
+            Unavailable unavailable => unavailable,
+        };
+
+    public async ValueTask<Result<Done, Conflict, Unavailable>> CloseProjectAsync(Ulid projectId, Ulid authorityOrganizationId, CancellationToken cancellationToken)
+    {
+        if (PlatformCatalog.IsPlatformProject(projectId))
+        {
+            return new Conflict("TerraScale's own projects hold its services' databases and cannot be closed", "platform_project_protected");
         }
 
-        return inserted switch
+        return await catalog.GetProjectAsync(projectId, cancellationToken) switch
         {
-            DatabaseRecord created => Published(created),
-            Conflict conflict => conflict,
+            ProjectRecord project when project.OrganizationId != authorityOrganizationId =>
+                new Conflict("the project belongs to another organization in TerraBase", "binding_conflict"),
+            ProjectRecord project => await catalog.DeleteProjectAsync(project.Id, cancellationToken) switch
+            {
+                Done done => done,
+                Conflict { Code: "project_not_empty" } => new Conflict("delete the project's databases first", "not_empty"),
+                Conflict conflict => conflict,
+                Unavailable unavailable => unavailable,
+            },
+            NotFound => new Done(),
             Unavailable unavailable => unavailable,
         };
     }
@@ -201,8 +228,7 @@ internal sealed class ManagementService(
             return new Validation("ttlSeconds is at least 60", "invalid_ttl");
         }
 
-        return await SaveAsync(current, current with { ExpiresAt = ttlSeconds is { } ttl ? time.GetUtcNow().AddSeconds(ttl) : null, Version = current.Version + 1 },
-            cancellationToken);
+        return await SaveAsync(current, current with { ExpiresAt = ttlSeconds is { } ttl ? time.GetUtcNow().AddSeconds(ttl) : null }, cancellationToken);
     }
 
     public async ValueTask<Result<Done, Unavailable>> DeleteDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken)
@@ -229,21 +255,43 @@ internal sealed class ManagementService(
             return new Validation("ttlSeconds is at least 60", "invalid_ttl");
         }
 
-        var now = time.GetUtcNow();
-        var branchId = Ulid.NewUlid(now);
+        var record = Record(project, name, source.Regions, source.AllRegions, source.DefaultConsistency, source.Strict, ttlSeconds, source.Id, source.StorageLimit);
         return await databases.OpenOrCreateAsync(source.Id, source.KeyId, source.Strict, cancellationToken) switch
         {
-            ISqlDatabaseSession session => await databases.BranchAsync(session, branchId, at, cancellationToken) switch
+            ISqlDatabaseSession session => await catalog.InsertDatabaseAsync(record, cancellationToken) switch
             {
-                OpenedDatabase opened => Widen(await InsertAsync(new DatabaseRecord(branchId, project.Id, name, source.Regions, source.AllRegions, source.DefaultConsistency,
-                    source.Strict, ControlDatabaseState.Active, opened.KeyId, source.Id, null, now, ttlSeconds is { } ttl ? now.AddSeconds(ttl) : null, 1, source.StorageLimit),
-                    cancellationToken)),
-                NotFound missing => missing,
+                DatabaseRecord reserved => await databases.BranchAsync(session, reserved.Id, reserved.KeyId, at, cancellationToken) switch
+                {
+                    ISqlDatabaseSession => Published(reserved),
+                    NotFound missing => await DiscardAsync(reserved, missing),
+                    Conflict conflict => await DiscardAsync(reserved, conflict),
+                    Unavailable unavailable => await DiscardAsync(reserved, unavailable),
+                },
                 Conflict conflict => conflict,
                 Unavailable unavailable => unavailable,
             },
             Unavailable unavailable => unavailable,
         };
+    }
+
+    public async ValueTask<int> SweepDeletedAsync(CancellationToken cancellationToken)
+    {
+        var deleted = await catalog.DeletedDatabasesAsync(64, cancellationToken) switch
+        {
+            IReadOnlyList<DatabaseRecord> records => records,
+            Unavailable => [],
+        };
+        var shredded = 0;
+        foreach (var database in deleted)
+        {
+            shredded += await ShredAsync(database, cancellationToken) switch
+            {
+                Done => 1,
+                Unavailable => 0,
+            };
+        }
+
+        return shredded;
     }
 
     public async ValueTask<int> SweepExpiredAsync(CancellationToken cancellationToken)
@@ -266,27 +314,58 @@ internal sealed class ManagementService(
         return deleted;
     }
 
-    private static Result<DatabaseRecord, Validation, Forbidden, NotFound, Conflict, QuotaExceeded, Unavailable> Widen(
-        Result<DatabaseRecord, Validation, Forbidden, Conflict, QuotaExceeded, Unavailable> result) => result switch
+    private async ValueTask<Result<DatabaseRecord, Validation, Forbidden, Conflict, QuotaExceeded, Unavailable>> CreatePlacedAsync(
+        DatabaseRecord record, CancellationToken cancellationToken) =>
+        await catalog.InsertDatabaseAsync(record, cancellationToken) switch
         {
-            DatabaseRecord record => record,
-            Validation invalid => invalid,
-            Forbidden forbidden => forbidden,
+            DatabaseRecord reserved => await databases.CreateAsync(reserved.Id, reserved.KeyId, reserved.Strict, cancellationToken) switch
+            {
+                ISqlDatabaseSession => Published(reserved),
+                Conflict conflict => await DiscardAsync(reserved, conflict),
+                Unavailable unavailable => await DiscardAsync(reserved, unavailable),
+            },
             Conflict conflict => conflict,
-            QuotaExceeded quota => quota,
             Unavailable unavailable => unavailable,
         };
 
-    private DatabaseRecord Changed(DatabaseRecord current, DatabaseInput input, IReadOnlyList<string> placed, ConsistencyMode mode) => current with
+    private static bool SamePlacement(DatabaseRecord current, IReadOnlyList<string> placed, bool allRegions) =>
+        current.AllRegions == allRegions
+        && current.Regions.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).SequenceEqual(placed.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal), StringComparer.Ordinal);
+
+    private DatabaseRecord Record(
+        ProjectRecord project, string name, IReadOnlyList<string> placed, bool allRegions, ConsistencyMode mode, bool strict, long? ttlSeconds, Ulid? branchedFrom, long storageLimit)
     {
-        Name = input.Name ?? current.Name,
-        PreviousName = input.Name is { } renamed && renamed != current.Name ? current.Name : current.PreviousName,
-        Regions = placed,
-        AllRegions = input.AllRegions ?? current.AllRegions,
-        DefaultConsistency = mode,
-        ExpiresAt = input.TtlSeconds is { } ttl ? time.GetUtcNow().AddSeconds(ttl) : current.ExpiresAt,
-        Version = current.Version + 1,
-    };
+        var now = time.GetUtcNow();
+        return new DatabaseRecord(Ulid.NewUlid(now), project.Id, name, placed, allRegions, mode, strict, ControlDatabaseState.Active, databases.ActiveKeyId, branchedFrom, null, now,
+            ttlSeconds is { } ttl ? now.AddSeconds(ttl) : null, 1, storageLimit);
+    }
+
+    private RestoreOperation Started(DatabaseRecord reserved, RestoreOperation operation)
+    {
+        _ = Published(reserved);
+        return operation;
+    }
+
+    private async ValueTask<TFailure> DiscardAsync<TFailure>(DatabaseRecord reserved, TFailure failure) =>
+        await DeleteDatabaseAsync(reserved, CancellationToken.None) switch
+        {
+            Done or Unavailable => failure,
+        };
+
+    private DatabaseRecord Changed(DatabaseRecord current, DatabaseInput input, IReadOnlyList<string> placed, ConsistencyMode mode)
+    {
+        var allRegions = input.AllRegions ?? current.AllRegions;
+        return current with
+        {
+            Name = input.Name ?? current.Name,
+            PreviousName = input.Name is { } renamed && renamed != current.Name ? current.Name : current.PreviousName,
+            Regions = placed,
+            AllRegions = allRegions,
+            DefaultConsistency = mode,
+            ExpiresAt = input.TtlSeconds is { } ttl ? time.GetUtcNow().AddSeconds(ttl) : current.ExpiresAt,
+            Version = SamePlacement(current, placed, allRegions) ? current.Version : current.Version + 1,
+        };
+    }
 
     private async ValueTask<Result<DatabaseRecord, Validation, Conflict, Unavailable>> SaveAsync(DatabaseRecord current, DatabaseRecord updated, CancellationToken cancellationToken)
     {
@@ -317,7 +396,8 @@ internal sealed class ManagementService(
         };
         return local switch
         {
-            Done => archived is null ? new Done() : archived,
+            Done when archived is { } failure => failure,
+            Done => await catalog.PurgeDatabaseAsync(database.Id, cancellationToken),
             Unavailable unavailable => unavailable,
         };
     }
