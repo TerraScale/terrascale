@@ -7,10 +7,16 @@ namespace TerraScale.Authentication.Storage;
 
 public readonly union AuthTransaction<T>(T, AuthConflict);
 
-public readonly union AuthBatchWrite(AuthCompleted, AuthConflict, AuthUnavailable);
+internal sealed record AuthStorageDown(Exception Cause);
+
+internal readonly union AuthBatchWrite(AuthCompleted, AuthConflict, AuthStorageDown);
 
 public sealed class AuthData(AuthConnectionFactory connections)
 {
+    private const int ContentionRetries = 2;
+
+    private const string SerializationFailureState = "40001";
+
     private readonly AsyncLocal<WriteAudit?> audit = new();
 
     public async Task<T> AuditWritesAsync<T>(Change success, Func<CancellationToken, Task<T>> write, CancellationToken cancellationToken)
@@ -83,15 +89,17 @@ public sealed class AuthData(AuthConnectionFactory connections)
             return false;
         }
 
-        await using var connection = await connections.OpenAsync(cancellationToken);
-        var outcome = batch.Statements <= WriteBatch.MaxStatements
-            ? await ExecuteAsync(batch, connection, null, cancellationToken)
-            : await ExecuteInTransactionAsync(batch, connection, cancellationToken);
+        var outcome = await WriteAsync(batch, cancellationToken);
+        for (var retry = 0; retry < ContentionRetries && Contended(outcome); retry++)
+        {
+            outcome = await WriteAsync(batch, cancellationToken);
+        }
+
         return outcome switch
         {
             AuthCompleted => Committed(currentAudit, true),
             AuthConflict => false,
-            AuthUnavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
+            AuthStorageDown down => throw ApiException.Unavailable(down.Cause),
         };
     }
 
@@ -113,15 +121,18 @@ public sealed class AuthData(AuthConnectionFactory connections)
         {
             AuthCompleted => await CommitAsync(transaction, cancellationToken),
             AuthConflict conflict => conflict,
-            AuthUnavailable unavailable => unavailable,
+            AuthStorageDown down => down,
         };
         return outcome switch
         {
             AuthCompleted => Committed(currentAudit, result),
             AuthConflict conflict => conflict,
-            AuthUnavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
+            AuthStorageDown down => throw ApiException.Unavailable(down.Cause),
         };
     }
+
+    public static bool IsContention(Exception? failure) =>
+        failure is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SerializationConflict, Sqlstate: SerializationFailureState };
 
     public static bool IsConflict(Exception failure) => failure is TerraBaseException { ErrorCode: { } code } refused && IsConflict(code, refused.Message);
 
@@ -183,6 +194,20 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return result;
     }
 
+    private async Task<AuthBatchWrite> WriteAsync(WriteBatch batch, CancellationToken cancellationToken)
+    {
+        await using var connection = await connections.OpenAsync(cancellationToken);
+        return batch.Statements <= WriteBatch.MaxStatements
+            ? await ExecuteAsync(batch, connection, null, cancellationToken)
+            : await ExecuteInTransactionAsync(batch, connection, cancellationToken);
+    }
+
+    private static bool Contended(AuthBatchWrite outcome) => outcome switch
+    {
+        AuthCompleted or AuthConflict => false,
+        AuthStorageDown down => IsContention(down.Cause),
+    };
+
     private static async Task<AuthBatchWrite> ExecuteInTransactionAsync(WriteBatch batch, DbConnection connection, CancellationToken cancellationToken)
     {
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -191,7 +216,7 @@ public sealed class AuthData(AuthConnectionFactory connections)
         {
             AuthCompleted => await CommitAsync(transaction, cancellationToken),
             AuthConflict conflict => conflict,
-            AuthUnavailable unavailable => unavailable,
+            AuthStorageDown down => down,
         };
     }
 
@@ -211,7 +236,7 @@ public sealed class AuthData(AuthConnectionFactory connections)
                 }
                 catch (Exception failure) when (IsUnavailable(failure))
                 {
-                    return new AuthUnavailable(failure.GetType().Name);
+                    return new AuthStorageDown(failure);
                 }
             }
         }
@@ -232,7 +257,7 @@ public sealed class AuthData(AuthConnectionFactory connections)
         }
         catch (Exception failure) when (IsUnavailable(failure))
         {
-            return new AuthUnavailable(failure.GetType().Name);
+            return new AuthStorageDown(failure);
         }
     }
 

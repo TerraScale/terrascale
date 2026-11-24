@@ -183,12 +183,19 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
     }
 }
 
-public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollector votes, StrongTransactionRegistry registry, CommitFinalizer finalizer, HlcClock clock, ILogger<StrongCoordinator> logger)
+public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollector votes, StrongTransactionRegistry registry, CommitFinalizer finalizer, AntiEntropyService antiEntropy, HlcClock clock, ILogger<StrongCoordinator> logger)
 {
+    private static readonly TimeSpan SiblingSyncTimeout = TimeSpan.FromMilliseconds(500);
+
     public async ValueTask<ClusterWriteOutcome> ExecuteAsync(ISqlDatabaseSession session, SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(request);
+        if (topology.RegionPeers.Count > 0 && topology.StrongCandidates(topology.LocalRegion, session.DatabaseId) is [{ IsLocal: false }, ..])
+        {
+            _ = await antiEntropy.SyncInRegionAsync(session.DatabaseId, SiblingSyncTimeout, cancellationToken);
+        }
+
         var staged = await session.StageWriteAsync(request with { Mode = ConsistencyMode.Strong }, cancellationToken);
         return staged switch
         {

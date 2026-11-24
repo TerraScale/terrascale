@@ -449,15 +449,19 @@ internal sealed class ManagementService(
     private DatabaseRecord Changed(DatabaseRecord current, DatabaseInput input, IReadOnlyList<string> placed, ConsistencyMode mode)
     {
         var allRegions = input.AllRegions ?? current.AllRegions;
+        var preferred = input.HomeRegion ?? (current.Regions.Count > 0 ? current.Regions[0] : null);
+        IReadOnlyList<string> ordered = preferred is { } home && placed.Contains(home, StringComparer.Ordinal)
+            ? [home, .. placed.Where(region => !string.Equals(region, home, StringComparison.Ordinal))]
+            : placed;
         return current with
         {
             Name = input.Name ?? current.Name,
             PreviousName = input.Name is { } renamed && renamed != current.Name ? current.Name : current.PreviousName,
-            Regions = placed,
+            Regions = ordered,
             AllRegions = allRegions,
             DefaultConsistency = mode,
             ExpiresAt = input.TtlSeconds is { } ttl ? Now().AddSeconds(ttl) : current.ExpiresAt,
-            Version = SamePlacement(current, placed, allRegions) ? current.Version : current.Version + 1,
+            Version = SamePlacement(current, ordered, allRegions) ? current.Version : current.Version + 1,
         };
     }
 
@@ -482,8 +486,9 @@ internal sealed class ManagementService(
     private async ValueTask<DatabaseRemovalOutcome> ShredAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
         atlas.Queue(database.ProjectId, database.Name, null);
-        var local = await databases.DeleteAsync(database.Id, cancellationToken);
+        await databases.EvictAsync(database.Id);
         var archivedOutcome = await continuity.CryptoShredAsync(database.Id, cancellationToken);
+        var local = await databases.DeleteAsync(database.Id, cancellationToken);
         var archived = archivedOutcome switch
         {
             ArchiveShredded or ContinuityNotFound => null,

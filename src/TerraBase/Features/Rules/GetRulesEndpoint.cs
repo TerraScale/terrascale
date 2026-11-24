@@ -28,7 +28,7 @@ internal sealed class GetRulesEndpoint(RulesService rules, RulesStore store, Dat
         var outcome = await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken);
         return outcome switch
         {
-            ResolvedDatabase resolved => await store.CurrentAsync(resolved.Database.Id, cancellationToken) switch
+            ResolvedDatabase resolved => await store.CurrentAsync(resolved.Database.Id, fresh: true, cancellationToken) switch
             {
                 StoredRules current => await access.OpenAsync(resolved.Database, cancellationToken) switch
                 {

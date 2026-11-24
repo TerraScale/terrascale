@@ -1,6 +1,7 @@
 using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Storage;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.RateLimiting;
 
@@ -33,13 +34,13 @@ public sealed class TerraBaseAttemptStore(AuthData data) : IAttemptStore
         }, cancellationToken);
 
     public Task<bool> TryCreateAsync(string instanceId, string key, AttemptBucket bucket, CancellationToken cancellationToken) =>
-        Guard(() => data.SaveAsync(Change.Insert(Record(instanceId, key, bucket)), cancellationToken), cancellationToken);
+        GuardWriteAsync(() => data.SaveAsync(Change.Insert(Record(instanceId, key, bucket)), cancellationToken), cancellationToken);
 
     public Task<bool> TryReplaceAsync(string instanceId, string key, AttemptBucket bucket, string version, CancellationToken cancellationToken) =>
-        Guard(() => data.SaveAsync(Change.Update(Record(instanceId, key, bucket), version), cancellationToken), cancellationToken);
+        GuardWriteAsync(() => data.SaveAsync(Change.Update(Record(instanceId, key, bucket), version), cancellationToken), cancellationToken);
 
     public Task<bool> TryChargeAsync(string instanceId, string key, IReadOnlyList<string> others, long window, int maximum, CancellationToken cancellationToken) =>
-        Guard(async () =>
+        GuardWriteAsync(async () =>
         {
             var version = AuthIds.New();
             return await data.ReadAsync(connection => connection.ExecuteAsync(
@@ -56,6 +57,25 @@ public sealed class TerraBaseAttemptStore(AuthData data) : IAttemptStore
         ArgumentNullException.ThrowIfNull(bucket);
         return new(instanceId, key, bucket.Window, bucket.Used);
     }
+
+    private static async Task<bool> GuardWriteAsync(Func<Task<bool>> write, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await Guard(write, cancellationToken);
+        }
+        catch (ApiException failure) when (Contended(failure))
+        {
+            return false;
+        }
+    }
+
+    private static bool Contended(Exception? failure) => failure switch
+    {
+        TerraBaseException { ErrorCode: TerraBaseSqlErrorCodes.RowConflict } => true,
+        ApiException { Status: StatusCodes.Status503ServiceUnavailable } unavailable => Contended(unavailable.InnerException),
+        _ => AuthData.IsContention(failure),
+    };
 
     private static async Task<TResult> Guard<TResult>(Func<Task<TResult>> operation, CancellationToken cancellationToken)
     {

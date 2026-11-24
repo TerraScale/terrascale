@@ -179,7 +179,7 @@ internal static partial class FileIo
         try
         {
             var length = new FileInfo(path).Length;
-            using (var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Write, FileShare.None))
+            using (var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
             {
                 var buffer = new byte[64 * 1024];
                 for (long offset = 0; offset < length; offset += buffer.Length)

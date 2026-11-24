@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Notifications;
 
-public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, AccountService accounts, TimeProvider time) : EndpointWithoutRequest<IResult>
+public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, AccountService accounts, TimeProvider time, IHostApplicationLifetime applicationLifetime) : EndpointWithoutRequest<IResult>
 {
     public override void Configure() => Get("/notifications/live");
 
@@ -21,7 +21,7 @@ public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, Accoun
             return TypedResults.BadRequest();
         }
 
-        var live = new LiveView(time);
+        var live = new LiveView(time, applicationLifetime);
         async Task<LiveFragment> ReadAsync(CancellationToken cancellationToken)
         {
             try

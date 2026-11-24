@@ -10,8 +10,10 @@ namespace TerraScale.Dashboard.Common.Live;
 
 public sealed record LiveFragment(RazorSlice Slice, bool Complete = false);
 
-public sealed class LiveView(TimeProvider time)
+public sealed class LiveView(TimeProvider time, IHostApplicationLifetime applicationLifetime)
 {
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(15);
+
     public static HtmlString Initializer(AccountContext context, string path)
     {
         var expression = "@get('" + JavaScriptEncoder.Default.Encode(WorkspaceUrl.For(context, path)) + "', {retry: 'always', requestCancellation: 'cleanup'})";
@@ -23,11 +25,13 @@ public sealed class LiveView(TimeProvider time)
     {
         var aborted = http.RequestAborted;
         using var lifetime = new CancellationTokenSource(TimeSpan.FromMinutes(15), time);
-        using var stream = CancellationTokenSource.CreateLinkedTokenSource(aborted, cancellationToken, lifetime.Token);
+        var stopping = applicationLifetime.ApplicationStopping;
+        using var stream = CancellationTokenSource.CreateLinkedTokenSource(aborted, cancellationToken, lifetime.Token, stopping);
         http.RequestAborted = stream.Token;
         try
         {
             string? previous = null;
+            var lastWrite = time.GetTimestamp();
             await foreach (var _ in changes.WithCancellation(stream.Token))
             {
                 var fragment = await read(stream.Token);
@@ -46,6 +50,12 @@ public sealed class LiveView(TimeProvider time)
 
                     await DatastarEvents.PatchElementsAsync(http, html, stream.Token);
                     previous = hash;
+                    lastWrite = time.GetTimestamp();
+                }
+                else if (http.Response.HasStarted && time.GetElapsedTime(lastWrite) >= KeepAliveInterval)
+                {
+                    await DatastarEvents.KeepAliveAsync(http, stream.Token);
+                    lastWrite = time.GetTimestamp();
                 }
 
                 if (fragment.Complete)
@@ -54,7 +64,7 @@ public sealed class LiveView(TimeProvider time)
                 }
             }
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested && !aborted.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when ((lifetime.IsCancellationRequested || stopping.IsCancellationRequested) && !aborted.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             return;
         }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TerraBase.Cluster;
 using TerraBase.Engine;
 using TerraBase.Hosting;
 
@@ -13,48 +14,66 @@ internal readonly union RulesVersionsOutcome(RulesVersionsBody, BackendUnavailab
 
 internal readonly union RulesSaveOutcome(StoredRules, StaleRules, BackendUnavailable);
 
-internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
+internal sealed class RulesStore(SystemDatabase system, AntiEntropyService antiEntropy, TimeProvider time)
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(5);
 
-    private readonly ConcurrentDictionary<Ulid, (StoredRules? Rules, DateTimeOffset Until)> _cache = new();
+    private static readonly TimeSpan SyncTimeout = TimeSpan.FromMilliseconds(500);
 
-    public async ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, CancellationToken cancellationToken)
+    private readonly ConcurrentDictionary<Ulid, (StoredRules? Rules, CausalBookmark Bookmark, DateTimeOffset Until)> _cache = new();
+
+    public ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        CurrentAsync(databaseId, fresh: false, cancellationToken);
+
+    public async ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, bool fresh, CancellationToken cancellationToken)
     {
-        if (_cache.TryGetValue(databaseId, out var cached) && cached.Until > time.GetUtcNow())
+        if (fresh)
+        {
+            await SyncSystemAsync(cancellationToken);
+        }
+        else if (_cache.TryGetValue(databaseId, out var cached) && cached.Until > time.GetUtcNow() && cached.Bookmark.Equals(system.Session.CurrentBookmark))
         {
             return cached.Rules is { } rules ? rules : NoRules();
         }
 
+        var bookmark = system.Session.CurrentBookmark;
         var current = await system.QueryAsync(SqlBuild.Statement(
             "SELECT v.version, v.body, v.updated_at, v.updated_by, v.digest FROM rules_current c JOIN rules_versions v ON v.database_id = c.database_id AND v.version = c.version WHERE c.database_id = ?",
             SqlBuild.Id(databaseId)), cancellationToken);
         return current switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows when Read(rows[0]) is { } rules => Cache(databaseId, rules),
-            IReadOnlyList<IReadOnlyList<SqlValue>> => CacheMissing(databaseId),
+            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows when Read(rows[0]) is { } rules => Cache(databaseId, rules, bookmark),
+            IReadOnlyList<IReadOnlyList<SqlValue>> => CacheMissing(databaseId, bookmark),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<StoredRulesLookup> VersionAsync(Ulid databaseId, string? version, CancellationToken cancellationToken) =>
-        await system.QueryAsync(SqlBuild.Statement(
+    public async ValueTask<StoredRulesLookup> VersionAsync(Ulid databaseId, string? version, CancellationToken cancellationToken)
+    {
+        await SyncSystemAsync(cancellationToken);
+        var found = await system.QueryAsync(SqlBuild.Statement(
             "SELECT version, body, updated_at, updated_by, digest FROM rules_versions WHERE database_id = ? AND version = ?", SqlBuild.Id(databaseId), SqlBuild.OptionalText(version)),
-            cancellationToken) switch
+            cancellationToken);
+        return found switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows when Read(rows[0]) is { } rules => rules,
             IReadOnlyList<IReadOnlyList<SqlValue>> => new ResourceNotFound("the database has no such rules version", "unknown_version"),
             BackendUnavailable unavailable => unavailable,
         };
+    }
 
-    public async ValueTask<RulesVersionsOutcome> VersionsAsync(Ulid databaseId, string? after, int limit, CancellationToken cancellationToken) =>
-        await system.QueryAsync(SqlBuild.Statement(
+    public async ValueTask<RulesVersionsOutcome> VersionsAsync(Ulid databaseId, string? after, int limit, CancellationToken cancellationToken)
+    {
+        await SyncSystemAsync(cancellationToken);
+        var listed = await system.QueryAsync(SqlBuild.Statement(
             "SELECT version, updated_at, updated_by, digest FROM rules_versions WHERE database_id = ?1 AND (?2 IS NULL OR version < ?2) ORDER BY version DESC LIMIT ?3",
-            SqlBuild.Id(databaseId), SqlBuild.OptionalText(after), SqlBuild.Integer(limit + 1)), cancellationToken) switch
+            SqlBuild.Id(databaseId), SqlBuild.OptionalText(after), SqlBuild.Integer(limit + 1)), cancellationToken);
+        return listed switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Versions(rows, limit),
             BackendUnavailable unavailable => unavailable,
         };
+    }
 
     public async ValueTask<RulesSaveOutcome> DeployAsync(
         Ulid databaseId, RulesSet rules, string? ifMatch, string actor, CancellationToken cancellationToken)
@@ -76,6 +95,7 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
         var pointer = ifMatch is { } expected
             ? SqlBuild.Statement("UPDATE rules_current SET version = ? WHERE database_id = ? AND version = ?", SqlBuild.Text(stored.Version), SqlBuild.Id(databaseId), SqlBuild.Text(expected))
             : SqlBuild.Statement("INSERT INTO rules_current (database_id, version) VALUES (?, ?)", SqlBuild.Id(databaseId), SqlBuild.Text(stored.Version));
+        await SyncSystemAsync(cancellationToken);
         var written = await system.WriteAsync([insertVersion, pointer], ConsistencyMode.Strong, cancellationToken);
         _cache.TryRemove(databaseId, out _);
         return written switch
@@ -88,7 +108,7 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
 
     private async ValueTask<string?> CurrentVersionAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
-        var outcome = await CurrentAsync(databaseId, cancellationToken);
+        var outcome = await CurrentAsync(databaseId, fresh: true, cancellationToken);
         return outcome switch
         {
             StoredRules rules => rules.Version,
@@ -96,15 +116,18 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
         };
     }
 
-    private StoredRulesLookup Cache(Ulid databaseId, StoredRules rules)
+    private async ValueTask SyncSystemAsync(CancellationToken cancellationToken) =>
+        _ = await antiEntropy.SyncInRegionAsync(SystemDatabase.Id, SyncTimeout, cancellationToken);
+
+    private StoredRulesLookup Cache(Ulid databaseId, StoredRules rules, CausalBookmark bookmark)
     {
-        _cache[databaseId] = (rules, time.GetUtcNow() + CacheTtl);
+        _cache[databaseId] = (rules, bookmark, time.GetUtcNow() + CacheTtl);
         return rules;
     }
 
-    private StoredRulesLookup CacheMissing(Ulid databaseId)
+    private StoredRulesLookup CacheMissing(Ulid databaseId, CausalBookmark bookmark)
     {
-        _cache[databaseId] = (null, time.GetUtcNow() + CacheTtl);
+        _cache[databaseId] = (null, bookmark, time.GetUtcNow() + CacheTtl);
         return NoRules();
     }
 

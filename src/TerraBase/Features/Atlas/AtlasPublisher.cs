@@ -152,7 +152,7 @@ internal sealed class AtlasPublisher(
 
                 var canonical = database.AllRegions
                     ? defaultCanonical
-                    : database.Regions.Order(StringComparer.Ordinal).FirstOrDefault() ?? options.Region;
+                    : database.Regions.Count > 0 ? database.Regions[0] : options.Region;
                 if (string.Equals(canonical, options.Region, StringComparison.Ordinal))
                 {
                     Queue(database.ProjectId, database.Name, canonical);

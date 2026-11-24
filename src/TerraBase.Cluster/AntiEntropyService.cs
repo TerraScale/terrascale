@@ -66,12 +66,23 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
     public ValueTask<CatchUpReport> SyncAsync(Ulid databaseId, CancellationToken cancellationToken) =>
         SyncAsync(databaseId, options.CatchUpTimeout, cancellationToken);
 
-    public async ValueTask<CatchUpReport> SyncAsync(Ulid databaseId, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
+    public ValueTask<CatchUpReport> SyncAsync(Ulid databaseId, TimeSpan perPeerTimeout, CancellationToken cancellationToken) =>
+        SyncFromAsync(databaseId, options.Peers, perPeerTimeout, cancellationToken);
+
+    public ValueTask<CatchUpReport> SyncInRegionAsync(Ulid databaseId, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
+    {
+        var peers = options.RegionPeers;
+        return peers.Count == 0 || !peers.Any(peer => health.IsReachable(peer.NodeId))
+            ? ValueTask.FromResult(CatchUpReport.Empty(databaseId))
+            : SyncFromAsync(databaseId, peers, perPeerTimeout, cancellationToken);
+    }
+
+    private async ValueTask<CatchUpReport> SyncFromAsync(Ulid databaseId, IReadOnlyList<PeerNodeInfo> peers, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
     {
         var resolved = await databases.ResolveAsync(databaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => await SyncLeasedAsync(session, perPeerTimeout, cancellationToken),
+            ISqlDatabaseSession session => await SyncLeasedAsync(session, peers, perPeerTimeout, cancellationToken),
             DatabaseNotFound notFound => new CatchUpReport(databaseId, 0, 0, 0, [notFound.Message]),
             ClusterUnavailable unavailable => new CatchUpReport(databaseId, 0, 0, 0, [unavailable.Message]),
         };
@@ -113,11 +124,11 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterDatabases 
         return session.CurrentBookmark.Dominates(target);
     }
 
-    private async ValueTask<CatchUpReport> SyncLeasedAsync(ISqlDatabaseSession session, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
+    private async ValueTask<CatchUpReport> SyncLeasedAsync(ISqlDatabaseSession session, IReadOnlyList<PeerNodeInfo> peers, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
     {
         await using (session)
         {
-            PeerNodeInfo[] reachable = [.. options.Peers.Where(peer => health.IsReachable(peer.NodeId))];
+            PeerNodeInfo[] reachable = [.. peers.Where(peer => health.IsReachable(peer.NodeId))];
             if (reachable.Length == 0)
             {
                 return CatchUpReport.Empty(session.DatabaseId);
