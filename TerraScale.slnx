@@ -22,13 +22,11 @@
   </Folder>
   <Folder Name="/benchmark/">
     <Project Path="benchmark/csharp/TerraScale.Benchmark.csproj" />
-    <Project Path="benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/sdk/">
     <Project Path="sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
-    <Project Path="sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
   </Folder>
   <Folder Name="/dashboard/">
     <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />

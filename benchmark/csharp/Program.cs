@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Benchmark;
 using TerraScale.DotNet;
 using TerraScale.DotNet.Errors;
@@ -245,23 +244,6 @@ internal static class Runner
                     {
                         throw new InvalidOperationException($"GET /.well-known/oauth-authorization-server returned {(int)meta.StatusCode}.");
                     }
-                }
-            }, cancellationToken));
-
-            var dbContextOptions = new DbContextOptionsBuilder<BenchDbContext>()
-                .UseTerraBase(db)
-                .Options;
-
-            results.Add(await MeasureAsync("efcore_roundtrip", options.Warmup, options.Iterations, async ct =>
-            {
-                var id = nextId++;
-                await using var context = new BenchDbContext(dbContextOptions);
-                context.Items.Add(new BenchItem { Id = id, Tag = "efcore", Amount = id * 10 });
-                await context.SaveChangesAsync(ct);
-                var fetched = await context.Items.AsNoTracking().SingleAsync(row => row.Id == id, ct);
-                if (fetched.Amount != id * 10)
-                {
-                    throw new InvalidOperationException($"EF Core roundtrip mismatch for id {id}.");
                 }
             }, cancellationToken));
         }
