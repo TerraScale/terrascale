@@ -73,6 +73,11 @@ public interface IClusterCoordinator
         SqlStatementRequest request,
         CancellationToken cancellationToken);
 
+    ValueTask<ClusterWriteOutcome> ExecuteLocalBootstrapWriteAsync(
+        ISqlDatabaseSession session,
+        SqlStatementRequest request,
+        CancellationToken cancellationToken);
+
     ValueTask<ClusterBeginTransactionOutcome> BeginTransactionAsync(ISqlDatabaseSession session, SqlTransactionOptions options, CancellationToken cancellationToken);
 
     ValueTask<ClusterCommitTransactionOutcome> CommitTransactionAsync(

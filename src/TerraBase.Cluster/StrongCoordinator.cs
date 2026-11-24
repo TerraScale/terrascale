@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using TerraBase.Storage;
@@ -20,40 +19,67 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         var started = timeProvider.GetTimestamp();
         var regionCount = topology.Regions.Count;
         var required = topology.RegionQuorum;
-        using var voteCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var dispatched = new ConcurrentBag<string>();
-        List<Task<RegionVote>> votes = [.. topology.Regions.Select(region => VoteRegionAsync(session, payload, region, dispatched, voteCancel.Token, cancellationToken))];
+        var voteCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var dispatchGate = new Lock();
+        var closed = false;
+        List<string> dispatched = [];
+        List<Task<RegionVote>> votes = [.. topology.Regions.Select(region => VoteRegionAsync(session, payload, region, dispatchGate, () => closed, dispatched, voteCancel.Token, cancellationToken))];
         var prepared = 0;
         var unreachable = 0;
         List<StrongPrepareOutcome> rejections = [];
-        await foreach (var completed in Task.WhenEach(votes).WithCancellation(cancellationToken))
+        try
         {
-            var result = await completed;
-            var definitive = result.Vote switch
+            await foreach (var completed in Task.WhenEach(votes).WithCancellation(cancellationToken))
             {
-                Prepared => Increment(ref prepared),
-                Wounded wounded => Reject(rejections, wounded, definitive: false),
-                ReadSetStale stale => Reject(rejections, stale, definitive: true),
-                SchemaEpochStale epoch => Reject(rejections, epoch, definitive: true),
-                ClusterUnavailable => Increment(ref unreachable),
-            };
-            if (prepared >= required || definitive || regionCount - rejections.Count - unreachable < required)
-            {
-                await voteCancel.CancelAsync();
-                break;
+                var result = await completed;
+                var definitive = result.Vote switch
+                {
+                    Prepared => Increment(ref prepared),
+                    Wounded wounded => Reject(rejections, wounded, definitive: false),
+                    ReadSetStale stale => Reject(rejections, stale, definitive: true),
+                    SchemaEpochStale epoch => Reject(rejections, epoch, definitive: true),
+                    ClusterUnavailable => Increment(ref unreachable),
+                };
+                if (prepared >= required || definitive || regionCount - rejections.Count - unreachable < required)
+                {
+                    await voteCancel.CancelAsync();
+                    break;
+                }
             }
         }
+        finally
+        {
+            await voteCancel.CancelAsync();
+            _ = Task.WhenAll(votes).ContinueWith(
+                static (task, state) =>
+                {
+                    _ = task.Exception;
+                    ((CancellationTokenSource)state!).Dispose();
+                },
+                voteCancel,
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
 
-        _ = Task.WhenAll(votes).ContinueWith(static task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        string[] remoteParticipants;
+        lock (dispatchGate)
+        {
+            closed = true;
+            remoteParticipants = [.. dispatched.Distinct(StringComparer.Ordinal)];
+        }
+
         var withinLease = timeProvider.GetElapsedTime(started) < options.StrongLockLease / 2;
-        return new StrongVoteTally(prepared, required, rejections, unreachable, [.. dispatched.Distinct(StringComparer.Ordinal)], withinLease);
+        return new StrongVoteTally(prepared, required, rejections, unreachable, remoteParticipants, withinLease);
     }
 
     private async Task<RegionVote> VoteRegionAsync(
         ISqlDatabaseSession session,
         StrongPreparePayload payload,
         string region,
-        ConcurrentBag<string> dispatched,
+        Lock dispatchGate,
+        Func<bool> isClosed,
+        List<string> dispatched,
         CancellationToken voteToken,
         CancellationToken callerToken)
     {
@@ -69,7 +95,15 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
 
             if (!candidate.IsLocal)
             {
-                dispatched.Add(candidate.NodeId);
+                lock (dispatchGate)
+                {
+                    if (isClosed() || voteToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    dispatched.Add(candidate.NodeId);
+                }
             }
 
             StrongVote vote;

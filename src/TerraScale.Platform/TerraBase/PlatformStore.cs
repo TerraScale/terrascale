@@ -110,7 +110,7 @@ public sealed class PlatformSchema(
                 PlatformConflict conflict => Failed(conflict.Message),
                 PlatformUnavailable unavailable => Failed(unavailable.Message),
             };
-            if (applied)
+            if (applied && await EnsureClosedFileProjectColumnsAsync(stoppingToken))
             {
                 readiness.MarkSchemaReady();
                 logger.ZLogInformation($"Platform state schema is in place");
@@ -118,6 +118,51 @@ public sealed class PlatformSchema(
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+
+    private async ValueTask<bool> EnsureClosedFileProjectColumnsAsync(CancellationToken cancellationToken)
+    {
+        var columnsOutcome = await store.ReadAsync(SqlValues.Statement("SELECT name FROM pragma_table_info('platform_closed_file_projects')"), cancellationToken);
+        HashSet<string>? existing = columnsOutcome switch
+        {
+            SqlExecuteResponse response => [.. response.Results[0].RowsOf().Select(static row => row.Text(0))],
+            PlatformConflict conflict => FailColumns(conflict.Message),
+            PlatformUnavailable unavailable => FailColumns(unavailable.Message),
+        };
+        if (existing is null)
+        {
+            return false;
+        }
+
+        List<SqlHttpStatement> migrations = [];
+        if (!existing.Contains("closed_at"))
+        {
+            migrations.Add(SqlValues.Statement("ALTER TABLE platform_closed_file_projects ADD COLUMN closed_at INTEGER NOT NULL DEFAULT 0"));
+        }
+
+        if (!existing.Contains("swept_at"))
+        {
+            migrations.Add(SqlValues.Statement("ALTER TABLE platform_closed_file_projects ADD COLUMN swept_at INTEGER"));
+        }
+
+        if (migrations.Count == 0)
+        {
+            return true;
+        }
+
+        var migrated = await store.ExecuteAsync(migrations, SqlContext.Strong, cancellationToken);
+        return migrated switch
+        {
+            SqlExecuteResponse => true,
+            PlatformConflict conflict => Failed(conflict.Message),
+            PlatformUnavailable unavailable => Failed(unavailable.Message),
+        };
+    }
+
+    private HashSet<string>? FailColumns(string message)
+    {
+        _ = Failed(message);
+        return null;
     }
 
     private bool Failed(string message)

@@ -113,7 +113,9 @@ internal sealed class ReadTransaction : ISqlTransaction
     private readonly TimeSpan _idleTimeout;
     private readonly ITimer? _idleTimer;
     private readonly Lock _gate = new();
+    private readonly Lock _interruptGate = new();
     private readonly StatementInfo _info = new();
+    private SqliteConnection? _ownedReader;
     private int _statements;
     private bool _finished;
 
@@ -121,6 +123,7 @@ internal sealed class ReadTransaction : ISqlTransaction
     {
         _session = session;
         _reader = reader;
+        _ownedReader = reader;
         Options = options;
         TxId = txId;
         _idleTimeout = idleTimeout;
@@ -140,7 +143,11 @@ internal sealed class ReadTransaction : ISqlTransaction
 
     public void Abandon()
     {
-        _reader.Interrupt();
+        lock (_interruptGate)
+        {
+            _ownedReader?.Interrupt();
+        }
+
         _ = Finish("ROLLBACK;");
     }
 
@@ -228,6 +235,11 @@ internal sealed class ReadTransaction : ISqlTransaction
             _idleTimer?.Dispose();
             _ = _reader.Exec(sql);
             _session.UnregisterReadTransaction(this);
+            lock (_interruptGate)
+            {
+                _ownedReader = null;
+            }
+
             _session.ReleaseReader(_reader);
             return true;
         }

@@ -9,7 +9,7 @@ const label = 'deployment-alert';
 const bot = 'github-actions[bot]';
 const runLink = `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 const activeLimit = 2 * 60 * 60 * 1000;
-assert.ok(['all', 'docs', 'landing', 'status', ...Object.keys(services)].includes(thing));
+assert.ok(['all', 'docs', 'landing', 'status', 'terrabase', 'platform', ...Object.keys(services)].includes(thing));
 let reads = 0;
 const git = (...argv) => execFileSync('git', argv, { encoding: 'utf8' }).trim();
 const sha = (value) => assert.match(value ?? '', /^[0-9a-f]{40}$/, 'Missing or invalid live revision');
@@ -237,7 +237,13 @@ async function notify(alert, name, revision) {
   });
 }
 
-if (thing === 'auth' && args[0] === '--probe') {
+if (args[0] === '--qualify-main') {
+  const own = process.env.GITHUB_SHA;
+  sha(own);
+  const ok = await appQualified(own);
+  console.log(`GitHub API reads: ${reads}`);
+  assert.ok(ok, `${thing}: ${own} tree was not qualified by a passing PR CI run (all-green + journey)`);
+} else if (thing === 'auth' && args[0] === '--probe') {
   const revision = await serviceLive(thing, { probe: true });
   const result = revision === null ? 'unavailable=true' : `revision=${revision}`;
   appendFileSync(process.env.GITHUB_OUTPUT, `${result}\n`);

@@ -19,37 +19,43 @@ internal sealed class QuicCertificateSource
     private readonly Lock _gate = new();
     private readonly Func<TimeProvider, QuicMeshCertificates>? _rotator;
     private readonly TimeProvider _timeProvider;
-    private SslStreamCertificateContext _context;
-    private DateTimeOffset _rotateAfter;
+    private volatile CertificateState _state;
 
     public QuicCertificateSource(QuicMeshOptions options, TimeProvider timeProvider)
     {
         _rotator = options.CertificateRotator;
         _timeProvider = timeProvider;
-        _context = SslStreamCertificateContext.Create(options.Certificate, [.. options.IntermediateCertificates], offline: true);
-        _rotateAfter = RotationTime(options.Certificate);
+        _state = new CertificateState(
+            SslStreamCertificateContext.Create(options.Certificate, [.. options.IntermediateCertificates], offline: true),
+            RotationTime(options.Certificate));
     }
 
     public SslStreamCertificateContext Current()
     {
-        if (_rotator is null || _timeProvider.GetUtcNow() < _rotateAfter)
+        var current = _state;
+        if (_rotator is null || _timeProvider.GetUtcNow() < current.RotateAfter)
         {
-            return _context;
+            return current.Context;
         }
 
         lock (_gate)
         {
-            if (_timeProvider.GetUtcNow() < _rotateAfter)
+            current = _state;
+            if (_timeProvider.GetUtcNow() < current.RotateAfter)
             {
-                return _context;
+                return current.Context;
             }
 
             var rotated = _rotator(_timeProvider);
-            _context = SslStreamCertificateContext.Create(rotated.Certificate, [.. rotated.Intermediates], offline: true);
-            _rotateAfter = RotationTime(rotated.Certificate);
-            return _context;
+            var next = new CertificateState(
+                SslStreamCertificateContext.Create(rotated.Certificate, [.. rotated.Intermediates], offline: true),
+                RotationTime(rotated.Certificate));
+            _state = next;
+            return next.Context;
         }
     }
+
+    private sealed record CertificateState(SslStreamCertificateContext Context, DateTimeOffset RotateAfter);
 
     private static DateTimeOffset RotationTime(X509Certificate2 certificate)
     {

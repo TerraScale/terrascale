@@ -169,7 +169,7 @@ internal sealed class AtlasPublisher(
         var stamp = time.GetUtcNow().ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
         var signed = Encoding.UTF8.GetBytes(string.Concat("atlas-publish-v1\n", stamp, "\n")).Concat(body).ToArray();
         var signature = key.SignData(signed, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(url, "v1/publish")) { Content = new ByteArrayContent(body) };
+        using var request = new HttpRequestMessage(HttpMethod.Post, PublishEndpoint(url)) { Content = new ByteArrayContent(body) };
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         request.Headers.Add("X-Atlas-Timestamp", stamp);
         request.Headers.Add("X-Atlas-Signature", Base64Url.EncodeToString(signature));
@@ -191,5 +191,16 @@ internal sealed class AtlasPublisher(
             _publishes.Add(placements.Count, new KeyValuePair<string, object?>("result", "retryable"));
             return false;
         }
+    }
+
+    private static Uri PublishEndpoint(Uri url)
+    {
+        if (url.AbsolutePath.TrimEnd('/').EndsWith("/v1/publish", StringComparison.Ordinal))
+        {
+            return url;
+        }
+
+        var baseUri = url.AbsoluteUri.EndsWith('/') ? url : new Uri(url.AbsoluteUri + "/");
+        return new Uri(baseUri, "v1/publish");
     }
 }

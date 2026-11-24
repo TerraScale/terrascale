@@ -89,7 +89,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         var subject = HostedAuth.Subject(peer?.ToString()) ?? throw ApiException.Unavailable();
         var maximum = options.RateLimitPerWindow;
         var purpose = clientLimit ? "token-client-ip" : "token-peer-ip";
-        if (!clientLimit && options.TrustedProxies.Contains(peer!.IsIPv4MappedToIPv6 ? peer.MapToIPv4() : peer))
+        if (!clientLimit && peer is not null && options.IsTrustedProxy(peer))
         {
             context.Items[TrustedProxyKey] = true;
             if (IPAddress.IsLoopback(peer))

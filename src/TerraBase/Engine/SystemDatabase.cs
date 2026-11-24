@@ -211,13 +211,31 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             }
         }
 
-        var localOutcome = await WriteAsync(missing, ConsistencyMode.Fast, cancellationToken);
+        var localOutcome = await WriteBootstrapAsync(missing, cancellationToken);
         return localOutcome switch
         {
             SqlWriteResult => new Completed(),
             BackendUnavailable { Code: "in_region_quorum_unconfirmed" or "strong_quorum_unreachable" } => null,
             StateConflict conflict => new ConfigurationError(string.Concat("the system database schema could not be created: ", conflict.Message)),
             BackendUnavailable unavailable => new ConfigurationError(string.Concat("the system database schema could not be created: ", unavailable.Message)),
+        };
+    }
+
+    private async ValueTask<SystemWriteOutcome> WriteBootstrapAsync(
+        IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
+    {
+        var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, ConsistencyMode.Strong, CausalBookmark.Empty);
+        var outcome = await coordinator.ExecuteLocalBootstrapWriteAsync(Session, request, cancellationToken);
+        return outcome switch
+        {
+            SqlWriteResult written => written,
+            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
+            SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
+            SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
+            SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
+            ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
+            ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
+            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
         };
     }
 }

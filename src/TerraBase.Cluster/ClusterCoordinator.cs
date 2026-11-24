@@ -57,6 +57,26 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         };
     }
 
+    public async ValueTask<ClusterWriteOutcome> ExecuteLocalBootstrapWriteAsync(
+        ISqlDatabaseSession session,
+        SqlStatementRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(request);
+        databases.Track(session.DatabaseId);
+        var local = await session.ExecuteWriteAsync(request with { Mode = ConsistencyMode.Strong }, cancellationToken);
+        return local switch
+        {
+            SqlWriteResult written => Durable(written, await finalizer.FinalizeFastAsync(session.DatabaseId, written.Commit, cancellationToken)),
+            StrongRequired => new ClusterUnavailable("bootstrap write was refused locally", "bootstrap_strong_required"),
+            SqlError error => error,
+            SchemaMismatch mismatch => mismatch,
+            StorageBusy busy => busy,
+            StorageTimeout timeout => new ClusterTimeout(timeout.Message, timeout.Code),
+        };
+    }
+
     public async ValueTask<ClusterCommitTransactionOutcome> CommitTransactionAsync(
         ISqlDatabaseSession session,
         ISqlTransaction transaction,

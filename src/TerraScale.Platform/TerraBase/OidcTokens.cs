@@ -84,7 +84,7 @@ public sealed class OidcTokens : IDisposable
         }
 
         var validIssuers = tenant ? new[] { jwt.Issuer } : new[] { issuer.AbsoluteUri, platformIssuer };
-        if (await ConfigurationAsync(entry.Manager, cancellationToken) is not { } metadata)
+        if (await CurrentConfigurationAsync(entry, cancellationToken) is not { } metadata)
         {
             return new PlatformUnavailable("the identity provider keys are unavailable; retry", "jwks_unavailable");
         }
@@ -92,8 +92,7 @@ public sealed class OidcTokens : IDisposable
         var result = await _handler.ValidateTokenAsync(token, Parameters(validIssuers, audiences, tenant, metadata.SigningKeys));
         if (!result.IsValid && result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            entry.Manager.RequestRefresh();
-            if (await FetchFreshAsync(entry, cancellationToken) is not { } refreshed)
+            if (await RefreshFreshAsync(entry, cancellationToken) is not { } refreshed)
             {
                 return new PlatformUnavailable("the identity provider keys are unavailable; retry", "jwks_unavailable");
             }
@@ -185,6 +184,45 @@ public sealed class OidcTokens : IDisposable
         }
     }
 
+    private static readonly TimeSpan UnknownKeyRefreshCooldown = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan FreshConfigurationLifetime = TimeSpan.FromSeconds(35);
+
+    private async Task<OpenIdConnectConfiguration?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        if (entry.FreshConfiguration is { } fresh && _time.GetElapsedTime(entry.LastRefreshTimestamp) < FreshConfigurationLifetime)
+        {
+            return fresh;
+        }
+
+        return await ConfigurationAsync(entry.Manager, cancellationToken);
+    }
+
+    private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        await entry.RefreshGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (entry.LastRefreshTimestamp != 0 && _time.GetElapsedTime(entry.LastRefreshTimestamp) < UnknownKeyRefreshCooldown)
+            {
+                return entry.FreshConfiguration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
+            }
+
+            entry.Manager.RequestRefresh();
+            var fetched = await FetchFreshAsync(entry, cancellationToken);
+            entry.LastRefreshTimestamp = _time.GetTimestamp();
+            if (fetched is not null)
+            {
+                entry.FreshConfiguration = fetched;
+            }
+
+            return fetched;
+        }
+        finally
+        {
+            _ = entry.RefreshGate.Release();
+        }
+    }
+
     private static async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
         try
@@ -198,5 +236,13 @@ public sealed class OidcTokens : IDisposable
         }
     }
 
-    private sealed record IssuerEntry(string MetadataAddress, HttpDocumentRetriever Retriever, ConfigurationManager<OpenIdConnectConfiguration> Manager);
+    private sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
+    {
+        public string MetadataAddress { get; } = metadataAddress;
+        public HttpDocumentRetriever Retriever { get; } = retriever;
+        public ConfigurationManager<OpenIdConnectConfiguration> Manager { get; } = manager;
+        public SemaphoreSlim RefreshGate { get; } = new(1, 1);
+        public volatile OpenIdConnectConfiguration? FreshConfiguration;
+        public long LastRefreshTimestamp;
+    }
 }

@@ -57,6 +57,13 @@ public sealed partial record AuthOptions
 
     public IReadOnlyList<IPNetwork> TrustedProxyNetworks { get; init; } = [];
 
+    public bool IsTrustedProxy(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        var normalized = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+        return TrustedProxies.Contains(normalized) || TrustedProxyNetworks.Any(network => network.Contains(normalized));
+    }
+
     public CloudflareEmailOptions? CloudflareEmail { get; init; }
 
     public SmtpEmailOptions? Smtp { get; init; }
@@ -264,7 +271,7 @@ public sealed partial record AuthOptions
 
         var addresses = new HashSet<IPAddress>();
         var networks = new HashSet<IPNetwork>();
-        foreach (var text in value.Split(';', StringSplitOptions.TrimEntries))
+        foreach (var text in value.Split([';', ','], StringSplitOptions.TrimEntries))
         {
             if (text.Contains('/'))
             {

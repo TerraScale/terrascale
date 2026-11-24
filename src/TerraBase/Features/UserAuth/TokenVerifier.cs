@@ -64,7 +64,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token");
         }
 
-        if (await ConfigurationAsync(trusted.Entry.Manager, cancellationToken) is not { } configuration)
+        if (await CurrentConfigurationAsync(trusted.Entry, cancellationToken) is not { } configuration)
         {
             return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
         }
@@ -72,8 +72,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, configuration.SigningKeys));
         if (!validated.IsValid && validated.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            trusted.Entry.Manager.RequestRefresh();
-            if (await FetchFreshAsync(trusted.Entry, cancellationToken) is not { } refreshed)
+            if (await RefreshFreshAsync(trusted.Entry, cancellationToken) is not { } refreshed)
             {
                 return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
             }
@@ -268,6 +267,45 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
+    private static readonly TimeSpan UnknownKeyRefreshCooldown = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan FreshConfigurationLifetime = TimeSpan.FromSeconds(35);
+
+    private async Task<OpenIdConnectConfiguration?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        if (entry.FreshConfiguration is { } fresh && time.GetElapsedTime(entry.LastRefreshTimestamp) < FreshConfigurationLifetime)
+        {
+            return fresh;
+        }
+
+        return await ConfigurationAsync(entry.Manager, cancellationToken);
+    }
+
+    private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        await entry.RefreshGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (entry.LastRefreshTimestamp != 0 && time.GetElapsedTime(entry.LastRefreshTimestamp) < UnknownKeyRefreshCooldown)
+            {
+                return entry.FreshConfiguration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
+            }
+
+            entry.Manager.RequestRefresh();
+            var fetched = await FetchFreshAsync(entry, cancellationToken);
+            entry.LastRefreshTimestamp = time.GetTimestamp();
+            if (fetched is not null)
+            {
+                entry.FreshConfiguration = fetched;
+            }
+
+            return fetched;
+        }
+        finally
+        {
+            _ = entry.RefreshGate.Release();
+        }
+    }
+
     private static async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
         try
@@ -282,6 +320,14 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     }
 }
 
-internal sealed record IssuerEntry(string MetadataAddress, HttpDocumentRetriever Retriever, ConfigurationManager<OpenIdConnectConfiguration> Manager);
+internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
+{
+    public string MetadataAddress { get; } = metadataAddress;
+    public HttpDocumentRetriever Retriever { get; } = retriever;
+    public ConfigurationManager<OpenIdConnectConfiguration> Manager { get; } = manager;
+    public SemaphoreSlim RefreshGate { get; } = new(1, 1);
+    public volatile OpenIdConnectConfiguration? FreshConfiguration;
+    public long LastRefreshTimestamp;
+}
 
 internal sealed record TrustedIssuer(string Issuer, IssuerEntry Entry, IReadOnlyList<string> Audiences, Ulid? Tenant);

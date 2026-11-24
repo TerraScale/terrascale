@@ -323,6 +323,7 @@ namespace TerraScale.Dashboard
             forwardedHeaders.KnownProxies.Clear();
             forwardedHeaders.KnownIPNetworks.Clear();
             forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("127.0.0.0/8"));
+            forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("::1/128"));
             forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("172.16.0.0/12"));
             forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("10.0.0.0/8"));
             app.UseForwardedHeaders(forwardedHeaders);

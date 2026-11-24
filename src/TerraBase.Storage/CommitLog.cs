@@ -651,20 +651,26 @@ internal sealed class OriginLog : IDisposable
         long offset = 0;
         var expected = baseSequence + 1;
         var first = true;
+        var verifiedCommitted = committedSequence == 0 || (_sealed.Count > 0 && _sealed[^1].Segment.LastSequence >= committedSequence);
         while (offset + CommitFrame.PrefixSize <= fileLength)
         {
             var bodyLength = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan((int)offset));
             var end = offset + CommitFrame.PrefixSize + bodyLength + CommitFrame.CrcSize;
             if (bodyLength > CommitFrame.MaxBodySize || end > fileLength)
             {
-                break;
+                if (verifiedCommitted)
+                {
+                    break;
+                }
+
+                return "commit log frame truncated or corrupt before committed sequence";
             }
 
             var body = bytes.AsSpan((int)offset + CommitFrame.PrefixSize, (int)bodyLength);
             var crc = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan((int)(end - CommitFrame.CrcSize)));
             if (Crc32.HashToUInt32(Crc32ParameterSet.Crc32C, body) != crc)
             {
-                if (_lastSequence >= committedSequence || end == fileLength)
+                if (verifiedCommitted)
                 {
                     break;
                 }
@@ -674,7 +680,7 @@ internal sealed class OriginLog : IDisposable
 
             if (!CommitFrame.TryDecode(body, Origin, _cipher, out var commit))
             {
-                if (_lastSequence >= committedSequence)
+                if (verifiedCommitted)
                 {
                     break;
                 }
@@ -690,7 +696,7 @@ internal sealed class OriginLog : IDisposable
             first = false;
             if (commit.Sequence != expected)
             {
-                if (_lastSequence >= committedSequence)
+                if (verifiedCommitted)
                 {
                     break;
                 }
@@ -700,8 +706,18 @@ internal sealed class OriginLog : IDisposable
 
             _frames.Add((offset, commit.Sequence));
             _lastSequence = commit.Sequence;
+            if (_lastSequence >= committedSequence)
+            {
+                verifiedCommitted = true;
+            }
+
             expected++;
             offset = end;
+        }
+
+        if (!verifiedCommitted)
+        {
+            return "commit log ended before committed sequence";
         }
 
         _length = offset;

@@ -20,6 +20,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     private readonly Dictionary<string, nint> _statements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TableSchema> _schemas = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Lock _handleGate = new();
     private readonly SqliteOpenOptions _options;
     private GCHandle<SqliteConnection> _self;
     private GCHandle<SnowflakeGenerator> _snowflake;
@@ -100,10 +101,12 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public void Interrupt()
     {
-        var db = Volatile.Read(ref _db);
-        if (db != 0)
+        lock (_handleGate)
         {
-            SqliteNative.InterruptQuery(db);
+            if (_db != 0)
+            {
+                SqliteNative.InterruptQuery(_db);
+            }
         }
     }
 
@@ -569,23 +572,28 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public void Dispose()
     {
-        if (_db == 0)
+        lock (_handleGate)
         {
-            return;
+            var db = _db;
+            if (db == 0)
+            {
+                return;
+            }
+
+            Capture?.Dispose();
+            Capture = null;
+            foreach (var statement in _statements.Values)
+            {
+                _ = SqliteNative.Finalize(statement);
+            }
+
+            _statements.Clear();
+            _schemas.Clear();
+            _ = SqliteNative.SetAuthorizer(db, null, 0);
+            _db = 0;
+            _ = SqliteNative.CloseV2(db);
         }
 
-        Capture?.Dispose();
-        Capture = null;
-        foreach (var statement in _statements.Values)
-        {
-            _ = SqliteNative.Finalize(statement);
-        }
-
-        _statements.Clear();
-        _schemas.Clear();
-        _ = SqliteNative.SetAuthorizer(_db, null, 0);
-        _ = SqliteNative.CloseV2(_db);
-        _db = 0;
         _self.Dispose();
         if (_snowflake.IsAllocated)
         {

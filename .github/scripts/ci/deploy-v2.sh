@@ -10,7 +10,7 @@ summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 
 case "$service" in
   terrabase|ts-platform|ts-auth) package=$service ;;
-  ts-dashboard) package='(?:terrascale-dashboard|ts-dashboard)' ;;
+  ts-dashboard) package='(terrascale-dashboard|ts-dashboard)' ;;
   *) echo "Unknown service: $service" >&2; exit 2 ;;
 esac
 

@@ -39,14 +39,13 @@ runs:
                 and all(.[]; .status == "completed" and .conclusion == "failure"
                   and (.name | IN("Report live ts-auth readiness HTTP 503", "Record the released source for the production journey"))));
             ["changes", "checks", "all-green",
-              ("journey / " + ("build terrabase", "build ts-auth", "build dashboard", "runner go", "runner rust",
+              ("journey / " + ("build terrabase", "build ts-platform", "build ts-auth", "build dashboard", "runner go", "runner rust",
                 "build engine rollback baseline", "engine crash selection guard",
-                "engine crash recovery (admission)", "engine crash recovery (idle)", "engine crash recovery (integrity)",
-                "engine crash recovery (proofs)", "engine crash recovery (publication)", "engine crash recovery (recovery)",
+                "engine crash recovery (recovery)", "engine crash recovery (integrity)",
+                "engine crash recovery (isolation)", "engine crash recovery (lifecycle)", "engine crash recovery (idle)",
                 "keyring recovery and rotation", "replication frontier",
                 "journey desktop and paid", "journey phone and flows", "journey session limits", "journey write guarantees",
-                "journey multi-region faults", "journey multi-region retired source",
-                "journey multi-region home moves and receipt handoffs"))] as $required
+                "journey multi-region faults"))] as $required
             | [.[].jobs[]] as $jobs
             | [$jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] as $unsuccessful
             | all($jobs[]; .status == "completed")

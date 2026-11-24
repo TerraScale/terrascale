@@ -309,9 +309,7 @@ jobs:
               {shard: "phone and flows", projects: "--project pages-mobile --project hosted --project interactions --project invitation", selected: env.PHONE},
               {shard: "session limits", projects: "placement/session-limits.spec.ts --project placement --workers 1", regions: 2, nodes: 2, selected: env.SESSION},
               {shard: "write guarantees", projects: "placement/database-functions.spec.ts placement/write-guarantees.spec.ts placement/region-restore.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
-              {shard: "multi-region faults", projects: "--project fault --grep-invert receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves|thirty.second.first.writer.outage|writer.killed.right.after.an.acknowledgement|retired.source.whose.fra.replica", regions: 2, nodes: 2, selected: env.FAULTS},
-              {shard: "multi-region retired source", projects: "--project fault --grep retired.source.whose.fra.replica", regions: 2, nodes: 2, selected: env.FAULTS},
-              {shard: "multi-region home moves and receipt handoffs", projects: "--project fault --grep receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves|thirty.second.first.writer.outage|writer.killed.right.after.an.acknowledgement", regions: 2, nodes: 2, selected: env.FAULTS}
+              {shard: "multi-region faults", projects: "--project fault", regions: 2, nodes: 2, selected: env.FAULTS}
             ] | map(select(env.ALL_LANES == "true" or .selected == "true") | del(.selected)) as $shards
             | ($shards | length > 0) as $browser
             | ($browser or env.ALL_LANES == "true" or env.ENGINE == "true" or env.FRONTIER == "true" or env.KEYRING == "true") as $journey
@@ -525,6 +523,12 @@ jobs:
       actions: read
     steps: &production-steps
       - *checkout
+      - name: Verify commit tree passed PR CI (all-green + journey)
+        if: github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only'
+        working-directory: terrascale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/ci/site-deploy-gate.mjs "$AREA" --qualify-main
       - uses: ./terrascale/.github/actions/qualified-main
         if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
         with:

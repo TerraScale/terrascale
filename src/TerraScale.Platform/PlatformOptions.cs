@@ -164,7 +164,11 @@ public sealed record ShapeStorageOptions(
             "TERRABASE_SHAPES_ENDPOINT", "TERRABASE_SHAPES_BUCKET", "TERRABASE_SHAPES_ACCESS_KEY_ID", "TERRABASE_SHAPES_SECRET_ACCESS_KEY",
             "TERRABASE_SHAPES_CDN_HOST", "TERRABASE_SHAPES_CDN_ZONE", "TERRABASE_SHAPES_CDN_API_TOKEN",
         ];
-        if (!reader.AnyOf(keys))
+        string[] enableKeys =
+        [
+            "TERRABASE_SHAPES_ENDPOINT", "TERRABASE_SHAPES_BUCKET", "TERRABASE_SHAPES_CDN_HOST", "TERRABASE_SHAPES_CDN_ZONE",
+        ];
+        if (!reader.AnyOf(enableKeys))
         {
             return null;
         }

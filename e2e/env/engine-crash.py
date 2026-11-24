@@ -716,15 +716,30 @@ def missing_catalog_case():
 @case("idle-cost")
 def idle_cost_case():
     start()
+    idle_org = request("POST", "/v1/management/organizations", {"name": "Crash idle"})["id"]
+    request("PUT", f"/v1/management/organizations/{idle_org}/plan", {"plan": "enterprise"}, actor=False)
+    idle_project = request("POST", f"/v1/management/organizations/{idle_org}/projects", {"name": "Crash idle"})["id"]
+
+    def create_idle(name):
+        return request("POST", f"/v1/projects/{idle_project}/databases", {"name": name})["id"]
+
+    def read_idle(identity):
+        return request(
+            "POST",
+            f"/v1/projects/{idle_project}/databases/{identity}/sql/execute",
+            {"statements": [{"sql": "SELECT 1;"}]},
+            actor=False,
+        )["results"][0]["rows"]
+
     with concurrent.futures.ThreadPoolExecutor(8) as executor:
-        idle = list(executor.map(lambda index: create(f"idle-{index}"), range(1000)))
+        idle = list(executor.map(lambda index: create_idle(f"idle-{index}"), range(1000)))
     end()
     start()
     resident, _ = memory()
     for label in ("first pass after restart", "steady pass"):
         began = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(8) as executor:
-            assert all(result == [[1]] for result in executor.map(lambda identity: rows(identity, "SELECT 1;"), idle))
+            assert all(result == [[1]] for result in executor.map(read_idle, idle))
         elapsed = time.perf_counter() - began
         current, peak = memory()
         print(
