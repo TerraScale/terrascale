@@ -98,14 +98,13 @@ internal static class SqlText
 
                     (kind, value) = (SqlTokenKind.Parameter, sql[start..i]);
                     break;
-                case ':' or '@' or '$' when IsWordPart(next):
-                    i++;
-                    while (i < sql.Length && IsWordPart(sql[i]))
+                case ':' or '@' or '$' or '#' when Variable(sql, i) is not 0 and var length:
+                    if (length < 0)
                     {
-                        i++;
+                        return false;
                     }
 
-                    (kind, value) = (SqlTokenKind.Parameter, sql[start..i]);
+                    (kind, value, i) = (SqlTokenKind.Parameter, sql[start..(start + length)], start + length);
                     break;
                 case '.' when !char.IsAsciiDigit(next):
                     (kind, value, i) = (SqlTokenKind.Dot, ".", i + 1);
@@ -182,6 +181,41 @@ internal static class SqlText
 
         value = "";
         return false;
+    }
+
+    private static int Variable(string sql, int start)
+    {
+        var named = 0;
+        var i = start + 1;
+        while (i < sql.Length)
+        {
+            var c = sql[i];
+            if (IsWordPart(c))
+            {
+                named++;
+                i++;
+            }
+            else if (c == '(' && named > 0)
+            {
+                i++;
+                while (i < sql.Length && sql[i] is not (' ' or '\t' or '\n' or '\v' or '\f' or '\r' or ')' or '\0'))
+                {
+                    i++;
+                }
+
+                return i < sql.Length && sql[i] == ')' ? i + 1 - start : -1;
+            }
+            else if (c == ':' && i + 1 < sql.Length && sql[i + 1] == ':')
+            {
+                i += 2;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return named > 0 ? i - start : 0;
     }
 
     private static bool IsWordStart(char c) => char.IsAsciiLetter(c) || c == '_' || c >= 0x80;
