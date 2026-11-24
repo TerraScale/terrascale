@@ -83,16 +83,23 @@ public static class App
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(services => new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
-            [],
-            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
-            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable],
-            caller: services.GetRequiredService<IConfiguration>()["TS_AUTH_TERRABASE_KEY_FILE"] is { Length: > 0 } path
-                ? new CallerCredential("ts-auth", File.ReadAllText(path), services.GetRequiredService<TimeProvider>()) : null),
-            services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]))));
+        builder.Services.AddSingleton(services =>
+        {
+            var origin = TerraBaseOrigin(options);
+            var clientOrigin = TerraBaseTransport.ClientOrigin(origin);
+            var internalTarget = ReferenceEquals(clientOrigin, origin) ? null : new DnsEndPoint(origin.DnsSafeHost, origin.Port);
+            return new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
+                [],
+                services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
+                peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable],
+                caller: services.GetRequiredService<IConfiguration>()["TS_AUTH_TERRABASE_KEY_FILE"] is { Length: > 0 } path
+                    ? new CallerCredential("ts-auth", File.ReadAllText(path), services.GetRequiredService<TimeProvider>()) : null,
+                internalTarget: internalTarget),
+                services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
+        });
         builder.Services.AddSingleton(services => new TerraBaseSqlClient(services.GetRequiredService<HttpClient>(), new TerraBaseSqlClientOptions
         {
-            BaseAddress = TerraBaseOrigin(options),
+            BaseAddress = TerraBaseTransport.ClientOrigin(TerraBaseOrigin(options)),
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddSingleton<AuthConnectionFactory>();
         builder.Services.AddSingleton<AuthData>();
@@ -138,7 +145,7 @@ public static class App
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new TerraBaseManagementClient(services.GetRequiredService<HttpClient>(),
-            new TerraBaseManagementClientOptions { BaseAddress = TerraBaseOrigin(options) }));
+            new TerraBaseManagementClientOptions { BaseAddress = TerraBaseTransport.ClientOrigin(TerraBaseOrigin(options)) }));
         builder.Services.AddSingleton<Closures>();
         builder.Services.AddSingleton<ClosureWorker>();
         builder.Services.AddHostedService(services => services.GetRequiredService<ClosureWorker>());
