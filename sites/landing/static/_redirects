@@ -2,6 +2,6 @@
 /terms https://docs.terrascale.tech/legal/terms 308
 /privacy https://docs.terrascale.tech/legal/privacy 308
 /dpa https://docs.terrascale.tech/legal/dpa 308
-/install.sh https://raw.githubusercontent.com/TerraScale/terrascale/main/sdk/go/scripts/install.sh 302
+/install.sh https://raw.githubusercontent.com/TerraScale/terrascale/f803140961c734aaddb78ba4b2f0b46b946424b1/sdk/go/scripts/install.sh 302
 # Go vanity import: every terrascale.tech/sdk/... path serves the go-import meta.
 /sdk/* /sdk 200
