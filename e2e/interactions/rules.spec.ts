@@ -445,6 +445,8 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
   const renamed = 'rules_sql_renamed_' + suffix;
   const view = 'rules_sql_view_' + suffix;
   const audit = 'rules_sql_audit_' + suffix;
+  const tasks = 'rules_sql_tasks_' + suffix;
+  const taskAudit = 'rules_sql_task_audit_' + suffix;
   const owner = await ownerToken(request, current);
   const ownerHeaders = { authorization: 'Bearer ' + owner };
   const run = (credential: string, sql: string) =>
@@ -464,15 +466,18 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
   await execute(`CREATE TABLE ${notes} (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL, secret TEXT NOT NULL)`);
   await execute(`CREATE TABLE ${ledger} (entry INTEGER PRIMARY KEY, owner TEXT NOT NULL, amount INTEGER NOT NULL)`);
   await execute(`CREATE TABLE ${vault} (id INTEGER PRIMARY KEY, pin TEXT NOT NULL)`);
+  await execute(`CREATE TABLE ${tasks} (id INTEGER PRIMARY KEY, assignee TEXT NOT NULL, title TEXT NOT NULL)`);
   try {
     await execute(`INSERT INTO ${notes} (id, owner, body, secret) VALUES (1, '${alice}', 'a1', 'pin-1111'), (2, '${alice}', 'a2', 'pin-2222'), (3, '${bob}', 'b1', 'pin-3333')`);
     await execute(`INSERT INTO ${ledger} (entry, owner, amount) VALUES (41, '${alice}', 100), (42, '${bob}', 200)`);
     await execute(`INSERT INTO ${vault} (id, pin) VALUES (1, 'vault-9999')`);
+    await execute(`INSERT INTO ${tasks} (id, assignee, title) VALUES (1, '${alice}', 't1')`);
     await execute(`CREATE VIEW ${view} AS SELECT id, owner, body FROM ${notes}`);
     await deploy({
       [notes]: { read: 'row.owner = auth.uid', columns: ['id', 'owner', 'body'], update: 'row.owner = auth.uid', delete: 'row.owner = auth.uid', writable: ['body'] },
       [ledger]: { read: 'row.owner = auth.uid', columns: ['owner'] },
       [view]: { read: 'row.owner = auth.uid' },
+      [tasks]: { read: 'row.assignee = auth.uid', columns: ['id', 'title'], update: 'row.assignee = auth.uid', writable: ['title'] },
     });
     const mint = await mintKey(page.request, current);
     const aliceToken = await endUserToken(request, mint, alice, current);
@@ -495,6 +500,9 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     expect(await allowed(`SELECT DISTINCT m.body FROM (${notes} AS m JOIN ${ledger} AS l ON l.owner = m.owner) ORDER BY m.body`)).toEqual([['a1-edited'], ['a2']]);
     expect(await allowed(`SELECT count(*) FROM ${notes} AS a, ${notes} AS b`)).toEqual([[4]]);
     expect(await allowed(`SELECT body FROM ${view} ORDER BY body`)).toEqual([['a1-edited'], ['a2']]);
+    expect(await allowed(`SELECT * FROM ${notes} ORDER BY id`)).toEqual([[1, alice, 'a1-edited'], [2, alice, 'a2']]);
+    await allowed(`UPDATE ${tasks} SET title = 't1-edited' WHERE id = 1`);
+    expect(await allowed(`SELECT * FROM ${tasks}`)).toEqual([[1, 't1-edited']]);
 
     const refused = async (sql: string, code: string, details?: Record<string, string>) => {
       const response = await run(aliceToken, sql);
@@ -507,6 +515,11 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await refused(`WITH ${vault} AS (SELECT 1) SELECT 1; SELECT pin FROM ${vault}`, 'rule_denied');
     await refused(`WITH ${vault} AS (SELECT 1) SELECT pin FROM main.${vault}`, 'rule_denied', { operation: 'read', table: vault });
     await refused(`SELECT id FROM ${notes} WHERE id IN ${vault}`, 'rule_denied');
+    await refused(`SELECT count(*) FROM '${notes}'`, 'rule_denied');
+    await refused(`SELECT count(*) FROM ${notes} AS a, '${notes}'`, 'rule_denied');
+    await refused(`SELECT 1 FROM ${notes} WHERE id IN '${notes}'`, 'rule_denied');
+    await refused(`UPDATE ${notes} SET 'owner' = '${bob}' WHERE id = 1`, 'column_not_writable', { column: 'owner' });
+    await refused(`UPDATE ${tasks} SET 'assignee' = '${bob}' WHERE id = 1`, 'column_not_writable', { column: 'assignee' });
     await refused(`SELECT 1 FROM ${notes} AS n JOIN ${ledger} AS l USING (owner), ${vault}`, 'rule_denied', { operation: 'read', table: vault });
     await refused(`SELECT 1 FROM ${notes} AS n JOIN ${ledger} AS l ON l.owner = n.owner, (${vault})`, 'rule_denied', { operation: 'read', table: vault });
     await refused(`WITH a AS (WITH b AS (SELECT id FROM ${notes}) SELECT id FROM b) SELECT id FROM a`, 'rule_denied');
@@ -535,7 +548,12 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await answer(triggered, 403, 'sql_sandbox');
     console.log('end-user UPDATE whose trigger reads a hidden column -> 403 sql_sandbox');
     await execute(`DROP TRIGGER ${audit}`);
+    await execute(`CREATE TRIGGER ${taskAudit} AFTER UPDATE ON ${tasks} BEGIN INSERT INTO ${vault} (pin) VALUES (OLD.assignee); END`);
+    await answer(await run(aliceToken, `UPDATE ${tasks} SET title = 'via trigger' WHERE id = 1`), 403, 'sql_sandbox');
+    console.log('end-user UPDATE whose trigger reads a column only the update rule uses -> 403 sql_sandbox');
+    await execute(`DROP TRIGGER ${taskAudit}`);
     expect(await execute(`SELECT pin FROM ${vault} ORDER BY id`)).toEqual([['vault-9999']]);
+    expect(await execute(`SELECT assignee, title FROM ${tasks}`)).toEqual([[alice, 't1-edited']]);
     expect(await execute(`SELECT id, body, secret FROM ${notes} ORDER BY id`)).toEqual([[1, 'a1-edited', 'pin-1111'], [2, 'a2', 'pin-2222'], [3, 'b1', 'pin-3333']]);
 
     for (const sql of [
@@ -557,7 +575,7 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await deploy({});
   } finally {
     await execute(`DROP VIEW IF EXISTS ${view}`);
-    for (const table of [notes, ledger, vault, renamed]) await execute(`DROP TABLE IF EXISTS ${table}`);
+    for (const table of [notes, ledger, vault, renamed, tasks]) await execute(`DROP TABLE IF EXISTS ${table}`);
   }
 });
 
