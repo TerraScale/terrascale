@@ -119,7 +119,14 @@ public enum SqlAccess
     Write,
 }
 
-public sealed record SqlStatement(string Sql, IReadOnlyList<SqlValue> Positional, IReadOnlyDictionary<string, SqlValue> Named);
+public sealed record SqlStatement(string Sql, IReadOnlyList<SqlValue> Positional, IReadOnlyDictionary<string, SqlValue> Named)
+{
+    public SqlRuleScope? Scope { get; init; }
+}
+
+public sealed record SqlRuleScope(IReadOnlyDictionary<string, SqlTableScope> Tables, IReadOnlySet<string> Ctes);
+
+public sealed record SqlTableScope(IReadOnlySet<string>? VisibleColumns);
 
 public sealed record SqlStatementRequest(
     Ulid DatabaseId,

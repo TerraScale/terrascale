@@ -33,6 +33,8 @@ internal sealed partial class DatabaseSession
 {
     private static readonly SqlResultSet EmptyResult = new([], [], 0, 0);
 
+    private static readonly SqliteStatus SingleStatement = new(SqliteNative.Auth, "end users send exactly one statement per entry");
+
     private StatementOutcome ExecuteStatement(WriteContext context, SqlStatement statement, int index)
     {
         if (!_capture.Fault.IsOk)
@@ -55,10 +57,11 @@ internal sealed partial class DatabaseSession
         var offset = 0;
         var last = EmptyResult;
         var info = context.Info;
+        var prepared = 0;
         while (offset < bytes.Length)
         {
             var remaining = bytes.AsSpan(offset);
-            var status = _writer.PrepareUser(remaining, info, out var handle, out var consumed);
+            var status = _writer.PrepareUser(remaining, statement.Scope, info, out var handle, out var consumed);
             if (!status.IsOk)
             {
                 return status.ToSqlError(index);
@@ -71,6 +74,12 @@ internal sealed partial class DatabaseSession
                 continue;
             }
 
+            if (statement.Scope is not null && prepared++ > 0)
+            {
+                SqliteConnection.FinalizeStatement(handle);
+                return SingleStatement.ToSqlError(index);
+            }
+
             if (context.Mode == ConsistencyMode.Fast && Gate(info) is { } reason)
             {
                 SqliteConnection.FinalizeStatement(handle);
@@ -81,7 +90,7 @@ internal sealed partial class DatabaseSession
             if (SqlAnalyzer.RewriteSnowflakeInsert(segment, tokens, _writer.Schema) is { } rewritten)
             {
                 SqliteConnection.FinalizeStatement(handle);
-                status = _writer.PrepareUser(Encoding.UTF8.GetBytes(rewritten), info, out handle, out _);
+                status = _writer.PrepareUser(Encoding.UTF8.GetBytes(rewritten), statement.Scope, info, out handle, out _);
                 if (!status.IsOk)
                 {
                     return status.ToSqlError(index);
@@ -385,10 +394,11 @@ internal sealed partial class DatabaseSession
         var bytes = Encoding.UTF8.GetBytes(sql);
         var offset = 0;
         var last = EmptyResult;
+        var prepared = 0;
         while (offset < bytes.Length)
         {
             var remaining = bytes.AsSpan(offset);
-            var status = reader.PrepareUser(remaining, info, out var handle, out var consumed);
+            var status = reader.PrepareUser(remaining, statement.Scope, info, out var handle, out var consumed);
             if (!status.IsOk)
             {
                 return status.ToSqlError(index);
@@ -398,6 +408,12 @@ internal sealed partial class DatabaseSession
             if (handle == 0)
             {
                 continue;
+            }
+
+            if (statement.Scope is not null && prepared++ > 0)
+            {
+                SqliteConnection.FinalizeStatement(handle);
+                return SingleStatement.ToSqlError(index);
             }
 
             readTables?.UnionWith(info.ReadTables);

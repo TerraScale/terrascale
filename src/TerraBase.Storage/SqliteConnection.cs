@@ -147,16 +147,15 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return SqliteStatus.Success;
         }
 
-        int result;
-        var rc = SqliteNative.DbConfigFlag(Handle, SqliteNative.ConfigEnableTrigger, applying ? 0 : 1, &result);
-        if (rc == SqliteNative.Ok)
+        var status = SetFlag(SqliteNative.ConfigEnableTrigger, applying ? 0 : 1);
+        if (status.IsOk)
         {
-            rc = SqliteNative.DbConfigFlag(Handle, SqliteNative.ConfigDefensive, applying ? 0 : 1, &result);
+            status = SetFlag(SqliteNative.ConfigDefensive, applying ? 0 : 1);
         }
 
-        if (rc != SqliteNative.Ok)
+        if (!status.IsOk)
         {
-            return Status(rc);
+            return status;
         }
 
         _applyMode = applying;
@@ -272,9 +271,10 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return status;
     }
 
-    public SqliteStatus PrepareUser(ReadOnlySpan<byte> sql, StatementInfo info, out nint statement, out int consumed)
+    public SqliteStatus PrepareUser(ReadOnlySpan<byte> sql, SqlRuleScope? scope, StatementInfo info, out nint statement, out int consumed)
     {
         info.Reset();
+        info.Scope = scope;
         nint handle = 0;
         byte* tail = null;
         int rc;
@@ -631,9 +631,12 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        int ignored;
-        _ = SqliteNative.DbConfigFlag(_db, SqliteNative.ConfigDefensive, 1, &ignored);
-        _ = SqliteNative.SetAuthorizer(_db, &OnAuthorize, GCHandle<SqliteConnection>.ToIntPtr(_self));
+        status = Harden();
+        if (!status.IsOk)
+        {
+            return status;
+        }
+
         var pragmas = _options.ReadOnly
             ? string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA cache_size = -{_options.CacheSizeKib}; PRAGMA query_only = 1;")
             : string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -{_options.CacheSizeKib};");
@@ -644,6 +647,42 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         }
 
         return QueryFirst("SELECT count(*) FROM sqlite_schema", out _);
+    }
+
+    private SqliteStatus Harden()
+    {
+        var status = SetFlag(SqliteNative.ConfigDefensive, 1);
+        if (status.IsOk)
+        {
+            status = SetFlag(SqliteNative.ConfigTrustedSchema, 0);
+        }
+
+        if (status.IsOk)
+        {
+            status = SetFlag(SqliteNative.ConfigEnableLoadExtension, 0);
+        }
+
+        if (!status.IsOk)
+        {
+            return status;
+        }
+
+        var rc = SqliteNative.SetAuthorizer(_db, &OnAuthorize, GCHandle<SqliteConnection>.ToIntPtr(_self));
+        return rc == SqliteNative.Ok ? SqliteStatus.Success : Status(rc);
+    }
+
+    private SqliteStatus SetFlag(int option, int value)
+    {
+        var applied = -1;
+        var rc = SqliteNative.DbConfigFlag(Handle, option, value, &applied);
+        if (rc != SqliteNative.Ok)
+        {
+            return Status(rc);
+        }
+
+        return applied == value
+            ? SqliteStatus.Success
+            : new SqliteStatus(SqliteNative.Error, string.Concat("sqlite configuration option ", option.ToString(CultureInfo.InvariantCulture), " was not applied"));
     }
 
     private SqliteStatus ApplyKey(ReadOnlySpan<byte> rawKey)
