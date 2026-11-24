@@ -15,7 +15,10 @@ import asyncio
 import builtins
 import contextlib
 import json
+import math
+import socket
 import threading
+import time
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 from urllib.parse import quote
@@ -31,6 +34,7 @@ from . import _spec
 from . import sql as _sql
 from ._sql_connect_retry import ConnectRetry
 from .errors import (
+    UNCERTAIN_WRITE_CODES,
     APIError,
     CommitUncertainError,
     InvalidResponseError,
@@ -50,8 +54,28 @@ __all__ = ["SUBPROTOCOL", "AsyncSqlSession", "SqlSession"]
 
 SUBPROTOCOL = "terrascale.sql.v2"
 MAX_FRAME_BYTES = 1 << 20
+MAX_ANSWER_BYTES = 64 << 20
+DEFAULT_FRAME_TIMEOUT = 30.0
 T = TypeVar("T")
 Statements = Sequence[str | tuple[str, Args] | Statement]
+
+
+class SqlSessionConnectionError(TerraScaleError):
+    pass
+
+
+class _LostTransactionError(SqlError, SqlSessionConnectionError):
+    pass
+
+
+def _frame_timeout(db: Database | AsyncDatabase) -> float:
+    timeout = db._c._http.timeout.read
+    return DEFAULT_FRAME_TIMEOUT if timeout is None or not math.isfinite(timeout) else timeout
+
+
+def _shutdown_socket(ws: ClientConnection) -> None:
+    with contextlib.suppress(OSError):
+        ws.socket.shutdown(socket.SHUT_RDWR)
 
 
 def _proxy(url: str) -> Literal[True] | None:
@@ -87,8 +111,8 @@ def _retry_refusal(source: Any, token: str, err: APIError, refreshed: bool) -> b
     return True
 
 
-def _not_opened(exc: Exception) -> TerraScaleError:
-    return TerraScaleError(f"the SQL session could not connect: {type(exc).__name__}: {exc}".rstrip(": "))
+def _not_opened(exc: Exception) -> SqlSessionConnectionError:
+    return SqlSessionConnectionError(f"the SQL session could not connect: {type(exc).__name__}: {exc}".rstrip(": "))
 
 
 def _wrong_protocol() -> InvalidResponseError:
@@ -99,8 +123,10 @@ def _closed(exc: BaseException) -> TerraScaleError:
     """A call in flight when the socket dropped; it is never resent."""
     if isinstance(exc, TerraScaleError):
         return exc
+    if isinstance(exc, asyncio.CancelledError):
+        return SqlSessionConnectionError("the SQL session closed when an in-flight call was canceled")
     text = f"the SQL session closed: {type(exc).__name__}: {exc}".rstrip(": ")
-    return TerraScaleError(text)
+    return SqlSessionConnectionError(text)
 
 
 def _handshake(db: Database | AsyncDatabase, consistency: str | None) -> dict[str, str]:
@@ -128,7 +154,7 @@ class _State:
         if self.failure is not None:
             raise self.failure
         if self.closed:
-            raise TerraScaleError("the SQL session is closed")
+            raise SqlSessionConnectionError("the SQL session is closed")
 
     def local(self, kind: str) -> bool:
         self.check_open()
@@ -137,9 +163,9 @@ class _State:
         if kind == "rollback":
             self.lost = False
             return True
-        raise SqlError(0, SqlErrorCodes.TRANSACTION_ROLLED_BACK,
-                       "the SQL session dropped and TerraBase rolled back the open transaction; call rollback()",
-                       sqlstate="40000")
+        raise _LostTransactionError(
+            0, SqlErrorCodes.TRANSACTION_ROLLED_BACK,
+            "the SQL session dropped and TerraBase rolled back the open transaction; call rollback()", sqlstate="40000")
 
     def frame(self, kind: str, statements: list[dict[str, Any]] | None, consistency: str | None = None,
               bookmark: str | None = None) -> tuple[int, str]:
@@ -185,8 +211,11 @@ class _State:
             if type(body.get("transaction")) is not bool:
                 raise ValueError("missing transaction flag")
             error = body.get("error")
-            if body["type"] == "error" and (not isinstance(error, dict) or not isinstance(error.get("code"), str)):
-                raise ValueError("invalid SQL error")
+            if body["type"] == "error":
+                if not isinstance(error, dict) or not isinstance(error.get("code"), str):
+                    raise ValueError("invalid SQL error")
+                if error["code"] in UNCERTAIN_WRITE_CODES:
+                    self.failure = CommitUncertainError(0, error["code"], "the server reported an uncertain write outcome")
             bookmark = body.get("bookmark")
             if bookmark is not None and not isinstance(bookmark, str):
                 raise ValueError("invalid bookmark")
@@ -200,8 +229,6 @@ class _State:
             self.pending.pop(frame_id, None)
             self.controls.discard(frame_id)
         self.transaction = body["transaction"]
-        if isinstance(error, dict) and error.get("code") in {"commit_uncertain", "write_outcome_unknown"}:
-            self.failure = CommitUncertainError(0, str(error["code"]), "the server reported an uncertain write outcome")
         return frame_id, body
 
 
@@ -248,7 +275,7 @@ class SqlSession:
         while True:
             token = client._bearer()
             try:
-                ws = connect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
+                ws = connect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=MAX_ANSWER_BYTES,
                              additional_headers={**client._headers, **_handshake(self._db, self._consistency),
                                                  "Authorization": f"Bearer {token}"},
                              proxy=_proxy(url), open_timeout=retry.remaining())
@@ -288,18 +315,31 @@ class SqlSession:
             if self._ws is None:
                 self._ws = self._open()
             ws = self._ws
+            timeout = _frame_timeout(self._db)
+            deadline = time.monotonic() + timeout
             state.sent(frame_id, kind)
             try:
-                ws.send(frame)
+                send_timeout = threading.Timer(timeout, _shutdown_socket, (ws,))
+                send_timeout.daemon = True
+                send_timeout.start()
+                try:
+                    ws.send(frame)
+                finally:
+                    send_timeout.cancel()
                 while True:
-                    answer_id, body = state.answer(ws.recv())
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("timed out waiting for a SQL answer")
+                    answer_id, body = state.answer(ws.recv(timeout=remaining))
                     if answer_id == frame_id or answer_id is None and body["type"] == "error":
                         break
             except BaseException as exc:
+                if isinstance(exc, TimeoutError):
+                    _shutdown_socket(ws)
                 self._drop()
                 if state.failure is not None:
                     raise state.failure from exc
-                if not isinstance(exc, Exception):
+                if isinstance(exc, TerraScaleError) or not isinstance(exc, Exception):
                     raise
                 raise _closed(exc) from exc
             if answer_id is None or state.failure is not None:
@@ -313,6 +353,10 @@ class SqlSession:
     def in_transaction(self) -> bool:
         """Whether a transaction is open, as of the last answer."""
         return self._state.transaction
+
+    @property
+    def _needs_rollback(self) -> bool:
+        return self._state.transaction or self._state.lost
 
     @property
     def bookmark(self) -> str | None:
@@ -433,7 +477,8 @@ class AsyncSqlSession:
         while True:
             token = await client._bearer()
             try:
-                ws = await aconnect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
+                ws = await aconnect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None,
+                                    max_size=MAX_ANSWER_BYTES,
                                     additional_headers={**client._headers, **_handshake(self._db, self._consistency),
                                                         "Authorization": f"Bearer {token}"},
                                     proxy=_proxy(url), open_timeout=retry.remaining())
@@ -457,7 +502,12 @@ class AsyncSqlSession:
     async def _read(self, link: _Link) -> None:
         try:
             while True:
-                answer_id, body = self._state.answer(await link.ws.recv())
+                raw = await link.ws.recv()
+                if self._link is not link:
+                    return
+                answer_id, body = self._state.answer(raw)
+                if self._state.failure is not None:
+                    raise self._state.failure
                 waiter = link.pending.pop(answer_id, None) if answer_id is not None else None
                 if waiter is not None:
                     if not waiter.done():
@@ -469,48 +519,55 @@ class AsyncSqlSession:
             with contextlib.suppress(Exception):
                 await link.ws.close()
 
-    def _drop(self, link: _Link, exc: BaseException) -> None:
+    def _drop(self, link: _Link, exc: BaseException) -> TerraScaleError:
         if self._link is link:
             self._link = None
             self._state.dropped()
+        error = self._state.failure or _closed(exc)
         for waiter in link.pending.values():
             if not waiter.done():
-                waiter.set_exception(self._state.failure or exc)
+                waiter.set_exception(error)
         link.pending.clear()
+        return error
 
     async def _call(self, kind: str, statements: list[dict[str, Any]] | None = None, consistency: str | None = None,
                     bookmark: str | None = None) -> dict[str, Any]:
         state = self._state
         if self._link is not None and self._link.ws.state is not State.OPEN:
-            self._drop(self._link, TerraScaleError("the SQL session closed"))
+            self._drop(self._link, SqlSessionConnectionError("the SQL session closed"))
         if state.local(kind):
             return {"results": []}
         frame_id, frame = state.frame(kind, statements, consistency, bookmark)
         link = await self._connected()
-        state.local(kind)
+        if state.local(kind):
+            return {"results": []}
         waiter = asyncio.get_running_loop().create_future()
         link.pending[frame_id] = waiter
-        state.sent(frame_id, kind)
+
+        async def exchange() -> dict[str, Any]:
+            if self._link is link:
+                state.sent(frame_id, kind)
+                await link.ws.send(frame)
+            return await waiter
+
         try:
-            await link.ws.send(frame)
-            body = await waiter
+            body = await asyncio.wait_for(exchange(), _frame_timeout(self._db))
         except (Exception, asyncio.CancelledError) as exc:
-            self._drop(link, exc)
-            with contextlib.suppress(Exception):
-                await link.ws.close()
-            if state.failure is not None:
-                raise state.failure from exc
-            if isinstance(exc, asyncio.CancelledError):
-                raise
-            raise _closed(exc) from exc
-        finally:
             link.pending.pop(frame_id, None)
-        if state.failure is not None:
-            self._drop(link, state.failure)
-            await link.ws.close()
-            raise state.failure
-        _raise_error(body)
-        return body
+            if waiter.done() and not waiter.cancelled():
+                waiter.exception()
+            error = self._drop(link, exc)
+            link.ws.transport.abort()
+            if error is exc:
+                raise
+            if not isinstance(exc, asyncio.CancelledError):
+                raise error from exc
+            if not isinstance(error, CommitUncertainError):
+                raise
+        else:
+            _raise_error(body)
+            return body
+        raise error
 
     @property
     def in_transaction(self) -> bool:
@@ -576,9 +633,11 @@ class AsyncSqlSession:
 
     async def close(self) -> None:
         """Close normally; the server rolls back an open transaction. The session stays closed."""
-        self._state.closed = True
-        self._state.dropped()
-        link, self._link = self._link, None
+        async with self._opening:
+            self._state.closed = True
+            link = self._link
+            if link is not None:
+                self._drop(link, SqlSessionConnectionError("the SQL session is closed"))
         if link is not None:
             await link.ws.close()
             if link.reader is not None:

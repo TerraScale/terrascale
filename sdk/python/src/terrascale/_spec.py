@@ -16,7 +16,7 @@ from urllib.parse import quote
 import httpx
 
 from . import models
-from .errors import CommitUncertainError, InvalidResponseError, SqlError, TerraScaleError, response_request_id
+from .errors import CommitUncertainError, InvalidResponseError, SerializationConflictError, TerraScaleError, response_request_id
 from .ids import is_valid_id, validate_id
 from .sql import results as sql_results
 
@@ -30,7 +30,6 @@ CONSISTENCY_MODES: tuple[str, ...] = ("fast", "strong")
 MAX_BOOKMARK_LENGTH = 1024
 MAX_BOOKMARK_REGION_BYTES = 64
 BOOKMARK_FORMAT = 1
-RETRY_CONFLICTS = frozenset({"serialization_conflict", "schema_mismatch"})
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
 API_SERVICE = ("api.terrascale.tech", "the TerraBase API")
@@ -267,18 +266,10 @@ class Bookmarks:
         with self._lock:
             return dict(self._known)
 
-    def set(self, database: str, value: str | None) -> None:
-        checked = bookmark(value) if value is not None else None
-        with self._lock:
-            if checked:
-                self._known[database] = checked
-            else:
-                self._known.pop(database, None)
-
     def observe(self, database: str, value: str | None) -> str | None:
         with self._lock:
             current = self._known.get(database)
-            if not value:
+            if value is None:
                 return current
             merged = merge_bookmarks(current, value)
             if merged:
@@ -320,11 +311,13 @@ def after_transport(call: Call, exc: Exception, attempt: int, max_attempts: int)
 def after_status(call: Call, err: Any, *, attempt: int, conflicts: int, max_attempts: int, refreshed: bool,
                  direct: bool, has_source: bool, project_key: bool) -> Next:
     """Classify a non-2xx response. SQL conflict retries stop after two; pass ``conflicts`` >= 2 to disable them."""
+    if isinstance(err, CommitUncertainError):
+        return Next("raise")
     if err.status == 401 and err.code in {"key_revoked", "key_expired"}:
         return Next("reject")
     if err.status == 401 and has_source and not refreshed and not direct and not project_key:
         return Next("refresh")
-    if isinstance(err, SqlError) and err.code in RETRY_CONFLICTS and conflicts < 2:
+    if isinstance(err, SerializationConflictError) and conflicts < 2:
         conflicts += 1
         return Next("sleep", backoff(conflicts, None), attempt, conflicts)
     attempt += 1
@@ -341,13 +334,22 @@ def project_bearer(api_key: str | None, call: Call) -> str | None:
     return None
 
 
+def bearer_token(value: object) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[!-~]+", value) is None:
+        raise ValueError("invalid bearer token")
+    return value
+
+
 def request_headers(base: Mapping[str, str], call: Call, bookmarks: Bookmarks, *, direct: bool, token: str,
                     has_body: bool) -> dict[str, str]:
-    headers = dict(call.headers) if direct else {**base, **call.causal_headers(bookmarks), **call.headers}
+    headers = dict(call.headers) if direct else {**base, **call.headers, **call.causal_headers(bookmarks)}
     if not direct and not call.anonymous:
         headers["Authorization"] = f"Bearer {token}"
     if has_body:
         headers["Content-Type"] = call.content_type
+    if any(not isinstance(value, str) or re.fullmatch(r"(?:[!-~](?:[\t -~]*[!-~])?)?", value) is None
+           for value in headers.values()):
+        raise ValueError("invalid HTTP header value")
     return headers
 
 
@@ -369,9 +371,12 @@ class Call:
     body_bookmark: bool = False
 
     def causal_headers(self, bookmarks: Bookmarks) -> dict[str, str]:
-        if self.causal is None or BOOKMARK in self.headers:
+        if self.causal is None:
             return {}
         known = bookmarks.get(self.causal)
+        supplied = self.headers.get(BOOKMARK)
+        if supplied is not None:
+            known = merge_bookmarks(known, supplied)
         return {BOOKMARK: known} if known else {}
 
     def _json_bookmark(self, response: httpx.Response) -> str | None:

@@ -29,7 +29,6 @@ __all__ = [
     "SqlError",
     "SqlErrorCodes",
     "SerializationConflictError",
-    "SchemaMismatchError",
     "error_for",
     "VersionMismatchError",
     "PreconditionRequiredError",
@@ -157,8 +156,10 @@ class ServiceUnavailableError(APIError):
 
 class CommitUncertainError(APIError):
     """The write may have committed: no response after sending, an uncoded 5xx,
-    or commit_uncertain, write_outcome_unknown or internal_error.
+    or commit_uncertain, write_outcome_unknown, in_region_quorum_unconfirmed or internal_error.
     Re-read the state before deciding what to do; never blindly replay."""
+
+UNCERTAIN_WRITE_CODES = frozenset({"commit_uncertain", "write_outcome_unknown", "in_region_quorum_unconfirmed"})
 
 
 class SqlErrorCodes:
@@ -178,7 +179,6 @@ class SqlErrorCodes:
     FORBIDDEN_SCOPE = "forbidden_scope"
     SQL_SANDBOX = "sql_sandbox"
     SERIALIZATION_CONFLICT = "serialization_conflict"
-    SCHEMA_MISMATCH = "schema_mismatch"
     ROW_CONFLICT = "row_conflict"
     TOO_LARGE = "too_large"
     QUERY_CANCELED = "query_canceled"
@@ -195,13 +195,13 @@ class SqlErrorCodes:
 
 
 class SqlError(APIError):
-    """A SQL statement error; write_outcome_unknown requires reconciliation. ``code`` is one of
+    """A SQL statement error. ``code`` is one of
     :class:`SqlErrorCodes`, ``statement`` the zero-based failing statement and
     ``sqlstate`` its PostgreSQL SQLSTATE."""
 
     @property
     def is_transient(self) -> bool:
-        return self.code in (SqlErrorCodes.SERIALIZATION_CONFLICT, SqlErrorCodes.SCHEMA_MISMATCH, SqlErrorCodes.TENANT_BUSY)
+        return self.code in (SqlErrorCodes.SERIALIZATION_CONFLICT, SqlErrorCodes.TENANT_BUSY)
 
 
 class SerializationConflictError(SqlError, ConflictError):
@@ -209,16 +209,9 @@ class SerializationConflictError(SqlError, ConflictError):
     Run the whole transaction again."""
 
 
-class SchemaMismatchError(SqlError):
-    """412 ``schema_mismatch``: the schema changed while the statement ran and nothing was written.
-    Run the whole transaction again."""
-
-
 def sql_error_class(code: str) -> type[SqlError]:
     if code == SqlErrorCodes.SERIALIZATION_CONFLICT:
         return SerializationConflictError
-    if code == SqlErrorCodes.SCHEMA_MISMATCH:
-        return SchemaMismatchError
     return SqlError
 
 
@@ -227,7 +220,6 @@ _BY_CODE: dict[str, type[APIError]] = {
     "key_expired": KeyExpiredError,
     "unique_violation": UniqueViolationError,
     "serialization_conflict": SerializationConflictError,
-    "schema_mismatch": SchemaMismatchError,
 }
 _BY_STATUS: dict[int, type[APIError]] = {
     400: InvalidRequestError,
@@ -254,11 +246,12 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
     raw_state = err.get("sqlState")
     sqlstate = raw_state if isinstance(raw_state, str) and raw_state else None
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
-    if statement is not None and raw_code and isinstance(raw_state, str):
-        cls = sql_error_class(code)
-    elif mutation and (code in ("commit_uncertain", "write_outcome_unknown", "internal_error")
-                       or 500 <= status < 600 and code == f"http_{status}"):
+    if code in UNCERTAIN_WRITE_CODES or (
+        mutation and (code == "internal_error" or 500 <= status < 600 and code == f"http_{status}")
+    ):
         cls = CommitUncertainError
+    elif statement is not None and raw_code and isinstance(raw_state, str):
+        cls = sql_error_class(code)
     extra: dict[str, Any] = {}
     if code == "version_mismatch":
         cls = VersionMismatchError

@@ -17,6 +17,7 @@ import time
 from collections.abc import Sequence
 from concurrent.futures import Future
 from typing import Any
+from unicodedata import category
 from urllib.parse import quote_plus
 
 import httpx
@@ -153,6 +154,10 @@ def delete_project_client_call(issuer: str | None, project: str, client_id: str)
 
 
 def _tenant_path(project: str, *extra: str) -> list[str]:
+    for segment in extra:
+        if (not isinstance(segment, str) or segment in ("", ".", "..") or "/" in segment or "\\" in segment
+                or any(category(character) == "Cc" for character in segment)):
+            raise ValueError("invalid tenant path segment")
     return ["v1", validate_id(project, "project"), *extra]
 
 

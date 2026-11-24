@@ -925,7 +925,7 @@ class UpdateProjectUser:
 @dataclass(frozen=True, kw_only=True)
 class CreateProjectUser(UpdateProjectUser):
     email: str
-    password: str | None = None
+    password: str | None = field(default=None, repr=False)
 
     def body(self) -> dict[str, Any]:
         body = super().body()
@@ -939,7 +939,7 @@ class CreateProjectUser(UpdateProjectUser):
 class ImportProjectUser(UpdateProjectUser):
     email: str
     email_verified: bool = False
-    password_hash: str | None = None
+    password_hash: str | None = field(default=None, repr=False)
 
     def body(self) -> dict[str, Any]:
         body = super().body()

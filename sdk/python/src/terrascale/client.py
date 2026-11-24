@@ -166,8 +166,8 @@ class TerraScale:
 
     def _bearer(self) -> str:
         if self._source is not None:
-            return self._source.token()
-        return self._token() if callable(self._token) else str(self._token)
+            return _spec.bearer_token(self._source.token())
+        return _spec.bearer_token(self._token() if callable(self._token) else self._token)
 
     def _send(self, call: Call) -> Any:
         url = call.url(self.base_url)
@@ -679,7 +679,7 @@ class Database:
 
     @bookmark.setter
     def bookmark(self, value: str | None) -> None:
-        self._c._bookmarks.set(self.name, value)
+        self._c._bookmarks.observe(self.name, value)
 
     @overload
     def query(self, sql: str, args: Args = None, *, consistency: _spec.Consistency | None = None,
@@ -698,7 +698,7 @@ class Database:
     def execute(self, sql: str | Statement, args: Args = None, *, consistency: _spec.Consistency | None = None,
                 bookmark: str | None = None) -> StatementResult:
         """Run one statement, reads and writes, with positional or named arguments.
-        ``consistency`` is fast or strong; ``bookmark`` replaces this database's bookmark for the call."""
+        ``consistency`` is fast or strong; ``bookmark`` is merged with this database's bookmark for the call."""
         call = _spec.execute(*self._p, _sql.statements([_sql.statement(sql, args)]), consistency, bookmark)
         return (self._c._send(call))[0]
 

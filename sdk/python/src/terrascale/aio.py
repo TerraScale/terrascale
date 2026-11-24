@@ -126,11 +126,11 @@ class AsyncTerraScale:
 
     async def _bearer(self) -> str:
         if self._source is not None:
-            return await self._source.token()
+            return _spec.bearer_token(await self._source.token())
         if callable(self._token):
             token = self._token()
-            return await token if isinstance(token, Awaitable) else token
-        return str(self._token)
+            return _spec.bearer_token(await token if isinstance(token, Awaitable) else token)
+        return _spec.bearer_token(self._token)
 
     async def _send(self, call: Call) -> Any:
         url = call.url(self.base_url)
@@ -564,7 +564,7 @@ class AsyncDatabase:
 
     @bookmark.setter
     def bookmark(self, value: str | None) -> None:
-        self._c._bookmarks.set(self.name, value)
+        self._c._bookmarks.observe(self.name, value)
 
     @overload
     async def query(self, sql: str, args: Args = None, *, consistency: _spec.Consistency | None = None,
