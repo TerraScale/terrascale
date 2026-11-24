@@ -39,10 +39,18 @@ const frameDeadlineMs = 60_000;
 const heartbeatIntervalMs = 20_000;
 const statusByCode = new Map([
   [SqlErrorCode.invalidRequest, 400], [SqlErrorCode.invalidBookmark, 400], [SqlErrorCode.invalidConsistency, 400],
-  ["forbidden_scope", 403], ["sql_sandbox", 403], ["rule_denied", 403], ["serialization_conflict", 409], ["row_conflict", 409],
-  ["too_large", 413], ["quota_exceeded", 429], ["tenant_busy", 429], ["unauthorized", 401],
+  ["syntax_error", 400], ["undefined_table", 400], ["undefined_column", 400], ["duplicate_object", 400],
+  ["sql_error", 400], ["transaction_state", 400], ["transaction_rolled_back", 400], ["query_canceled", 400],
+  ["check_violation", 400], ["not_null_violation", 400], ["foreign_key_violation", 400], ["unique_violation", 400],
+  ["primary_key_violation", 400], ["constraint_violation", 400],
+  ["unauthorized", 401],
+  ["forbidden_scope", 403], ["sql_sandbox", 403], ["rule_denied", 403], ["column_not_readable", 403], ["rules_invalid", 403],
+  ["serialization_conflict", 409], ["row_conflict", 409],
+  ["too_large", 413], ["quota_exceeded", 429], ["tenant_busy", 429],
   [SqlErrorCode.writeOutcomeUnknown, 503], [SqlErrorCode.commitUncertain, 503], [SqlErrorCode.inRegionQuorumUnconfirmed, 503],
-  ["unavailable", 503], ["storage_busy", 503], ["request_timeout", 504], ["internal_error", 500],
+  ["unavailable", 503], ["storage_busy", 503], ["storage_corrupted", 503], ["io_error", 503],
+  ["strong_quorum_unreachable", 503], ["system_catalog_timeout", 503],
+  ["request_timeout", 504], ["internal_error", 500],
 ]);
 
 /**
@@ -66,8 +74,10 @@ export class V1SqlSocket {
   #socket;
   /** @type {V1SqlSession} */
   #session;
-  /** @type {Map<number, { resolve: (value: JsonObject) => void; reject: (error: unknown) => void; committing: boolean; control: boolean; timer: ReturnType<typeof setTimeout> }>} */
+  /** @type {Map<number, { resolve: (value: JsonObject) => void; reject: (error: unknown) => void; committing: boolean; control: boolean }>} */
   #pending = new Map();
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  #responseTimer;
   /** @type {ReturnType<typeof setInterval> | undefined} */
   #heartbeat;
   #nextId = 1;
@@ -82,13 +92,21 @@ export class V1SqlSocket {
     socket.addEventListener("message", event => this.#receive(event.data));
     socket.addEventListener("close", event => this.#fail(new SqlSocketClosedError(event.code ?? 1006, event.reason ?? "")));
     socket.addEventListener("error", () => this.#terminate(new SqlSocketClosedError(1006, "connection failed")));
-    const ping = socket.ping?.bind(socket);
-    if (ping !== undefined && socket.on !== undefined) {
+    const ping = typeof socket.ping === "function" ? socket.ping.bind(socket) : undefined;
+    if (ping !== undefined) {
       let awaitingPong = false;
       const decoder = new TextDecoder();
-      socket.on("pong", data => {
-        if (decoder.decode(data) === sqlSocketProtocol) awaitingPong = false;
-      });
+      /** @param {unknown} payload */
+      const onPong = payload => {
+        const text = typeof payload === "string"
+          ? payload
+          : payload instanceof Uint8Array || payload instanceof ArrayBuffer
+            ? decoder.decode(payload)
+            : "";
+        if (text === sqlSocketProtocol || text === "") awaitingPong = false;
+      };
+      if (typeof socket.on === "function") socket.on("pong", onPong);
+      else socket.addEventListener("pong", event => onPong(event?.data ?? event));
       this.#heartbeat = setInterval(() => {
         if (awaitingPong) {
           this.#terminate(new SqlSocketClosedError(1006, "heartbeat deadline expired"));
@@ -278,15 +296,21 @@ export class V1SqlSocket {
       return Promise.reject(new TypeError(`A SQL WebSocket request holds at most ${maximumOutboundFrameBytes} bytes.`));
     return new Promise((resolve, reject) => {
       const committing = type === "commit" || type === "execute" && (!this.#transaction || [...this.#pending.values()].some(pending => pending.control));
-      const timer = setTimeout(() => {
-        this.#terminate(new SqlSocketClosedError(1006, "SQL frame response deadline expired"));
-      }, frameDeadlineMs);
-      this.#pending.set(id, { resolve, reject, committing, control: ["begin", "commit", "rollback"].includes(type), timer });
+      const wasEmpty = this.#pending.size === 0;
+      this.#pending.set(id, { resolve, reject, committing, control: ["begin", "commit", "rollback"].includes(type) });
+      if (wasEmpty) this.#armResponseTimer();
       try { this.#socket.send(frame); }
       catch (error) {
         this.#terminate(new SqlSocketClosedError(1006, error instanceof Error ? error.message : "send failed"));
       }
     });
+  }
+
+  #armResponseTimer() {
+    clearTimeout(this.#responseTimer);
+    this.#responseTimer = setTimeout(() => {
+      this.#terminate(new SqlSocketClosedError(1006, "SQL frame response deadline expired"));
+    }, frameDeadlineMs);
   }
 
   /** @param {unknown} data */
@@ -317,7 +341,12 @@ export class V1SqlSocket {
       else if (error !== undefined) waiter.reject(error);
       else malformed("SQL frame type");
       this.#pending.delete(/** @type {number} */ (id));
-      clearTimeout(waiter.timer);
+      if (this.#pending.size === 0) {
+        clearTimeout(this.#responseTimer);
+        this.#responseTimer = undefined;
+      } else {
+        this.#armResponseTimer();
+      }
     } catch (error) {
       this.#terminate(new SqlSocketClosedError(1002, error instanceof Error ? error.message : "unreadable answer"));
     }
@@ -345,8 +374,9 @@ export class V1SqlSocket {
           : error;
     this.#transaction = false;
     clearInterval(this.#heartbeat);
+    clearTimeout(this.#responseTimer);
+    this.#responseTimer = undefined;
     for (const waiter of this.#pending.values()) {
-      clearTimeout(waiter.timer);
       waiter.reject(this.#closed);
     }
     this.#pending.clear();
