@@ -1,7 +1,6 @@
 using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
-using TerraBase.Engine;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 
@@ -15,35 +14,33 @@ internal readonly union ReadConditionOutcome(RewrittenSql, SqlRefusal);
 
 internal readonly union EndUserStatementOutcome(EndUserStatement, SqlRefusal);
 
-internal readonly union SchemaObjectsOutcome(SchemaObjects, SqlRefusal);
 
-internal sealed record SchemaObjects(FrozenSet<string> Views, FrozenSet<string> Triggers);
 
 internal sealed record EnforcedSql(IReadOnlyList<SqlStatement> Statements, string? RulesVersion);
 
 internal sealed record RewrittenSql(
-    IReadOnlyList<string> Pieces, IReadOnlyDictionary<string, string> Guards, IReadOnlyDictionary<string, SqlTableScope> Tables, IReadOnlySet<string> Views);
+    IReadOnlyList<string> Pieces, IReadOnlyDictionary<string, string> Guards, IReadOnlyDictionary<string, SqlTableScope> Tables);
 
 internal sealed record EndUserStatement(string Sql, IReadOnlyList<SqlToken> Tokens, int Start, int Main, FrozenSet<string> Ctes);
 
 internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 {
-    private static readonly FrozenSet<string> ClauseEnds = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
+    private static readonly FrozenSet<string> ClauseEnds = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance,
         "WHERE", "GROUP", "ORDER", "LIMIT", "HAVING", "WINDOW", "UNION", "EXCEPT", "INTERSECT", "ON", "USING", "RETURNING", "SET", "VALUES",
         "JOIN", "LEFT", "RIGHT", "FULL", "INNER", "CROSS", "NATURAL", "OUTER", "OFFSET");
 
-    private static readonly FrozenSet<string> JoinWords = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
+    private static readonly FrozenSet<string> JoinWords = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance,
         "LEFT", "RIGHT", "FULL", "INNER", "CROSS", "NATURAL", "OUTER", "ON", "USING");
 
     private const string GuardPrefix = "_tb_rule_";
 
-    private static readonly FrozenSet<string> TailClauses = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "RETURNING", "ORDER", "LIMIT");
+    private static readonly FrozenSet<string> TailClauses = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance, "RETURNING", "ORDER", "LIMIT");
 
-    private static readonly FrozenSet<string> RowIdNames = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "rowid", "_rowid_", "oid");
+    private static readonly FrozenSet<string> RowIdNames = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance, "rowid", "_rowid_", "oid");
 
-    private static readonly FrozenSet<string> TableFunctions = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "json_each", "json_tree");
+    private static readonly FrozenSet<string> TableFunctions = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance, "json_each", "json_tree");
 
-    private static readonly FrozenSet<string> SqlKeywords = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
+    private static readonly FrozenSet<string> SqlKeywords = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance,
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL", "TRUE", "FALSE", "AS", "BY", "ORDER", "ASC", "DESC",
         "LIMIT", "OFFSET", "GROUP", "HAVING", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "ON", "USING", "CASE", "WHEN",
         "THEN", "ELSE", "END", "CAST", "COLLATE", "LIKE", "GLOB", "BETWEEN", "DISTINCT", "ALL", "UNION", "INTERSECT", "EXCEPT",
@@ -126,7 +123,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             StatementKind.Read when main.Is("SELECT") || main.Is("VALUES") =>
                 await ReadsAsync(rules, auth, statement, index, skipTarget: -1, session, cancellationToken) switch
                 {
-                    RewrittenSql text => planned.Statement with { Sql = Join(text.Pieces), Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, text.Views, null) },
+                    RewrittenSql text => planned.Statement with { Sql = Join(text.Pieces), Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, null) },
                     SqlRefusal refusal => refusal,
                 },
             StatementKind.Read => SqlRefusal.RuleDenied("end users run SELECT, UPDATE and DELETE statements", index),
@@ -190,7 +187,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         }
 
         if (!deleting && rule.Writable is { } writable && Assigned(tokens, targetAt) is { } columns
-            && columns.FirstOrDefault(column => !writable.Contains(column, StringComparer.OrdinalIgnoreCase)) is { } blocked)
+            && columns.FirstOrDefault(column => !writable.Contains(column, AsciiIgnoreCaseComparer.Instance)) is { } blocked)
         {
             return new SqlRefusal("column_not_writable", string.Concat(blocked, " is not a writable column of ", table), "42501", index, StatusCodes.Status403Forbidden,
                 Details: new Dictionary<string, string>(StringComparer.Ordinal) { ["column"] = blocked });
@@ -217,14 +214,14 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         HashSet<string>? targetVisible = null;
         if (restricted is not null || rule.Read is null)
         {
-            targetVisible = new(restricted ?? [], StringComparer.OrdinalIgnoreCase);
+            targetVisible = new(restricted ?? [], AsciiIgnoreCaseComparer.Instance);
             targetVisible.UnionWith(RowColumns(compiled));
         }
 
-        var readableColumns = restricted is not null ? restricted.ToFrozenSet(StringComparer.OrdinalIgnoreCase)
+        var readableColumns = restricted is not null ? restricted.ToFrozenSet(AsciiIgnoreCaseComparer.Instance)
             : rule.Read is null ? FrozenSet<string>.Empty : null;
-        var target = new SqlTargetScope(table, targetVisible?.ToFrozenSet(StringComparer.OrdinalIgnoreCase), readableColumns,
-            rule.Writable?.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
+        var target = new SqlTargetScope(table, targetVisible?.ToFrozenSet(AsciiIgnoreCaseComparer.Instance), readableColumns,
+            rule.Writable?.ToFrozenSet(AsciiIgnoreCaseComparer.Instance));
         var predicate = RulesCompiler.Render(compiled, auth, time.GetUtcNow().ToUnixTimeMilliseconds());
         var rewrittenReads = await ReadsAsync(rules, auth, statement, index, skipTarget: targetAt, session, cancellationToken);
         return rewrittenReads switch
@@ -232,7 +229,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             RewrittenSql text => planned.Statement with
             {
                 Sql = AppendWhere(tokens, statement.Main, text.Pieces, predicate),
-                Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, text.Views, target),
+                Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, target),
             },
             SqlRefusal refusal => refusal,
         };
@@ -243,9 +240,9 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     {
         var tokens = statement.Tokens;
         var pieces = tokens.Select(token => Render(statement.Sql, token)).ToArray();
-        Dictionary<string, string> guards = new(StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, string> guardOf = new(StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, SqlTableScope> scoped = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, string> guards = new(AsciiIgnoreCaseComparer.Instance);
+        Dictionary<string, string> guardOf = new(AsciiIgnoreCaseComparer.Instance);
+        Dictionary<string, SqlTableScope> scoped = new(AsciiIgnoreCaseComparer.Instance);
         List<string> definitions = [];
         var depth = 0;
         Stack<int> fromDepths = [];
@@ -348,7 +345,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             }
 
             var liveNames = session is null ? null : await LiveColumnsAsync(session, table, cancellationToken);
-            if (liveNames is not null && rule.Columns is { Count: > 0 } listed && listed.Any(column => !liveNames.Contains(column, StringComparer.OrdinalIgnoreCase)))
+            if (liveNames is not null && rule.Columns is { Count: > 0 } listed && listed.Any(column => !liveNames.Contains(column, AsciiIgnoreCaseComparer.Instance)))
             {
                 return SqlRefusal.RulesInvalid(string.Concat("the read columns of ", table, " reference a missing column; deploy the rules again"), index);
             }
@@ -380,11 +377,11 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 HashSet<string>? visible = null;
                 if (readable is not null)
                 {
-                    visible = new(readable, StringComparer.OrdinalIgnoreCase);
+                    visible = new(readable, AsciiIgnoreCaseComparer.Instance);
                     visible.UnionWith(RowColumns(compiled));
                 }
 
-                scoped[table] = new SqlTableScope(visible?.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
+                scoped[table] = new SqlTableScope(visible?.ToFrozenSet(AsciiIgnoreCaseComparer.Instance));
             }
 
             var aliased = at + 1 < tokens.Count && (tokens[at + 1].Is("AS") || tokens[at + 1].Kind == SqlTokenKind.String || (tokens[at + 1].IsName && !(tokens[at + 1].Kind == SqlTokenKind.Word && ClauseEnds.Contains(tokens[at + 1].Value))));
@@ -409,49 +406,8 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             }
         }
 
-        var objects = await SchemaObjectsAsync(session, [.. scoped.Keys], [.. statement.Ctes, .. guards.Keys, .. scoped.Keys], skipTarget >= 0 && statement.Ctes.Count > 0,
-            index, cancellationToken);
-        return objects switch
-        {
-            SchemaObjects found when found.Triggers.Overlaps(statement.Ctes) || found.Triggers.Overlaps(guards.Keys) =>
-                SqlRefusal.RuleDenied("a common table expression name matches a trigger; rename it", index),
-            SchemaObjects found => new RewrittenSql(pieces, guards.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase), scoped.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase),
-                found.Views.Except(found.Triggers, StringComparer.OrdinalIgnoreCase).ToFrozenSet(StringComparer.OrdinalIgnoreCase)),
-            SqlRefusal refusal => refusal,
-        };
+        return new RewrittenSql(pieces, guards.ToFrozenDictionary(AsciiIgnoreCaseComparer.Instance), scoped.ToFrozenDictionary(AsciiIgnoreCaseComparer.Instance));
     }
-
-    private static async ValueTask<SchemaObjectsOutcome> SchemaObjectsAsync(
-        ISqlDatabaseSession? session, string[] tables, string[] names, bool triggersRequired, int index, CancellationToken cancellationToken)
-    {
-        var none = new SchemaObjects(FrozenSet<string>.Empty, FrozenSet<string>.Empty);
-        if (session is null)
-        {
-            return triggersRequired ? SqlRefusal.RuleDenied("end-user writes in a transaction cannot declare common table expressions", index) : none;
-        }
-
-        if (names.Length == 0)
-        {
-            return none;
-        }
-
-        var sql = string.Concat("SELECT type, name FROM sqlite_schema WHERE (type = 'view' AND name COLLATE NOCASE IN (", Literals(tables),
-            ")) OR (type = 'trigger' AND name COLLATE NOCASE IN (", Literals(names), "))");
-        var request = new SqlStatementRequest(session.DatabaseId, [new SqlStatement(sql, [], SqlBuild.NoNamed)], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
-        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
-        return outcome switch
-        {
-            SqlReadResult { ResultSets: [.., var last] } => new SchemaObjects(
-                last.Rows.Where(static row => SqlBuild.Format(row[0]) == "view").Select(static row => SqlBuild.Format(row[1])).ToFrozenSet(StringComparer.OrdinalIgnoreCase),
-                last.Rows.Where(static row => SqlBuild.Format(row[0]) == "trigger").Select(static row => SqlBuild.Format(row[1])).ToFrozenSet(StringComparer.OrdinalIgnoreCase)),
-            SqlReadResult => SqlRefusal.RuleDenied("the schema could not be checked", index),
-            SqlError error => SqlRefusal.From(error),
-            StorageBusy busy => SqlRefusal.From(busy),
-            StorageTimeout timeout => SqlRefusal.From(timeout),
-        };
-    }
-
-    private static string Literals(string[] values) => string.Join(", ", values.Select(static value => RulesCompiler.Literal(value)));
 
     private static EndUserStatementOutcome Parse(string sql, int index)
     {
@@ -494,7 +450,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     {
         var start = tokens[0].Is("EXPLAIN") ? (tokens.Count > 2 && tokens[1].Is("QUERY") && tokens[2].Is("PLAN") ? 3 : 1) : 0;
         var at = start;
-        HashSet<string> ctes = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> ctes = new(AsciiIgnoreCaseComparer.Instance);
         if (at < tokens.Count && tokens[at].Is("WITH"))
         {
             at++;
@@ -572,7 +528,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             }
         }
 
-        return new EndUserStatement(sql, tokens, start, at, ctes.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
+        return new EndUserStatement(sql, tokens, start, at, ctes.ToFrozenSet(AsciiIgnoreCaseComparer.Instance));
     }
 
     private static SqlRefusal UnreadableWith(int index) => SqlRefusal.RuleDenied("the WITH clause could not be read", index);
@@ -612,7 +568,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return true;
     }
 
-    private static bool IsMain(SqlToken token) => token.IsName && string.Equals(token.Value, "main", StringComparison.OrdinalIgnoreCase);
+    private static bool IsMain(SqlToken token) => token.IsName && AsciiIgnoreCaseComparer.Instance.Equals(token.Value, "main");
 
     private static string Render(string sql, SqlToken token) => token.Kind switch
     {
@@ -664,8 +620,8 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 continue;
             }
 
-            var declared = liveNames is not null && liveNames.Contains(token.Value, StringComparer.OrdinalIgnoreCase);
-            if (!declared || (visibleColumns is not null && !visibleColumns.Contains(token.Value, StringComparer.OrdinalIgnoreCase)))
+            var declared = liveNames is not null && liveNames.Contains(token.Value, AsciiIgnoreCaseComparer.Instance);
+            if (!declared || (visibleColumns is not null && !visibleColumns.Contains(token.Value, AsciiIgnoreCaseComparer.Instance)))
             {
                 return token.Value;
             }
@@ -679,9 +635,9 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         Dictionary<string, string>? hidden = null;
         foreach (var name in liveNames)
         {
-            if (!visibleColumns.Contains(name, StringComparer.OrdinalIgnoreCase))
+            if (!visibleColumns.Contains(name, AsciiIgnoreCaseComparer.Instance))
             {
-                hidden ??= new(StringComparer.OrdinalIgnoreCase);
+                hidden ??= new(AsciiIgnoreCaseComparer.Instance);
                 hidden.TryAdd(name, name);
             }
         }
