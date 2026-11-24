@@ -68,9 +68,11 @@ class _LostTransactionError(SqlError, SqlSessionConnectionError):
     pass
 
 
-def _frame_timeout(db: Database | AsyncDatabase) -> float:
+def _frame_timeout(db: Database | AsyncDatabase) -> float | None:
     timeout = db._c._http.timeout.read
-    return DEFAULT_FRAME_TIMEOUT if timeout is None or not math.isfinite(timeout) else timeout
+    if timeout is None:
+        return None
+    return DEFAULT_FRAME_TIMEOUT if not math.isfinite(timeout) else timeout
 
 
 def _shutdown_socket(ws: ClientConnection) -> None:
@@ -316,20 +318,24 @@ class SqlSession:
                 self._ws = self._open()
             ws = self._ws
             timeout = _frame_timeout(self._db)
-            deadline = time.monotonic() + timeout
+            deadline = None if timeout is None else time.monotonic() + timeout
             state.sent(frame_id, kind)
             try:
-                send_timeout = threading.Timer(timeout, _shutdown_socket, (ws,))
-                send_timeout.daemon = True
-                send_timeout.start()
+                send_timeout = None if timeout is None else threading.Timer(timeout, _shutdown_socket, (ws,))
+                if send_timeout is not None:
+                    send_timeout.daemon = True
+                    send_timeout.start()
                 try:
                     ws.send(frame)
                 finally:
-                    send_timeout.cancel()
+                    if send_timeout is not None:
+                        send_timeout.cancel()
                 while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("timed out waiting for a SQL answer")
+                    remaining: float | None = None
+                    if deadline is not None:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError("timed out waiting for a SQL answer")
                     answer_id, body = state.answer(ws.recv(timeout=remaining))
                     if answer_id == frame_id or answer_id is None and body["type"] == "error":
                         break
@@ -437,6 +443,7 @@ class _Link:
         self.ws = ws
         self.pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self.reader: asyncio.Task[None] | None = None
+        self.head_timer: asyncio.TimerHandle | None = None
 
 
 class AsyncSqlSession:
@@ -499,6 +506,26 @@ class AsyncSqlSession:
                 raise _wrong_protocol()
             return ws
 
+    def _arm_head_timer(self, link: _Link) -> None:
+        self._clear_head_timer(link)
+        timeout = _frame_timeout(self._db)
+        if timeout is None or not link.pending:
+            return
+        link.head_timer = asyncio.get_running_loop().call_later(timeout, self._on_head_timeout, link)
+
+    @staticmethod
+    def _clear_head_timer(link: _Link) -> None:
+        if link.head_timer is not None:
+            link.head_timer.cancel()
+            link.head_timer = None
+
+    def _on_head_timeout(self, link: _Link) -> None:
+        link.head_timer = None
+        if self._link is not link or not link.pending:
+            return
+        self._drop(link, TimeoutError("timed out waiting for a SQL answer"))
+        link.ws.transport.abort()
+
     async def _read(self, link: _Link) -> None:
         try:
             while True:
@@ -509,10 +536,14 @@ class AsyncSqlSession:
                 if self._state.failure is not None:
                     raise self._state.failure
                 waiter = link.pending.pop(answer_id, None) if answer_id is not None else None
+                if link.pending:
+                    self._arm_head_timer(link)
+                else:
+                    self._clear_head_timer(link)
                 if waiter is not None:
                     if not waiter.done():
                         waiter.set_result(body)
-                elif body["type"] == "error":
+                elif body["type"] == "error" and answer_id is None:
                     _raise_error(body)
         except Exception as exc:
             self._drop(link, exc)
@@ -520,6 +551,7 @@ class AsyncSqlSession:
                 await link.ws.close()
 
     def _drop(self, link: _Link, exc: BaseException) -> TerraScaleError:
+        self._clear_head_timer(link)
         if self._link is link:
             self._link = None
             self._state.dropped()
@@ -541,18 +573,34 @@ class AsyncSqlSession:
         link = await self._connected()
         if state.local(kind):
             return {"results": []}
+        was_empty = not link.pending
         waiter = asyncio.get_running_loop().create_future()
         link.pending[frame_id] = waiter
+        if was_empty:
+            self._arm_head_timer(link)
 
-        async def exchange() -> dict[str, Any]:
+        sent = False
+        try:
             if self._link is link:
                 state.sent(frame_id, kind)
-                await link.ws.send(frame)
-            return await waiter
-
-        try:
-            body = await asyncio.wait_for(exchange(), _frame_timeout(self._db))
-        except (Exception, asyncio.CancelledError) as exc:
+                timeout = _frame_timeout(self._db)
+                if timeout is None:
+                    await link.ws.send(frame)
+                else:
+                    await asyncio.wait_for(link.ws.send(frame), timeout)
+                sent = True
+            body = await waiter
+        except asyncio.CancelledError:
+            link.pending.pop(frame_id, None)
+            if waiter.done() and not waiter.cancelled():
+                waiter.exception()
+            if not sent:
+                self._drop(link, SqlSessionConnectionError("sending a SQL frame was cancelled"))
+                link.ws.transport.abort()
+            elif not link.pending:
+                self._clear_head_timer(link)
+            raise
+        except Exception as exc:
             link.pending.pop(frame_id, None)
             if waiter.done() and not waiter.cancelled():
                 waiter.exception()
@@ -560,14 +608,10 @@ class AsyncSqlSession:
             link.ws.transport.abort()
             if error is exc:
                 raise
-            if not isinstance(exc, asyncio.CancelledError):
-                raise error from exc
-            if not isinstance(error, CommitUncertainError):
-                raise
+            raise error from exc
         else:
             _raise_error(body)
             return body
-        raise error
 
     @property
     def in_transaction(self) -> bool:
