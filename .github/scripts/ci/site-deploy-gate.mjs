@@ -32,19 +32,26 @@ async function github(path, method = 'GET', body) {
   return response.status === 204 || existingLabel ? null : response.json();
 }
 
+async function probeJson(response, message) {
+  try {
+    return await response.json();
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    assert.fail(message);
+  }
+}
+
 async function cloudflare(path, signal) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${path}`, {
     headers: { authorization: `Bearer ${token}` },
     signal,
   });
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    assert.fail(`Cloudflare ${path}: HTTP ${response.status}, response was not JSON`);
-  }
-  if (response.status === 404 && body?.errors?.some((error) => error.code === 10007) && path.endsWith('/deployments')) return null;
-  assert.ok(response.ok && body?.success, `Cloudflare ${path}: HTTP ${response.status}`);
+  const status = `Cloudflare ${path}: HTTP ${response.status}`;
+  const body = await probeJson(response, `${status}, response was not JSON`);
+  const codes = Array.isArray(body?.errors) ? body.errors.map((error) => error?.code).filter(Number.isSafeInteger) : [];
+  if (response.status === 404 && codes.includes(10007) && path.endsWith('/deployments')) return null;
+  const details = codes.length > 0 ? `, error codes ${codes.join(', ')}` : '';
+  assert.ok(response.ok && body?.success === true, `${status}${details}`);
   assert.ok(body.result && typeof body.result === 'object', `Cloudflare ${path}: missing result`);
   return body.result;
 }
@@ -54,12 +61,7 @@ async function serviceLive(kind, signal) {
   assert.ok(response.ok, `readiness HTTP ${response.status}`);
   const live = response.headers.get('x-terrascale-revision');
   sha(live);
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    assert.fail('readiness response was not JSON');
-  }
+  const body = await probeJson(response, 'readiness response was not JSON');
   assert.ok(['ok', 'ready'].includes(body?.status), 'readiness status is unhealthy');
   return live;
 }
@@ -67,9 +69,11 @@ async function serviceLive(kind, signal) {
 async function workerLive(worker, signal) {
   const result = await cloudflare(`${worker}/deployments`, signal);
   if (result === null) return null;
-  const active = result.deployments[0];
-  assert.ok(active && active.versions.length === 1 && active.versions[0].percentage === 100, `${worker}: missing or split live deployment`);
-  const version = await cloudflare(`${worker}/versions/${active.versions[0].version_id}`, signal);
+  const versions = result.deployments?.[0]?.versions;
+  assert.ok(Array.isArray(versions) && versions.length === 1 && versions[0]?.percentage === 100, `${worker}: missing or split live deployment`);
+  const versionId = versions[0].version_id;
+  assert.ok(typeof versionId === 'string' && versionId.length > 0, `${worker}: missing live version ID`);
+  const version = await cloudflare(`${worker}/versions/${encodeURIComponent(versionId)}`, signal);
   const live = version.annotations?.['workers/message'];
   sha(live);
   return live;
@@ -80,6 +84,9 @@ async function probeLive(read, timeout) {
   try {
     return { revision: await read(signal), failure: null };
   } catch (error) {
+    const aborted = error instanceof DOMException && ['AbortError', 'TimeoutError'].includes(error.name);
+    const transportFailure = error instanceof TypeError && error.cause && ['fetch failed', 'terminated'].includes(error.message);
+    if (!aborted && !transportFailure && !(error instanceof assert.AssertionError)) throw error;
     if (signal.aborted) return { revision: null, failure: `probe timed out after ${timeout / 1000}s` };
     const code = error.cause?.code;
     const failure = code ? `${error.message} (${code})` : error.message;
@@ -194,7 +201,8 @@ function alertFor(issues, name) {
   assert.ok(typeof state.target === 'string' && /^[0-9a-f]{40}$/.test(state.target), `${where} records an invalid target`);
   assert.ok(Number.isInteger(state.attempts) && state.attempts >= 0 && state.attempts <= 2, `${where} records ${JSON.stringify(state.attempts)} attempts`);
   assert.equal(typeof state.notified, 'boolean', `${where} records an invalid notified value`);
-  return { issue, body, ...state };
+  const probeNote = body.split('\n').find((line) => line.startsWith(workerProbeNotePrefix)) ?? null;
+  return { issue, body, probeNote, ...state };
 }
 
 function next(alert, revision) {
@@ -204,7 +212,7 @@ function next(alert, revision) {
   return `waiting: the selected target is not newer than the recorded one (${alert.target})`;
 }
 
-const healthy = (alert, revision) => alert !== null && alert.target === revision && alert.attempts === 0 && !alert.notified;
+const healthy = (alert, revision) => alert !== null && alert.target === revision && alert.attempts === 0 && !alert.notified && alert.probeNote === null;
 
 function due(alert, deployed, revision, decision) {
   if (deployed === revision) return !healthy(alert, revision);
@@ -245,8 +253,8 @@ async function recordWorkerProbeFailure(alert, name, failure) {
     if (revision !== null) await writeState(null, name, revision, 0, false, { probeNote: note });
     return;
   }
+  if (alert.probeNote === note) return;
   const lines = alert.body.trimEnd().split('\n');
-  if (lines.includes(note)) return;
   const body = [...lines.filter((line) => !line.startsWith(workerProbeNotePrefix)), note, ''].join('\n');
   await github(`issues/${alert.issue.number}`, 'PATCH', { body });
 }
@@ -307,7 +315,11 @@ if (args[0] === '--qualify-main') {
   const states = new Map();
   const failures = [];
   for (const { name, revision, failure } of live) {
-    if (failure !== null) report(`${name}: live unhealthy: ${failure}`);
+    if (failure !== null) {
+      const message = `${name}: live unhealthy: ${failure}`;
+      if (thing === 'all') failures.push(message);
+      report(message);
+    }
     try {
       assert.ok(revision === null || ancestor(revision, 'origin/main'), `${name}: live ${revision} is not on main`);
       states.set(name, alertFor(issues, name));
@@ -325,7 +337,7 @@ if (args[0] === '--qualify-main') {
       if (!states.has(name)) continue;
       const alert = states.get(name);
       if (failure !== null && !services[kind]) {
-        if (alert !== null ? !alert.body.split('\n').includes(workerProbeNote(failure)) : revision !== null) selected.push([kind, name]);
+        if (alert !== null ? alert.probeNote !== workerProbeNote(failure) : revision !== null) selected.push([kind, name]);
         continue;
       }
       const liveStatus = failure === null ? deployed ?? 'absent' : 'unhealthy';
@@ -408,5 +420,6 @@ if (args[0] === '--qualify-main') {
     appendFileSync(process.env.GITHUB_OUTPUT, `deploy=${deploy}\n`);
     if (deploy) appendFileSync(process.env.GITHUB_ENV, `REVISION=${revision}\n`);
     console.log(`GitHub API reads: ${reads}`);
+    assert.ok(!workerUnavailable, `${name}: live unhealthy: ${failure}`);
   }
 }
