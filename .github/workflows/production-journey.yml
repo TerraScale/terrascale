@@ -75,7 +75,7 @@ jobs:
             exit 0
           fi
           if jq -e '.jobs[] | select((.name == "release-only" or .name == "main" or .name == "main-fallback") and .conclusion == "success")
-            | any(.steps[]?; (.name == "Verify and deploy the pinned arm64 digest through ts-orch" or .name == "Deploy through ts-orch") and .conclusion == "success")' <<< "$jobs" > /dev/null; then
+            | .steps[]? | select((.name == "Verify and deploy the pinned arm64 digest through ts-orch" or .name == "Deploy through ts-orch") and .conclusion == "success")' <<< "$jobs" > /dev/null; then
             echo "terrabase=$COMMIT" >> "$GITHUB_OUTPUT"
           fi
           if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release") | select(.conclusion == "success")
