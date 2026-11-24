@@ -90,11 +90,11 @@
     }
     @if (Model.NoAccess)
     {
-        <section class="ts-card ts-card-boxed" aria-labelledby="functions-title"><div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">Functions require read and write access to this project.</p><a class="ts-btn ts-btn-secondary" href="/organization?tab=members">View organization members</a></div></div></section>
+        <section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="functions-title"><div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">Functions require read and write access to this project.</p><a class="ts-btn ts-btn-secondary" href="/organization?tab=members">View organization members</a></div></div></section>
     }
     @if (Model.Functions.Count == 0 && !Model.NoAccess && Model.Form is null)
     {
-        <section class="ts-card ts-card-boxed" aria-labelledby="functions-title"><div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p>@if (canWrite){<a class="ts-btn ts-btn-primary ts-btn-sm" href="@(list + "?edit=new")">New function</a>}<a class="ts-link" href="https://docs.terrascale.tech/guides/functions" @(ExternalLink.Attributes)>Deploy a function@(ExternalLink.Hint)</a></div></div></section>
+        <section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="functions-title"><div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p><div class="ts-empty-actions">@if (canWrite){<a class="ts-btn ts-btn-primary ts-btn-sm" href="@(list + "?edit=new")">@Icons.Render("Zap", 14)<span>New function</span></a>}<a class="ts-btn ts-btn-secondary ts-btn-sm" href="https://docs.terrascale.tech/guides/functions" @(ExternalLink.Attributes)>Deploy a function@(ExternalLink.Hint)</a></div></div></div></section>
     }
     @{
         var deleteName = Model.DeleteName.Length > 0 ? Model.DeleteName : selected?.Name;

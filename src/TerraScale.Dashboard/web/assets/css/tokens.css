@@ -95,6 +95,7 @@
   --ts-control-h: 36px;
   --ts-control-h-lg: 40px;
   --ts-sidebar-width: 232px;
+  --ts-page-gutter: var(--ts-s8);
 
   --ts-fast: 150ms;
   --ts-base: 200ms;
@@ -136,4 +137,16 @@
 
 [data-tone="slate"] {
   --tone: var(--ts-ink-2);
+}
+
+@media (max-width: 63.99rem) {
+  :root {
+    --ts-page-gutter: var(--ts-s6);
+  }
+}
+
+@media (max-width: 47.99rem) {
+  :root {
+    --ts-page-gutter: var(--ts-s4);
+  }
 }

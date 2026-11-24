@@ -17,7 +17,7 @@
     @if (Model.Error is { } error) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@error</p><a class="ts-link" href="/storage">Reload files</a></div> }
     @if (listing is not null)
     {
-        <header class="ts-page-header"><div class="ts-page-heading"><h1 class="ts-page-title">File storage</h1></div><div class="ts-page-actions">@if (canWrite) { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>New bucket</span></button> }</div></header>
+        <header class="ts-page-header"><div class="ts-page-heading"><h1 class="ts-page-title">File storage</h1></div><div class="ts-page-actions">@if (canWrite && listing.Buckets.Items.Count > 0) { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>New bucket</span></button> }</div></header>
         @if (listing.Buckets.Items.Count == 0)
         {
             <section class="ts-card ts-card-boxed ts-card-flush"><div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">No buckets yet.</p>@if (canWrite) { <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>New bucket</span></button> }</div></div></section>

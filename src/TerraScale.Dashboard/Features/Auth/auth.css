@@ -275,6 +275,9 @@ html[data-theme="system"]:has(.ts-org-picker) {
 }
 
 .ts-org-picker-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-s6);
   color: inherit;
 }
 
@@ -300,5 +303,14 @@ html[data-theme="system"]:has(.ts-org-picker) {
 
   .ts-org-picker-user {
     flex-wrap: wrap;
+    gap: var(--ts-s2) var(--ts-s3);
+  }
+
+  .ts-org-picker-user > div {
+    flex: 1 1 180px;
+  }
+
+  .ts-org-picker-user > form {
+    margin-left: auto;
   }
 }

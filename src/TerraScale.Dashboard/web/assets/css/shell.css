@@ -42,7 +42,7 @@
 }
 
 .ts-sidebar-brand img {
-  height: var(--ts-nav-row);
+  height: var(--ts-control-h-sm);
   width: auto;
 }
 
@@ -62,7 +62,7 @@
   align-items: center;
   gap: var(--ts-s2);
   height: var(--ts-s12);
-  padding-inline: clamp(var(--ts-s4), 2.5vw, var(--ts-s10));
+  padding-inline: var(--ts-page-gutter);
   border-bottom: 1px solid var(--ts-line);
   background: var(--ts-canvas);
 }
@@ -105,6 +105,7 @@
 .ts-context-menu {
   display: flex;
   min-width: 0;
+  margin-left: calc(-1 * var(--ts-s1) - 1px);
 }
 
 .ts-context-trigger {
@@ -187,7 +188,8 @@
 }
 
 .ts-context-menu > .ts-menu-panel {
-  width: min(18rem, calc(100vw - 2 * var(--ts-s4)));
+  width: max(anchor-size(width), min(18rem, calc(100vw - 2 * var(--ts-s4))));
+  max-width: min(22rem, calc(100vw - 2 * var(--ts-s4)));
   max-height: min(70dvh, 520px);
 }
 
@@ -270,20 +272,24 @@
 
 .ts-search-results {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   max-height: min(56dvh, calc(12 * var(--ts-control-h)));
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
 .ts-search-results > .ts-menu-item {
   gap: var(--ts-s3);
+  min-width: 0;
   min-height: var(--ts-control-h);
   padding-inline: var(--ts-s3);
   font-size: var(--ts-fs-md);
 }
 
 .ts-search-scope {
-  flex: none;
-  max-width: 50%;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
   overflow: hidden;
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-xs);
@@ -524,7 +530,7 @@
   display: none;
 }
 
-@media (max-width: 47.99rem) {
+@media (max-width: 63.99rem) {
   .ts-shell {
     padding-left: 0;
   }
@@ -560,13 +566,32 @@
     background: var(--ts-scrim);
   }
 
+  .ts-topbar .ts-topbar-nav {
+    display: inline-grid;
+    margin-left: -7px;
+  }
+
+  .ts-context-menu {
+    margin-left: 0;
+  }
+
+  .ts-search {
+    width: clamp(10rem, 18vw, 14rem);
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-sidebar {
+    --ts-nav-row: var(--ts-control-h);
+  }
+
   .ts-topbar {
     gap: var(--ts-s1);
     padding-inline: var(--ts-s2);
   }
 
   .ts-topbar .ts-topbar-nav {
-    display: inline-grid;
+    margin-left: 0;
   }
 
   .ts-context-menu {
@@ -591,5 +616,13 @@
     padding: 0;
     border-color: transparent;
     color: var(--ts-ink-2);
+  }
+
+  #ts-search-dialog {
+    margin-top: var(--ts-s4);
+  }
+
+  .ts-search-scope {
+    max-width: 40%;
   }
 }

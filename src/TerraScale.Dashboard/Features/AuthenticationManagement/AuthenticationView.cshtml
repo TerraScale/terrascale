@@ -4,7 +4,10 @@
 @using TerraScale.Dashboard.Common.Databases
 @{
     var current = Model.Section; var manage = Model.Context.CanManageProject;
-    var sections = AuthenticationSection.All.Where(section => section.Key != "settings" || Model.Context.Project?.Id == PlatformDatabases.AuthProjectId);
+    var sections = AuthenticationSection.All.Where(section => section.Key != "settings" || Model.Context.Project?.Id == PlatformDatabases.AuthProjectId).ToArray();
+    var primary = sections.Where(section => PrimaryKeys.Contains(section.Key));
+    var more = sections.Where(section => !PrimaryKeys.Contains(section.Key)).ToArray();
+    var moreActive = more.Any(section => section.Key == current.Key);
 }
 <main class="ts-page ts-idp" data-auth-section="@current.Key">
 <header class="ts-page-header"><h1 class="ts-page-title" id="authentication-page-title">@(current.Key == "agents" ? "Agents" : "Authentication")</h1><div class="ts-page-actions">
@@ -12,11 +15,13 @@
 else if (manage && current.Key == "clients") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-create-client-dialog">@Icons.Render("Plus", 16)<span>New client</span></button> }
 else if (manage && current.Key == "webhooks") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-create-webhook-dialog">@Icons.Render("Plus", 16)<span>Add webhook</span></button> }
 </div></header>
-<nav class="ts-tabs ts-idp-tabs" aria-label="Authentication sections">
-@foreach (var tab in sections) { <a class="ts-tab" href="@("/auth/" + tab.Key)" aria-current="@(tab.Key == current.Key ? "page" : null)">@tab.Title</a> }
+<nav class="ts-tabs ts-idp-tabs" aria-label="Authentication sections" data-init="el.scrollWidth > el.clientWidth &amp;&amp; el.querySelector('[aria-current=page], [data-active=true]')?.scrollIntoView({block: 'nearest', inline: 'center'})">
+@foreach (var tab in primary) { <a class="ts-tab" href="@("/auth/" + tab.Key)" aria-current="@(tab.Key == current.Key ? "page" : null)"><span>@tab.Title</span></a> }
+<div class="ts-menu ts-idp-more"><button class="ts-tab" type="button" popovertarget="auth-more" data-active="@(moreActive ? "true" : "false")" aria-current="@(moreActive ? "page" : null)"><span>@(moreActive ? current.Title : "More")</span>@Icons.Render("ChevronDown", 14)</button><div class="ts-menu-panel" id="auth-more" popover="auto" role="group" aria-label="More authentication sections">@foreach (var group in more.GroupBy(section => section.Group)) { @if (group.Key.Length > 0) { <div class="ts-menu-heading">@group.Key</div> }@foreach (var tab in group) { <a class="@(tab.Key == "danger" ? "ts-menu-item ts-menu-item-danger" : "ts-menu-item")" href="@("/auth/" + tab.Key)" aria-current="@(tab.Key == current.Key ? "page" : null)">@tab.Title</a> } }</div></div>
 </nav>
 @(await RenderPartialAsync<AuthenticationSectionView, AuthenticationPage>(Model))
 </main>
 @functions {
+private static readonly System.Collections.Frozen.FrozenSet<string> PrimaryKeys = System.Collections.Frozen.FrozenSet.ToFrozenSet(["overview", "users", "sign-in", "social", "clients", "branding"], StringComparer.Ordinal);
 public ShellModel LayoutModel => Model.Shell;
 }

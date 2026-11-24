@@ -31,6 +31,7 @@
 @import "../../../Features/Backups/backups.css" layer(features);
 @import "../../../Features/Organizations/organization.css" layer(features);
 @import "../../../Features/Profile/profile.css" layer(features);
+@import "../../../Features/Support/support.css" layer(features);
 @import "../../../Features/Auth/auth.css" layer(features);
 @import "../../../Features/Onboarding/onboarding.css" layer(features);
 @import "../../../Features/NotFound/not-found.css" layer(features);

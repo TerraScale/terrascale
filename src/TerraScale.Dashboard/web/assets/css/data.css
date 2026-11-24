@@ -66,9 +66,10 @@
   vertical-align: middle;
 }
 
-.ts-table :is(th, td).ts-break {
+.ts-table :is(th, td).ts-break,
+.ts-table :is(th, td).ts-break code {
   max-width: 36ch;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .ts-table .ts-list-main {
@@ -124,10 +125,12 @@
     border-bottom: 0;
   }
 
-  .ts-table.ts-table-stacked td {
+  .ts-table.ts-table-stacked td,
+  .ts-table.ts-table-stacked td.ts-num {
     height: auto;
     padding: 0;
     border: 0;
+    text-align: left;
   }
 
   .ts-card-boxed.ts-card-flush .ts-table-stacked td {
@@ -141,6 +144,10 @@
 
   .ts-table-stacked .ts-table-actions > .ts-row {
     justify-content: flex-start;
+  }
+
+  .ts-table-stacked .ts-table-actions:empty {
+    display: none;
   }
 
   .ts-table-stacked td[data-label]::before {
@@ -268,6 +275,26 @@
 .ts-kv dd {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+@container page (width < 480px) {
+  .ts-kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s1);
+  }
+
+  .ts-kv:has(> div) {
+    gap: var(--ts-s3);
+  }
+
+  .ts-kv > dd + dt {
+    margin-top: var(--ts-s3);
+  }
+
+  .ts-kv > div {
+    display: grid;
+    gap: var(--ts-s1);
+  }
 }
 
 .ts-pager {

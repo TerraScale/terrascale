@@ -153,11 +153,17 @@ hr {
   border-radius: var(--ts-radius);
   background: var(--ts-accent-fill);
   color: var(--ts-on-accent);
-  transform: translateY(-200%);
+  text-decoration: none;
 }
 
-.ts-skip-link:focus {
-  transform: none;
+.ts-skip-link:not(:focus) {
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 @keyframes ts-pop-in {

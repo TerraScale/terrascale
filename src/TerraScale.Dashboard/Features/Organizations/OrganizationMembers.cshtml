@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @using TerraScale.Dashboard.Common.Accounts
 @using TerraScale.Dashboard.Features.Organizations
-<section class="ts-card ts-card-boxed @(Model.MemberRows.Count > 0 ? "ts-card-flush" : "")" id="team-members" aria-labelledby="team-members-title">
+<section class="ts-card ts-card-boxed ts-card-flush" id="team-members" aria-labelledby="team-members-title">
     <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="team-members-title">Organization members <span class="ts-tab-count">@Model.MemberTotal</span></h2></div></header><div class="ts-card-body">
     @if (Model.MemberTotal == 0) { <div class="ts-empty" role="alert"><p class="ts-empty-title">Members could not be loaded.</p><div class="ts-empty-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization?tab=members">Reload</a></div></div> }
     else if (Model.MemberRows.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No members match</p>@if (Model.Filter.Query.Length > 0 || Model.Filter.Role != "all") { <div class="ts-empty-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization?tab=members">Clear filters</a></div> }</div> }
@@ -12,7 +12,7 @@
     }
     </div>
 </section>
-<section class="ts-card ts-card-boxed @(Model.InvitationRows.Count > 0 ? "ts-card-flush" : "")" id="team-invitations" aria-labelledby="team-invitations-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="team-invitations-title">Invitations <span class="ts-tab-count">@Model.InvitationRows.Count</span></h2></div></header><div class="ts-card-body">
+<section class="ts-card ts-card-boxed ts-card-flush" id="team-invitations" aria-labelledby="team-invitations-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="team-invitations-title">Invitations <span class="ts-tab-count">@Model.InvitationRows.Count</span></h2></div></header><div class="ts-card-body">
     @if (Model.InvitationRows.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No invitations yet.</p>@if (Model.CanManage) { <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="team-invite">@Icons.Render("UserPlus", 14)<span>Invite</span></button> }</div> }
     else
     {

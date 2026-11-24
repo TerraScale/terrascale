@@ -11,7 +11,13 @@
 @container page (width < 640px) {
   #project-databases .ts-card-actions {
     flex-wrap: wrap;
+    width: 100%;
     margin-left: 0;
+  }
+
+  #project-databases .ts-db-search {
+    flex: 1 1 200px;
+    width: auto;
   }
 }
 
@@ -78,9 +84,19 @@
   gap: var(--ts-s2);
 }
 
-.ts-db-tabs {
-  gap: 0 var(--ts-s5);
-  margin-top: calc(-1 * var(--ts-s4));
+@container page (width < 820px) {
+  .ts-db-tabs {
+    gap: 0 var(--ts-s3);
+    font-size: var(--ts-fs-sm);
+  }
+
+  .ts-db-more > .ts-tab {
+    gap: var(--ts-s1);
+  }
+}
+
+.ts-db-more {
+  flex: none;
 }
 
 .ts-db-more > .ts-tab {
@@ -93,6 +109,7 @@
 }
 
 .ts-db-more > .ts-tab > svg {
+  flex: none;
   width: 14px;
   height: 14px;
 }
@@ -105,7 +122,7 @@
 .ts-db-more > .ts-tab[data-active="true"]::after {
   content: "";
   position: absolute;
-  inset: auto 0 -1px;
+  inset: auto 0 0;
   height: 2px;
   border-radius: 2px;
   background: var(--ts-accent);
@@ -165,6 +182,7 @@
   align-items: center;
   gap: var(--ts-s2);
   min-width: 0;
+  margin-left: calc(-1 * var(--ts-s1));
   padding: var(--ts-s1) var(--ts-s2) var(--ts-s1) var(--ts-s1);
   border: 0;
   border-radius: var(--ts-radius);
@@ -258,6 +276,24 @@ a.ts-db-region:hover {
   text-decoration: none;
 }
 
+#connect {
+  gap: var(--ts-s5);
+}
+
+#connect .ts-meta > .ts-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-s6);
+}
+
+#connect [role="status"]:empty {
+  margin-top: calc(-1 * var(--ts-s2));
+}
+
+.ts-db-endpoint dt {
+  align-self: center;
+}
+
 .ts-db-endpoint dd {
   display: flex;
   align-items: center;
@@ -269,8 +305,62 @@ a.ts-db-region:hover {
   overflow-wrap: anywhere;
 }
 
+@container page (width < 520px) {
+  .ts-db-endpoint {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s1);
+  }
+
+  .ts-db-endpoint > div {
+    display: grid;
+    gap: var(--ts-s1);
+  }
+
+  .ts-db-endpoint > div + div {
+    margin-top: var(--ts-s2);
+  }
+}
+
+#database-general > .ts-card-body,
+#database-general > form > .ts-card-body,
+#database-expiry > .ts-card-body,
+#database-expiry > form > .ts-card-body {
+  padding: var(--ts-s5);
+}
+
+#database-general > form,
+#database-expiry > form {
+  gap: 0;
+}
+
+@container page (width >= 480px) {
+  #database-settings .ts-columns-side .ts-kv {
+    grid-template-columns: minmax(84px, max-content) minmax(0, 1fr);
+    gap: var(--ts-s3) var(--ts-s4);
+  }
+}
+
+#request-log-filters {
+  align-items: center;
+}
+
+#request-logs td a.ts-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-s6);
+  font-size: var(--ts-fs-xs);
+}
+
 .ts-card.ts-card-boxed.ts-db-danger {
   border-color: var(--ts-danger);
+}
+
+.ts-db-danger > .ts-card-head {
+  align-items: center;
+}
+
+.ts-db-danger .ts-card-heading {
+  flex: 1 1 200px;
 }
 
 .ts-db-danger .ts-card-title {
@@ -307,8 +397,9 @@ a.ts-db-region:hover {
   vector-effect: non-scaling-stroke;
 }
 
-@container page (width < 768px) {
-  .ts-db-table thead {
+@container page (width < 840px) {
+  .ts-db-table thead,
+  #request-logs .ts-table-stacked thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -317,27 +408,59 @@ a.ts-db-region:hover {
     white-space: nowrap;
   }
 
-  .ts-db-table tr {
+  #request-logs .ts-table-stacked tbody tr {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: center;
-    gap: var(--ts-s2) var(--ts-s3);
+    gap: var(--ts-s2);
     padding: var(--ts-s4) 0;
     border-bottom: 1px solid var(--ts-line);
   }
 
-  .ts-db-table td {
-    padding: 0;
-    border: 0;
+  #request-logs .ts-table-stacked tbody tr:last-child {
+    border-bottom: 0;
   }
 
-  .ts-db-table td:first-child {
+  #request-logs .ts-table.ts-table-stacked td,
+  #request-logs .ts-table.ts-table-stacked td.ts-num {
+    height: auto;
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+
+  #request-logs .ts-table-stacked td[data-label]::before {
+    content: attr(data-label) " " / "";
+    color: var(--ts-ink-2);
+  }
+
+  .ts-db-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: var(--ts-s2) var(--ts-s4);
+    padding: var(--ts-s4) 0;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-db-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ts-db-table td,
+  .ts-db-table td.ts-num {
+    height: auto;
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+
+  .ts-db-table td:first-child,
+  .ts-db-table td:last-child {
     grid-column: 1 / -1;
   }
 
   .ts-db-table td[data-label]::before {
-    content: attr(data-label) " ";
-    color: var(--ts-ink-2);
+    content: attr(data-label) " " / "";
+    color: var(--ts-ink-3);
   }
 
   .ts-db-spark {

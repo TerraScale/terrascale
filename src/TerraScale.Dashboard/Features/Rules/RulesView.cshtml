@@ -21,8 +21,8 @@
                         <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
                         <input type="hidden" name="databaseId" value="@Model.Database.Id" />
                         <div class="ts-field">
-                            <label class="ts-label" for="rules-source">Rules JSON</label>
-                            <ts-code-editor class="ts-code-editor" data-language="json" data-submit-shortcut="false"><textarea class="ts-input ts-mono" id="rules-source" name="source" rows="18" required spellcheck="false" autocapitalize="off" autocomplete="off" readonly="@(Model.CanWrite ? null : "readonly")">@Model.Source</textarea></ts-code-editor>
+                            <label class="ts-sr-only" for="rules-source">Rules JSON</label>
+                            <ts-code-editor class="ts-code-editor" data-language="json" data-submit-shortcut="false"><textarea class="ts-input ts-mono" id="rules-source" name="source" rows="12" required spellcheck="false" autocapitalize="off" autocomplete="off" readonly="@(Model.CanWrite ? null : "readonly")">@Model.Source</textarea></ts-code-editor>
                         </div>
                     </form>
                     @(await RenderPartialAsync<RulesProblemsView, RulesPage>(Model))

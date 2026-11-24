@@ -1,5 +1,11 @@
 .ts-access-toolbar {
   align-items: center;
+  border-bottom: 0;
+}
+
+.ts-access-toolbar > .ts-filters {
+  padding-bottom: 0;
+  justify-content: flex-start;
 }
 
 .ts-access-toolbar > .ts-btn {
@@ -20,11 +26,10 @@
   white-space: nowrap;
 }
 
-/* Member filters sit on the tab row, right-aligned. */
 .ts-access-filters {
-  flex: 1 1 360px;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .ts-access-filters .ts-filter-field {
@@ -33,19 +38,14 @@
 
 .ts-access-search {
   flex: 1 1 220px;
-  max-width: 280px;
+  max-width: 320px;
 }
 
 .ts-access-filters .ts-filter-field:has(select) {
   flex: 0 0 170px;
 }
 
-/* 390px: filters stack full width, as in the prototype. */
-@media (max-width: 47.99rem) {
-  .ts-access-filters {
-    flex-wrap: wrap;
-  }
-
+@container page (width < 560px) {
   .ts-access-search {
     max-width: none;
   }
@@ -55,7 +55,48 @@
   }
 }
 
-/* Role and invitation distributions: one colored share bar per category. */
+@container page (width < 900px) {
+  :where(#team-members, #team-invitations) .ts-table-stacked thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  :where(#team-members, #team-invitations) .ts-table-stacked tbody tr {
+    display: grid;
+    gap: var(--ts-s2);
+    padding: var(--ts-s4) 0;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  :where(#team-members, #team-invitations) .ts-table-stacked tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  :where(#team-members, #team-invitations) .ts-table.ts-table-stacked td {
+    height: auto;
+    padding: 0 var(--ts-s5);
+    border: 0;
+  }
+
+  :where(#team-members, #team-invitations) .ts-table.ts-table-stacked .ts-table-actions {
+    text-align: left;
+    white-space: normal;
+  }
+
+  :where(#team-members, #team-invitations) .ts-table-stacked .ts-table-actions > .ts-row {
+    justify-content: flex-start;
+  }
+
+  :where(#team-members, #team-invitations) .ts-table-stacked td[data-label]::before {
+    content: attr(data-label) " " / "";
+    color: var(--ts-ink-2);
+  }
+}
+
 .ts-access-shares {
   display: grid;
   gap: var(--ts-s4);

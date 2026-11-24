@@ -8,7 +8,7 @@
 
 .ts-usage-meters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--ts-s3);
 }
 
@@ -38,8 +38,13 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
+  align-content: flex-start;
   gap: var(--ts-s1) var(--ts-s2);
   min-width: 0;
+}
+
+.ts-usage-meter:not(:has(> .ts-usage-meter-bar)) {
+  grid-template-rows: auto 1fr;
 }
 
 .ts-usage-meter-value {
@@ -60,10 +65,10 @@
 .ts-usage-meter .ts-usage-meter-value[data-measured="false"],
 .ts-usage-summary .ts-stat-value[data-measured="false"],
 .ts-usage-share-value[data-measured="false"] {
-  color: var(--ts-ink-3);
+  color: var(--ts-ink-2);
   font-family: inherit;
   font-size: var(--ts-fs-md);
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: 0;
   line-height: var(--ts-lh);
   white-space: normal;
@@ -178,6 +183,9 @@
 }
 
 .ts-usage-share-name > .ts-strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-s6);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -237,11 +245,25 @@
   gap: var(--ts-s2) var(--ts-s5);
 }
 
-@container page (width < 768px) {
+.ts-spending-links > .ts-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-s6);
+}
+
+@container page (width < 1120px) {
+  .ts-usage-meters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page (width < 560px) {
   .ts-usage-meters {
     grid-template-columns: minmax(0, 1fr);
   }
+}
 
+@container page (width < 768px) {
   .ts-usage-figures > div {
     justify-items: start;
   }

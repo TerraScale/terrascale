@@ -1,6 +1,3 @@
-/* Database data tabs: tables and the SQL editor. */
-
-/* Tables: the table list beside the open table's columns and rows. */
 .ts-data-browser {
   display: grid;
   grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
@@ -33,7 +30,6 @@
   font-weight: 500;
 }
 
-/* Long lists scroll inside the column instead of stretching the page. */
 .ts-data-nav-list {
   display: grid;
   gap: 1px;
@@ -55,7 +51,6 @@
   transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
 }
 
-/* Row counts sit at the row end in mono. */
 .ts-data-nav-link > .ts-meta {
   margin-left: auto;
   color: var(--ts-ink-3);
@@ -69,13 +64,11 @@
   text-decoration: none;
 }
 
-/* Neutral active row: a faint white tint, not a brand fill. */
 .ts-data-nav-link[aria-current="page"] {
   background: color-mix(in srgb, var(--ts-ink) 8%, transparent);
   color: var(--ts-ink);
 }
 
-/* Narrow pages choose the table from a select. */
 .ts-data-nav-select {
   display: none;
   gap: var(--ts-s2);
@@ -135,15 +128,11 @@
   white-space: nowrap;
 }
 
-/* Query results: one row per result row and one column per field. The table
-   scrolls inside a bounded frame and keeps its header in view. */
 .ts-data-result-wrap {
   max-height: min(70vh, 640px);
   overflow: auto;
 }
 
-/* Separate borders move with the sticky header; collapsed ones stay behind
-   in the table grid. The header draws its divider as a shadow. */
 .ts-data-result {
   border-collapse: separate;
   border-spacing: 0;
@@ -167,7 +156,6 @@
   white-space: nowrap;
 }
 
-/* Numeric columns align right and grow to fit instead of cutting digits. */
 .ts-data-result td.ts-num {
   max-width: none;
 }
@@ -193,6 +181,24 @@
   flex-wrap: wrap;
 }
 
+@container page (width < 560px) {
+  .ts-data-sql-history {
+    flex: 1 0 100%;
+    max-width: none;
+    margin-right: 0;
+  }
+
+  .ts-data-sql-toolbar .ts-kbd {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .ts-data-sql-toolbar .ts-kbd {
+    display: none;
+  }
+}
+
 .ts-data-nav .ts-input-group > svg {
   position: absolute;
   top: 50%;
@@ -210,4 +216,8 @@
 
 .ts-data-sql #saved-queries .ts-rows > li {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#sql-output:not(:has(*)) {
+  display: none;
 }

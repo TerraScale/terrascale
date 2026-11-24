@@ -5,7 +5,7 @@
     @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "logs", Databases: Model.Shell.Context.Project?.Databases.Values)))
     <h1 class="ts-sr-only">Logs</h1>
     <section class="ts-card" id="request-logs" aria-labelledby="request-logs-title">
-        <header class="ts-card-head">
+        <header class="ts-card-head ts-card-head-title-actions">
             <div class="ts-card-heading"><h2 class="ts-card-title" id="request-logs-title">Request logs</h2></div>
             <div class="ts-card-actions">
                 <form id="request-log-filters" method="get" data-on:submit="evt.preventDefault(); const url = new URL(el.getAttribute('action'), window.location.origin); url.search = new URLSearchParams(new FormData(el)).toString(); history.replaceState(null, '', url); @@get(url.toString(), {retryMaxCount: 0})" class="ts-filters" action="@DatabaseService.Path(Model.Database.Id, "logs")">

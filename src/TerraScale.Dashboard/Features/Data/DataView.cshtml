@@ -14,7 +14,7 @@
         <script type="application/json" id="sql-diagnostics" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(new { sql = Model.Sql, diagnostics = Model.Sql.Trim().Length == 0 ? [] : SqlValidation.Diagnostics(Model.Sql) }, new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
         <div class="ts-columns">
             <div class="ts-columns-main">
-                <section class="ts-card" id="sql-editor" aria-labelledby="sql-editor-title">
+                <section class="ts-card ts-card-boxed" id="sql-editor" aria-labelledby="sql-editor-title">
                     <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-editor-title">Query</h2></div></header>
                     <div class="ts-card-body">
                         <form id="sql-query-form" method="post" action="/api/v1/dashboard/data/sql" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})">

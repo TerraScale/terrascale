@@ -172,12 +172,13 @@
 
 .ts-billing-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--ts-s4);
 }
 
 .ts-plan {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-row: span 4;
   grid-template-rows: subgrid;
   gap: var(--ts-s4);
@@ -186,6 +187,40 @@
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
+}
+
+.ts-plan-enterprise {
+  grid-column: 1 / -1;
+  grid-row: auto;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr;
+  align-items: start;
+  gap: var(--ts-s2) var(--ts-s6);
+}
+
+.ts-plan-enterprise > .ts-plan-head {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.ts-plan-enterprise > .ts-plan-pricing {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.ts-plan-enterprise > .ts-plan-features {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ts-s2) var(--ts-s4);
+  padding-top: 0;
+  border-top: 0;
+}
+
+.ts-plan-enterprise > .ts-plan-action {
+  grid-column: 3;
+  grid-row: 1 / -1;
+  align-self: center;
 }
 
 .ts-plan-current {
@@ -252,6 +287,58 @@
 
 .ts-plan-action {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+
+.ts-plan-action > form {
+  min-width: 0;
+}
+
+.ts-plan-action .ts-btn {
+  height: auto;
+  min-height: var(--ts-control-h);
+  padding: var(--ts-s2) var(--ts-s3);
+  line-height: var(--ts-lh-tight);
+  text-align: center;
+  white-space: normal;
+}
+
+@container page (width < 960px) {
+  .ts-billing-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ts-plan-enterprise {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: var(--ts-s4);
+  }
+
+  .ts-plan-enterprise > :is(.ts-plan-head, .ts-plan-pricing, .ts-plan-features, .ts-plan-action) {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .ts-plan-enterprise > .ts-plan-features {
+    padding-top: var(--ts-s4);
+    border-top: 1px solid var(--ts-line);
+  }
+}
+
+@container page (width < 480px) {
+  .ts-billing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-plan {
+    grid-row: auto;
+    grid-template-rows: auto;
+  }
+
+  .ts-plan-enterprise > .ts-plan-features {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ts-billing-options {
@@ -268,6 +355,7 @@
 }
 
 .ts-billing-interval .ts-segment {
+  gap: var(--ts-s1);
   cursor: pointer;
 }
 
@@ -378,6 +466,18 @@
 
   .ts-billing-invoices .ts-table-actions {
     gap: 0;
+  }
+
+  #recent-invoices > .ts-card-head {
+    padding-inline: var(--ts-s4);
+  }
+
+  #recent-invoices .ts-card-actions {
+    flex: 1 1 100%;
+  }
+
+  .ts-billing-history-filters {
+    width: 100%;
   }
 
   .ts-billing-history-filters > .ts-select {
