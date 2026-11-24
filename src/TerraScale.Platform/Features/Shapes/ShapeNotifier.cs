@@ -6,7 +6,7 @@ public sealed class ShapeNotifier(TimeProvider timeProvider)
 {
     private static readonly TimeSpan IdleFor = TimeSpan.FromMinutes(1);
     private readonly Lock _gate = new();
-    private readonly Dictionary<Ulid, Feed> _feeds = [];
+    private readonly Dictionary<Ulid, Pulse> _pulses = [];
     private long _generation;
     private long _sweptAt = timeProvider.GetTimestamp();
 
@@ -21,17 +21,17 @@ public sealed class ShapeNotifier(TimeProvider timeProvider)
     public async Task<bool> WaitAsync(Ulid database, long seen, TimeSpan timeout, CancellationToken cancellationToken)
     {
         Task signal;
-        Feed feed;
+        Pulse pulse;
         lock (_gate)
         {
-            feed = Touch(database);
-            if (feed.Version != seen)
+            pulse = Touch(database);
+            if (pulse.Version != seen)
             {
                 return true;
             }
 
-            feed.Waiters++;
-            signal = feed.Signal.Task;
+            pulse.Waiters++;
+            signal = pulse.Signal.Task;
         }
 
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -39,9 +39,9 @@ public sealed class ShapeNotifier(TimeProvider timeProvider)
         await stop.CancelAsync();
         lock (_gate)
         {
-            feed.Waiters--;
-            feed.TouchedAt = timeProvider.GetTimestamp();
-            return feed.Version != seen;
+            pulse.Waiters--;
+            pulse.TouchedAt = timeProvider.GetTimestamp();
+            return pulse.Version != seen;
         }
     }
 
@@ -50,11 +50,11 @@ public sealed class ShapeNotifier(TimeProvider timeProvider)
         TaskCompletionSource? fired = null;
         lock (_gate)
         {
-            if (_feeds.TryGetValue(database, out var feed))
+            if (_pulses.TryGetValue(database, out var pulse))
             {
-                feed.Version = ++_generation;
-                fired = feed.Signal;
-                feed.Signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                pulse.Version = ++_generation;
+                fired = pulse.Signal;
+                pulse.Signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             }
 
             Sweep();
@@ -63,13 +63,13 @@ public sealed class ShapeNotifier(TimeProvider timeProvider)
         _ = fired?.TrySetResult();
     }
 
-    private Feed Touch(Ulid database)
+    private Pulse Touch(Ulid database)
     {
         Sweep();
-        ref var feed = ref CollectionsMarshal.GetValueRefOrAddDefault(_feeds, database, out _);
-        feed ??= new Feed(++_generation);
-        feed.TouchedAt = timeProvider.GetTimestamp();
-        return feed;
+        ref var pulse = ref CollectionsMarshal.GetValueRefOrAddDefault(_pulses, database, out _);
+        pulse ??= new Pulse(++_generation);
+        pulse.TouchedAt = timeProvider.GetTimestamp();
+        return pulse;
     }
 
     private void Sweep()
@@ -80,13 +80,13 @@ public sealed class ShapeNotifier(TimeProvider timeProvider)
         }
 
         _sweptAt = timeProvider.GetTimestamp();
-        foreach (var (database, feed) in _feeds.Where(entry => entry.Value.Waiters == 0 && timeProvider.GetElapsedTime(entry.Value.TouchedAt) >= IdleFor).ToArray())
+        foreach (var (database, pulse) in _pulses.Where(entry => entry.Value.Waiters == 0 && timeProvider.GetElapsedTime(entry.Value.TouchedAt) >= IdleFor).ToArray())
         {
-            _ = _feeds.Remove(database);
+            _ = _pulses.Remove(database);
         }
     }
 
-    private sealed class Feed(long version)
+    private sealed class Pulse(long version)
     {
         public long Version { get; set; } = version;
 
