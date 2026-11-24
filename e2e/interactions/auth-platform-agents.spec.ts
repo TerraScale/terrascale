@@ -117,6 +117,7 @@ test('a TerraScale account enrolls an agent, the dashboard exchanges its token f
       saveSecret('platform-agent-project-token', projectAccess);
       expect((await request.get(databases, { headers: { Authorization: 'Bearer ' + projectAccess } })).status()).toBe(200);
       const projectClaims = claims(projectAccess);
+      expect(projectClaims.exp as number).toBeLessThanOrEqual(acting.exp as number);
       expect(projectClaims).toMatchObject({ sub: ownerId, agent_id: agentId, act: { sub: agentId }, org_id: current.organizationId, project_id: current.projectId });
       expect((projectClaims.scope as string).split(' ').sort()).toEqual(['databases:read', 'databases:write', 'sql:read', 'sql:write']);
       expect(await exchangeForProject(request, exchanged, current.organizationId, current.projectId, 'auth:read'))

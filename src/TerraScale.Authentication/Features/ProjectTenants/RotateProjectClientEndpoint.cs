@@ -11,6 +11,8 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenIddictApplicationManager applications, PlatformAuthentication authentication,
     StepUpProofs proofs, TimeProvider clock) : ProjectTenantEndpoint(tenants, authentication)
 {
+    protected override bool PersonOnly => true;
+
     public override void Configure()
     {
         Post(Root + "/clients/{client_id}/secret/rotate");

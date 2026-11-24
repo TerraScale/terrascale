@@ -519,7 +519,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
         if (caller.ActingAgentId is not null && !IsRead(this.HttpContext.Request.Method)
             && !(this.AgentMayWrite && caller.ActingAgentScopes.Contains(AgentDirectory.McpWrite, StringComparer.Ordinal)))
         {
-            return TypedResults.Json(new ErrorBody(new ErrorDetail(AgentForbiddenCode, AgentForbiddenMessage)), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status403Forbidden);
+            return AgentForbidden();
         }
 
         return await this.HandleAsync(caller, cancellationToken);
@@ -529,11 +529,9 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
 
     protected static ApiException Invalid(string message) => new(StatusCodes.Status400BadRequest, "invalid_request", message);
 
-    private const string AgentForbiddenCode = "agent_forbidden";
-
-    private const string AgentForbiddenMessage = "An AI agent acting for the account cannot do this. The account owner must do it with their own sign-in.";
-
-    public static ApiException AgentForbidden() => new(StatusCodes.Status403Forbidden, AgentForbiddenCode, AgentForbiddenMessage);
+    protected static IResult AgentForbidden() => TypedResults.Json(
+        new ErrorBody(new ErrorDetail("agent_forbidden", "An AI agent acting for the account cannot do this. The account owner must do it with their own sign-in.")),
+        PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status403Forbidden);
 
     private static bool IsRead(string method) => HttpMethods.IsGet(method) || HttpMethods.IsHead(method);
 

@@ -75,8 +75,15 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 
     protected TenantDirectory Tenants { get; } = tenants;
 
+    protected virtual bool PersonOnly => false;
+
     protected sealed override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
+        if (this.PersonOnly && caller.ActingAgentId is not null)
+        {
+            return AgentForbidden();
+        }
+
         var person = new ProjectCaller.SignedIn(caller);
         await this.BeforeWriteAsync(person, cancellationToken);
         return await this.HandleAsync(person, cancellationToken);

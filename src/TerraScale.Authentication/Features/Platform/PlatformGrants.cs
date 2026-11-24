@@ -213,6 +213,11 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(OidcErrors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }
 
+        if (agentId is not null)
+        {
+            context.Items[AgentExchange.SubjectExpiry] = expires;
+        }
+
         var lifetime = expires - clock.GetUtcNow();
         var identity = Identity(user.Id, organization, project, requested.IsEmpty ? allowed : requested, lifetime < Lifetime ? lifetime : Lifetime)
             .SetClaim("token_use", "user")
