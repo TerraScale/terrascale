@@ -11,6 +11,8 @@ pub use custom_tokens::CustomToken;
 mod organizations;
 pub use organizations::*;
 
+use std::fmt;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -271,7 +273,7 @@ pub struct UserProfile {
     pub unsafe_metadata: Option<serde_json::Map<String, Value>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CreateProjectUser {
     pub email: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -280,7 +282,17 @@ pub struct CreateProjectUser {
     pub profile: UserProfile,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+impl fmt::Debug for CreateProjectUser {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateProjectUser")
+            .field("email", &self.email)
+            .field("password", &"<redacted>")
+            .field("profile", &self.profile)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportProjectUser {
     pub email: String,
     pub email_verified: bool,
@@ -288,6 +300,17 @@ pub struct ImportProjectUser {
     pub password_hash: Option<String>,
     #[serde(flatten)]
     pub profile: UserProfile,
+}
+
+impl fmt::Debug for ImportProjectUser {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImportProjectUser")
+            .field("email", &self.email)
+            .field("email_verified", &self.email_verified)
+            .field("password_hash", &"<redacted>")
+            .field("profile", &self.profile)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -384,7 +407,7 @@ pub struct ProjectUserExportPage {
 
 /// A federated provider's credentials; an omitted `client_secret` keeps the
 /// stored one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectProviderUpdate {
     /// Client id at the provider.
     pub client_id: String,
@@ -406,6 +429,20 @@ pub struct ProjectProviderUpdate {
     /// Custom OAuth2 endpoints and claims.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth2: Option<ProjectOAuth2>,
+}
+
+impl fmt::Debug for ProjectProviderUpdate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProjectProviderUpdate")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field("issuer", &self.issuer)
+            .field("team_id", &self.team_id)
+            .field("key_id", &self.key_id)
+            .field("tenant", &self.tenant)
+            .field("oauth2", &self.oauth2)
+            .finish()
+    }
 }
 
 /// One live end-user session; revoking it signs the session out.
@@ -435,7 +472,7 @@ pub struct ProjectSessionPage {
 
 /// A project's registered OAuth client; `client_secret` appears only on
 /// confidential creation and rotation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectClient {
     /// Client id.
     pub client_id: String,
@@ -456,6 +493,22 @@ pub struct ProjectClient {
     pub allowed_audiences: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_lifetime_minutes: Option<i32>,
+}
+
+impl fmt::Debug for ProjectClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProjectClient")
+            .field("client_id", &self.client_id)
+            .field("name", &self.name)
+            .field("type", &self.r#type)
+            .field("redirect_uris", &self.redirect_uris)
+            .field("created_at", &self.created_at)
+            .field("client_secret", &"<redacted>")
+            .field("allowed_scopes", &self.allowed_scopes)
+            .field("allowed_audiences", &self.allowed_audiences)
+            .field("token_lifetime_minutes", &self.token_lifetime_minutes)
+            .finish()
+    }
 }
 
 /// One cursor page of the project's OAuth clients.
@@ -502,7 +555,7 @@ pub struct UpdateProjectClient {
 
 /// A rotated client secret, answered exactly once; the previous secret keeps
 /// working until `previous_secret_expires_at`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectClientSecret {
     /// Client id.
     pub client_id: String,
@@ -511,6 +564,19 @@ pub struct ProjectClientSecret {
     /// When the previous secret stops working, when a grace was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_secret_expires_at: Option<String>,
+}
+
+impl fmt::Debug for ProjectClientSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProjectClientSecret")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field(
+                "previous_secret_expires_at",
+                &self.previous_secret_expires_at,
+            )
+            .finish()
+    }
 }
 
 fn validate_cursor(cursor: &str) -> Result<()> {

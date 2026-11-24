@@ -15,6 +15,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
+use tokio::time::{interval_at, timeout, timeout_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::Message;
 
 use super::client::WebSocket;
@@ -32,6 +33,11 @@ use crate::consistency::{ConsistencyMode, BOOKMARK_HEADER, CONSISTENCY_HEADER};
 pub const SQL_SUBPROTOCOL: &str = "terrascale.sql.v2";
 /// Maximum bytes of one client frame.
 pub const MAX_SQL_FRAME_BYTES: usize = 1 << 20;
+
+const FRAME_DEADLINE: Duration = Duration::from_secs(30);
+const PING_INTERVAL: Duration = Duration::from_secs(10);
+
+type SocketSink = tokio::sync::Mutex<SplitSink<WebSocket, Message>>;
 
 #[derive(Serialize)]
 struct Frame<'a> {
@@ -80,7 +86,7 @@ impl Wire {
 
 /// One open socket.
 struct Link {
-    sink: tokio::sync::Mutex<SplitSink<WebSocket, Message>>,
+    sink: Arc<SocketSink>,
     wire: Arc<Wire>,
     reader: tokio::task::AbortHandle,
 }
@@ -417,7 +423,7 @@ impl SqlSession {
                 });
             };
             let mut sink = link.sink.lock().await;
-            let (waiter, answer) = oneshot::channel();
+            let (waiter, mut answer) = oneshot::channel();
             {
                 let state = lock(&self.shared.state);
                 if state.uncertain {
@@ -445,18 +451,34 @@ impl SqlSession {
                 link: link.clone(),
                 id,
             };
-            if let Err(error) = sink.send(Message::Text(frame.as_str().into())).await {
-                fail(&link.wire, &self.shared, &error.to_string());
+            let deadline = Instant::now() + FRAME_DEADLINE;
+            let failure =
+                match timeout_at(deadline, sink.send(Message::Text(frame.as_str().into()))).await {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(error.to_string()),
+                    Err(_) => Some("sending the SQL frame timed out".into()),
+                };
+            if let Some(reason) = failure {
+                fail(&link.wire, &self.shared, &reason);
                 return if lock(&self.shared.state).uncertain {
                     Err(Error::CommitUncertain)
                 } else {
-                    Err(Error::Transport(format!("SQL session: {error}")))
+                    Err(Error::Transport(format!("SQL session: {reason}")))
                 };
             }
             drop(sink);
-            let answer = answer
-                .await
-                .unwrap_or_else(|_| Err(Error::Transport("SQL session closed".into())))?;
+            let answer = match timeout_at(deadline, &mut answer).await {
+                Ok(result) => result,
+                Err(_) => {
+                    fail(
+                        &link.wire,
+                        &self.shared,
+                        "waiting for the SQL answer timed out",
+                    );
+                    answer.await
+                }
+            }
+            .unwrap_or_else(|_| Err(Error::Transport("SQL session closed".into())))?;
             drop(flight);
             return match answer.error {
                 Some(error) => Err(Error::Sql {
@@ -530,13 +552,19 @@ impl SqlSession {
             )
             .await?;
         let (sink, stream) = socket.split();
+        let sink = Arc::new(tokio::sync::Mutex::new(sink));
         let wire = Arc::new(Wire {
             pending: Mutex::new(Some(HashMap::new())),
             transaction: AtomicBool::new(false),
         });
-        let reader = tokio::spawn(read(stream, wire.clone(), Arc::downgrade(&self.shared)));
+        let reader = tokio::spawn(read(
+            stream,
+            sink.clone(),
+            wire.clone(),
+            Arc::downgrade(&self.shared),
+        ));
         let link = Arc::new(Link {
-            sink: tokio::sync::Mutex::new(sink),
+            sink,
             wire,
             reader: reader.abort_handle(),
         });
@@ -554,17 +582,26 @@ impl SqlSession {
 
 /// Delivers answers by id until the socket ends, then fails every call in
 /// flight and records a transaction lost with it.
-async fn read(mut stream: SplitStream<WebSocket>, wire: Arc<Wire>, shared: Weak<Shared>) {
+async fn read(
+    mut stream: SplitStream<WebSocket>,
+    sink: Arc<SocketSink>,
+    wire: Arc<Wire>,
+    shared: Weak<Shared>,
+) {
+    let keepalive = keepalive(&sink);
+    tokio::pin!(keepalive);
     let reason = loop {
-        match stream.next().await {
+        let message = tokio::select! {
+            message = timeout(FRAME_DEADLINE, stream.next()) => match message {
+                Ok(message) => message,
+                Err(_) => break "reading a SQL WebSocket frame timed out".into(),
+            },
+            reason = &mut keepalive => break reason,
+        };
+        match message {
             Some(Ok(Message::Text(text))) => match serde_json::from_str::<Answer>(&text) {
                 Ok(answer) => {
-                    let uncertain = answer.error.as_ref().is_some_and(|error| {
-                        matches!(
-                            error.code.as_str(),
-                            "write_outcome_unknown" | "commit_uncertain"
-                        )
-                    });
+                    let uncertain = answer.error.as_ref().is_some_and(SqlError::is_uncertain);
                     let waiter = if let Some(shared) = shared.upgrade() {
                         if let Some(bookmark) = answer.bookmark.as_deref() {
                             shared.db.bookmark_tracker().observe(bookmark);
@@ -615,6 +652,26 @@ async fn read(mut stream: SplitStream<WebSocket>, wire: Arc<Wire>, shared: Weak<
     };
     if let Some(shared) = shared.upgrade() {
         fail(&wire, &shared, &reason);
+    }
+}
+
+async fn keepalive(sink: &SocketSink) -> String {
+    let mut ticks = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+    ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        ticks.tick().await;
+        match timeout(FRAME_DEADLINE, async {
+            sink.lock()
+                .await
+                .send(Message::Ping(Default::default()))
+                .await
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return error.to_string(),
+            Err(_) => return "sending a SQL WebSocket ping timed out".into(),
+        }
     }
 }
 

@@ -214,7 +214,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}",
             self.project(project)?,
-            percent_encode(org)
+            path_id(org, "org")?
         );
         self.send_typed(
             "auth_projects.get_organization",
@@ -236,7 +236,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}",
             self.project(project)?,
-            percent_encode(org)
+            path_id(org, "org")?
         );
         let body = serde_json::to_value(request).map_err(invalid_body)?;
         self.send_typed(
@@ -258,7 +258,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}",
             self.project(project)?,
-            percent_encode(org)
+            path_id(org, "org")?
         );
         self.send_no_content(
             "auth_projects.delete_organization",
@@ -279,7 +279,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/memberships",
             self.project(project)?,
-            percent_encode(org)
+            path_id(org, "org")?
         );
         let body = serde_json::to_value(request).map_err(invalid_body)?;
         self.send_typed(
@@ -303,7 +303,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/memberships{}",
             self.project(project)?,
-            percent_encode(org),
+            path_id(org, "org")?,
             self.page_query(None, limit, after)?
         );
         self.send_typed(
@@ -327,8 +327,8 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/memberships/{}",
             self.project(project)?,
-            percent_encode(org),
-            percent_encode(user)
+            path_id(org, "org")?,
+            path_id(user, "user")?
         );
         let body = serde_json::to_value(request).map_err(invalid_body)?;
         self.send_typed(
@@ -351,8 +351,8 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/memberships/{}",
             self.project(project)?,
-            percent_encode(org),
-            percent_encode(user)
+            path_id(org, "org")?,
+            path_id(user, "user")?
         );
         self.send_no_content(
             "auth_projects.delete_organization_member",
@@ -373,7 +373,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/invitations",
             self.project(project)?,
-            percent_encode(org)
+            path_id(org, "org")?
         );
         let body = serde_json::to_value(request).map_err(invalid_body)?;
         self.send_typed(
@@ -397,7 +397,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/invitations{}",
             self.project(project)?,
-            percent_encode(org),
+            path_id(org, "org")?,
             self.page_query(None, limit, after)?
         );
         self.send_typed(
@@ -420,8 +420,8 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/invitations/{}",
             self.project(project)?,
-            percent_encode(org),
-            percent_encode(invitation)
+            path_id(org, "org")?,
+            path_id(invitation, "invitation")?
         );
         self.send_no_content(
             "auth_projects.revoke_organization_invitation",
@@ -442,7 +442,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/domains",
             self.project(project)?,
-            percent_encode(org)
+            path_id(org, "org")?
         );
         let body = serde_json::to_value(request).map_err(invalid_body)?;
         self.send_typed(
@@ -464,7 +464,7 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/domains",
             self.project(project)?,
-            percent_encode(org)
+            path_id(org, "org")?
         );
         self.send_typed(
             "auth_projects.list_organization_domains",
@@ -486,8 +486,8 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/domains/{}/verify",
             self.project(project)?,
-            percent_encode(org),
-            percent_encode(domain)
+            path_id(org, "org")?,
+            path_id(domain, "domain")?
         );
         self.send_typed(
             "auth_projects.verify_organization_domain",
@@ -509,8 +509,8 @@ impl ProjectsClient {
         let path = format!(
             "/{}/organizations/{}/domains/{}",
             self.project(project)?,
-            percent_encode(org),
-            percent_encode(domain)
+            path_id(org, "org")?,
+            path_id(domain, "domain")?
         );
         self.send_no_content(
             "auth_projects.delete_organization_domain",

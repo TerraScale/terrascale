@@ -136,6 +136,10 @@ pub struct SqlError {
 }
 
 impl SqlError {
+    pub(super) fn is_uncertain(&self) -> bool {
+        uncertain_write_code(&self.code)
+    }
+
     /// True when sending the same request again can succeed.
     #[must_use]
     pub fn is_transient(&self) -> bool {
@@ -322,10 +326,7 @@ impl Error {
             Self::Response {
                 mutation, error, ..
             } => *mutation && error.is_uncertain(),
-            Self::Sql { error, .. } => matches!(
-                error.code.as_str(),
-                "write_outcome_unknown" | "commit_uncertain"
-            ),
+            Self::Sql { error, .. } => error.is_uncertain(),
             Self::CommitUncertain
             | Self::InternalError
             | Self::Transport(_)
@@ -334,14 +335,20 @@ impl Error {
                 may_have_applied, ..
             } => *may_have_applied,
             Self::Api { status, code, .. } => {
-                matches!(
-                    code.as_str(),
-                    "commit_uncertain" | "write_outcome_unknown" | "internal_error"
-                ) || (500..600).contains(status) && code == &format!("http_{status}")
+                uncertain_write_code(code)
+                    || code == "internal_error"
+                    || (500..600).contains(status) && code == &format!("http_{status}")
             }
             _ => false,
         }
     }
+}
+
+fn uncertain_write_code(code: &str) -> bool {
+    matches!(
+        code,
+        "write_outcome_unknown" | "commit_uncertain" | "in_region_quorum_unconfirmed"
+    )
 }
 
 /// Maps a project API failure without discarding its HTTP diagnostics.

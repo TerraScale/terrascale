@@ -679,11 +679,15 @@ fn validate_slug(slug: &str) -> Result<()> {
 pub(crate) fn path_id(value: &str, field: &str) -> Result<String> {
     validate_non_empty(value, field)?;
     let trimmed = value.trim();
-    if trimmed == "." || trimmed == ".." {
+    if matches!(trimmed, "." | "..")
+        || value
+            .chars()
+            .any(|ch| matches!(ch, '/' | '\\') || ch.is_control())
+    {
         return Err(Error::new(
             ErrorKind::Validation,
             format!("invalid_{field}"),
-            "Path segments cannot be \".\" or \"..\".",
+            "Path segments cannot be \".\" or \"..\" or contain slashes, backslashes, or control characters.",
         ));
     }
     Ok(percent_encode(trimmed))

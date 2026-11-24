@@ -232,8 +232,10 @@ impl Client {
             ));
         }
         check_ttl(options.ttl_seconds, 2_592_000)?;
-        self.send_scoped_key(options)
-            .await?
-            .decode_status(&[StatusCode::CREATED])
+        let mut response = self.send_scoped_key(options).await?;
+        let body = std::mem::take(&mut response.body);
+        response.check_status(&[StatusCode::CREATED])?;
+        serde_json::from_slice(&body)
+            .map_err(|_| response.invalid("invalid scoped key response".into()))
     }
 }
