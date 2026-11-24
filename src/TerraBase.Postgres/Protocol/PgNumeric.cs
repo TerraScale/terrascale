@@ -70,7 +70,7 @@ internal static class PgNumeric
         var scale = BinaryPrimitives.ReadInt16BigEndian(value[6..]);
         if (sign == NotANumber)
         {
-            return count == 0 && value.Length == 8 && TrySet(out text, "NaN");
+            return count == 0 && weight == 0 && scale == 0 && value.Length == 8 && TrySet(out text, "NaN");
         }
 
         if (sign is not (Positive or Negative) || count is < 0 or > MaxGroups || scale is < 0 or > MaxScale

@@ -19,7 +19,7 @@ internal sealed class PgWire(IDuplexPipe transport, TimeProvider timeProvider) :
         {
             await tls.AuthenticateAsServerAsync(options, cancellationToken);
         }
-        catch (Exception error) when (error is AuthenticationException or IOException)
+        catch (Exception error) when (error is AuthenticationException or IOException or OperationCanceledException)
         {
             await tls.DisposeAsync();
             return false;

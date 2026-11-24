@@ -23,7 +23,7 @@ internal sealed class PgPreparedStatement(string name, PgCommand command, int[] 
 
 internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlValue> parameters, long parameterBytes, short[] resultFormats)
 {
-    private long? _resultBytes;
+    private long _resultBytes;
 
     public PgPreparedStatement Statement => statement;
 
@@ -31,17 +31,23 @@ internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlV
 
     public short[] ResultFormats => resultFormats;
 
-    public PgResult? Result
+    public PgResult? Result { get; private set; }
+
+    public long ParameterBytes => parameterBytes;
+
+    public long Bytes => parameterBytes + _resultBytes;
+
+    public void Hold(PgResult result, long bytes)
     {
-        get;
-        set
-        {
-            field = value;
-            _resultBytes = null;
-        }
+        Result = result;
+        _resultBytes = bytes;
     }
 
-    public long Bytes => parameterBytes + (_resultBytes ??= Result is { } result ? PgValueCodec.Footprint(result.Rows) : 0);
+    public void Release()
+    {
+        Result = null;
+        _resultBytes = 0;
+    }
 
     public int Position { get; set; }
 
@@ -107,6 +113,18 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
         }
 
         return total;
+    }
+
+    public bool TryHold(string name, PgPortal portal, PgResult result)
+    {
+        var bytes = PgValueCodec.Footprint(result.Rows);
+        if (PortalBytes(except: name) + portal.ParameterBytes + bytes > PostgresLimits.MaxPortalBytes)
+        {
+            return false;
+        }
+
+        portal.Hold(result, bytes);
+        return true;
     }
 
     public Dictionary<string, string> PendingReports { get; } = new(StringComparer.Ordinal);

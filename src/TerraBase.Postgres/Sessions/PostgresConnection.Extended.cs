@@ -175,7 +175,7 @@ internal sealed partial class PostgresConnection
         }
 
         var budget = PostgresLimits.MaxPortalBytes - session.PortalBytes(except: message.Portal);
-        long bytes = 0;
+        var bytes = PgValueCodec.Footprint(message.ResultFormats);
         var values = new SqlValue[message.Parameters.Length];
         for (var index = 0; index < values.Length; index++)
         {
@@ -192,6 +192,11 @@ internal sealed partial class PostgresConnection
             {
                 return PgErrors.PortalMemory;
             }
+        }
+
+        if (bytes > budget)
+        {
+            return PgErrors.PortalMemory;
         }
 
         if (message.Portal.Length > 0 && session.Portals.ContainsKey(message.Portal))
@@ -260,13 +265,13 @@ internal sealed partial class PostgresConnection
                     return error;
                 }
 
-                portal.Result = executed.Result;
-                portal.Columns = executed.Result?.Columns;
-                if (session.PortalBytes() > PostgresLimits.MaxPortalBytes)
+                if (executed.Result is { } result && !session.TryHold(message.Name, portal, result))
                 {
                     session.Portals.Remove(message.Name);
                     return PgErrors.PortalMemory;
                 }
+
+                portal.Columns = executed.Result?.Columns;
             }
             else
             {
@@ -307,7 +312,8 @@ internal sealed partial class PostgresConnection
             return new PgError("34000", $"portal \"{message.Portal}\" does not exist");
         }
 
-        if (portal.Result is null)
+        var current = portal.Result;
+        if (current is null)
         {
             if (portal.Completed)
             {
@@ -326,24 +332,30 @@ internal sealed partial class PostgresConnection
                 return error;
             }
 
-            portal.Result = executed.Result;
+            current = executed.Result ?? PgResult.EmptyQuery;
         }
 
-        var current = portal.Result ?? PgResult.EmptyQuery;
         if (current.Tag is null)
         {
             Writer.Empty('I');
-            portal.Result = null;
+            portal.Release();
             portal.Completed = true;
             return null;
         }
 
         var shape = portal.Columns ?? current.Columns ?? [];
         var end = message.MaxRows > 0 ? Math.Min(current.Rows.Count, portal.Position + message.MaxRows) : current.Rows.Count;
+        if (end < current.Rows.Count && !ReferenceEquals(portal.Result, current) && !session.TryHold(message.Portal, portal, current))
+        {
+            session.Portals.Remove(message.Portal);
+            return PgErrors.PortalMemory;
+        }
+
         for (var index = portal.Position; index < end; index++)
         {
             if (Writer.DataRow(current.Rows[index], shape, portal.ResultFormats) is { } encodeError)
             {
+                session.Portals.Remove(message.Portal);
                 return encodeError;
             }
 
@@ -356,12 +368,6 @@ internal sealed partial class PostgresConnection
         portal.Position = end;
         if (end < current.Rows.Count)
         {
-            if (session.PortalBytes() > PostgresLimits.MaxPortalBytes)
-            {
-                session.Portals.Remove(message.Portal);
-                return PgErrors.PortalMemory;
-            }
-
             Writer.Empty('s');
             return null;
         }
@@ -372,7 +378,7 @@ internal sealed partial class PostgresConnection
         }
 
         Writer.CommandComplete(current.Tag);
-        portal.Result = null;
+        portal.Release();
         portal.Completed = true;
         return null;
     }

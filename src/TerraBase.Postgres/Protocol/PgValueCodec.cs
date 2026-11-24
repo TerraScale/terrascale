@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Unicode;
@@ -14,6 +15,7 @@ internal static class PgValueCodec
 {
     private const int TextFormatCode = 0;
     private const int BinaryFormatCode = 1;
+    private const int ObjectOverhead = 24;
     private static ReadOnlySpan<byte> HexDigits => "0123456789abcdef"u8;
 
     public static bool SupportsBinary(int oid) => PgOid.IsKnown(oid) && oid != PgOid.Unknown;
@@ -183,15 +185,19 @@ internal static class PgValueCodec
     public static string DecodeFailureState(int oid, short format) => format == BinaryFormatCode && oid == PgOid.Numeric ? "22P03" : "22P02";
 
     public static long Footprint(SqlValue value) =>
-        value.TryGetText(out var text) ? (long)text.Length * sizeof(char)
-        : value.TryGetBlob(out var blob) ? blob.Length
-        : sizeof(long);
+        Unsafe.SizeOf<SqlValue>()
+        + (value.TryGetText(out var text) ? ObjectOverhead + ((long)text.Length * sizeof(char))
+            : value.TryGetBlob(out var blob) ? ObjectOverhead + blob.Length
+            : 0);
+
+    public static long Footprint(IReadOnlyList<short> formats) => ObjectOverhead + ObjectOverhead + ((long)formats.Count * sizeof(short));
 
     public static long Footprint(IReadOnlyList<IReadOnlyList<SqlValue>> rows)
     {
-        long total = 0;
+        long total = ObjectOverhead;
         foreach (var row in rows)
         {
+            total += ObjectOverhead + IntPtr.Size;
             foreach (var value in row)
             {
                 total += Footprint(value);

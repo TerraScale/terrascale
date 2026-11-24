@@ -39,7 +39,8 @@ public sealed class PostgresConnectionHandler(
 
     private async Task ServeAsync(PgWire wire, IPAddress? client, CancellationToken closed)
     {
-        var startup = await NegotiateAsync(wire, closed);
+        var handshake = timeProvider.GetTimestamp();
+        var startup = await NegotiateAsync(wire, handshake, closed);
         if (startup is null)
         {
             return;
@@ -53,7 +54,7 @@ public sealed class PostgresConnectionHandler(
 
         try
         {
-            await AuthenticateAsync(wire, startup, client, closed);
+            await AuthenticateAsync(wire, startup, client, handshake, closed);
         }
         finally
         {
@@ -61,11 +62,14 @@ public sealed class PostgresConnectionHandler(
         }
     }
 
-    private async ValueTask<PgStartupMessage?> NegotiateAsync(PgWire wire, CancellationToken closed)
+    private TimeSpan HandshakeRemaining(long handshake) =>
+        PostgresLimits.HandshakeTimeout - timeProvider.GetElapsedTime(handshake) is var remaining && remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+
+    private async ValueTask<PgStartupMessage?> NegotiateAsync(PgWire wire, long handshake, CancellationToken closed)
     {
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            var (proceed, startup) = await NegotiateStepAsync(wire, closed);
+            var (proceed, startup) = await NegotiateStepAsync(wire, handshake, closed);
             if (!proceed || startup is not null)
             {
                 return startup;
@@ -76,9 +80,9 @@ public sealed class PostgresConnectionHandler(
         return null;
     }
 
-    private async ValueTask<(bool Proceed, PgStartupMessage? Startup)> NegotiateStepAsync(PgWire wire, CancellationToken closed)
+    private async ValueTask<(bool Proceed, PgStartupMessage? Startup)> NegotiateStepAsync(PgWire wire, long handshake, CancellationToken closed)
     {
-        var read = await wire.Reader.ReadStartupAsync(PostgresLimits.HandshakeTimeout);
+        var read = await wire.Reader.ReadStartupAsync(HandshakeRemaining(handshake));
         (PgStartupPacket? Packet, PgError? Error) received = read switch
         {
             PgStartupPacket value => (value, null),
@@ -94,14 +98,14 @@ public sealed class PostgresConnectionHandler(
         return received.Packet switch
         {
             null => (false, null),
-            PgSslRequest => (await NegotiateTlsAsync(wire, closed), null),
+            PgSslRequest => (await NegotiateTlsAsync(wire, handshake, closed), null),
             PgGssEncryptionRequest => (await DeclineAsync(wire, closed), null),
             PgCancelRequest cancel => (Cancel(cancel), null),
             PgStartupMessage message => await AcceptAsync(wire, message, closed) ? (true, message) : (false, null),
         };
     }
 
-    private async ValueTask<bool> NegotiateTlsAsync(PgWire wire, CancellationToken closed)
+    private async ValueTask<bool> NegotiateTlsAsync(PgWire wire, long handshake, CancellationToken closed)
     {
         if (options.Tls is not { } tls)
         {
@@ -109,7 +113,14 @@ public sealed class PostgresConnectionHandler(
         }
 
         wire.Writer.Raw((byte)'S');
-        return await wire.Writer.FlushAsync(closed) && await wire.UpgradeAsync(tls, closed);
+        if (!await wire.Writer.FlushAsync(closed))
+        {
+            return false;
+        }
+
+        using var deadline = new CancellationTokenSource(HandshakeRemaining(handshake), timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(closed, deadline.Token);
+        return await wire.UpgradeAsync(tls, linked.Token);
     }
 
     private static async ValueTask<bool> DeclineAsync(PgWire wire, CancellationToken closed)
@@ -141,7 +152,7 @@ public sealed class PostgresConnectionHandler(
         return true;
     }
 
-    private async Task AuthenticateAsync(PgWire wire, PgStartupMessage message, IPAddress? client, CancellationToken closed)
+    private async Task AuthenticateAsync(PgWire wire, PgStartupMessage message, IPAddress? client, long handshake, CancellationToken closed)
     {
         var user = message.Parameters["user"];
         var database = message.Parameters.TryGetValue("database", out var requested) && requested.Length > 0 ? requested : user;
@@ -158,7 +169,8 @@ public sealed class PostgresConnectionHandler(
             return;
         }
 
-        var read = await wire.Reader.ReadMessageAsync(PostgresLimits.HandshakeTimeout, PostgresLimits.HandshakeTimeout, closed);
+        var remaining = HandshakeRemaining(handshake);
+        var read = await wire.Reader.ReadMessageAsync(remaining, remaining, closed);
         var password = read switch
         {
             PgFrontendMessage frontend => frontend switch

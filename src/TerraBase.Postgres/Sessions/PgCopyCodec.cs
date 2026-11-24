@@ -32,12 +32,22 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
 
     public PgCopyRowsResult Complete()
     {
-        if (_finished || _start == _end)
+        if (_finished)
         {
             return new List<SqlValue[]>();
         }
 
-        return Drain(final: true);
+        PgCopyRowsResult drained = _start == _end ? new List<SqlValue[]>() : Drain(final: true);
+        if (options.Format != PgCopyFormat.Binary || _finished)
+        {
+            return drained;
+        }
+
+        return drained switch
+        {
+            List<SqlValue[]> => new PgError("22P04", "invalid COPY data", Detail: "binary COPY data ended without the file trailer"),
+            PgError error => error,
+        };
     }
 
     public void Dispose()
@@ -85,6 +95,11 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
                 case < 0:
                     return new PgError("22P04", "invalid COPY data", Detail: $"row {records.Count + 1}");
                 case 0:
+                    if (final)
+                    {
+                        return new PgError("22P04", "invalid COPY data", Detail: $"row {records.Count + 1} is incomplete at the end of the data");
+                    }
+
                     if (_end - _start > PostgresLimits.MaxCopyRecordBytes)
                     {
                         return new PgError("54000", "COPY row exceeds the maximum record size");

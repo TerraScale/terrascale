@@ -18,6 +18,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
     public async ValueTask<PgStartupRead> ReadStartupAsync(TimeSpan timeout)
     {
+        var called = timeProvider.GetTimestamp();
         using var deadline = new CancellationTokenSource(timeout, timeProvider);
         while (true)
         {
@@ -45,7 +46,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                 {
                     var packet = Parse(buffer.Slice(4, length - 4), static body => ParseStartup(body));
                     input.AdvanceTo(buffer.GetPosition(length));
-                    return packet;
+                    return timeProvider.GetElapsedTime(called) >= timeout ? new PgIdleExpired() : packet;
                 }
             }
 
@@ -115,7 +116,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                     var message = Parse(buffer.Slice(5, length - 4), body => ParseMessage(type, body));
                     input.AdvanceTo(buffer.GetPosition(length + 1));
                     LastMessageStarted = started ?? timeProvider.GetTimestamp();
-                    return message;
+                    return ceiling is { } limit && timeProvider.GetElapsedTime(called) >= limit ? new PgIncompleteExpired() : message;
                 }
             }
 
@@ -229,7 +230,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         PgFrontendMessage? message = type switch
         {
             'p' => reader.TryCString(out var password) ? new PgPasswordMessage(password) : null,
-            'Q' => reader.TryCString(out var sql) ? new PgQueryMessage(sql) : null,
+            'Q' => ParseQuery(body),
             'P' => ParseParse(ref reader),
             'B' => ParseBind(ref reader),
             'D' => reader.TryByte(out var describeTarget) && reader.TryCString(out var describeName) && describeTarget is (byte)'S' or (byte)'P'
@@ -250,6 +251,9 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         };
         return message is null ? PgError.ProtocolViolation($"invalid message format for message type '{type}'") : message;
     }
+
+    private static PgQueryMessage? ParseQuery(ReadOnlySpan<byte> body) =>
+        body is [.. var sql, 0] && Utf8.IsValid(sql) ? new PgQueryMessage(Encoding.UTF8.GetString(sql)) : null;
 
     private static PgParseMessage? ParseParse(ref PgSpanReader reader)
     {
