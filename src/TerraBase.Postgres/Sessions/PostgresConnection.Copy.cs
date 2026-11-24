@@ -74,8 +74,8 @@ internal sealed partial class PostgresConnection
     }
 
     private PgError? CopyInterruption(long started) =>
-        _shuttingDown ? PgErrors.AdministratorShutdown
-        : _revoked ? PgErrors.CredentialRevoked
+        ShuttingDown ? PgErrors.AdministratorShutdown
+        : Revoked ? PgErrors.CredentialRevoked
         : session.Time.GetElapsedTime(started) >= PostgresLimits.MaxTransaction ? PgErrors.TransactionExpired
         : null;
 

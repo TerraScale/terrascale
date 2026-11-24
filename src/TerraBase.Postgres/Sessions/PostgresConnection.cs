@@ -12,6 +12,10 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
     private volatile bool _revoked;
     private volatile bool _shuttingDown;
 
+    private bool ShuttingDown => _shuttingDown || session.Grant.Shutdown.IsCancellationRequested;
+
+    private bool Revoked => _revoked || session.Grant.Revocation.IsCancellationRequested;
+
     private PgFrameReader Reader => wire.Reader;
 
     private PgBackendWriter Writer => wire.Writer;
@@ -42,13 +46,13 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         });
         while (true)
         {
-            if (_shuttingDown)
+            if (ShuttingDown)
             {
                 await FatalAsync(PgErrors.AdministratorShutdown);
                 return;
             }
 
-            if (_revoked)
+            if (Revoked)
             {
                 await FatalAsync(PgErrors.CredentialRevoked);
                 return;

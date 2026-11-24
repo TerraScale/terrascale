@@ -313,12 +313,19 @@ internal sealed partial class PostgresConnection
         }
 
         var current = portal.Result;
+        var deferredCommit = false;
         if (current is null)
         {
             if (portal.Completed)
             {
                 Writer.CommandComplete("SELECT 0");
                 return null;
+            }
+
+            deferredCommit = message.MaxRows > 0 && session.Transaction is null && portal.Statement.Command is PgSqlCommand { Access: SqlAccess.Write };
+            if (deferredCommit)
+            {
+                session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
             }
 
             var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, portal.Columns ?? portal.Statement.Columns);
@@ -337,6 +344,12 @@ internal sealed partial class PostgresConnection
 
         if (current.Tag is null)
         {
+            if (await CommitDeferredAsync(deferredCommit) is { } emptyCommitError)
+            {
+                session.Portals.Remove(message.Portal);
+                return emptyCommitError;
+            }
+
             Writer.Empty('I');
             portal.Release();
             portal.Completed = true;
@@ -365,6 +378,12 @@ internal sealed partial class PostgresConnection
             }
         }
 
+        if (await CommitDeferredAsync(deferredCommit) is { } commitError)
+        {
+            session.Portals.Remove(message.Portal);
+            return commitError;
+        }
+
         portal.Position = end;
         if (end < current.Rows.Count)
         {
@@ -382,6 +401,8 @@ internal sealed partial class PostgresConnection
         portal.Completed = true;
         return null;
     }
+
+    private async ValueTask<PgError?> CommitDeferredAsync(bool deferred) => deferred ? await EndImplicitAsync(commit: true) : null;
 
     private PgError? Close(PgCloseMessage message)
     {

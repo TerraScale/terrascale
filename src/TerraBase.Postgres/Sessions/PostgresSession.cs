@@ -35,7 +35,7 @@ internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlV
 
     public long ParameterBytes => parameterBytes;
 
-    public long Bytes => parameterBytes + _resultBytes;
+    public long Bytes => parameterBytes + PgValueCodec.Footprint(Columns) + _resultBytes;
 
     public void Hold(PgResult result, long bytes)
     {
@@ -117,8 +117,9 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
 
     public bool TryHold(string name, PgPortal portal, PgResult result)
     {
-        var bytes = PgValueCodec.Footprint(result.Rows) + PgValueCodec.Footprint(result.Columns);
-        if (PortalBytes(except: name) + portal.ParameterBytes + bytes > PostgresLimits.MaxPortalBytes)
+        var bytes = PgValueCodec.Footprint(result.Rows);
+        var columns = PgValueCodec.Footprint(portal.Columns ?? result.Columns);
+        if (PortalBytes(except: name) + portal.ParameterBytes + columns + bytes > PostgresLimits.MaxPortalBytes)
         {
             return false;
         }

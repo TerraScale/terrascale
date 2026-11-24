@@ -33,7 +33,7 @@ internal sealed partial class PostgresConnection
         }
         catch (OperationCanceledException) when (!closed.IsCancellationRequested)
         {
-            if (_shuttingDown)
+            if (ShuttingDown)
             {
                 return PgErrors.AdministratorShutdown;
             }
