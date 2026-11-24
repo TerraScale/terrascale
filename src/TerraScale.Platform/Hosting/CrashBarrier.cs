@@ -25,6 +25,11 @@ public sealed class CrashBarrier(RequestDelegate next, TerraBaseClient terraBase
 
             context.Abort();
         }
+        catch (BadHttpRequestException rejected) when (!context.Response.HasStarted)
+        {
+            context.Response.Clear();
+            await Rejected(rejected).ExecuteAsync(context);
+        }
         catch (Exception error)
         {
             logger.ZLogError(error, $"Unhandled failure serving {context.Request.Method} {context.Request.Path}");
@@ -35,6 +40,10 @@ public sealed class CrashBarrier(RequestDelegate next, TerraBaseClient terraBase
             }
         }
     }
+
+    private static ErrorResult Rejected(BadHttpRequestException rejected) => rejected.StatusCode == StatusCodes.Status413PayloadTooLarge
+        ? ErrorResults.From(new PlatformPayloadTooLarge("the request body is larger than this route accepts"))
+        : ErrorResults.From(new PlatformInvalidRequest("the request could not be read"));
 
     private static (string Project, string Database, string Path)? DatabaseTarget(string? path)
     {

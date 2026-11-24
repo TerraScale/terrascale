@@ -1,10 +1,13 @@
-import type { Page } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
+import type { APIResponse, Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
+import { signInToken, stepUp } from '../support/auth-management';
+import { createDedicatedProjectOwner } from '../support/project-owner';
 import { deployFunction, functionAccess, functionSource, functionTool, functionUrl } from '../support/functions';
 import { deletionHandoff, mcpTool } from '../support/mcp';
 import { confirmWithPassword } from '../support/hosted';
 import { journey, saveSecret } from '../support/state';
-import { production } from '../support/stack';
+import { auth, dash, production } from '../support/stack';
 
 const unique = (prefix: string) => `${prefix}-${journey().runId}${Date.now().toString(36)}`.toLowerCase();
 
@@ -576,4 +579,81 @@ test('function secrets are write-only, reach the next invocation and go away wit
   expect(await (await request.get(`${url}/secrets`, { headers })).json(), 'deleting the function deleted its secrets').toEqual([]);
   expect((await request.delete(url, { headers })).status()).toBe(204);
   console.log('Function secrets: REST set, invoke sees length and checksum only, list without values, MCP set/list/delete, panel save/delete, delete and function delete.');
+});
+
+test('guest and end-user tokens get 403 on every function route while developer credentials keep working', async ({ browser, request }, info) => {
+  const account = await createDedicatedProjectOwner(browser, info, 'Functions access owner');
+  const { current, page } = account;
+  const project = current.projectId;
+  const exchanged = await request.post(auth + '/terrascale/oauth/token', {
+    form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project,
+      scope: 'sql:read sql:write databases:read databases:write' },
+  });
+  expect(exchanged.status()).toBe(200);
+  const developerToken = (await exchanged.json()).access_token as string;
+  saveSecret('functions-access-developer-token', developerToken);
+  const developer = { Authorization: 'Bearer ' + developerToken };
+  const created = await request.post(`https://api.terrascale.tech/v1/projects/${project}/databases`,
+    { headers: developer, data: { name: 'functions-access-' + randomBytes(4).toString('hex') } });
+  expect(created.status(), await created.text()).toBe(201);
+  const databaseId = (await created.json()).id as string;
+  const functions = `https://api.terrascale.tech/v1/projects/${project}/databases/${databaseId}/functions`;
+  const url = `${functions}/${unique('access')}`;
+  const padding = 'x'.repeat(100_000);
+  const paddedSource = `const padding = "${padding}"; async function handler(event) { return { ok: padding.length === ${padding.length} }; }`;
+  const deployed = await request.put(url, { headers: developer, data: { source: paddedSource } });
+  expect(deployed.status(), 'a developer deploys a source larger than the 64 KiB pre-auth body limit').toBe(200);
+
+  const ownerToken = await signInToken(page.request, 'functions-access-owner');
+  const clients = await page.request.post(auth + '/v1/' + project + '/clients', {
+    headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': await stepUp(page.request, ownerToken, 'create_oauth_client', current.password) },
+    data: { name: 'Functions access journey', type: 'public', redirect_uris: [dash + '/auth/functions-access'], allow_anonymous: true },
+  });
+  expect(clients.status(), await clients.text()).toBe(201);
+  const guestIssued = await request.post(auth + '/' + project + '/oauth/anonymous', { form: { client_id: (await clients.json()).client_id as string } });
+  expect(guestIssued.status(), await guestIssued.text()).toBe(200);
+  const guestToken = (await guestIssued.json()).access_token as string;
+  saveSecret('functions-access-guest-token', guestToken);
+  const guestUser = JSON.parse(Buffer.from(guestToken.split('.')[1], 'base64url').toString()).sub as string;
+
+  const mintKeyCreated = await page.request.post(auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects/' + project + '/api-keys', {
+    headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: 'Functions access mint', scopes: ['auth:tokens:mint'] },
+  });
+  expect(mintKeyCreated.status(), await mintKeyCreated.text()).toBe(201);
+  const mintKey = (await mintKeyCreated.json()).key as string;
+  saveSecret('functions-access-mint-key', mintKey);
+  const minted = await request.post(auth + '/v1/' + project + '/custom-tokens', {
+    headers: { Authorization: 'Bearer ' + mintKey }, data: { user_id: guestUser, database: databaseId, claims: { plan: 'journey' } },
+  });
+  expect(minted.status(), await minted.text()).toBe(200);
+  const endUserToken = (await minted.json()).access_token as string;
+  saveSecret('functions-access-end-user-token', endUserToken);
+
+  const routes = (headers: Record<string, string>): [string, string, () => Promise<APIResponse>, number][] => [
+    ['PUT', '{function}', () => request.put(url, { headers, data: { source: functionSource } }), 200],
+    ['GET', '{function}', () => request.get(url, { headers }), 200],
+    ['GET', '', () => request.get(functions, { headers }), 200],
+    ['GET', '{function}/logs', () => request.get(url + '/logs', { headers }), 200],
+    ['GET', '{function}/stats', () => request.get(url + '/stats', { headers }), 200],
+    ['POST', '{function}/invoke', () => request.post(url + '/invoke', { headers, data: {} }), 200],
+    ['PUT', '{function}/secrets/API_TOKEN', () => request.put(url + '/secrets/API_TOKEN', { headers, data: { value: 'journey-secret' } }), 200],
+    ['GET', '{function}/secrets', () => request.get(url + '/secrets', { headers }), 200],
+    ['DELETE', '{function}/secrets/API_TOKEN', () => request.delete(url + '/secrets/API_TOKEN', { headers }), 204],
+    ['DELETE', '{function}', () => request.delete(url, { headers }), 204],
+  ];
+  for (const [label, token] of [['guest', guestToken], ['end user', endUserToken]] as const) {
+    for (const [method, path, send] of routes({ Authorization: 'Bearer ' + token })) {
+      const refused = await send();
+      const text = await refused.text();
+      console.log(`${label} ${method} …/functions/${path} -> ${refused.status()} ${text}`);
+      expect(refused.status(), `${label} ${method} ${path}: ${text}`).toBe(403);
+      expect(JSON.parse(text).error.code).toBe('developer_credential_required');
+    }
+  }
+
+  for (const [method, path, send, status] of routes(developer)) {
+    const answered = await send();
+    console.log(`developer ${method} …/functions/${path} -> ${answered.status()}`);
+    expect(answered.status(), `developer ${method} ${path}: ${await answered.text()}`).toBe(status);
+  }
 });

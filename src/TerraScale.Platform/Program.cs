@@ -16,6 +16,7 @@ try
     builder.Logging.ClearProviders().AddTerraScaleLogging("ts-platform");
     builder.WebHost.ConfigureKestrel(kestrel =>
     {
+        kestrel.Limits.MaxRequestBodySize = ClientAdmission.MaxRequestBodyBytes;
         kestrel.ListenAnyIP(options.Port, listen => listen.Protocols = HttpProtocols.Http1);
         kestrel.ListenAnyIP(options.MetricsPort, listen => listen.Protocols = HttpProtocols.Http1);
     });
@@ -92,17 +93,21 @@ try
         .WithHeaders("Authorization", "Content-Type", "If-None-Match", "TB-Shape-Resume", "X-TerraScale-Region-Pin", "TerraScale-Consistency", "TerraScale-Bookmark")
         .WithExposedHeaders("ETag", "Location", "Retry-After", "TerraScale-Bookmark", "TerraScale-Consistency", "TB-Shape-Hints", "TB-Shape-Cursor", "TB-Shape-Handle",
             "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "X-TerraBase-Region", "X-TerraBase-Machine", "X-Request-ID")));
+    services.AddRateLimiter(ClientAdmission.Configure);
     services.AddTerraScaleEndpoints(PlatformResponses.Configure);
 
     var app = builder.Build();
+    app.UseForwardedHeaders(ClientAdmission.Forwarding());
     app.UseTerraScaleRequestIdentity(() => Ulid.NewUlid().ToString(), options.PeerSecret);
     app.UseMiddleware<CrashBarrier>();
+    app.UseRateLimiter();
     app.UseCors();
     app.Use(static (context, next) =>
     {
         context.Response.Headers.CacheControl = "no-store";
         return next(context);
     });
+    app.UseMiddleware<RequestAdmission>();
     app.UseWebSockets();
     app.MapTerraScaleEndpoints();
     app.MapTerraScaleOpenApi();

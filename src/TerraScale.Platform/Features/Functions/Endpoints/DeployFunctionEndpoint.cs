@@ -12,6 +12,8 @@ public readonly union DeployFunctionReply(
 public sealed class DeployFunctionEndpoint(PlatformAccess access, FunctionService functions)
     : Endpoint<DeployFunctionRequest, DeployFunctionReply>
 {
+    private const long MaxBodyBytes = (FunctionRunner.MaxSourceChars * 6L) + ClientAdmission.MaxRequestBodyBytes;
+
     public override void Configure()
     {
         Put(FunctionNames.RouteItem);
@@ -19,6 +21,7 @@ public sealed class DeployFunctionEndpoint(PlatformAccess access, FunctionServic
         Summary("Deploys or replaces a function");
         Description(FunctionNames.Description + " Body {source, cron?}: at most 256 KiB of JavaScript that must parse; cron is five-field UTC. At most 32 functions per database.");
         Tags("Functions");
+        Metadata(new FunctionBodyLimit(MaxBodyBytes, Scopes.ReadWrite));
         AllowAnonymous();
     }
 
