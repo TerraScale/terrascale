@@ -12,7 +12,7 @@ public readonly union DeployFunctionReply(
 public sealed class DeployFunctionEndpoint(PlatformAccess access, FunctionService functions)
     : Endpoint<DeployFunctionRequest, DeployFunctionReply>
 {
-    private const long MaxBodyBytes = 2 * 1024 * 1024;
+    private const long MaxBodyBytes = 4 * 1024 * 1024;
 
     public override void Configure()
     {

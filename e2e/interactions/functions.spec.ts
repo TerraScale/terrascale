@@ -602,10 +602,10 @@ test('guest and end-user tokens get 403 on every function route while developer 
     databaseId = (await created.json()).id as string;
     const functions = `https://api.terrascale.tech/v1/projects/${project}/databases/${databaseId}/functions`;
     const url = `${functions}/${unique('access')}`;
-    const padding = 'x'.repeat(200_000);
+    const padding = '\u00e9'.repeat(200_000);
     const paddedSource = `const padding = "${padding}"; async function handler(event) { return { ok: padding.length === ${padding.length} }; }`;
     const deployed = await request.put(url, { headers: developer, data: { source: paddedSource } });
-    expect(deployed.status(), 'a developer deploys a source larger than the 128 KiB pre-auth body limit').toBe(200);
+    expect(deployed.status(), 'a developer deploys a 400 KB UTF-8 body, above the 256 KiB pre-auth body limit').toBe(200);
 
     for (const [path, target] of [['{function}', url], ['{invalid name}', functions + '/Not_A_Name']]) {
       const anonymous = await request.put(target, { data: { source: functionSource } });
@@ -670,10 +670,13 @@ test('guest and end-user tokens get 403 on every function route while developer 
       expect(answered.status(), `developer ${method} ${path}: ${await answered.text()}`).toBe(status);
     }
   } finally {
-    if (databaseId) {
-      const removed = await request.delete(`https://api.terrascale.tech/v1/projects/${project}/databases/${databaseId}`, { headers: developer });
-      expect(removed.status(), await removed.text()).toBe(204);
+    try {
+      if (databaseId) {
+        const removed = await request.delete(`https://api.terrascale.tech/v1/projects/${project}/databases/${databaseId}`, { headers: developer });
+        expect(removed.status(), await removed.text()).toBe(204);
+      }
+    } finally {
+      await account.remove();
     }
-    await account.remove();
   }
 });

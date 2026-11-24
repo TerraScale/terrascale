@@ -100,8 +100,8 @@ try
     app.UseForwardedHeaders(ClientAdmission.Forwarding());
     app.UseTerraScaleRequestIdentity(() => Ulid.NewUlid().ToString(), options.PeerSecret);
     app.UseMiddleware<CrashBarrier>();
-    app.UseRateLimiter();
     app.UseCors();
+    app.UseRateLimiter();
     app.Use(static (context, next) =>
     {
         context.Response.Headers.CacheControl = "no-store";
