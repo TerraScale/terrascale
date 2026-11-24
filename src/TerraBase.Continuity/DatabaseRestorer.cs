@@ -35,6 +35,7 @@ public sealed class DatabaseRestorer(
     internal async ValueTask<ContinuityCopyOutcome> CopyAsync(Ulid operationId, Ulid sourceId, Ulid targetId, RestoreTarget target, CancellationToken cancellationToken)
     {
         var resolved = await sessions.ResolveKeyAsync(targetId, cancellationToken);
+        using var lease = await manifests.AcquireAsync(sourceId, cancellationToken);
         return resolved switch
         {
             ContinuityRawKey targetKey => await BuildAsync(operationId, sourceId, targetId, targetKey.Bytes, target, cancellationToken),
@@ -221,7 +222,7 @@ public sealed class DatabaseRestorer(
         RestoreTarget target,
         CancellationToken cancellationToken)
     {
-        var loaded = await manifests.LoadAsync(sourceId, cancellationToken);
+        var loaded = await manifests.RefreshAsync(sourceId, cancellationToken);
         return loaded switch
         {
             ArchiveManifest manifest => await BuildFromManifestAsync(operationId, manifest, sourceId, sourceKey, targetId, targetKey, target, cancellationToken),
@@ -306,7 +307,9 @@ public sealed class DatabaseRestorer(
             var resolved = await ResolveAsync(source, target, floor, cancellationToken);
             var branched = resolved switch
             {
-                CausalBookmark at => await BranchAsync(engine, source.DatabaseId, targetId, targetKey, at, cancellationToken),
+                CausalBookmark at when source.CurrentBookmark.Dominates(at) =>
+                    await BranchAsync(engine, source.DatabaseId, targetId, targetKey, at, cancellationToken),
+                CausalBookmark => new OperationFailed("archived commit log ends before the requested bookmark"),
                 OperationFailed failed => failed,
             };
             return branched switch
@@ -345,7 +348,12 @@ public sealed class DatabaseRestorer(
 
         foreach (var group in manifest.Segments.GroupBy(static segment => segment.Origin, StringComparer.Ordinal))
         {
-            var baseline = snapshot.Bookmark.Get(group.Key);
+            if (group.Key is not { } origin || !StorageEngineOptions.IsValidRegion(origin))
+            {
+                return new OperationFailed("archived commit log segment has an invalid origin region");
+            }
+
+            var baseline = snapshot.Bookmark.Get(origin);
             var history = Chain([.. group], 1);
             var chain = history.Count > 0 && history[^1].LastSequence >= baseline ? history : Chain([.. group], baseline + 1);
             foreach (var segment in chain)
@@ -355,8 +363,8 @@ public sealed class DatabaseRestorer(
                     break;
                 }
 
-                var path = StorageLayout.SegmentFileIn(staging, sourceId, segment.Origin, segment.FirstSequence, segment.LastSequence);
-                var segmentDownload = await manifests.Store.DownloadToFileAsync(segment.Key, path, cancellationToken);
+                var path = StorageLayout.SegmentFileIn(staging, sourceId, origin, segment.FirstSequence, segment.LastSequence);
+                var segmentDownload = await manifests.Store.DownloadToFileAsync(segment.Key, path, SqliteCommitLog.MaxSegmentBytes, cancellationToken);
                 if (Downloaded(segmentDownload) is { } failure)
                 {
                     return failure;
@@ -560,6 +568,7 @@ public sealed class DatabaseRestorer(
     {
         long => null,
         ArchiveObjectMissing missing => new OperationFailed(string.Concat("archived object is missing: ", missing.Message)),
+        ArchiveObjectTooLarge oversized => new OperationFailed(string.Concat("archived segment exceeds the download limit: ", oversized.Key)),
         ArchiveUnavailable unavailable => new OperationFailed(unavailable.Message),
         ArchiveTimedOut timeout => new OperationFailed(timeout.Message),
     };

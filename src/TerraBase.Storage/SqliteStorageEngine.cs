@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 
 namespace TerraBase.Storage;
 
+internal readonly union CollectBranchReplayOutcome(IReadOnlyList<CommitMetadata>, InvalidDatabaseRequest);
+
 public sealed class SqliteStorageEngine : ISqlStorageEngine
 {
     private const string SnapshotDirectory = "snapshots";
@@ -157,7 +159,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         await using var sourceLease = source;
         await gate.WaitAsync(cancellationToken);
         DatabaseSession? branch = null;
-        List<CommitMetadata> replay = [];
+        IReadOnlyList<CommitMetadata> replay = [];
         try
         {
             if (Tracked(request.BranchDatabaseId) is not null || File.Exists(DatabasePath(request.BranchDatabaseId)))
@@ -211,13 +213,25 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return new InvalidDatabaseRequest("no snapshot precedes the requested bookmark");
             }
 
+            var collected = CollectReplay(source, baseline, target);
+            var (entries, missingReplay) = collected switch
+            {
+                IReadOnlyList<CommitMetadata> commits => (commits, (InvalidDatabaseRequest?)null),
+                InvalidDatabaseRequest invalid => ((IReadOnlyList<CommitMetadata>)[], invalid),
+            };
+            if (missingReplay is not null)
+            {
+                _ = FileIo.DeleteDirectory(branchContext.Directory);
+                return missingReplay;
+            }
+
             if (!createEmpty && source.CopyHistoryTo(branchContext, baseline) is { } history)
             {
                 _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return history;
             }
 
-            replay = CollectReplay(source, baseline, target);
+            replay = entries;
             var opened = DatabaseSession.Open(branchContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync);
             branch = opened switch
             {
@@ -512,27 +526,44 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         return copied.IsOk ? chosen.Bookmark : null;
     }
 
-    private static List<CommitMetadata> CollectReplay(DatabaseSession source, CausalBookmark baseline, CausalBookmark target)
+    private static CollectBranchReplayOutcome CollectReplay(DatabaseSession source, CausalBookmark baseline, CausalBookmark target)
     {
         List<CommitMetadata> replay = [];
-        foreach (var log in source.Logs())
+        foreach (var (origin, until) in target.Entries)
         {
-            var from = baseline.Get(log.Origin) + 1;
-            var until = target.Get(log.Origin);
-            if (until < from)
+            var through = baseline.Get(origin);
+            if (until <= through)
             {
                 continue;
             }
 
-            var read = log.Read(from, (int)Math.Min(until - from + 1, int.MaxValue));
-            var entries = read switch
+            if (source.Log(origin) is not { } log)
             {
-                IReadOnlyList<CommitMetadata> page => page,
-                CommitLogGap or StorageCorrupted => [],
+                return MissingReplay(origin);
+            }
+
+            var read = log.Read(through + 1, (int)Math.Min(until - through, int.MaxValue));
+            var invalid = read switch
+            {
+                IReadOnlyList<CommitMetadata> page when page.Count == until - through && page[0].Sequence == through + 1 && page[^1].Sequence == until =>
+                    Add(page, replay),
+                IReadOnlyList<CommitMetadata> or CommitLogGap or StorageCorrupted => MissingReplay(origin),
             };
-            replay.AddRange(entries.Where(entry => entry.Sequence <= until));
+            if (invalid is not null)
+            {
+                return invalid;
+            }
         }
 
-        return replay;
+        return (IReadOnlyList<CommitMetadata>)replay;
+
+        static InvalidDatabaseRequest MissingReplay(string origin) =>
+            new(string.Concat("commit log cannot replay the requested branch history for origin ", origin));
+
+        static InvalidDatabaseRequest? Add(IReadOnlyList<CommitMetadata> page, List<CommitMetadata> replay)
+        {
+            replay.AddRange(page);
+            return null;
+        }
     }
 }

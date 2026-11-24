@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraBase.Storage;
 
 namespace TerraBase.Continuity;
 
@@ -44,15 +45,12 @@ internal sealed record ArchiveManifest(
 
     public bool IsEmpty => Snapshots.Count == 0 && Segments.Count == 0;
 
-    public long ArchivedSegmentThrough(string origin)
+    public IReadOnlyDictionary<string, long> ArchivedThrough(CausalBookmark snapshotFloor)
     {
-        var through = 0L;
+        Dictionary<string, long> through = new(snapshotFloor.Entries, StringComparer.Ordinal);
         foreach (var segment in Segments)
         {
-            if (string.Equals(segment.Origin, origin, StringComparison.Ordinal) && segment.LastSequence > through)
-            {
-                through = segment.LastSequence;
-            }
+            through[segment.Origin] = Math.Max(segment.LastSequence, through.GetValueOrDefault(segment.Origin));
         }
 
         return through;
@@ -61,6 +59,7 @@ internal sealed record ArchiveManifest(
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = false)]
 [JsonSerializable(typeof(ArchiveManifest))]
+[JsonSerializable(typeof(PendingArchiveRetirement))]
 internal sealed partial class ContinuityJsonContext : JsonSerializerContext;
 
 internal sealed record DecodedSnapshot(ArchivedSnapshot Archived, CausalBookmark Bookmark);
@@ -71,6 +70,10 @@ internal readonly union ArchiveManifestDecodeOutcome(ArchiveManifest, ArchiveMan
 
 internal readonly union ArchiveManifestOutcome(ArchiveManifest, ContinuityUnavailable);
 
+internal sealed record PendingArchiveRetirement(string ManifestETag, IReadOnlyList<string> Keys);
+
+internal readonly union ArchiveRetirementDecodeOutcome(PendingArchiveRetirement, ContinuityUnavailable);
+
 internal static class ManifestCodec
 {
     public const string JsonContentType = "application/json";
@@ -78,6 +81,23 @@ internal static class ManifestCodec
 
     public static byte[] Serialize(ArchiveManifest manifest) =>
         JsonSerializer.SerializeToUtf8Bytes(manifest, ContinuityJsonContext.Default.ArchiveManifest);
+
+    public static byte[] Serialize(PendingArchiveRetirement retirement) =>
+        JsonSerializer.SerializeToUtf8Bytes(retirement, ContinuityJsonContext.Default.PendingArchiveRetirement);
+
+    public static ArchiveRetirementDecodeOutcome DeserializeRetirement(ReadOnlySpan<byte> json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize(json, ContinuityJsonContext.Default.PendingArchiveRetirement) is { ManifestETag.Length: > 0, Keys.Count: > 0 } retirement
+                ? retirement
+                : new ContinuityUnavailable("archive retirement record is missing its ETag or keys", "archive_retirement_corrupted");
+        }
+        catch (JsonException exception)
+        {
+            return new ContinuityUnavailable(string.Concat("archive retirement record is unreadable: ", exception.Message), "archive_retirement_corrupted");
+        }
+    }
 
     public static ArchiveManifestDecodeOutcome Deserialize(Ulid databaseId, ReadOnlySpan<byte> json)
     {
@@ -94,7 +114,14 @@ internal static class ManifestCodec
         if (manifest is not { Version: ArchiveManifest.CurrentVersion } decoded
             || !Ulid.TryParse(decoded.DatabaseId, out var id)
             || id != databaseId
-            || decoded.Snapshots.Any(static snapshot => !CausalBookmark.TryDecode(snapshot.Bookmark, out _)))
+            || decoded.Snapshots is null
+            || decoded.Segments is null
+            || decoded.Operations is null
+            || decoded.Snapshots.Any(snapshot => snapshot is null || !CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark)
+                || snapshot.Key != ArchiveKeys.Snapshot(databaseId, snapshot.TakenAtUtc, bookmark))
+            || decoded.Segments.Any(segment => segment is null || segment.Origin is not { } origin || !StorageEngineOptions.IsValidRegion(origin)
+                || segment.FirstSequence <= 0 || segment.LastSequence < segment.FirstSequence
+                || segment.Key != ArchiveKeys.Segment(databaseId, origin, segment.FirstSequence, segment.LastSequence)))
         {
             return new ArchiveManifestCorrupted("archive manifest does not describe this database", "archive_manifest_corrupted");
         }
@@ -132,6 +159,8 @@ internal static class ArchiveKeys
 
     public static string Manifest(Ulid databaseId) => string.Concat(DatabasePrefix(databaseId), "manifest.json");
 
+    public static string RetirementPrefix(Ulid databaseId) => string.Concat(DatabasePrefix(databaseId), "retirements/");
+
     public static string Snapshot(Ulid databaseId, DateTimeOffset takenAtUtc, CausalBookmark bookmark)
     {
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(bookmark.Encode())).AsSpan(0, 8));
@@ -145,13 +174,16 @@ internal static class ArchiveKeys
     }
 
     public static string Segment(Ulid databaseId, CommitLogSegment segment) =>
+        Segment(databaseId, segment.OriginRegion, segment.FirstSequence, segment.LastSequence);
+
+    public static string Segment(Ulid databaseId, string origin, long firstSequence, long lastSequence) =>
         string.Concat(
             DatabasePrefix(databaseId),
             "segments/",
-            segment.OriginRegion,
+            origin,
             "/",
-            segment.FirstSequence.ToString("D20", CultureInfo.InvariantCulture),
+            firstSequence.ToString("D20", CultureInfo.InvariantCulture),
             "-",
-            segment.LastSequence.ToString("D20", CultureInfo.InvariantCulture),
+            lastSequence.ToString("D20", CultureInfo.InvariantCulture),
             ".tblog");
 }

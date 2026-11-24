@@ -2,7 +2,9 @@ using TerraBase.Storage;
 
 namespace TerraBase.Continuity;
 
-internal sealed record ArchiveStep(ArchiveManifest Manifest, ContinuityUnavailable? Failure);
+internal sealed record StagedArchiveSnapshot(ArchivedSnapshot Snapshot, string Path);
+
+internal readonly union ArchiveSnapshotOutcome(StagedArchiveSnapshot, ContinuityUnavailable);
 
 internal readonly union ArchivedSegmentOutcome(ArchivedSegment, ContinuityUnavailable);
 
@@ -18,73 +20,72 @@ internal sealed class SessionArchiver(
 {
     private const string LocalSnapshotPattern = "*.db";
 
-    public async ValueTask<ArchiveManifestOutcome> RunAsync(ArchiveManifest manifest, bool forceSnapshot, CancellationToken cancellationToken)
+    public async ValueTask<ArchiveManifestOutcome> RunAsync(
+        ArchiveManifest manifest,
+        ArchiveRetentionPolicy retention,
+        bool forceSnapshot,
+        CancellationToken cancellationToken)
     {
+        var cutoff = timeProvider.GetUtcNow().AddDays(-retention.Days);
         SqliteStorageEngine.SealCommittedLogs(session);
-        var step = new ArchiveStep(manifest, null);
+        var archivedThrough = manifest.ArchivedThrough(ArchiveRetention.SnapshotFloor(manifest));
+        List<ArchivedSegment> segments = [];
+        ContinuityUnavailable? failure = null;
         foreach (var (origin, _) in session.CurrentBookmark.Entries)
         {
-            step = await ArchiveSegmentsAsync(step.Manifest, origin, cancellationToken);
-            if (step.Failure is not null)
+            failure = await ArchiveSegmentsAsync(origin, archivedThrough.GetValueOrDefault(origin), segments, cancellationToken);
+            if (failure is not null)
             {
                 break;
             }
         }
 
-        if (step.Failure is null && SnapshotDue(step.Manifest, forceSnapshot))
+        StagedArchiveSnapshot? snapshot = null;
+        if (failure is null && SnapshotDue(manifest, forceSnapshot))
         {
-            step = await ArchiveSnapshotAsync(step.Manifest, cancellationToken);
+            var staged = await ArchiveSnapshotAsync(cancellationToken);
+            (snapshot, failure) = staged switch
+            {
+                StagedArchiveSnapshot archived => (archived, (ContinuityUnavailable?)null),
+                ContinuityUnavailable unavailable => ((StagedArchiveSnapshot?)null, unavailable),
+            };
         }
 
-        if (ReferenceEquals(step.Manifest, manifest))
-        {
-            return Finish(step);
-        }
-
-        var saved = await manifests.UpdateAsync(
-            session.DatabaseId,
-            current => MergeInto(current, step.Manifest),
-            cancellationToken);
+        var saved = await manifests.PublishAsync(session.DatabaseId, segments, snapshot?.Snapshot, cutoff, cancellationToken);
         return saved switch
         {
-            ArchiveManifest stored => Finish(step with { Manifest = stored }),
-            ContinuityUnavailable unavailable => step.Failure ?? unavailable,
+            ArchiveManifest stored => Finish(stored, snapshot, cutoff, failure),
+            ContinuityUnavailable unavailable => failure ?? unavailable,
         };
     }
 
-    private static ArchiveManifest MergeInto(ArchiveManifest remote, ArchiveManifest staged)
+    private ArchiveManifestOutcome Finish(
+        ArchiveManifest stored,
+        StagedArchiveSnapshot? snapshot,
+        DateTimeOffset cutoff,
+        ContinuityUnavailable? failure)
     {
-        Dictionary<string, ArchivedSnapshot> snapshots = new(StringComparer.Ordinal);
-        foreach (var snapshot in remote.Snapshots)
+        if (failure is not null)
         {
-            snapshots[snapshot.Key] = snapshot;
+            return failure;
         }
 
-        foreach (var snapshot in staged.Snapshots)
+        var floor = ArchiveRetention.SnapshotFloor(stored);
+        if (SqliteCommitLog.PruneArchivedSegments(session, segment => segment.SealedAtUtc < cutoff
+            && segment.LastSequence <= floor.Get(segment.OriginRegion)) is { } busy)
         {
-            snapshots[snapshot.Key] = snapshot;
+            return Busy(busy);
         }
 
-        Dictionary<string, ArchivedSegment> segments = new(StringComparer.Ordinal);
-        foreach (var segment in remote.Segments)
+        if (snapshot is not null
+            && stored.Snapshots.Any(archived => archived.Key == snapshot.Snapshot.Key)
+            && PruneLocalSnapshots(snapshot.Path) is { } ioFailure)
         {
-            segments[segment.Key] = segment;
+            return ioFailure;
         }
 
-        foreach (var segment in staged.Segments)
-        {
-            segments[segment.Key] = segment;
-        }
-
-        return remote with
-        {
-            Snapshots = [.. snapshots.Values.OrderBy(static item => item.TakenAtUtc)],
-            Segments = [.. segments.Values.OrderBy(static item => item.Origin, StringComparer.Ordinal).ThenBy(static item => item.FirstSequence)],
-        };
+        return stored;
     }
-
-    private static ArchiveManifestOutcome Finish(ArchiveStep step) =>
-        step.Failure is { } failure ? failure : step.Manifest;
 
     private bool SnapshotDue(ArchiveManifest manifest, bool forceSnapshot)
     {
@@ -101,36 +102,46 @@ internal sealed class SessionArchiver(
         return forceSnapshot || timeProvider.GetUtcNow() - latest.Archived.TakenAtUtc >= options.SnapshotInterval;
     }
 
-    private async ValueTask<ArchiveStep> ArchiveSegmentsAsync(ArchiveManifest manifest, string origin, CancellationToken cancellationToken)
+    private async ValueTask<ContinuityUnavailable?> ArchiveSegmentsAsync(
+        string origin,
+        long archivedThrough,
+        List<ArchivedSegment> staged,
+        CancellationToken cancellationToken)
     {
-        var listed = await session.ListSealedSegmentsAsync(origin, manifest.ArchivedSegmentThrough(origin), cancellationToken);
+        var listed = await session.ListSealedSegmentsAsync(origin, archivedThrough, cancellationToken);
         return listed switch
         {
-            IReadOnlyList<CommitLogSegment> segments => await UploadSegmentsAsync(manifest, segments, cancellationToken),
-            StorageBusy busy => new ArchiveStep(manifest, Busy(busy)),
+            IReadOnlyList<CommitLogSegment> segments => await UploadSegmentsAsync(segments, staged, cancellationToken),
+            StorageBusy busy => Busy(busy),
         };
     }
 
-    private async ValueTask<ArchiveStep> UploadSegmentsAsync(ArchiveManifest manifest, IReadOnlyList<CommitLogSegment> segments, CancellationToken cancellationToken)
+    private async ValueTask<ContinuityUnavailable?> UploadSegmentsAsync(
+        IReadOnlyList<CommitLogSegment> segments,
+        List<ArchivedSegment> staged,
+        CancellationToken cancellationToken)
     {
-        var current = manifest;
         foreach (var segment in segments.OrderBy(static segment => segment.FirstSequence))
         {
             var uploaded = await UploadSegmentAsync(segment, cancellationToken);
-            var step = uploaded switch
+            var failure = uploaded switch
             {
-                ArchivedSegment archived => new ArchiveStep(current with { Segments = [.. current.Segments.Where(existing => existing.Key != archived.Key), archived] }, null),
-                ContinuityUnavailable unavailable => new ArchiveStep(current, unavailable),
+                ArchivedSegment archived => Stage(staged, archived),
+                ContinuityUnavailable unavailable => unavailable,
             };
-            if (step.Failure is not null)
+            if (failure is not null)
             {
-                return step;
+                return failure;
             }
-
-            current = step.Manifest;
         }
 
-        return new ArchiveStep(current, null);
+        return null;
+
+        static ContinuityUnavailable? Stage(List<ArchivedSegment> staged, ArchivedSegment segment)
+        {
+            staged.Add(segment);
+            return null;
+        }
     }
 
     private async ValueTask<ArchivedSegmentOutcome> UploadSegmentAsync(CommitLogSegment segment, CancellationToken cancellationToken)
@@ -196,35 +207,35 @@ internal sealed class SessionArchiver(
         };
     }
 
-    private async ValueTask<ArchiveStep> ArchiveSnapshotAsync(ArchiveManifest manifest, CancellationToken cancellationToken)
+    private async ValueTask<ArchiveSnapshotOutcome> ArchiveSnapshotAsync(CancellationToken cancellationToken)
     {
         var snapped = await engine.SnapshotAsync(session.DatabaseId, cancellationToken);
         return snapped switch
         {
-            DatabaseSnapshot snapshot => await UploadSnapshotAsync(manifest, snapshot, cancellationToken),
-            DatabaseNotFound missing => new ArchiveStep(manifest, new ContinuityUnavailable(missing.Message, "snapshot_unavailable")),
-            StorageBusy busy => new ArchiveStep(manifest, Busy(busy)),
+            DatabaseSnapshot snapshot => await UploadSnapshotAsync(snapshot, cancellationToken),
+            DatabaseNotFound missing => new ContinuityUnavailable(missing.Message, "snapshot_unavailable"),
+            StorageBusy busy => Busy(busy),
         };
     }
 
-    private async ValueTask<ArchiveStep> UploadSnapshotAsync(ArchiveManifest manifest, DatabaseSnapshot snapshot, CancellationToken cancellationToken)
+    private async ValueTask<ArchiveSnapshotOutcome> UploadSnapshotAsync(DatabaseSnapshot snapshot, CancellationToken cancellationToken)
     {
         var key = ArchiveKeys.Snapshot(session.DatabaseId, snapshot.TakenAtUtc, snapshot.Bookmark);
         var uploaded = await manifests.Store.UploadFileAsync(key, snapshot.Path, cancellationToken);
         var failure = uploaded switch
         {
-            ArchiveObjectWritten => PruneLocalSnapshots(snapshot.Path),
+            ArchiveObjectWritten => (ContinuityUnavailable?)null,
             ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
             ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
         };
         if (failure is not null)
         {
-            return new ArchiveStep(manifest, failure);
+            return failure;
         }
 
         metrics.Uploaded(ArchiveObjectKind.Snapshot, snapshot.SizeBytes);
         var archived = new ArchivedSnapshot(key, snapshot.Bookmark.Encode(), snapshot.SchemaEpoch, snapshot.SizeBytes, snapshot.TakenAtUtc);
-        return new ArchiveStep(manifest with { Snapshots = [.. manifest.Snapshots.Where(existing => existing.Key != key), archived] }, null);
+        return new StagedArchiveSnapshot(archived, snapshot.Path);
     }
 
     private ContinuityUnavailable? PruneLocalSnapshots(string snapshotPath)

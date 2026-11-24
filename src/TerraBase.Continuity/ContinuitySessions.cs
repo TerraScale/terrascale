@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace TerraBase.Continuity;
 
 public sealed record ContinuityRawKey(ReadOnlyMemory<byte> Bytes);
@@ -18,6 +20,10 @@ public sealed record ContinuitySessionUnavailable(string Message, string Code);
 
 public readonly union ContinuitySessionOutcome(ISqlDatabaseSession, ContinuitySessionMissing, ContinuitySessionUnavailable);
 
+internal sealed record ArchiveRetentionPolicy(int Days);
+
+internal readonly union ArchiveRetentionPolicyOutcome(ArchiveRetentionPolicy, ContinuityUnavailable);
+
 public interface IContinuityDatabaseCatalog
 {
     ValueTask<IReadOnlyList<Ulid>> ListActiveDatabasesAsync(CancellationToken cancellationToken);
@@ -31,6 +37,8 @@ public interface IContinuityDatabaseCatalog
 
 public sealed class ContinuitySessions(ISqlStorageEngine engine, IContinuityDatabaseCatalog catalog)
 {
+    private const int DefaultRetentionDays = 7;
+
     public ISqlStorageEngine Engine => engine;
 
     public IContinuityDatabaseCatalog Catalog => catalog;
@@ -67,5 +75,42 @@ public sealed class ContinuitySessions(ISqlStorageEngine engine, IContinuityData
             StorageCorrupted corrupted => new ContinuitySessionUnavailable(corrupted.Message, "storage_corrupted"),
             StorageBusy busy => new ContinuitySessionUnavailable(busy.Message, "storage_busy"),
         };
+    }
+
+    internal async ValueTask<ArchiveRetentionPolicyOutcome> ReadArchiveRetentionAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var opened = await OpenAsync(Ulid.Empty, cancellationToken);
+        return opened switch
+        {
+            ISqlDatabaseSession system => await ReadArchiveRetentionAsync(system, databaseId, cancellationToken),
+            ContinuitySessionMissing missing => new ContinuityUnavailable(missing.Message, missing.Code),
+            ContinuitySessionUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+        };
+    }
+
+    private static async ValueTask<ArchiveRetentionPolicyOutcome> ReadArchiveRetentionAsync(
+        ISqlDatabaseSession system,
+        Ulid databaseId,
+        CancellationToken cancellationToken)
+    {
+        await using (system)
+        {
+            var statement = new SqlStatement(
+                "SELECT retention_days FROM backup_policies WHERE database_id = ?",
+                [SqlValue.FromText(databaseId.ToString())],
+                FrozenDictionary<string, SqlValue>.Empty);
+            var request = new SqlStatementRequest(system.DatabaseId, [statement], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
+            var read = await system.ExecuteReadAsync(request, cancellationToken);
+            return read switch
+            {
+                SqlReadResult { ResultSets: [{ Rows: [] }] } => new ArchiveRetentionPolicy(DefaultRetentionDays),
+                SqlReadResult { ResultSets: [{ Rows: [[var value]] }] } when value.TryGetIntegral(out var days) && days is >= 1 and <= 3650 =>
+                    new ArchiveRetentionPolicy((int)days),
+                SqlReadResult => new ContinuityUnavailable("invalid archive retention policy", "invalid_retention"),
+                SqlError error => new ContinuityUnavailable(error.Message, "system_catalog_error"),
+                StorageBusy busy => new ContinuityUnavailable(busy.Message, "storage_busy"),
+                StorageTimeout timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
+            };
+        }
     }
 }

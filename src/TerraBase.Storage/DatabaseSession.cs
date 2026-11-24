@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
@@ -362,11 +363,9 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     {
         ArgumentNullException.ThrowIfNull(segment);
         cancellationToken.ThrowIfCancellationRequested();
-        OpenSegmentOutcome result = Log(segment.OriginRegion)?.SegmentPath(segment) is not { } path
-            ? new SegmentNotFound(segment.DatabaseId, segment.OriginRegion, segment.FirstSequence, segment.LastSequence)
-            : FileIo.OpenRead(path) is { } stream
-                ? stream
-                : new StorageBusy("commit log segment could not be opened", TimeSpan.FromMilliseconds(50));
+        var result = Log(segment.OriginRegion) is { } log
+            ? log.OpenSegment(segment)
+            : new OpenSegmentOutcome(new SegmentNotFound(segment.DatabaseId, segment.OriginRegion, segment.FirstSequence, segment.LastSequence));
         return ValueTask.FromResult(result);
     }
 
@@ -379,10 +378,44 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return new InvalidSegment("segment does not belong to a remote origin of this database");
         }
 
+        if (segment.SizeBytes is <= 0 or > SqliteCommitLog.MaxSegmentBytes)
+        {
+            return new InvalidSegment("segment size is outside the import limit");
+        }
+
+        if (segment.FirstSequence <= 0 || segment.LastSequence < segment.FirstSequence
+            || segment.LastSequence - segment.FirstSequence >= Math.Min(Options.MaxPendingRemoteCommits, int.MaxValue - 1))
+        {
+            return new InvalidSegment("segment sequence range is outside the import limit");
+        }
+
         using var buffer = new MemoryStream();
-        await content.CopyToAsync(buffer, cancellationToken);
+        using var chunk = MemoryPool<byte>.Shared.Rent(1 << 16);
+        while (true)
+        {
+            var remaining = segment.SizeBytes - buffer.Length;
+            var read = await content.ReadAsync(chunk.Memory[..(int)Math.Min(remaining + 1, chunk.Memory.Length)], cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            if (read > remaining)
+            {
+                return new InvalidSegment("segment content exceeds its declared size");
+            }
+
+            buffer.Write(chunk.Memory.Span[..read]);
+        }
+
+        if (buffer.Length != segment.SizeBytes)
+        {
+            return new InvalidSegment("segment content does not match its declared size");
+        }
+
         List<CommitMetadata> commits = [];
-        if (!CommitFrame.TryParseAll(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), segment.OriginRegion, _cipher, commits))
+        var expectedCommits = (int)(segment.LastSequence - segment.FirstSequence + 1);
+        if (!CommitFrame.TryParseAll(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), segment.OriginRegion, _cipher, commits, maxEntries: expectedCommits + 1))
         {
             return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
         }
@@ -395,7 +428,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             }
         }
 
-        if (commits.Count == 0 || commits[^1].Sequence != segment.LastSequence)
+        if (commits.Count != expectedCommits)
         {
             return new InvalidSegment("segment range does not match its content");
         }
@@ -419,6 +452,19 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         {
             _ = log.SealCommitted(_versions.Get(log.Origin));
         }
+    }
+
+    internal StorageBusy? PruneArchivedSegments(Func<CommitLogSegment, bool> canPrune)
+    {
+        foreach (var log in Logs())
+        {
+            if (log.PruneSealed(_versions.Get(log.Origin), canPrune) is { } busy)
+            {
+                return busy;
+            }
+        }
+
+        return null;
     }
 
     internal bool Strict => _strict;

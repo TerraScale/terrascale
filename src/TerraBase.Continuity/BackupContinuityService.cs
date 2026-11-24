@@ -65,7 +65,7 @@ public sealed class BackupContinuityService(
             return Disabled;
         }
 
-        var loaded = await manifests.LoadAsync(databaseId, cancellationToken);
+        var loaded = await manifests.RefreshAsync(databaseId, cancellationToken);
         return loaded switch
         {
             ArchiveManifest manifest => await StatusAsync(manifest, databaseId, cancellationToken),
@@ -510,8 +510,36 @@ public sealed class BackupContinuityService(
         return opened switch
         {
             ISqlDatabaseSession session => await ArchiveSessionAsync(session, forceSnapshot, cancellationToken),
+            ContinuitySessionMissing missing when !forceSnapshot => await RetainRemoteArchiveAsync(missing, cancellationToken),
             ContinuitySessionMissing missing => new ContinuityNotFound(missing.Message, missing.Code),
             ContinuitySessionUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> RetainRemoteArchiveAsync(ContinuitySessionMissing missing, CancellationToken cancellationToken)
+    {
+        var loaded = await manifests.LoadAsync(missing.DatabaseId, cancellationToken);
+        return loaded switch
+        {
+            ArchiveManifest { IsEmpty: true } => new ContinuityNotFound(missing.Message, missing.Code),
+            ArchiveManifest => await RetainRemoteArchiveAsync(missing.DatabaseId, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> RetainRemoteArchiveAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var policy = await sessions.ReadArchiveRetentionAsync(databaseId, cancellationToken);
+        var saved = policy switch
+        {
+            ArchiveRetentionPolicy retention => await manifests.PublishAsync(
+                databaseId, [], null, timeProvider.GetUtcNow().AddDays(-retention.Days), cancellationToken),
+            ContinuityUnavailable unavailable => (ArchiveManifestOutcome)unavailable,
+        };
+        return saved switch
+        {
+            ArchiveManifest stored => Status(stored, 0, null),
+            ContinuityUnavailable unavailable => unavailable,
         };
     }
 
@@ -519,24 +547,39 @@ public sealed class BackupContinuityService(
     {
         await using (session)
         {
-            var archiver = new SessionArchiver(session, manifests, sessions.Engine, options, metrics, timeProvider);
-            var loaded = await manifests.LoadAsync(session.DatabaseId, cancellationToken);
-            return loaded switch
+            var policy = await sessions.ReadArchiveRetentionAsync(session.DatabaseId, cancellationToken);
+            return policy switch
             {
-                ArchiveManifest manifest => await ArchivedAsync(archiver, manifest, session, forceSnapshot, cancellationToken),
+                ArchiveRetentionPolicy retention => await ArchiveSessionAsync(session, retention, forceSnapshot, cancellationToken),
                 ContinuityUnavailable unavailable => unavailable,
             };
         }
+    }
+
+    private async ValueTask<BackupStatusOutcome> ArchiveSessionAsync(
+        ISqlDatabaseSession session,
+        ArchiveRetentionPolicy retention,
+        bool forceSnapshot,
+        CancellationToken cancellationToken)
+    {
+        var archiver = new SessionArchiver(session, manifests, sessions.Engine, options, metrics, timeProvider);
+        var loaded = await manifests.LoadAsync(session.DatabaseId, cancellationToken);
+        return loaded switch
+        {
+            ArchiveManifest manifest => await ArchivedAsync(archiver, manifest, session, retention, forceSnapshot, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
+        };
     }
 
     private async ValueTask<BackupStatusOutcome> ArchivedAsync(
         SessionArchiver archiver,
         ArchiveManifest manifest,
         ISqlDatabaseSession session,
+        ArchiveRetentionPolicy retention,
         bool forceSnapshot,
         CancellationToken cancellationToken)
     {
-        var archived = await archiver.RunAsync(manifest, forceSnapshot, cancellationToken);
+        var archived = await archiver.RunAsync(manifest, retention, forceSnapshot, cancellationToken);
         return archived switch
         {
             ArchiveManifest stored => await StatusForSessionAsync(stored, session, cancellationToken),
@@ -568,10 +611,11 @@ public sealed class BackupContinuityService(
     {
         var checkedAt = timeProvider.GetUtcNow();
         var current = session.CurrentBookmark;
+        var archivedThrough = manifest.ArchivedThrough(ArchiveRetention.SnapshotFloor(manifest));
         var pending = 0;
         foreach (var (origin, _) in current.Entries)
         {
-            var listed = await session.ListSealedSegmentsAsync(origin, manifest.ArchivedSegmentThrough(origin), cancellationToken);
+            var listed = await session.ListSealedSegmentsAsync(origin, archivedThrough.GetValueOrDefault(origin), cancellationToken);
             var (count, busy) = Pending(listed);
             if (busy is not null)
             {

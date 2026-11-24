@@ -14,6 +14,14 @@ internal readonly union OriginLogOpenResult(OriginLog, StorageCorrupted);
 
 internal readonly union LogReadResult(IReadOnlyList<CommitMetadata>, CommitLogGap, StorageCorrupted);
 
+public static class SqliteCommitLog
+{
+    public const int MaxSegmentBytes = 128 * 1024 * 1024;
+
+    public static StorageBusy? PruneArchivedSegments(ISqlDatabaseSession session, Func<CommitLogSegment, bool> canPrune) =>
+        session is DatabaseSession sqlite ? sqlite.PruneArchivedSegments(canPrune) : null;
+}
+
 internal sealed class CommitLogCipher : IDisposable
 {
     private const int NonceSize = 12;
@@ -237,6 +245,7 @@ internal sealed class OriginLog : IDisposable
     private long _length;
     private long _lastSequence;
     private long _firstAvailable;
+    private int _sealedReaders;
     private DateTimeOffset _activeSince;
     private bool _disposed;
 
@@ -434,6 +443,26 @@ internal sealed class OriginLog : IDisposable
 
     public LogReadResult Read(long fromSequence, int maxEntries)
     {
+        lock (_gate)
+        {
+            _sealedReaders++;
+        }
+
+        try
+        {
+            return ReadCore(fromSequence, maxEntries);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _sealedReaders--;
+            }
+        }
+    }
+
+    private LogReadResult ReadCore(long fromSequence, int maxEntries)
+    {
         List<(CommitLogSegment Segment, string Path)> segments;
         long firstAvailable;
         long last;
@@ -538,7 +567,7 @@ internal sealed class OriginLog : IDisposable
         }
     }
 
-    public string? SegmentPath(CommitLogSegment segment)
+    public OpenSegmentOutcome OpenSegment(CommitLogSegment segment)
     {
         lock (_gate)
         {
@@ -546,11 +575,64 @@ internal sealed class OriginLog : IDisposable
             {
                 if (candidate.FirstSequence == segment.FirstSequence && candidate.LastSequence == segment.LastSequence)
                 {
-                    return path;
+                    return FileIo.OpenRead(path) is { } content
+                        ? content
+                        : new StorageBusy("commit log segment could not be opened", TimeSpan.FromMilliseconds(50));
                 }
             }
 
+            return new SegmentNotFound(segment.DatabaseId, segment.OriginRegion, segment.FirstSequence, segment.LastSequence);
+        }
+    }
+
+    public StorageBusy? PruneSealed(long committedThrough, Func<CommitLogSegment, bool> canPrune)
+    {
+        lock (_gate)
+        {
+            if (_disposed || _sealedReaders > 0)
+            {
+                return null;
+            }
+
+            var removed = 0;
+            string? failure = null;
+            foreach (var (segment, path) in _sealed)
+            {
+                if (segment.LastSequence > committedThrough || !canPrune(segment) || (failure = DeleteSealedFile(path)) is not null)
+                {
+                    break;
+                }
+
+                removed++;
+            }
+
+            if (removed > 0)
+            {
+                _sealed.RemoveRange(0, removed);
+                _firstAvailable = _sealed.Count > 0 ? _sealed[0].Segment.FirstSequence
+                    : _frames.Count > 0 ? _frames[0].Sequence
+                    : _lastSequence + 1;
+                FileIo.SyncDirectory(_directory);
+            }
+
+            return failure is null ? null : new StorageBusy(failure, TimeSpan.FromMilliseconds(50));
+        }
+    }
+
+    private static string? DeleteSealedFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
             return null;
+        }
+        catch (IOException exception)
+        {
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return exception.Message;
         }
     }
 
