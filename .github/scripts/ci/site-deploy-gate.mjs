@@ -212,7 +212,7 @@ function next(alert, revision) {
   return `waiting: the selected target is not newer than the recorded one (${alert.target})`;
 }
 
-const healthy = (alert, revision) => alert !== null && alert.target === revision && alert.attempts === 0 && !alert.notified && alert.probeNote === null;
+const healthy = (alert, revision) => alert !== null && alert.target === revision && alert.attempts === 0 && !alert.notified;
 
 function due(alert, deployed, revision, decision) {
   if (deployed === revision) return !healthy(alert, revision);
@@ -340,8 +340,10 @@ if (args[0] === '--qualify-main') {
         if (alert !== null ? alert.probeNote !== workerProbeNote(failure) : revision !== null) selected.push([kind, name]);
         continue;
       }
+      const staleProbeNote = !services[kind] && alert !== null && alert.probeNote !== null;
       const liveStatus = failure === null ? deployed ?? 'absent' : 'unhealthy';
       if (revision === null) {
+        if (staleProbeNote) selected.push([kind, name]);
         report(`${name}: live ${liveStatus}, no qualified target`);
         continue;
       }
@@ -351,7 +353,7 @@ if (args[0] === '--qualify-main') {
       }
       try {
         const decision = work(kind, name, deployed, revision);
-        const selectedJob = due(alert, deployed, revision, decision);
+        const selectedJob = staleProbeNote || due(alert, deployed, revision, decision);
         if (selectedJob) selected.push([kind, name]);
         const attempt = deployed === revision ? null : next(alert, revision);
         const note = selectedJob ? `${decision}; locked job starts to reconcile state` : typeof attempt === 'string' ? attempt : decision;
@@ -392,6 +394,7 @@ if (args[0] === '--qualify-main') {
     const workerUnavailable = failure !== null && !services[kind];
     const revision = !workerUnavailable && await (services[kind] ? appQualified(own) : qualified(own)) ? own : null;
     let deploy = false;
+    let clearProbeNote = !services[kind] && !workerUnavailable && alert !== null && alert.probeNote !== null;
     const liveStatus = failure === null ? deployed ?? 'absent' : 'unhealthy';
     if (workerUnavailable) {
       await recordWorkerProbeFailure(alert, name, failure);
@@ -400,12 +403,18 @@ if (args[0] === '--qualify-main') {
     } else {
       const decision = work(kind, name, deployed, revision);
       if (deployed === revision) {
-        if (!healthy(alert, revision)) await writeState(alert, name, revision, 0, false);
+        if (!healthy(alert, revision)) {
+          await writeState(alert, name, revision, 0, false);
+          clearProbeNote = false;
+        }
         report(`${name}: live ${deployed}, target ${revision}: already live; state healthy`);
       } else {
         const attempt = next(alert, revision);
         if (typeof attempt !== 'number') {
-          if (attempt === 'suppressed after two attempts' && !alert.notified) await notify(alert, name, revision);
+          if (attempt === 'suppressed after two attempts' && !alert.notified) {
+            await notify(alert, name, revision);
+            clearProbeNote = false;
+          }
           report(`${name}: live ${liveStatus}, target ${revision}: ${attempt}`);
         } else if (decision !== 'deploy') {
           if (alert === null) await writeState(null, name, revision, 0, false);
@@ -416,6 +425,11 @@ if (args[0] === '--qualify-main') {
           report(`${name}: live ${liveStatus}, target ${revision}: deploying, attempt ${attempt} of 2 recorded`);
         }
       }
+    }
+    if (!deploy && clearProbeNote) {
+      const body = alert.issue.body.split('\n').filter((line) => !line.startsWith(workerProbeNotePrefix)).join('\n');
+      await github(`issues/${alert.issue.number}`, 'PATCH', { body });
+      report(`${name}: cleared the live probe failure after recovery`);
     }
     appendFileSync(process.env.GITHUB_OUTPUT, `deploy=${deploy}\n`);
     if (deploy) appendFileSync(process.env.GITHUB_ENV, `REVISION=${revision}\n`);
