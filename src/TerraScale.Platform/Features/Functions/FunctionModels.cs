@@ -101,7 +101,7 @@ public static partial class FunctionNames
     public const string RouteSecrets = RouteItem + "/secrets";
     public const string RouteSecret = RouteSecrets + "/{secret}";
     public const string Description = "Project-token database functions. Deploy, logs, stats, secrets and delete require sql:read and sql:write; "
-        + "invoke requires sql:read. A function is JavaScript defining handler(event); it runs with the function's authority against the database.";
+        + "invoke requires sql:read. End-user and guest tokens answer 403 developer_credential_required on every function route. A function is JavaScript defining handler(event); it runs with the function's authority against the database.";
 
     public static PlatformInvalidRequest? Check(string function) =>
         NamePattern().IsMatch(function) ? null : new PlatformInvalidRequest("function must be a lowercase name of at most 63 characters");

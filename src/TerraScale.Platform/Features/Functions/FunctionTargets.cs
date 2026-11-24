@@ -8,8 +8,13 @@ public readonly union ResolveFunctionTargetOutcome(
     PlatformNotFound,
     PlatformUnavailable);
 
+public sealed record FunctionBodyLimit(long Bytes, IReadOnlyList<string> Scopes);
+
 public static class FunctionTargets
 {
+    private static readonly PlatformForbidden DeveloperOnly =
+        new("functions accept only a project API key or developer token; end-user and guest tokens are refused", "developer_credential_required");
+
     public static async ValueTask<ResolveFunctionTargetOutcome> ResolveAsync(
         PlatformAccess access,
         HttpContext context,
@@ -27,6 +32,7 @@ public static class FunctionTargets
         var outcome = await access.DatabaseAsync(context, project, database, scopes, cancellationToken);
         return outcome switch
         {
+            DatabaseAccess { Access.Grant.EndUser: true } => DeveloperOnly,
             DatabaseAccess granted => new FunctionTarget(granted.Access.Organization, granted.Access.Project, granted.Database, granted.DatabaseName),
             PlatformUnauthorized unauthorized => unauthorized,
             PlatformForbidden forbidden => forbidden,

@@ -16,6 +16,7 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
     : EndpointWithoutRequest<InvokeFunctionReply>
 {
     private const int MaxBodyBytes = 1024 * 1024;
+    private const int ChunkBytes = 16 * 1024;
     private static readonly PlatformPayloadTooLarge TooLarge = new("the request body is at most 1 MiB");
 
     public override void Configure()
@@ -26,6 +27,7 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
         Description(FunctionNames.Description + " The body (at most 1 MiB) is event.body: parsed JSON, otherwise text. Query values are event.query. "
             + "Answers the handler's {status, body}, or its JSON result with 200; a failed run answers 500 function_error. TerraScale-Bookmark is honored and returned.");
         Tags("Functions");
+        Metadata(new FunctionBodyLimit(MaxBodyBytes + ChunkBytes, Scopes.Read));
         AllowAnonymous();
     }
 
@@ -38,19 +40,6 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
             return TooLarge;
         }
 
-        var body = new ArrayBufferWriter<byte>();
-        var chunk = new byte[16 * 1024];
-        int read;
-        while ((read = await request.Body.ReadAsync(chunk, cancellationToken)) > 0)
-        {
-            if (body.WrittenCount + read > MaxBodyBytes)
-            {
-                return TooLarge;
-            }
-
-            body.Write(chunk.AsSpan(0, read));
-        }
-
         var project = RouteValue("project");
         var database = RouteValue("database");
         var function = RouteValue("function");
@@ -60,7 +49,6 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
             return new PlatformInvalidRequest("TerraScale-Bookmark is not a valid bookmark", "invalid_bookmark");
         }
 
-        var eventJson = Event(body.WrittenMemory, request.Query);
         var outcome = await FunctionTargets.ResolveAsync(access, HttpContext, project, database, function, Scopes.Read, cancellationToken);
         return outcome switch
         {
@@ -74,6 +62,12 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
 
         async ValueTask<InvokeFunctionReply> HandleAuthorizedAsync(FunctionTarget target)
         {
+            if (await ReadBodyAsync(request, cancellationToken) is not { } body)
+            {
+                return TooLarge;
+            }
+
+            var eventJson = Event(body, request.Query);
             var operation = await invoker.InvokeAsync(target, function, "http", eventJson, bookmark, HttpContext.TraceIdentifier, cancellationToken);
             return operation switch
             {
@@ -82,6 +76,24 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
                 PlatformUnavailable unavailable => unavailable,
             };
         }
+    }
+
+    private static async ValueTask<ReadOnlyMemory<byte>?> ReadBodyAsync(HttpRequest request, CancellationToken cancellationToken)
+    {
+        var body = new ArrayBufferWriter<byte>();
+        var chunk = new byte[ChunkBytes];
+        int read;
+        while ((read = await request.Body.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            if (body.WrittenCount + read > MaxBodyBytes)
+            {
+                return null;
+            }
+
+            body.Write(chunk.AsSpan(0, read));
+        }
+
+        return body.WrittenMemory;
     }
 
     private string RouteValue(string name) =>

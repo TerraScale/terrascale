@@ -64,7 +64,7 @@ curl -sS --fail-with-body --header @/dev/fd/3 \
   3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
 ```
 
-Add `"cron": "*/5 * * * *"` (UTC) to the deploy body to run on a schedule. Deploying, reading logs and deleting need a key with read and write access; invoking needs read access. The function's SQL runs with the function's own authority.
+Add `"cron": "*/5 * * * *"` (UTC) to the deploy body to run on a schedule. Deploying, reading logs and deleting need a key with read and write access; invoking needs read access. Every function route, including invoke, needs a project API key or developer token: end-user and guest tokens answer `403 developer_credential_required`, so call a function from your own backend rather than from a signed-in browser. The function's SQL runs with the function's own authority.
 
 | API (under `/v1/projects/{project}/databases/{database}`) | Purpose |
 | --- | --- |
