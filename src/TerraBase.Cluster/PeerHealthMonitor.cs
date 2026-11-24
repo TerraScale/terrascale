@@ -7,7 +7,7 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient client, TimeProvider timeProvider, ILogger<PeerHealthMonitor> logger)
+public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology topology, QuicRpcClient client, TimeProvider timeProvider, ILogger<PeerHealthMonitor> logger)
 {
     private readonly long _instanceId = Random.Shared.NextInt64(1, long.MaxValue);
     private readonly ConcurrentDictionary<string, PeerState> _peers = new(
@@ -87,7 +87,8 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             cancellationToken);
         var (success, timedOut, remoteInstanceId) = response switch
         {
-            PongMessage pong when string.Equals(pong.NodeId, state.Info.NodeId, StringComparison.Ordinal) => (true, false, pong.InstanceId),
+            PongMessage pong when string.Equals(pong.NodeId, state.Info.NodeId, StringComparison.Ordinal)
+                && string.Equals(pong.Region, state.Info.Region, StringComparison.Ordinal) => (true, false, pong.InstanceId),
             PongMessage => (false, false, 0L),
             QuicTimeout => (false, true, 0L),
             QuicUnavailable or QuicRemoteError => (false, false, 0L),
@@ -168,18 +169,22 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
 
     private ValueTask<QuicHandlerOutcome<PongMessage>> HandlePingAsync(QuicCallContext context, PingMessage message, CancellationToken cancellationToken)
     {
-        if (_peers.TryGetValue(message.NodeId, out var state))
+        if (!topology.IsPeer(context, message.NodeId)
+            || !string.Equals(context.RemoteRegion, message.Region, StringComparison.Ordinal)
+            || !_peers.TryGetValue(context.RemoteNodeId, out var state))
         {
-            var (restarted, previous, next) = state.ObserveInbound(message.InstanceId, timeProvider.GetUtcNow());
-            if (previous != next)
-            {
-                ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
-            }
+            return ValueTask.FromResult<QuicHandlerOutcome<PongMessage>>(ClusterTopology.PeerForbidden());
+        }
 
-            if (restarted)
-            {
-                client.ResetPeer(message.NodeId);
-            }
+        var (restarted, previous, next) = state.ObserveInbound(message.InstanceId, timeProvider.GetUtcNow());
+        if (previous != next)
+        {
+            ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
+        }
+
+        if (restarted)
+        {
+            client.ResetPeer(context.RemoteNodeId);
         }
 
         return ValueTask.FromResult<QuicHandlerOutcome<PongMessage>>(new PongMessage(options.NodeId, options.Region, message.SentAtTicks, _instanceId));

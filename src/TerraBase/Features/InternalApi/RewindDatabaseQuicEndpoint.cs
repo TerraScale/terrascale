@@ -1,4 +1,5 @@
 using System.Buffers;
+using TerraBase.Cluster;
 using TerraBase.Continuity;
 using TerraBase.Hosting;
 using TerraScale.Contracts.Continuity;
@@ -30,7 +31,7 @@ internal sealed record RewindDatabaseReply(bool Applied) : IBinaryMessage<Rewind
     }
 }
 
-internal sealed class RewindDatabaseQuicEndpoint(BackupContinuityService continuity) : IQuicEndpoints
+internal sealed class RewindDatabaseQuicEndpoint(BackupContinuityService continuity, ClusterTopology topology) : IQuicEndpoints
 {
     public void Map(QuicRpcHost host)
     {
@@ -40,6 +41,11 @@ internal sealed class RewindDatabaseQuicEndpoint(BackupContinuityService continu
 
     private async ValueTask<QuicHandlerOutcome<RewindDatabaseReply>> HandleAsync(QuicCallContext context, RewindDatabaseRequest request, CancellationToken cancellationToken)
     {
+        if (!topology.IsPeer(context))
+        {
+            return new QuicRemoteError("forbidden", "rewind requires an authenticated cluster peer");
+        }
+
         if (!CausalBookmark.TryDecode(request.Bookmark, out var bookmark))
         {
             return new QuicRemoteError("invalid_bookmark", "rewind bookmark is malformed");

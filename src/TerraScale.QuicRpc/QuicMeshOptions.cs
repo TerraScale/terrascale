@@ -14,7 +14,7 @@ public sealed record QuicPeer(string NodeId, string Region, IPEndPoint EndPoint)
     }
 }
 
-public sealed record QuicCallContext(string RemoteNodeId, string RemoteRegion, ushort MessageTypeId, ulong RequestId);
+public sealed record QuicCallContext(string RemoteNodeId, string RemoteRegion, ushort MessageTypeId, ulong RequestId, bool IsPlatform = false);
 
 internal static class QuicMeshLimits
 {

@@ -64,6 +64,8 @@ public interface IClusterCoordinator
 
     void TrackDatabase(Ulid databaseId);
 
+    void UntrackDatabase(Ulid databaseId);
+
     CausalBookmark CurrentBookmark(Ulid databaseId);
 
     ValueTask<ClusterWaitBookmarkOutcome> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);

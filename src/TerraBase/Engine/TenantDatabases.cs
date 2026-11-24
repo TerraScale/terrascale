@@ -111,6 +111,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         lock (_gate)
         {
             _sessions.Remove(databaseId, out session);
+            cluster.UntrackDatabase(databaseId);
         }
 
         if (session is not null)
@@ -239,9 +240,9 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         lock (_gate)
         {
             _sessions[databaseId] = session;
+            cluster.TrackDatabase(databaseId);
         }
 
-        cluster.TrackDatabase(databaseId);
         return session;
     }
 }

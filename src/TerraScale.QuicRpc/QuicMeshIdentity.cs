@@ -5,11 +5,13 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace TerraScale.QuicRpc;
 
-public sealed record QuicPeerIdentity(string NodeId, string Region);
+public sealed record QuicPeerIdentity(string NodeId, string Region, bool IsPlatform = false);
 
 public static class QuicMeshIdentity
 {
     public const string TrustDomain = "terrascale";
+
+    internal const string PlatformUri = "spiffe://" + TrustDomain + "/service/ts-platform";
 
     private const string SubjectAlternativeNameOid = "2.5.29.17";
     private const string UriPrefix = "spiffe://" + TrustDomain + "/region/";
@@ -32,7 +34,8 @@ public static class QuicMeshIdentity
         ArgumentNullException.ThrowIfNull(certificate);
         var commonName = certificate.GetNameInfo(X509NameType.SimpleName, false);
         QuicPeerIdentity? identity = null;
-        foreach (var uri in ReadUris(certificate))
+        var uris = ReadUris(certificate);
+        foreach (var uri in uris)
         {
             if (!TryParse(uri, out var parsed))
             {
@@ -47,7 +50,7 @@ public static class QuicMeshIdentity
             identity = parsed;
         }
 
-        return identity;
+        return identity is null ? null : identity with { IsPlatform = uris.Contains(PlatformUri, StringComparer.Ordinal) };
     }
 
     internal static QuicPeerIdentity? ReadRemote(X509Certificate? certificate)
