@@ -173,9 +173,18 @@ internal sealed unsafe partial class SqliteConnection
 
     private static int? Scoped(StatementInfo info, SqlRuleScope scope, int action, string? first, string? second, string? database, string? inner)
     {
+        var direct = inner is null || scope.Ctes.Contains(inner);
         if (action == SqliteNative.ActionPragma)
         {
             return Deny(info, "end users cannot run PRAGMA statements");
+        }
+
+        if (action == SqliteNative.ActionUpdate)
+        {
+            return direct && scope.Target is { WritableColumns: { } writable } written && string.Equals(written.Table, first, StringComparison.OrdinalIgnoreCase)
+                && second is { } column && !writable.Contains(column)
+                ? Deny(info, string.Concat(column, " is not a writable column of ", first))
+                : null;
         }
 
         if (action != SqliteNative.ActionRead || first is null || DeniedTables.Contains(first))
@@ -208,15 +217,16 @@ internal sealed unsafe partial class SqliteConnection
             return scope.Tables.TryGetValue(first, out var table) && Hidden(table.VisibleColumns, second) ? SqliteNative.AuthIgnore : null;
         }
 
-        var direct = inner is null || scope.Ctes.Contains(inner);
-        if (inner is not null && !direct && scope.Tables.ContainsKey(inner))
+        if (inner is not null && !direct && scope.Views.Contains(inner) && scope.Tables.ContainsKey(inner))
         {
             return null;
         }
 
         if (scope.Target is { } target && string.Equals(target.Table, first, StringComparison.OrdinalIgnoreCase))
         {
-            return Hidden(target.VisibleColumns, second) ? Deny(info, string.Concat(second, " of ", first, " is not readable")) : null;
+            return Hidden(direct ? target.VisibleColumns : target.ReadableColumns, second)
+                ? Deny(info, string.Concat(second, " of ", first, " is not readable"))
+                : null;
         }
 
         if (direct && second is { Length: 0 } && scope.Tables.ContainsKey(first))

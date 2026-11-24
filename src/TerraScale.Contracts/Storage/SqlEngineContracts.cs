@@ -128,11 +128,16 @@ public sealed record SqlRuleScope(
     IReadOnlyDictionary<string, SqlTableScope> Tables,
     IReadOnlySet<string> Ctes,
     IReadOnlyDictionary<string, string> Guards,
+    IReadOnlySet<string> Views,
     SqlTargetScope? Target);
 
 public sealed record SqlTableScope(IReadOnlySet<string>? VisibleColumns);
 
-public sealed record SqlTargetScope(string Table, IReadOnlySet<string>? VisibleColumns);
+public sealed record SqlTargetScope(
+    string Table,
+    IReadOnlySet<string>? VisibleColumns,
+    IReadOnlySet<string>? ReadableColumns,
+    IReadOnlySet<string>? WritableColumns);
 
 public sealed record SqlStatementRequest(
     Ulid DatabaseId,
