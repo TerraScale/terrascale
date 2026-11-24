@@ -60,13 +60,15 @@ export interface Sample {
 const keyOf = (endpoint: Pick<RoundEndpoint, "url" | "headers">): string => `${endpoint.url}\n${endpoint.headers}`;
 
 const REGIONS_URL = "https://api.terrascale.tech/v1/regions";
+const isRegionsUrl = (url: string): boolean =>
+  url === REGIONS_URL || /^https:\/\/[a-z0-9-]+\.api\.terrascale\.tech\/v1\/regions$/.test(url);
 const DASHBOARD_READY = "https://dash.terrascale.tech/health/ready";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** TerraBase's region list from the answering node: every region, or the
-    endpoint's own region, must accept writes and have a node in the mesh. */
+/** TerraBase's region list from the answering node: v2 reports a string array
+    of regions known to the mesh. */
 export function judgeRegions(observation: Parameters<typeof judge>[1], region?: string | null): Judgement {
   const unavailable = (error: string): Judgement => ({
     outcome: region == null ? "fail" : "unknown",
@@ -83,41 +85,24 @@ export function judgeRegions(observation: Parameters<typeof judge>[1], region?: 
     return unavailable("Invalid JSON");
   }
   if (!isRecord(report) || !Array.isArray(report.regions)) return fail("Expected regions array");
-  const regions: { id: string; acceptingWrites: boolean; nodes: number }[] = [];
+  const regions: string[] = [];
   for (const [index, entry] of report.regions.entries()) {
-    if (
-      !isRecord(entry) ||
-      typeof entry.id !== "string" ||
-      typeof entry.acceptingWrites !== "boolean" ||
-      typeof entry.nodes !== "number"
-    ) {
+    if (typeof entry !== "string" || entry.length === 0) {
       return fail(`Invalid region at index ${index}`);
     }
-    regions.push({ id: entry.id.toLowerCase(), acceptingWrites: entry.acceptingWrites, nodes: entry.nodes });
+    regions.push(entry.toLowerCase());
   }
-  const problem = (entry: (typeof regions)[number]): string | null =>
-    !entry.acceptingWrites
-      ? `Region ${entry.id}: not accepting writes`
-      : entry.nodes < 1
-        ? `Region ${entry.id}: no nodes`
-        : null;
   if (region != null) {
-    const own = regions.find((entry) => entry.id === region.toLowerCase());
-    if (!own) return { outcome: "unknown", error: "Not reported", values: {} };
-    const error = problem(own);
-    return error ? fail(error) : { outcome: "ok", error: null, values: { nodes: own.nodes } };
+    if (!regions.includes(region.toLowerCase())) return { outcome: "unknown", error: "Not reported", values: {} };
+    return { outcome: "ok", error: null, values: { regions: regions.length } };
   }
   if (regions.length === 0) return fail("No regions reported");
-  for (const entry of regions) {
-    const error = problem(entry);
-    if (error) return fail(error);
-  }
   return { outcome: "ok", error: null, values: { regions: regions.length } };
 }
 
 export function judgeEndpoint(endpoint: RoundEndpoint, observation: Parameters<typeof judge>[1]) {
   const result = judge(endpoint.spec, observation);
-  if (endpoint.url === REGIONS_URL && result.outcome === "ok") {
+  if (isRegionsUrl(endpoint.url) && result.outcome === "ok") {
     const regions = judgeRegions(observation, endpoint.regionCode);
     return { ...regions, values: { ...result.values, ...regions.values } };
   }
@@ -138,7 +123,7 @@ export function targets(endpoints: readonly RoundEndpoint[]): Target[] {
   const unique = new Map<string, Target>();
   for (const endpoint of endpoints) {
     const key = keyOf(endpoint);
-    const body = (unique.get(key)?.body ?? false) || needsBody(endpoint.spec) || endpoint.url === REGIONS_URL;
+    const body = (unique.get(key)?.body ?? false) || needsBody(endpoint.spec) || isRegionsUrl(endpoint.url);
     unique.set(key, { key, url: endpoint.url, headers: endpoint.headers, body });
   }
   return [...unique.values()];

@@ -8,6 +8,12 @@ namespace TerraBase.Continuity;
 
 public sealed record ArchiveObjectWritten;
 
+public sealed record ArchiveConditionalWritten(string? ETag);
+
+public sealed record ArchivePreconditionFailed(string Message, string Code = "archive_precondition_failed");
+
+public sealed record ArchiveVersionedBytes(byte[] Content, string? ETag);
+
 public sealed record ArchiveObjectMissing(string Message, string Code);
 
 public sealed record ArchiveUnavailable(string Message, string Code);
@@ -16,13 +22,17 @@ public sealed record ArchiveTimedOut(string Message, string Code);
 
 public readonly union ArchiveWriteOutcome(ArchiveObjectWritten, ArchiveUnavailable, ArchiveTimedOut);
 
+public readonly union ArchiveConditionalWriteOutcome(ArchiveConditionalWritten, ArchivePreconditionFailed, ArchiveUnavailable, ArchiveTimedOut);
+
 public readonly union ArchiveBytesOutcome(byte[], ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
+
+public readonly union ArchiveVersionedBytesOutcome(ArchiveVersionedBytes, ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
 
 public readonly union ArchiveDownloadOutcome(long, ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
 
 public readonly union ArchiveListOutcome(IReadOnlyList<string>, ArchiveUnavailable, ArchiveTimedOut);
 
-internal readonly union ArchiveTransportFailure(ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
+internal readonly union ArchiveTransportFailure(ArchiveObjectMissing, ArchivePreconditionFailed, ArchiveUnavailable, ArchiveTimedOut);
 
 public sealed class S3ArchiveStore : IDisposable
 {
@@ -89,10 +99,53 @@ public sealed class S3ArchiveStore : IDisposable
         return await UploadStreamAsync(key, stream, contentType, cancellationToken);
     }
 
-    public async ValueTask<ArchiveBytesOutcome> GetBytesAsync(string key, CancellationToken cancellationToken)
+    public async ValueTask<ArchiveConditionalWriteOutcome> PutBytesIfMatchAsync(
+        string key,
+        ReadOnlyMemory<byte> content,
+        string contentType,
+        string? expectedETag,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        string? writtenETag = null;
+        var uploaded = await InvokeAsync(
+            async (client, bucket, token) =>
+            {
+                using var stream = new MemoryStream(content.ToArray(), writable: false);
+                var request = Put(bucket, key, stream, contentType);
+                if (expectedETag is not null)
+                {
+                    request.IfMatch = expectedETag;
+                }
+                else
+                {
+                    request.IfNoneMatch = "*";
+                }
+
+                var response = await client.PutObjectAsync(request, token);
+                writtenETag = response.ETag;
+            },
+            cancellationToken);
+        if (uploaded is not { } failure)
+        {
+            return new ArchiveConditionalWritten(writtenETag);
+        }
+
+        return failure switch
+        {
+            ArchivePreconditionFailed conflict => conflict,
+            ArchiveObjectMissing missing => new ArchiveUnavailable(missing.Message, "archive_bucket_missing"),
+            ArchiveUnavailable unavailable => unavailable,
+            ArchiveTimedOut timeout => timeout,
+        };
+    }
+
+    public async ValueTask<ArchiveVersionedBytesOutcome> GetBytesWithETagAsync(string key, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         byte[]? payload = null;
+        string? etag = null;
         var fetched = await InvokeAsync(
             async (client, bucket, token) =>
             {
@@ -100,6 +153,7 @@ public sealed class S3ArchiveStore : IDisposable
                 using var buffer = new MemoryStream();
                 await response.ResponseStream.CopyToAsync(buffer, token);
                 payload = buffer.ToArray();
+                etag = response.ETag;
             },
             cancellationToken);
         if (fetched is { } failure)
@@ -107,6 +161,7 @@ public sealed class S3ArchiveStore : IDisposable
             return failure switch
             {
                 ArchiveObjectMissing missing => missing,
+                ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
                 ArchiveUnavailable unavailable => unavailable,
                 ArchiveTimedOut timeout => timeout,
             };
@@ -117,7 +172,19 @@ public sealed class S3ArchiveStore : IDisposable
             throw new UnreachableException();
         }
 
-        return content;
+        return new ArchiveVersionedBytes(content, etag);
+    }
+
+    public async ValueTask<ArchiveBytesOutcome> GetBytesAsync(string key, CancellationToken cancellationToken)
+    {
+        var fetched = await GetBytesWithETagAsync(key, cancellationToken);
+        return fetched switch
+        {
+            ArchiveVersionedBytes versioned => versioned.Content,
+            ArchiveObjectMissing missing => missing,
+            ArchiveUnavailable unavailable => unavailable,
+            ArchiveTimedOut timeout => timeout,
+        };
     }
 
     public async ValueTask<ArchiveDownloadOutcome> DownloadToFileAsync(string key, string path, CancellationToken cancellationToken)
@@ -141,6 +208,7 @@ public sealed class S3ArchiveStore : IDisposable
             return failure switch
             {
                 ArchiveObjectMissing missing => missing,
+                ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
                 ArchiveUnavailable unavailable => unavailable,
                 ArchiveTimedOut timeout => timeout,
             };
@@ -166,6 +234,7 @@ public sealed class S3ArchiveStore : IDisposable
             return failure switch
             {
                 ArchiveObjectMissing missing => new ArchiveUnavailable(missing.Message, "archive_bucket_missing"),
+                ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
                 ArchiveUnavailable unavailable => unavailable,
                 ArchiveTimedOut timeout => timeout,
             };
@@ -196,6 +265,7 @@ public sealed class S3ArchiveStore : IDisposable
         return failure switch
         {
             ArchiveObjectMissing => new ArchiveObjectWritten(),
+            ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
             ArchiveUnavailable unavailable => unavailable,
             ArchiveTimedOut timeout => timeout,
         };
@@ -244,6 +314,7 @@ public sealed class S3ArchiveStore : IDisposable
         return failure switch
         {
             ArchiveObjectMissing missing => new ArchiveUnavailable(missing.Message, "archive_bucket_missing"),
+            ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
             ArchiveUnavailable unavailable => unavailable,
             ArchiveTimedOut timeout => timeout,
         };
@@ -266,6 +337,10 @@ public sealed class S3ArchiveStore : IDisposable
         catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound && exception.ErrorCode != NoSuchBucket)
         {
             return new ArchiveObjectMissing(exception.Message, "archive_object_not_found");
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode is HttpStatusCode.PreconditionFailed or HttpStatusCode.Conflict)
+        {
+            return new ArchivePreconditionFailed(exception.Message);
         }
         catch (AmazonS3Exception exception)
         {

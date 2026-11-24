@@ -1,6 +1,6 @@
 name: Pinned native libraries
 description: >-
-  Restore or build the pinned libsqlite3mc.so and libmsquic.so.2 under native/runtimes for the given
+  Restore or build the pinned libsqlite3mc.so, libmsquic.so.2 and libnuma.so.1 under native/runtimes for the given
   runtimes, keyed by native/native-pin.env and native/build-native.sh. A miss runs make native-libs,
   which verifies every SHA-256, ELF machine and exported symbol before the cache is saved.
 
@@ -25,14 +25,21 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu
+        sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
         echo CC_linux_arm64=aarch64-linux-gnu-gcc >> "$GITHUB_ENV"
     - if: steps.cache.outputs.cache-hit != 'true' && contains(inputs.runtimes, 'linux-x64') && runner.arch != 'X64'
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install --yes --no-install-recommends gcc-x86-64-linux-gnu
+        sudo apt-get install --yes --no-install-recommends gcc-x86-64-linux-gnu libc6-dev-amd64-cross
         echo CC_linux_x64=x86_64-linux-gnu-gcc >> "$GITHUB_ENV"
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if ! command -v zstd >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends zstd
+        fi
     - shell: bash
       working-directory: ${{ inputs.dir }}
       env:

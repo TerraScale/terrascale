@@ -27,10 +27,11 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
 
     public static bool IsPlatformProject(Ulid projectId) => projectId == AuthProjectId || projectId == DashboardProjectId || projectId == PlatformProjectId;
 
-    public async ValueTask<SystemSetupOutcome> EnsureAsync(CancellationToken cancellationToken)
+    public async ValueTask<SystemSetupOutcome> EnsureAsync(CancellationToken cancellationToken, bool allowFastFallback = false)
     {
         var now = time.GetUtcNow();
-        var organization = await catalog.UpsertOrganizationAsync(new OrganizationRecord(OrganizationId, "TerraScale", "platform", now, "enterprise", false), cancellationToken);
+        var mode = allowFastFallback ? ConsistencyMode.Fast : ConsistencyMode.Strong;
+        var organization = await catalog.UpsertOrganizationAsync(new OrganizationRecord(OrganizationId, "TerraScale", "platform", now, "enterprise", false), cancellationToken, mode);
         if (organization switch { Completed => null, ResourceNotFound missing => missing.Message, BackendUnavailable error => error.Message } is { } failed)
         {
             return new ConfigurationError(string.Concat("the platform organization could not be seeded: ", failed));
@@ -38,7 +39,7 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
 
         foreach (var platform in Databases)
         {
-            var project = await catalog.UpsertProjectAsync(new ProjectRecord(platform.ProjectId, OrganizationId, platform.ProjectName, now, "enterprise"), cancellationToken);
+            var project = await catalog.UpsertProjectAsync(new ProjectRecord(platform.ProjectId, OrganizationId, platform.ProjectName, now, "enterprise"), cancellationToken, mode);
             if (project switch { Completed => null, BackendUnavailable error => error.Message } is { } projectFailure)
             {
                 return new ConfigurationError(string.Concat("the platform project could not be seeded: ", projectFailure));
@@ -48,7 +49,7 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
             var seeded = seededOutcome switch
             {
                 DatabaseRecord existing => await LocalAsync(existing, cancellationToken),
-                ResourceNotFound => await CreateAsync(platform, now, cancellationToken),
+                ResourceNotFound => await CreateAsync(platform, now, mode, cancellationToken),
                 BackendUnavailable error => error.Message,
             };
             if (seeded is not null)
@@ -70,10 +71,10 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
         };
     }
 
-    private async ValueTask<string?> CreateAsync(PlatformDatabase platform, DateTimeOffset now, CancellationToken cancellationToken)
+    private async ValueTask<string?> CreateAsync(PlatformDatabase platform, DateTimeOffset now, ConsistencyMode mode, CancellationToken cancellationToken)
     {
         var record = Record(platform, databases.ActiveKeyId, now);
-        var outcome = await catalog.UpsertDatabaseAsync(record, cancellationToken);
+        var outcome = await catalog.UpsertDatabaseAsync(record, cancellationToken, mode);
         return outcome switch
         {
             Completed => await LocalAsync(record, cancellationToken),

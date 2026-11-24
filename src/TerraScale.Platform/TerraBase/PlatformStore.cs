@@ -71,7 +71,7 @@ public sealed class PlatformSchema(
         """,
         """
         CREATE TABLE IF NOT EXISTS platform_closed_file_projects (
-            project_id TEXT NOT NULL PRIMARY KEY, organization_id TEXT NOT NULL)
+            project_id TEXT NOT NULL PRIMARY KEY, organization_id TEXT NOT NULL, closed_at INTEGER NOT NULL DEFAULT 0, swept_at INTEGER)
         """,
         """
         CREATE TABLE IF NOT EXISTS platform_file_regions (region TEXT NOT NULL PRIMARY KEY)

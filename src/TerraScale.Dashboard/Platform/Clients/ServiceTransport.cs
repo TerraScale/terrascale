@@ -113,7 +113,7 @@ public sealed class ServiceTransport(HttpClient http)
             return refused(TerraBaseRefusal.Invalid(string.Concat("The service answered invalid JSON: ", error.Message)));
         }
 
-        return value is { } parsed ? accepted(parsed) : refused(TerraBaseRefusal.Invalid("The service answered an empty JSON document."));
+        return value is { } parsed ? accepted(parsed) : refused(TerraBaseRefusal.Invalid("The service answered an empty JSON payload."));
     }
 
     private HttpRequestMessage Request(ServiceCaller caller, HttpMethod method, string path, HttpContent? content, Action<HttpRequestHeaders>? headers)

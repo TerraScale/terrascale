@@ -3,12 +3,12 @@ import { logEvent } from "../log";
 import { check } from "./check";
 import { isOrigin } from "./terrabase";
 
-export const REGIONAL_ORIGINS = "https://api.terrascale.tech/v1/regions/origins";
+export const REGIONAL_ORIGINS = "https://atlas.terrascale.tech/v1/discovery";
 const API_COMPONENT = "01M4E7G1W82VKFPF5FJ9AVK1D2";
 
 interface RegionOrigin {
   id: string;
-  apiUrl: string;
+  api: string;
 }
 
 function origins(body: string): RegionOrigin[] {
@@ -22,8 +22,8 @@ function origins(body: string): RegionOrigin[] {
       typeof region.id !== "string" ||
       !/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(region.id) ||
       seen.has(region.id) ||
-      !isOrigin(region.apiUrl) ||
-      !new URL(region.apiUrl).hostname.endsWith(".terrascale.tech")
+      !isOrigin(region.api) ||
+      !new URL(region.api).hostname.endsWith(".terrascale.tech")
     )
       throw new Error("Invalid regional origin discovery");
     seen.add(region.id);
@@ -31,7 +31,7 @@ function origins(body: string): RegionOrigin[] {
   return value.regions as RegionOrigin[];
 }
 
-/** Cheap anonymous host checks discovered from ts-orch. Retain known probes
+/** Cheap anonymous host checks discovered from Atlas. Retain known probes
  * during discovery outages so an unavailable catalog cannot hide an outage. */
 export async function discoverRegionalHosts(db: D1Database, fetcher: typeof fetch = fetch): Promise<void> {
   try {
@@ -41,7 +41,7 @@ export async function discoverRegionalHosts(db: D1Database, fetcher: typeof fetc
     await db.batch(
       regions.flatMap((region) => {
         const code = region.id.toUpperCase();
-        const url = region.apiUrl + "/healthz";
+        const url = region.api + "/healthz";
         const assertions = JSON.stringify([
           { path: "status", op: "eq", value: "ok" },
           { path: "region", op: "eq", value: region.id },

@@ -61,6 +61,8 @@ public sealed record ClusterOptions
 
     public int MaxReplicationParallelism { get; init; } = 8;
 
+    public string? StorageIncarnation { get; init; }
+
     public IReadOnlyList<string> Regions =>
         [.. Peers.Select(static peer => peer.Region).Append(Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 
@@ -68,7 +70,23 @@ public sealed record ClusterOptions
 
     public IReadOnlyList<PeerNodeInfo> RemotePeers => [.. Peers.Where(peer => !string.Equals(peer.Region, Region, StringComparison.Ordinal))];
 
-    public string StorageOrigin => RegionPeers.Count == 0 ? Region : OriginFor(NodeId);
+    public string StorageOrigin
+    {
+        get
+        {
+            var baseOrigin = RegionPeers.Count == 0 ? Region : OriginFor(NodeId);
+            if (string.IsNullOrEmpty(StorageIncarnation))
+            {
+                return baseOrigin;
+            }
+
+            var maxBase = Math.Max(1, 63 - StorageIncarnation.Length - 1);
+            var trimmed = baseOrigin.Length > maxBase ? baseOrigin[..maxBase] : baseOrigin;
+            return string.Concat(trimmed, "-", StorageIncarnation);
+        }
+    }
+
+    public bool IsRegionBootstrapNode => !RegionPeers.Any(peer => string.CompareOrdinal(peer.NodeId, NodeId) < 0);
 
     public bool IsBootstrapNode => !Peers.Any(peer => string.CompareOrdinal(peer.Region, Region) switch
     {
@@ -85,6 +103,7 @@ public sealed record ClusterOptions
         Certificate = Certificates.Certificate,
         TrustedAuthorities = Certificates.TrustedAuthorities,
         IntermediateCertificates = Certificates.Intermediates,
+        CertificateRotator = Certificates.Rotator,
     };
 
     public ClusterOptions Validate()
@@ -141,17 +160,54 @@ public sealed record ClusterOptions
 
     private static ClusterOptionsOutcome Assemble(ClusterSettings settings, IReadOnlyList<PeerNodeInfo> all, MeshPkiOutcome certificates) => certificates switch
     {
-        QuicMeshCertificates loaded => new ClusterOptions
+        QuicMeshCertificates loaded => Build(settings, all, loaded),
+        MeshPkiInvalid invalid => new ClusterConfigurationError(invalid.Message, invalid.Code),
+    };
+
+    private static ClusterOptions Build(ClusterSettings settings, IReadOnlyList<PeerNodeInfo> all, QuicMeshCertificates loaded)
+    {
+        PeerNodeInfo[] peers = [.. all.Where(peer => !string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal))];
+        return new ClusterOptions
         {
             NodeId = settings.NodeId,
             Region = settings.Region,
             DataDirectory = Path.Combine(settings.DataDirectory, "cluster"),
             ListenEndPoint = ListenFor(all.FirstOrDefault(peer => string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal)), all.Count == 0, settings.QuicPort),
-            Peers = [.. all.Where(peer => !string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal))],
+            Peers = peers,
             Certificates = loaded,
-        },
-        MeshPkiInvalid invalid => new ClusterConfigurationError(invalid.Message, invalid.Code),
-    };
+            StorageIncarnation = LoadOrCreateIncarnation(settings.DataDirectory, peers.Length),
+        };
+    }
+
+    private static string? LoadOrCreateIncarnation(string dataDirectory, int peerCount)
+    {
+        if (peerCount == 0)
+        {
+            return null;
+        }
+
+        var path = Path.Combine(dataDirectory, "storage-incarnation");
+        try
+        {
+            if (File.Exists(path))
+            {
+                var existing = File.ReadAllText(path).Trim();
+                if (existing.Length is >= 8 and <= 16 && existing.All(static character => char.IsAsciiDigit(character) || character is >= 'a' and <= 'f'))
+                {
+                    return existing;
+                }
+            }
+
+            _ = Directory.CreateDirectory(dataDirectory);
+            var created = RandomNumberGenerator.GetHexString(8, lowercase: true);
+            File.WriteAllText(path, created);
+            return created;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     private static IPEndPoint ListenFor(PeerNodeInfo? self, bool standalone, int quicPort)
     {

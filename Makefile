@@ -72,7 +72,7 @@ native-libs:
 	set -e; inputs=$$(cat $(NATIVE_INPUTS) | sha256sum | cut -d' ' -f1); \
 	for runtime in $(NATIVE_RUNTIMES); do \
 		out=native/runtimes/$$runtime; \
-		if [ -f $$out/native/libsqlite3mc.so ] && [ -f $$out/native/libmsquic.so.2 ] && [ "$$(cat $$out/inputs.sha256 2>/dev/null)" = "$$inputs" ]; then continue; fi; \
+		if [ -f $$out/native/libsqlite3mc.so ] && [ -f $$out/native/libmsquic.so.2 ] && [ -f $$out/native/libnuma.so.1 ] && [ "$$(cat $$out/inputs.sha256 2>/dev/null)" = "$$inputs" ]; then continue; fi; \
 		bash native/build-native.sh $$runtime; \
 		echo "$$inputs" > $$out/inputs.sha256; \
 	done
@@ -154,8 +154,10 @@ terrabase-publish: native-libs
 	test -x "$(PUBLISH_DIR)/terrabase"
 	test ! -e "$(PUBLISH_DIR)/libsqlite3mc.so"
 	test ! -e "$(PUBLISH_DIR)/libmsquic.so.2"
+	test ! -e "$(PUBLISH_DIR)/libnuma.so.1"
 	grep -qa libsqlite3mc.so "$(PUBLISH_DIR)/terrabase"
 	grep -qa libmsquic.so.2 "$(PUBLISH_DIR)/terrabase"
+	grep -qa libnuma.so.1 "$(PUBLISH_DIR)/terrabase"
 
 platform-restore:
 	$(DOTNET) restore $(PLATFORM_PROJECT) --locked-mode
@@ -167,7 +169,9 @@ platform-publish: native-libs
 	$(DOTNET) publish src/TerraScale.Platform --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
 	test -x "$(PUBLISH_DIR)/ts-platform"
 	test ! -e "$(PUBLISH_DIR)/libmsquic.so.2"
+	test ! -e "$(PUBLISH_DIR)/libnuma.so.1"
 	grep -qa libmsquic.so.2 "$(PUBLISH_DIR)/ts-platform"
+	grep -qa libnuma.so.1 "$(PUBLISH_DIR)/ts-platform"
 
 dashboard-restore:
 	$(DOTNET) restore $(DASHBOARD_PROJECT) --locked-mode

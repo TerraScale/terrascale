@@ -156,7 +156,7 @@ export async function runTerraBase(
           version?: unknown;
           region?: unknown;
         };
-        if (ready.status !== "ready" || !isString(ready.version) || ready.region !== config.region) invalid();
+        if (ready.status !== "ok" || !isString(ready.version) || ready.region !== config.region) invalid();
         break;
       }
       case SQL_PROBE: {

@@ -233,7 +233,7 @@ internal sealed class OriginLog : IDisposable
     private readonly CommitLogOptions _options;
     private readonly TimeProvider _time;
     private readonly Ulid _databaseId;
-    private SafeFileHandle _active;
+    private SafeFileHandle? _active;
     private long _length;
     private long _lastSequence;
     private long _firstAvailable;
@@ -336,7 +336,7 @@ internal sealed class OriginLog : IDisposable
 
         var log = new OriginLog(directory, prefix, origin, databaseId, cipher, options, time, active, sealedSegments);
         var lastSealed = sealedSegments.Count > 0 ? sealedSegments[^1].Segment.LastSequence : 0;
-        if (log.Recover(lastSealed > 0 ? lastSealed : baseSequence) is { } failure)
+        if (log.Recover(lastSealed > 0 ? lastSealed : baseSequence, baseSequence) is { } failure)
         {
             log.Dispose();
             return new StorageCorrupted(databaseId, failure);
@@ -374,7 +374,12 @@ internal sealed class OriginLog : IDisposable
                 return SqliteStatus.Success;
             }
 
-            if (FileIo.Write(_active, buffer.GetBuffer().AsSpan(0, (int)buffer.Length), offset, _options.Fsync) is { } error)
+            if (EnsureActiveHandle() is not { } active)
+            {
+                return new SqliteStatus(SqliteNative.IoError, "active commit log could not be opened");
+            }
+
+            if (FileIo.Write(active, buffer.GetBuffer().AsSpan(0, (int)buffer.Length), offset, _options.Fsync) is { } error)
             {
                 return new SqliteStatus(SqliteNative.IoError, error);
             }
@@ -392,8 +397,18 @@ internal sealed class OriginLog : IDisposable
                 _firstAvailable = added[0].Sequence;
             }
 
-            SealIfDue(force: false);
             return SqliteStatus.Success;
+        }
+    }
+
+    public void SealIfDue()
+    {
+        lock (_gate)
+        {
+            if (!_disposed)
+            {
+                SealIfDue(force: false);
+            }
         }
     }
 
@@ -407,7 +422,11 @@ internal sealed class OriginLog : IDisposable
             }
 
             _frames.RemoveAll(frame => frame.Offset >= length);
-            _ = FileIo.SetLength(_active, length);
+            if (_active is { } active)
+            {
+                _ = FileIo.SetLength(active, length);
+            }
+
             _length = length;
             _lastSequence = lastSequence;
         }
@@ -446,7 +465,7 @@ internal sealed class OriginLog : IDisposable
                 var first = _frames.FindIndex(frame => frame.Sequence >= fromSequence);
                 var offset = first < 0 ? _length : _frames[first].Offset;
                 bytes = new byte[_length - offset];
-                if (FileIo.Read(_active, bytes, offset) is not null)
+                if (bytes.Length > 0 && (_active is not { } active || FileIo.Read(active, bytes, offset) is not null))
                 {
                     return new StorageCorrupted(_databaseId, "active commit log unreadable");
                 }
@@ -547,27 +566,57 @@ internal sealed class OriginLog : IDisposable
             }
 
             _disposed = true;
-            _active.Dispose();
+            _active?.Dispose();
+            _active = null;
         }
+    }
+
+    private string ActivePath() => Path.Combine(_directory, string.Concat(_prefix, ActiveExtension));
+
+    private SafeFileHandle? EnsureActiveHandle()
+    {
+        if (_active is not null)
+        {
+            return _active;
+        }
+
+        _active = FileIo.OpenHandle(ActivePath(), FileMode.OpenOrCreate);
+        return _active;
     }
 
     private void SealIfDue(bool force)
     {
-        if (_frames.Count == 0 || (!force && _length < _options.SegmentMaxBytes && _time.GetUtcNow() - _activeSince < _options.SegmentMaxAge))
+        if (_active is null || _frames.Count == 0 || (!force && _length < _options.SegmentMaxBytes && _time.GetUtcNow() - _activeSince < _options.SegmentMaxAge))
         {
             return;
         }
 
         var first = _frames[0].Sequence;
-        var activePath = Path.Combine(_directory, string.Concat(_prefix, ActiveExtension));
+        var activePath = ActivePath();
         var sealedPath = Path.Combine(_directory, string.Create(CultureInfo.InvariantCulture, $"{_prefix}.{first:D19}-{_lastSequence:D19}{SealedExtension}"));
         if (FileIo.Flush(_active) is not null)
         {
             return;
         }
 
-        if (FileIo.Move(activePath, sealedPath) is not null || FileIo.OpenHandle(activePath, FileMode.CreateNew) is not { } fresh)
+        if (FileIo.Move(activePath, sealedPath) is not null)
         {
+            return;
+        }
+
+        if (FileIo.OpenHandle(activePath, FileMode.CreateNew) is not { } fresh)
+        {
+            if (FileIo.Move(sealedPath, activePath) is null)
+            {
+                return;
+            }
+
+            _active.Dispose();
+            _active = null;
+            _sealed.Add((new CommitLogSegment(_databaseId, Origin, first, _lastSequence, _length, _time.GetUtcNow()), sealedPath));
+            _frames.Clear();
+            _length = 0;
+            _activeSince = _time.GetUtcNow();
             return;
         }
 
@@ -579,9 +628,14 @@ internal sealed class OriginLog : IDisposable
         _activeSince = _time.GetUtcNow();
     }
 
-    private string? Recover(long baseSequence)
+    private string? Recover(long baseSequence, long committedSequence)
     {
         _lastSequence = baseSequence;
+        if (_active is null)
+        {
+            return "active commit log handle missing";
+        }
+
         var fileLength = RandomAccess.GetLength(_active);
         if (fileLength == 0)
         {
@@ -610,7 +664,7 @@ internal sealed class OriginLog : IDisposable
             var crc = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan((int)(end - CommitFrame.CrcSize)));
             if (Crc32.HashToUInt32(Crc32ParameterSet.Crc32C, body) != crc)
             {
-                if (end == fileLength)
+                if (_lastSequence >= committedSequence || end == fileLength)
                 {
                     break;
                 }
@@ -620,6 +674,11 @@ internal sealed class OriginLog : IDisposable
 
             if (!CommitFrame.TryDecode(body, Origin, _cipher, out var commit))
             {
+                if (_lastSequence >= committedSequence)
+                {
+                    break;
+                }
+
                 return "commit log frame failed authentication";
             }
 
@@ -631,6 +690,11 @@ internal sealed class OriginLog : IDisposable
             first = false;
             if (commit.Sequence != expected)
             {
+                if (_lastSequence >= committedSequence)
+                {
+                    break;
+                }
+
                 return "commit log sequence gap";
             }
 

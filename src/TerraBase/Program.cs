@@ -25,12 +25,15 @@ using TerraBase.Postgres.Hosting;
 using TerraScale.Contracts;
 using TerraScale.Endpoints;
 using TerraScale.Logging;
+using TerraScale.QuicRpc;
 
 if (args is ["--storage-format"])
 {
     Console.WriteLine(StorageFormat.Id);
     return 0;
 }
+
+QuicPlatform.EnsureInitialized();
 
 return await (Startup.Prepare(args) switch
 {
@@ -52,10 +55,11 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     builder.WebHost.ConfigureKestrel(kestrel =>
     {
         kestrel.Limits.MaxRequestBodySize = 8 * 1024 * 1024;
-        kestrel.AddTerraBaseListeners(options, Listeners.InternalAddress(prepared.Cluster));
+        kestrel.AddTerraBaseListeners(options, Listeners.InternalAddress(prepared.Cluster, options));
     });
     builder.Logging.AddTerraScaleLogging("terrabase");
 
+    builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = TimeSpan.FromSeconds(25));
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton(options);
     builder.Services.AddSingleton(prepared.Credential);

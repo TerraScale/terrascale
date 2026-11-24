@@ -118,7 +118,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
     }
 
     private bool IsLocalOnlyStrong(Ulid databaseId) =>
-        topology.StrongParticipants(databaseId) is [{ IsLocal: true }];
+        topology.RegionPeers.Count == 0 && topology.StrongParticipants(databaseId) is [{ IsLocal: true }];
 
     private async ValueTask<ClusterWriteOutcome> ExecuteLocalStrongAsync(
         ISqlDatabaseSession session,

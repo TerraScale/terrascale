@@ -86,15 +86,15 @@ public static class PeerMeshDiscovery
 
     public static PeerDiscoveryOutcome ParseJson(ReadOnlySpan<byte> json, int defaultQuicPort, int defaultInternalHttpPort)
     {
-        var document = OpenJson(json);
-        if (document is null)
+        var parsed = OpenJson(json);
+        if (parsed is null)
         {
             return Invalid("peers JSON is malformed");
         }
 
-        using (document)
+        using (parsed)
         {
-            var root = document.RootElement;
+            var root = parsed.RootElement;
             var array = root.ValueKind switch
             {
                 JsonValueKind.Array => root,

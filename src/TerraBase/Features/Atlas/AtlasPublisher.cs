@@ -9,12 +9,18 @@ using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using TerraBase.Configuration;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using ZLogger;
 
 namespace TerraBase.Features.Atlas;
 
-public sealed record AtlasPlacement(int Version, string Project, string Database, string? Region, long Updated);
+public sealed record AtlasPlacement(
+    [property: JsonPropertyName("v")] int Version,
+    string Project,
+    string Database,
+    string? Region,
+    long Updated);
 
 public sealed record AtlasPublishRequest(IReadOnlyList<AtlasPlacement> Placements);
 
@@ -28,7 +34,13 @@ public sealed record AtlasPublishResponse(IReadOnlyList<AtlasPlacementResult> Pl
 internal sealed partial class AtlasJsonContext : JsonSerializerContext;
 
 internal sealed class AtlasPublisher(
-    TerraBaseOptions options, IHttpClientFactory http, CatalogStore catalog, TimeProvider time, IMeterFactory meters, ILogger<AtlasPublisher> logger) : BackgroundService
+    TerraBaseOptions options,
+    IHttpClientFactory http,
+    CatalogStore catalog,
+    RegionDirectory regions,
+    TimeProvider time,
+    IMeterFactory meters,
+    ILogger<AtlasPublisher> logger) : BackgroundService
 {
     public const string HttpClientName = "atlas-publish";
 
@@ -51,7 +63,7 @@ internal sealed class AtlasPublisher(
             return;
         }
 
-        _queue.Writer.TryWrite(new AtlasPlacement(1, projectId.ToString(), database, region, time.GetUtcNow().ToUnixTimeMilliseconds()));
+        _queue.Writer.TryWrite(new AtlasPlacement(1, projectId.ToString(), database, region, time.GetUtcNow().ToUnixTimeSeconds()));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -81,16 +93,31 @@ internal sealed class AtlasPublisher(
                 }
             }
 
-            if (batch.Count > 0 && !await PublishAsync(url, key, batch, stoppingToken))
+            if (batch.Count > 0)
             {
-                foreach (var placement in batch)
+                var unique = Deduplicate(batch);
+                if (!await PublishAsync(url, key, unique, stoppingToken))
                 {
-                    _queue.Writer.TryWrite(placement);
-                }
+                    foreach (var placement in unique)
+                    {
+                        _queue.Writer.TryWrite(placement);
+                    }
 
-                await Task.Delay(TimeSpan.FromSeconds(5), time, stoppingToken);
+                    await Task.Delay(TimeSpan.FromSeconds(5), time, stoppingToken);
+                }
             }
         }
+    }
+
+    private static List<AtlasPlacement> Deduplicate(List<AtlasPlacement> batch)
+    {
+        Dictionary<(string Project, string Database), AtlasPlacement> latest = [];
+        foreach (var placement in batch)
+        {
+            latest[(placement.Project, placement.Database)] = placement;
+        }
+
+        return [.. latest.Values];
     }
 
     private async Task<bool> WaitAsync(CancellationToken cancellationToken)
@@ -107,6 +134,8 @@ internal sealed class AtlasPublisher(
 
     private async Task ResyncAsync(CancellationToken cancellationToken)
     {
+        var knownRegions = regions.List();
+        var defaultCanonical = knownRegions.Count > 0 ? knownRegions[0] : options.Region;
         string? after = null;
         while (await catalog.AllDatabasesAsync(after, 256, cancellationToken) switch
         {
@@ -114,9 +143,20 @@ internal sealed class AtlasPublisher(
             BackendUnavailable => [],
         } is { Count: > 0 } page)
         {
-            foreach (var database in page.Where(database => database.PlacedIn(options.Region)))
+            foreach (var database in page)
             {
-                Queue(database.ProjectId, database.Name, options.Region);
+                if (!database.PlacedIn(options.Region))
+                {
+                    continue;
+                }
+
+                var canonical = database.AllRegions
+                    ? defaultCanonical
+                    : database.Regions.Order(StringComparer.Ordinal).FirstOrDefault() ?? options.Region;
+                if (string.Equals(canonical, options.Region, StringComparison.Ordinal))
+                {
+                    Queue(database.ProjectId, database.Name, canonical);
+                }
             }
 
             after = page[^1].Id.ToString();

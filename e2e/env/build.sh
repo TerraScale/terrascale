@@ -20,7 +20,7 @@ case $service in
     rm -rf "$out/terrabase"
     dotnet publish src/TerraBase/TerraBase.csproj --configuration Release --no-restore \
       -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:SourceRevisionId="$revision" --output "$out/terrabase"
-    published "$out/terrabase" libsqlite3mc.so libmsquic.so.2
+    published "$out/terrabase" libsqlite3mc.so libmsquic.so.2 libnuma.so.1
     dotnet restore e2e/keyring/Journey.Keyring.csproj --locked-mode -p:KeyringServiceDirectory="$out/terrabase"
     dotnet build e2e/keyring/Journey.Keyring.csproj -c Release --no-restore --output "$out/keyring" -p:KeyringServiceDirectory="$out/terrabase" -p:SourceRevisionId="$revision"
     python3 e2e/fault/build-receipts.py "$root" "$out"
@@ -32,7 +32,7 @@ case $service in
     rm -rf "$out/ts-platform"
     dotnet publish src/TerraScale.Platform/TerraScale.Platform.csproj --configuration Release --no-restore \
       -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:SourceRevisionId="$revision" --output "$out/ts-platform"
-    published "$out/ts-platform" libmsquic.so.2
+    published "$out/ts-platform" libmsquic.so.2 libnuma.so.1
     ;;
   ts-auth)
     dotnet restore src/TerraScale.Authentication/TerraScale.Authentication.csproj --locked-mode

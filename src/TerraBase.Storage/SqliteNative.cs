@@ -264,6 +264,9 @@ internal static unsafe partial class SqliteNative
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_result_int64")]
     public static partial void ResultInt64(nint context, long value);
 
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_result_error")]
+    public static partial void ResultError(nint context, byte* message, int byteCount);
+
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_db_config")]
     public static partial int DbConfigFlag(nint db, int option, int value, int* result);
 
@@ -357,13 +360,9 @@ internal static class SqliteLibrary
         }
 
         var architecture = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "linux-arm64" : "linux-x64";
-        string[] candidates =
-        [
-            Path.Combine(AppContext.BaseDirectory, "runtimes", architecture, "native", FileName),
-            Path.Combine(AppContext.BaseDirectory, FileName),
-        ];
-        foreach (var candidate in candidates)
+        foreach (var directory in SearchDirectories(architecture))
         {
+            var candidate = Path.Combine(directory, FileName);
             if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
             {
                 return handle;
@@ -371,5 +370,31 @@ internal static class SqliteLibrary
         }
 
         return NativeLibrary.TryLoad(FileName, assembly, searchPath, out var fallback) ? fallback : 0;
+    }
+
+    private static List<string> SearchDirectories(string runtimeIdentifier)
+    {
+        List<string> directories = [];
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        if (AppContext.GetData("NATIVE_DLL_SEARCH_DIRECTORIES") is string search)
+        {
+            foreach (var entry in search.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                Add(entry);
+                Add(Path.Combine(entry, "runtimes", runtimeIdentifier, "native"));
+            }
+        }
+
+        Add(Path.Combine(AppContext.BaseDirectory, "runtimes", runtimeIdentifier, "native"));
+        Add(AppContext.BaseDirectory);
+        return directories;
+
+        void Add(string directory)
+        {
+            if (directory.Length > 0 && seen.Add(directory))
+            {
+                directories.Add(directory);
+            }
+        }
     }
 }

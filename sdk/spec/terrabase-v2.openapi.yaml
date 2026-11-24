@@ -4,7 +4,7 @@ info:
   version: 2.0.0
   description: >-
     Canonical wire contract for TerraBase v2 and the TerraScale platform. Every SDK (dotnet, go, js, python, rust)
-    is generated or hand-aligned from this document. Every write response returns a TerraScale-Bookmark header;
+    is generated or hand-aligned from this OpenAPI document. Every write response returns a TerraScale-Bookmark header;
     clients send the newest bookmark they hold on every later request to get read-your-writes in any region.
     TerraScale-Consistency selects fast (local commit, asynchronous peer replication) or strong
     (2-of-3 quorum optimistic concurrency) execution. Schema changes and writes to tables with secondary UNIQUE

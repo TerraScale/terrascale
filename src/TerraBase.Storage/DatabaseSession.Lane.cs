@@ -45,6 +45,12 @@ internal sealed partial class DatabaseSession
     public async ValueTask<StageWriteOutcome> StageWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken);
+        if (waited switch { BookmarkReached => false, StorageTimeout => true })
+        {
+            return new StorageTimeout("causal bookmark was not reached before the staged write");
+        }
+
         var completion = NewCompletion<StageWriteOutcome>();
         if (!await EnqueueAsync(new StageRequest(request, completion, cancellationToken), cancellationToken))
         {
@@ -128,7 +134,14 @@ internal sealed partial class DatabaseSession
                 return begun.ToBusy();
             }
 
-            return AsResult(new ReadTransaction(this, reader, options, Ulid.NewUlid(_context.Time.GetUtcNow())));
+            var readTransaction = new ReadTransaction(this, reader, options, Ulid.NewUlid(_context.Time.GetUtcNow()), Options.TransactionIdleTimeout, _context.Time);
+            if (!RegisterReadTransaction(readTransaction))
+            {
+                readTransaction.Abandon();
+                return Closing();
+            }
+
+            return AsResult(readTransaction);
         }
 
         var transaction = new WriteTransaction(options, Ulid.NewUlid(_context.Time.GetUtcNow()));
@@ -215,8 +228,8 @@ internal sealed partial class DatabaseSession
 
     private static bool IsGroupable(LaneRequest request) => request switch
     {
-        LocalWriteRequest or StageRequest => true,
-        TransactionRequest or RemoteApplyRequest or CommitStagedRequest => false,
+        LocalWriteRequest => true,
+        StageRequest or TransactionRequest or RemoteApplyRequest or CommitStagedRequest => false,
     };
 
     private async Task ProcessSerialAsync(LaneRequest request)
@@ -372,15 +385,27 @@ internal sealed partial class DatabaseSession
 
     private LocalItemOutcome FinishLocalItem(WriteContext context, ref long nextSequence, ref ulong epoch)
     {
+        var savedSequence = nextSequence;
+        var savedEpoch = epoch;
         var finished = FinishLocal(context, ref nextSequence, ref epoch, out var commit);
         if (!finished.IsOk)
         {
+            nextSequence = savedSequence;
+            epoch = savedEpoch;
             RollbackItemSchema(context);
             return finished.ToSqlError(-1);
         }
 
         var released = _writer.Exec(ReleaseItem);
-        return released.IsOk ? new LocalItemPrepared(commit) : released.ToSqlError(-1);
+        if (!released.IsOk)
+        {
+            nextSequence = savedSequence;
+            epoch = savedEpoch;
+            RollbackItemSchema(context);
+            return released.ToSqlError(-1);
+        }
+
+        return new LocalItemPrepared(commit);
     }
 
     private LocalItemOutcome AbortItem(WriteContext context, LocalItemOutcome failure)
@@ -654,6 +679,7 @@ internal sealed partial class DatabaseSession
 
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
         _versions.Set([new(Region, commits[^1].Sequence)]);
+        log.SealIfDue();
         return SqliteStatus.Success;
     }
 

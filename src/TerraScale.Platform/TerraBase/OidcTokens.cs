@@ -14,25 +14,45 @@ public sealed record TokenRejected(string Message);
 
 public sealed class OidcTokens : IDisposable
 {
-    private const string ConfigurationPath = ".well-known/openid-configuration";
-    private readonly MemoryCache _projects = new(new MemoryCacheOptions { SizeLimit = 1024 });
-    private readonly ConfigurationManager<OpenIdConnectConfiguration>? _configuration;
-    private readonly JsonWebTokenHandler _handler = new();
-    private readonly PlatformOptions _options;
+    public const string HttpClientName = "ts-auth";
 
-    public OidcTokens(PlatformOptions options)
+    private const string ConfigurationPath = ".well-known/openid-configuration";
+
+    private static readonly string[] Algorithms =
+    [
+        SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
+        SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
+        SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
+    ];
+
+    private static readonly string[] Types = ["at+jwt", "application/at+jwt", "JWT"];
+
+    private readonly MemoryCache _projects = new(new MemoryCacheOptions { SizeLimit = 1024 });
+    private readonly IssuerEntry? _platform;
+    private readonly string[] _audiences;
+    private readonly JsonWebTokenHandler _handler = new() { MaximumTokenSizeInBytes = 16 * 1024 };
+    private readonly PlatformOptions _options;
+    private readonly IHttpClientFactory _http;
+    private readonly TimeProvider _time;
+
+    public OidcTokens(PlatformOptions options, IHttpClientFactory http, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(time);
         _options = options;
+        _http = http;
+        _time = time;
+        _audiences = options.AuthAudience?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
         if (options.AuthIssuer is { } issuer)
         {
-            _configuration = Manager(issuer);
+            _platform = CreateEntry(http, issuer);
         }
     }
 
     public async ValueTask<ValidateTokenOutcome> ValidateAsync(string token, string project, CancellationToken cancellationToken)
     {
-        if (_configuration is not { } configuration || _options.AuthIssuer is not { } issuer || _options.AuthAudience is not { } audience)
+        if (_platform is not { } entry || _options.AuthIssuer is not { } issuer || _audiences.Length == 0)
         {
             return new TokenAccepted();
         }
@@ -45,6 +65,7 @@ public sealed class OidcTokens : IDisposable
 
         var platformIssuer = issuer.AbsoluteUri.TrimEnd('/');
         var tenant = jwt.Issuer != platformIssuer && jwt.Issuer != issuer.AbsoluteUri;
+        IReadOnlyList<string> audiences = _audiences;
         if (tenant)
         {
             if (project.Length != 26 || !Ulid.TryParse(project, out var id) || id.ToString() != project)
@@ -58,37 +79,56 @@ public sealed class OidcTokens : IDisposable
                 return invalid;
             }
 
-            configuration = ProjectManager(projectIssuer);
-            audience = string.Concat(audience.TrimEnd('/'), "/v1/projects/", project);
+            entry = ProjectEntry(projectIssuer);
+            audiences = [.. _audiences.Select(audience => string.Concat(audience.TrimEnd('/'), "/v1/projects/", project))];
         }
 
-        OpenIdConnectConfiguration document;
-        try
+        var validIssuers = tenant ? new[] { jwt.Issuer } : new[] { issuer.AbsoluteUri, platformIssuer };
+        if (await ConfigurationAsync(entry.Manager, cancellationToken) is not { } metadata)
         {
-            document = await configuration.GetConfigurationAsync(cancellationToken);
-        }
-        catch (InvalidOperationException error)
-        {
-            return new PlatformUnavailable($"the identity provider keys are unavailable: {error.Message}", "jwks_unavailable");
-        }
-        catch (IOException error)
-        {
-            return new PlatformUnavailable($"the identity provider keys are unavailable: {error.Message}", "jwks_unavailable");
+            return new PlatformUnavailable("the identity provider keys are unavailable; retry", "jwks_unavailable");
         }
 
-        var result = await _handler.ValidateTokenAsync(token, new TokenValidationParameters
+        var result = await _handler.ValidateTokenAsync(token, Parameters(validIssuers, audiences, tenant, metadata.SigningKeys));
+        if (!result.IsValid && result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            ValidIssuers = tenant ? [jwt.Issuer] : [issuer.AbsoluteUri, platformIssuer],
-            ValidAudience = audience,
-            IgnoreTrailingSlashWhenValidatingAudience = !tenant,
-            IssuerSigningKeys = document.SigningKeys,
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromSeconds(30),
-        });
+            entry.Manager.RequestRefresh();
+            if (await FetchFreshAsync(entry, cancellationToken) is not { } refreshed)
+            {
+                return new PlatformUnavailable("the identity provider keys are unavailable; retry", "jwks_unavailable");
+            }
+
+            result = await _handler.ValidateTokenAsync(token, Parameters(validIssuers, audiences, tenant, refreshed.SigningKeys));
+        }
+
         return result.IsValid ? new TokenAccepted() : invalid;
     }
 
     public void Dispose() => _projects.Dispose();
+
+    private TokenValidationParameters Parameters(
+        string[] validIssuers,
+        IReadOnlyList<string> audiences,
+        bool tenant,
+        IEnumerable<SecurityKey> keys) => new()
+        {
+            ValidIssuers = validIssuers,
+            ValidAudiences = audiences,
+            ValidateAudience = audiences.Count > 0,
+            IgnoreTrailingSlashWhenValidatingAudience = !tenant,
+            IssuerSigningKeys = keys,
+            ValidAlgorithms = Algorithms,
+            ValidTypes = Types,
+            RequireSignedTokens = true,
+            RequireExpirationTime = true,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            LifetimeValidator = (notBefore, expires, _, _) =>
+            {
+                var now = _time.GetUtcNow().UtcDateTime;
+                return expires is { } until && until >= now.AddSeconds(-30) && (notBefore is null || notBefore.Value <= now.AddSeconds(30));
+            },
+        };
 
     private JsonWebToken? Read(string token)
     {
@@ -106,20 +146,57 @@ public sealed class OidcTokens : IDisposable
         }
     }
 
-    private ConfigurationManager<OpenIdConnectConfiguration> ProjectManager(Uri issuer)
+    private IssuerEntry ProjectEntry(Uri issuer)
     {
-        if (_projects.TryGetValue(issuer, out ConfigurationManager<OpenIdConnectConfiguration>? cached) && cached is not null)
+        if (_projects.TryGetValue(issuer, out IssuerEntry? cached) && cached is not null)
         {
             return cached;
         }
 
-        var created = Manager(issuer);
+        var created = CreateEntry(_http, issuer);
         _projects.Set(issuer, created, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = TimeSpan.FromHours(1) });
         return created;
     }
 
-    private static ConfigurationManager<OpenIdConnectConfiguration> Manager(Uri issuer) => new(
-        issuer.AbsoluteUri.TrimEnd('/') + "/" + ConfigurationPath,
-        new OpenIdConnectConfigurationRetriever(),
-        new HttpDocumentRetriever { RequireHttps = issuer.Scheme == Uri.UriSchemeHttps });
+    private static IssuerEntry CreateEntry(IHttpClientFactory http, Uri issuer)
+    {
+        var metadataAddress = issuer.AbsoluteUri.TrimEnd('/') + "/" + ConfigurationPath;
+        var retriever = new HttpDocumentRetriever(http.CreateClient(HttpClientName)) { RequireHttps = issuer.Scheme == Uri.UriSchemeHttps };
+        var manager = new ConfigurationManager<OpenIdConnectConfiguration>(metadataAddress, new OpenIdConnectConfigurationRetriever(), retriever)
+        {
+            AutomaticRefreshInterval = TimeSpan.FromHours(1),
+            RefreshInterval = TimeSpan.FromSeconds(30),
+        };
+        return new IssuerEntry(metadataAddress, retriever, manager);
+    }
+
+    private static async Task<OpenIdConnectConfiguration?> ConfigurationAsync(
+        ConfigurationManager<OpenIdConnectConfiguration> manager,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await manager.GetConfigurationAsync(cancellationToken);
+        }
+        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
+            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return null;
+        }
+    }
+
+    private static async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, cancellationToken);
+        }
+        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
+            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return null;
+        }
+    }
+
+    private sealed record IssuerEntry(string MetadataAddress, HttpDocumentRetriever Retriever, ConfigurationManager<OpenIdConnectConfiguration> Manager);
 }

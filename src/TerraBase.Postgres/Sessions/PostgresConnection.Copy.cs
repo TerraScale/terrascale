@@ -98,7 +98,7 @@ internal sealed partial class PostgresConnection
             {
                 PgFrontendMessage message => message switch
                 {
-                    PgCopyDataMessage data => Unpack(reader.Feed(data.Data), done: false),
+                    PgCopyDataMessage data => Unpack(reader.Consume(data.Data), done: false),
                     PgCopyDoneMessage => Unpack(reader.Complete(), done: true),
                     PgCopyFailMessage fail => (null, true, new PgError("57014", $"COPY from stdin failed: {fail.Reason}")),
                     PgFlushMessage or PgSyncMessage => (null, false, null),

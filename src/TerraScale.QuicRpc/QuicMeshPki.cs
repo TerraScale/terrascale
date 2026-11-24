@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
+using System.Net.Security;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -7,7 +8,56 @@ using System.Text;
 
 namespace TerraScale.QuicRpc;
 
-public sealed record QuicMeshCertificates(X509Certificate2 Certificate, IReadOnlyList<X509Certificate2> TrustedAuthorities, IReadOnlyList<X509Certificate2> Intermediates);
+public sealed record QuicMeshCertificates(
+    X509Certificate2 Certificate,
+    IReadOnlyList<X509Certificate2> TrustedAuthorities,
+    IReadOnlyList<X509Certificate2> Intermediates,
+    Func<TimeProvider, QuicMeshCertificates>? Rotator = null);
+
+internal sealed class QuicCertificateSource
+{
+    private readonly Lock _gate = new();
+    private readonly Func<TimeProvider, QuicMeshCertificates>? _rotator;
+    private readonly TimeProvider _timeProvider;
+    private SslStreamCertificateContext _context;
+    private DateTimeOffset _rotateAfter;
+
+    public QuicCertificateSource(QuicMeshOptions options, TimeProvider timeProvider)
+    {
+        _rotator = options.CertificateRotator;
+        _timeProvider = timeProvider;
+        _context = SslStreamCertificateContext.Create(options.Certificate, [.. options.IntermediateCertificates], offline: true);
+        _rotateAfter = RotationTime(options.Certificate);
+    }
+
+    public SslStreamCertificateContext Current()
+    {
+        if (_rotator is null || _timeProvider.GetUtcNow() < _rotateAfter)
+        {
+            return _context;
+        }
+
+        lock (_gate)
+        {
+            if (_timeProvider.GetUtcNow() < _rotateAfter)
+            {
+                return _context;
+            }
+
+            var rotated = _rotator(_timeProvider);
+            _context = SslStreamCertificateContext.Create(rotated.Certificate, [.. rotated.Intermediates], offline: true);
+            _rotateAfter = RotationTime(rotated.Certificate);
+            return _context;
+        }
+    }
+
+    private static DateTimeOffset RotationTime(X509Certificate2 certificate)
+    {
+        var notBefore = new DateTimeOffset(certificate.NotBefore.ToUniversalTime(), TimeSpan.Zero);
+        var notAfter = new DateTimeOffset(certificate.NotAfter.ToUniversalTime(), TimeSpan.Zero);
+        return notBefore + ((notAfter - notBefore) / 2);
+    }
+}
 
 public sealed record MeshPkiInvalid(string Message, string Code = "invalid_mesh_pki");
 
@@ -76,7 +126,8 @@ public static class QuicMeshPki
         using var issued = request.Create(authorityWithKey, now - ClockSkewAllowance, now + NodeValidity, serial);
         using var withKey = issued.CopyWithPrivateKey(nodeKey);
         var certificate = X509CertificateLoader.LoadPkcs12(withKey.Export(X509ContentType.Pkcs12), null);
-        return new QuicMeshCertificates(certificate, [authority], []);
+        var secretCopy = secret.ToArray();
+        return new QuicMeshCertificates(certificate, [authority], [], tp => DeriveNode(secretCopy, nodeId, region, tp));
     }
 
     public static MeshPkiOutcome LoadPem(string certificatePath, string keyPath, string authorityPath, string nodeId, string region, TimeProvider timeProvider)
@@ -94,13 +145,13 @@ public static class QuicMeshPki
     private static MeshPkiOutcome FromPem(string certificatePem, string keyPem, string authorityPem, string nodeId, string region)
     {
         var loaded = LoadPemPair(certificatePem, keyPem);
-        var authorities = LoadPemCollection(authorityPem);
+        var authorities = LoadPemCertificates(authorityPem);
         if (loaded is null || authorities is null || authorities.Count == 0)
         {
             return new MeshPkiInvalid("mesh certificate, key or authority PEM is malformed", "cluster_mesh_pem");
         }
 
-        var chain = LoadPemCollection(certificatePem) ?? [];
+        var chain = LoadPemCertificates(certificatePem) ?? [];
         IReadOnlyList<X509Certificate2> intermediates = [.. chain.Where(candidate => !string.Equals(candidate.Thumbprint, loaded.Thumbprint, StringComparison.Ordinal))];
         if (QuicMeshIdentity.Read(loaded) is not { } identity
             || !string.Equals(identity.NodeId, nodeId, StringComparison.Ordinal)
@@ -148,13 +199,13 @@ public static class QuicMeshPki
         }
     }
 
-    private static List<X509Certificate2>? LoadPemCollection(string pem)
+    private static List<X509Certificate2>? LoadPemCertificates(string pem)
     {
         try
         {
-            var collection = new X509Certificate2Collection();
-            collection.ImportFromPem(pem);
-            return [.. collection];
+            var certificates = new X509Certificate2Collection();
+            certificates.ImportFromPem(pem);
+            return [.. certificates];
         }
         catch (CryptographicException)
         {

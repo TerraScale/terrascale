@@ -2,7 +2,11 @@ namespace TerraScale.Platform.Hosting;
 
 public readonly union ReadyzReply(HealthStatus, PlatformUnavailable);
 
-public sealed class ReadyzEndpoint(PlatformOptions options, PlatformReadiness readiness, TerraBaseClient terraBase)
+public sealed class ReadyzEndpoint(
+    PlatformOptions options,
+    PlatformReadiness readiness,
+    TerraBaseClient terraBase,
+    IHostApplicationLifetime lifetime)
     : EndpointWithoutRequest<ReadyzReply>
 {
     public override void Configure()
@@ -16,6 +20,11 @@ public sealed class ReadyzEndpoint(PlatformOptions options, PlatformReadiness re
 
     public override async ValueTask<ReadyzReply> HandleAsync(CancellationToken cancellationToken)
     {
+        if (lifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            return new PlatformUnavailable("ts-platform is stopping", "stopping");
+        }
+
         if (!readiness.SchemaReady)
         {
             return new PlatformUnavailable("the platform schema is not in place yet", "not_ready");

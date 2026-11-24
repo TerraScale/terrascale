@@ -4,6 +4,7 @@ area=${2:?area required}
 case $area in
   auth) binary=ts-auth project=src/TerraScale.Authentication ;;
   terrabase) binary=terrabase project=src/TerraBase ;;
+  platform) binary=ts-platform project=src/TerraScale.Platform ;;
   dashboard) binary=dashboard project=src/TerraScale.Dashboard ;;
   *) exit 2 ;;
 esac
@@ -18,5 +19,5 @@ case ${1:-} in
   runtime-dockerfile)
     cat ".github/docker/$binary.Dockerfile"
     ;;
-  *) echo 'Expected publish | runtime-dockerfile <auth|terrabase|dashboard>' >&2; exit 2 ;;
+  *) echo 'Expected publish | runtime-dockerfile <auth|terrabase|platform|dashboard>' >&2; exit 2 ;;
 esac

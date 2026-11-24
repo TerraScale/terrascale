@@ -14,7 +14,7 @@
     <Using Include="TerraScale.Contracts.Storage" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="../../native/runtimes/linux-x64/native/libsqlite3mc.so" Condition="Exists('../../native/runtimes/linux-x64/native/libsqlite3mc.so')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-x64/native/libsqlite3mc.so" />
-    <Content Include="../../native/runtimes/linux-arm64/native/libsqlite3mc.so" Condition="Exists('../../native/runtimes/linux-arm64/native/libsqlite3mc.so')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-arm64/native/libsqlite3mc.so" />
+    <Content Include="../../native/runtimes/linux-x64/native/libsqlite3mc.so" Condition="Exists('../../native/runtimes/linux-x64/native/libsqlite3mc.so') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-x64/native/libsqlite3mc.so" Visible="false" />
+    <Content Include="../../native/runtimes/linux-arm64/native/libsqlite3mc.so" Condition="Exists('../../native/runtimes/linux-arm64/native/libsqlite3mc.so') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-arm64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-arm64/native/libsqlite3mc.so" Visible="false" />
   </ItemGroup>
 </Project>

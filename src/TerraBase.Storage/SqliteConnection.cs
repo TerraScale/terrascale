@@ -98,6 +98,15 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         SqliteStatus => null,
     };
 
+    public void Interrupt()
+    {
+        var db = Volatile.Read(ref _db);
+        if (db != 0)
+        {
+            SqliteNative.InterruptQuery(db);
+        }
+    }
+
     public PreupdateCapture AttachCapture()
     {
         ObjectDisposedException.ThrowIf(_db == 0, this);
@@ -450,8 +459,17 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             && Stopwatch.GetElapsedTime(_workStarted) >= _options.StatementTimeout);
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    private static int OnProgress(nint context) =>
-        GCHandle<SqliteConnection>.FromIntPtr(context).Target.IsWorkCanceled() ? 1 : 0;
+    private static int OnProgress(nint context)
+    {
+        try
+        {
+            return GCHandle<SqliteConnection>.FromIntPtr(context).Target.IsWorkCanceled() ? 1 : 0;
+        }
+        catch
+        {
+            return 1;
+        }
+    }
 
     private bool ViolatesPrimaryKey(string message)
     {
@@ -810,7 +828,18 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void OnSnowflake(nint context, int argumentCount, nint* arguments)
     {
-        var generator = GCHandle<SnowflakeGenerator>.FromIntPtr(SqliteNative.UserData(context)).Target;
-        SqliteNative.ResultInt64(context, generator.Next());
+        try
+        {
+            var generator = GCHandle<SnowflakeGenerator>.FromIntPtr(SqliteNative.UserData(context)).Target;
+            SqliteNative.ResultInt64(context, generator.Next());
+        }
+        catch
+        {
+            var message = "snowflake generation failed"u8;
+            fixed (byte* pointer = message)
+            {
+                SqliteNative.ResultError(context, pointer, message.Length);
+            }
+        }
     }
 }

@@ -30,10 +30,11 @@ internal sealed class PeerSlot(QuicPeer peer)
     private readonly Dictionary<string, OrderedPushChannel> _channels = new(StringComparer.Ordinal);
     private QuicPeer _peer = peer;
     private ActiveConnection? _active;
+    private Task<QuicConnectionOpenOutcome>? _connecting;
+    private long _lastConnectFailureTimestamp;
+    private QuicFault? _lastConnectFault;
     private bool _everConnected;
     private bool _closed;
-
-    public SemaphoreSlim ConnectGate { get; } = new(1, 1);
 
     public QuicPeer Peer
     {
@@ -61,7 +62,12 @@ internal sealed class PeerSlot(QuicPeer peer)
     {
         lock (_gate)
         {
-            _peer = latest;
+            if (_peer != latest)
+            {
+                _peer = latest;
+                _lastConnectFailureTimestamp = 0;
+                _lastConnectFault = null;
+            }
         }
     }
 
@@ -99,6 +105,8 @@ internal sealed class PeerSlot(QuicPeer peer)
 
             _active = active;
             _everConnected = true;
+            _lastConnectFailureTimestamp = 0;
+            _lastConnectFault = null;
             return true;
         }
     }
@@ -123,8 +131,74 @@ internal sealed class PeerSlot(QuicPeer peer)
         {
             var active = _active;
             _active = null;
+            _lastConnectFailureTimestamp = 0;
+            _lastConnectFault = null;
             return active;
         }
+    }
+
+    public bool TryJoinOrStartConnect(
+        TimeProvider timeProvider,
+        out QuicConnection? current,
+        out Task<QuicConnectionOpenOutcome>? inFlight,
+        out QuicFault? immediateFault,
+        out TaskCompletionSource<QuicConnectionOpenOutcome>? leader)
+    {
+        lock (_gate)
+        {
+            current = null;
+            inFlight = null;
+            immediateFault = null;
+            leader = null;
+            if (_closed)
+            {
+                immediateFault = new TransportShutdown("The peer was removed from the QUIC client.");
+                return false;
+            }
+
+            if (_active is { } active && active.Peer == _peer)
+            {
+                current = active.Connection;
+                return false;
+            }
+
+            if (_connecting is { } connecting)
+            {
+                inFlight = connecting;
+                return false;
+            }
+
+            if (_lastConnectFault is { } recentFault
+                && _lastConnectFailureTimestamp != 0
+                && timeProvider.GetElapsedTime(_lastConnectFailureTimestamp) < QuicMeshLimits.ConnectFailureBackoff)
+            {
+                immediateFault = recentFault;
+                return false;
+            }
+
+            leader = new TaskCompletionSource<QuicConnectionOpenOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _connecting = leader.Task;
+            return true;
+        }
+    }
+
+    public void FinishConnect(TaskCompletionSource<QuicConnectionOpenOutcome> leader, QuicConnectionOpenOutcome outcome, TimeProvider timeProvider)
+    {
+        lock (_gate)
+        {
+            if (ReferenceEquals(_connecting, leader.Task))
+            {
+                _connecting = null;
+            }
+
+            if (outcome switch { QuicConnection => null, QuicFault fault => fault } is { } failure)
+            {
+                _lastConnectFault = failure;
+                _lastConnectFailureTimestamp = timeProvider.GetTimestamp();
+            }
+        }
+
+        leader.TrySetResult(outcome);
     }
 
     public OrderedPushChannel? GetOrAddChannel(string key, QuicConnectionPool pool)
@@ -138,11 +212,23 @@ internal sealed class PeerSlot(QuicPeer peer)
 
             if (!_channels.TryGetValue(key, out var channel))
             {
-                channel = new OrderedPushChannel(pool, this);
+                channel = new OrderedPushChannel(pool, this, key);
                 _channels.Add(key, channel);
             }
 
             return channel;
+        }
+    }
+
+    public void EvictIdleChannel(string key, OrderedPushChannel channel)
+    {
+        lock (_gate)
+        {
+            if (_channels.TryGetValue(key, out var existing) && ReferenceEquals(existing, channel))
+            {
+                _ = _channels.Remove(key);
+                channel.CompleteIdle();
+            }
         }
     }
 
@@ -178,8 +264,7 @@ internal sealed class QuicConnectionPool(
     CancellationToken shutdownToken)
 {
     private readonly ConcurrentDictionary<string, PeerSlot> _slots = new(StringComparer.Ordinal);
-    private readonly SslStreamCertificateContext _certificate =
-        SslStreamCertificateContext.Create(options.Certificate, [.. options.IntermediateCertificates], offline: true);
+    private readonly QuicCertificateSource _certificates = new(options, timeProvider);
 
     public QuicMeshOptions Options => options;
 
@@ -254,13 +339,8 @@ internal sealed class QuicConnectionPool(
         }
     }
 
-    public async ValueTask ShutdownAsync()
-    {
-        foreach (var slot in _slots.Values)
-        {
-            await CloseSlotAsync(slot);
-        }
-    }
+    public async ValueTask ShutdownAsync() =>
+        await Task.WhenAll(_slots.Values.Select(slot => CloseSlotAsync(slot).AsTask()));
 
     private async ValueTask<StreamLeaseOutcome> OpenOnAsync(PeerSlot slot, QuicConnection connection, QuicStreamType type, bool reconnectIfDead, CallScope scope)
     {
@@ -300,23 +380,30 @@ internal sealed class QuicConnectionPool(
             return cached;
         }
 
-        if (!await EnterGateAsync(slot, scope))
+        if (!slot.TryJoinOrStartConnect(timeProvider, out var current, out var inFlight, out var immediateFault, out var leader))
         {
-            return scope.Interrupted();
-        }
-
-        try
-        {
-            if (slot.IsClosed)
-            {
-                return new TransportShutdown("The peer was removed from the QUIC client.");
-            }
-
-            if (slot.Current() is { } current)
+            if (current is not null)
             {
                 return current;
             }
 
+            if (immediateFault is not null)
+            {
+                return immediateFault;
+            }
+
+            return await WaitForConnectAsync(inFlight!, scope);
+        }
+
+        var shared = ConnectAsLeaderAsync(slot, leader!);
+        return await WaitForConnectAsync(shared, scope);
+    }
+
+    private async Task<QuicConnectionOpenOutcome> ConnectAsLeaderAsync(PeerSlot slot, TaskCompletionSource<QuicConnectionOpenOutcome> leader)
+    {
+        QuicConnectionOpenOutcome result = new TransportShutdown("The QUIC client connect did not complete.");
+        try
+        {
             if (slot.TakeStale() is { } stale)
             {
                 metrics.ConnectionClosed(QuicSide.Client);
@@ -324,8 +411,9 @@ internal sealed class QuicConnectionPool(
             }
 
             var peer = slot.Peer;
-            var outcome = await QuicIo.ConnectAsync(ConnectionOptions(peer), scope);
-            return outcome switch
+            using var dialScope = new CallScope(QuicMeshLimits.HandshakeTimeout, timeProvider, shutdownToken, CancellationToken.None);
+            var outcome = await QuicIo.ConnectAsync(ConnectionOptions(peer), dialScope);
+            result = outcome switch
             {
                 QuicConnection connection => await ActivateAsync(slot, peer, connection),
                 QuicFault fault => ConnectFailed(peer, fault),
@@ -333,20 +421,21 @@ internal sealed class QuicConnectionPool(
         }
         finally
         {
-            slot.ConnectGate.Release();
+            slot.FinishConnect(leader, result, timeProvider);
         }
+
+        return result;
     }
 
-    private static async ValueTask<bool> EnterGateAsync(PeerSlot slot, CallScope scope)
+    private static async ValueTask<QuicConnectionOpenOutcome> WaitForConnectAsync(Task<QuicConnectionOpenOutcome> connectTask, CallScope scope)
     {
         try
         {
-            await slot.ConnectGate.WaitAsync(scope.Token);
-            return true;
+            return await connectTask.WaitAsync(scope.Token);
         }
         catch (OperationCanceledException) when (!scope.Caller.IsCancellationRequested)
         {
-            return false;
+            return scope.Interrupted();
         }
     }
 
@@ -384,7 +473,7 @@ internal sealed class QuicConnectionPool(
         {
             ApplicationProtocols = [new SslApplicationProtocol(QuicProtocol.ApplicationProtocol)],
             TargetHost = peer.NodeId,
-            ClientCertificateContext = _certificate,
+            ClientCertificateContext = _certificates.Current(),
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
             RemoteCertificateValidationCallback = (_, certificate, chain, _) =>
                 validator.ValidateRemote(certificate, chain, QuicCertificateValidator.ServerAuthOid) is { } identity
@@ -395,17 +484,21 @@ internal sealed class QuicConnectionPool(
 
     private async ValueTask CloseSlotAsync(PeerSlot slot)
     {
-        foreach (var channel in slot.Close())
-        {
-            await channel.DisposeAsync();
-        }
-
+        await Task.WhenAll(slot.Close().Select(static channel => channel.DisposeAsync().AsTask()));
         if (slot.Take() is { } active)
         {
-            var closed = await QuicIo.CloseAsync(active.Connection, QuicProtocol.CloseErrorCode);
-            Observe(closed);
+            var closeTask = QuicIo.CloseAsync(active.Connection, QuicProtocol.CloseErrorCode).AsTask();
+            using var timeout = new CancellationTokenSource();
+            var delay = Task.Delay(QuicMeshLimits.CloseTimeout, timeProvider, timeout.Token);
+            var winner = await Task.WhenAny(closeTask, delay);
+            await timeout.CancelAsync();
+            if (winner == closeTask)
+            {
+                Observe(await closeTask);
+            }
+
             metrics.ConnectionClosed(QuicSide.Client);
-            await active.Connection.DisposeAsync();
+            _ = QuicIo.DisposeConnectionAsync(active.Connection);
         }
     }
 

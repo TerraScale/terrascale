@@ -19,7 +19,7 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
     private bool _headerConsumed;
     private bool _finished;
 
-    public PgCopyRowsResult Feed(ReadOnlySpan<byte> data)
+    public PgCopyRowsResult Consume(ReadOnlySpan<byte> data)
     {
         if (_finished)
         {

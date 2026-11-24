@@ -2,6 +2,7 @@
 set -euo pipefail
 case ${1:?thing} in
   auth) package=ts-auth ;;
+  platform) package=ts-platform ;;
   dashboard) package=terrascale-dashboard ;;
   *) exit 2 ;;
 esac

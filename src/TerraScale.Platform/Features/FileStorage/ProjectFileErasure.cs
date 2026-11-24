@@ -6,7 +6,7 @@ public sealed record FileProjectOrganizationMismatch;
 
 public readonly union CloseFileProjectOutcome(ProjectClosed, FileProjectOrganizationMismatch, PlatformUnavailable);
 
-public sealed class ProjectFileErasure(PlatformStore store, S3FileObjectStore objects)
+public sealed class ProjectFileErasure(PlatformStore store, S3FileObjectStore objects, TimeProvider timeProvider)
 {
     internal const string RegionsQuery = "SELECT region FROM platform_file_regions ORDER BY region";
 
@@ -14,13 +14,14 @@ public sealed class ProjectFileErasure(PlatformStore store, S3FileObjectStore ob
     {
         var projectId = SqlValues.Text(project.ToString());
         var organizationId = SqlValues.Text(organization.ToString());
+        var closedAt = SqlValues.Number(timeProvider.GetUtcNow().UnixMs());
         const string bound = "EXISTS (SELECT 1 FROM platform_closed_file_projects WHERE project_id = ? AND organization_id = ?)";
         IReadOnlyList<SqlHttpStatement> statements =
         [
             SqlValues.Statement(
-                "INSERT OR IGNORE INTO platform_closed_file_projects (project_id, organization_id) SELECT ?, ? "
+                "INSERT OR IGNORE INTO platform_closed_file_projects (project_id, organization_id, closed_at) SELECT ?, ?, ? "
                 + "WHERE NOT EXISTS (SELECT 1 FROM platform_buckets WHERE project_id = ? AND organization_id <> ?)",
-                projectId, organizationId, projectId, organizationId),
+                projectId, organizationId, closedAt, projectId, organizationId),
             SqlValues.Statement("DELETE FROM platform_files WHERE project_id = ? AND " + bound, projectId, projectId, organizationId),
             SqlValues.Statement("DELETE FROM platform_buckets WHERE project_id = ? AND " + bound, projectId, projectId, organizationId),
             SqlValues.Statement("SELECT 1 WHERE " + bound, projectId, organizationId),

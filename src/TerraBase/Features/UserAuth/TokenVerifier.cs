@@ -47,10 +47,12 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     public async ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
     {
-        if (_platform is null || options.AuthIssuer is not { } platformIssuer)
+        if (_platform is null || options.AuthIssuer is not { } rawPlatformIssuer)
         {
             return new CredentialRejected("bearer tokens need TERRABASE_AUTH_ISSUER", "invalid_token");
         }
+
+        var platformIssuer = rawPlatformIssuer.TrimEnd('/');
 
         if (!Tokens.CanReadToken(token) || Read(token) is not { } unverified)
         {

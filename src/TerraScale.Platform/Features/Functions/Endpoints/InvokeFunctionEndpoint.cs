@@ -99,7 +99,7 @@ public sealed class InvokeFunctionEndpoint(PlatformAccess access, FunctionInvoke
             {
                 writer.WriteNullValue();
             }
-            else if (FunctionAnswers.Document(body) is { } parsed)
+            else if (FunctionAnswers.ParseJson(body) is { } parsed)
             {
                 using (parsed)
                 {

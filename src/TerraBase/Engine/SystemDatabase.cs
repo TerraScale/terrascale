@@ -19,6 +19,8 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
 
     private static readonly TimeSpan SchemaPoll = TimeSpan.FromMilliseconds(500);
 
+    private static readonly TimeSpan SingleRegionBootstrapGrace = TimeSpan.FromSeconds(10);
+
     private static readonly (string Table, string Sql)[] Tables =
     [
         ("organizations", "CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, plan TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0)"),
@@ -47,26 +49,40 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         registry.Register(Id, "usage_counters", "value");
     }
 
-    public async ValueTask<SystemSetupOutcome> OpenAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
+    public async ValueTask<SystemSetupOutcome> OpenAsync(
+        bool bootstrap,
+        bool regionBootstrap,
+        bool immediateFallback,
+        Func<bool>? anyRemotePeerReachable,
+        Func<CancellationToken, ValueTask>? sync,
+        CancellationToken cancellationToken)
     {
         var keyFile = Path.Combine(options.DataDirectory, KeyIdFile);
         var keyId = KeyId;
         return File.Exists(keyFile)
             ? await databases.OpenAsync(Id, keyId, cancellationToken) switch
             {
-                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, sync, cancellationToken),
+                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, regionBootstrap, immediateFallback, anyRemotePeerReachable, sync, cancellationToken),
                 ResourceNotFound => new ConfigurationError("the system catalog is missing from a data-directory that already holds one; restore it before starting"),
                 BackendUnavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
             }
             : await databases.OpenOrCreateAsync(Id, keyId, strict: false, cancellationToken) switch
             {
-                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, sync, cancellationToken),
+                ISqlDatabaseSession session => await InitializeAsync(session, keyFile, keyId, bootstrap, regionBootstrap, immediateFallback, anyRemotePeerReachable, sync, cancellationToken),
                 BackendUnavailable error => new ConfigurationError(string.Concat("the system database could not be opened: ", error.Message)),
             };
     }
 
     private async ValueTask<SystemSetupOutcome> InitializeAsync(
-        ISqlDatabaseSession session, string keyFile, string keyId, bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
+        ISqlDatabaseSession session,
+        string keyFile,
+        string keyId,
+        bool bootstrap,
+        bool regionBootstrap,
+        bool immediateFallback,
+        Func<bool>? anyRemotePeerReachable,
+        Func<CancellationToken, ValueTask>? sync,
+        CancellationToken cancellationToken)
     {
         _session = session;
         if (WriteKeyId(keyFile, keyId) is { } unwritable)
@@ -74,7 +90,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             return unwritable;
         }
 
-        return await EnsureSchemaAsync(bootstrap, sync, cancellationToken);
+        return await EnsureSchemaAsync(bootstrap, regionBootstrap, immediateFallback, anyRemotePeerReachable, sync, cancellationToken);
     }
 
     public async ValueTask<SystemQueryOutcome> QueryAsync(SqlStatement statement, CancellationToken cancellationToken)
@@ -131,18 +147,28 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         }
     }
 
-    private async ValueTask<SystemSetupOutcome> EnsureSchemaAsync(bool bootstrap, Func<CancellationToken, ValueTask>? sync, CancellationToken cancellationToken)
+    private async ValueTask<SystemSetupOutcome> EnsureSchemaAsync(
+        bool bootstrap,
+        bool regionBootstrap,
+        bool immediateFallback,
+        Func<bool>? anyRemotePeerReachable,
+        Func<CancellationToken, ValueTask>? sync,
+        CancellationToken cancellationToken)
     {
+        var started = time.GetTimestamp();
+        var fallbackDelay = immediateFallback ? TimeSpan.Zero : SingleRegionBootstrapGrace;
         while (true)
         {
-            if (!bootstrap && sync is not null)
+            if (sync is not null)
             {
                 await sync(cancellationToken);
             }
 
+            var allowSingleRegionBootstrap = regionBootstrap
+                && (immediateFallback || (time.GetElapsedTime(started) >= fallbackDelay && anyRemotePeerReachable?.Invoke() != true));
             SystemSetupOutcome? settled = await QueryAsync(SqlBuild.Statement("SELECT name FROM sqlite_schema WHERE type = 'table'"), cancellationToken) switch
             {
-                IReadOnlyList<IReadOnlyList<SqlValue>> rows => await SettleAsync(Missing([.. rows.Select(static row => row.TextAt(0))]), bootstrap, cancellationToken),
+                IReadOnlyList<IReadOnlyList<SqlValue>> rows => await SettleAsync(Missing([.. rows.Select(static row => row.TextAt(0))]), bootstrap, allowSingleRegionBootstrap, cancellationToken),
                 BackendUnavailable failure => new ConfigurationError(string.Concat("the system database schema could not be read: ", failure.Message)),
             };
             if (settled is { } outcome)
@@ -157,23 +183,39 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
     private static SqlStatement[] Missing(HashSet<string> present) =>
         [.. Tables.Where(table => !present.Contains(table.Table)).Select(static table => SqlBuild.Statement(table.Sql))];
 
-    private async ValueTask<SystemSetupOutcome?> SettleAsync(SqlStatement[] missing, bool bootstrap, CancellationToken cancellationToken)
+    private async ValueTask<SystemSetupOutcome?> SettleAsync(SqlStatement[] missing, bool bootstrap, bool allowSingleRegionBootstrap, CancellationToken cancellationToken)
     {
         if (missing.Length == 0)
         {
             return new Completed();
         }
 
-        if (!bootstrap)
+        if (!bootstrap && !allowSingleRegionBootstrap)
         {
             return null;
         }
 
-        var outcome = await WriteAsync(missing, ConsistencyMode.Strong, cancellationToken);
-        return outcome switch
+        if (bootstrap)
+        {
+            var outcome = await WriteAsync(missing, ConsistencyMode.Strong, cancellationToken);
+            var strongSettled = outcome switch
+            {
+                SqlWriteResult => (SystemSetupOutcome?)new Completed(),
+                BackendUnavailable { Code: "strong_quorum_unreachable" } => null,
+                StateConflict conflict => new ConfigurationError(string.Concat("the system database schema could not be created: ", conflict.Message)),
+                BackendUnavailable unavailable => new ConfigurationError(string.Concat("the system database schema could not be created: ", unavailable.Message)),
+            };
+            if (strongSettled is not null || !allowSingleRegionBootstrap)
+            {
+                return strongSettled;
+            }
+        }
+
+        var localOutcome = await WriteAsync(missing, ConsistencyMode.Fast, cancellationToken);
+        return localOutcome switch
         {
             SqlWriteResult => new Completed(),
-            BackendUnavailable { Code: "strong_quorum_unreachable" } => null,
+            BackendUnavailable { Code: "in_region_quorum_unconfirmed" or "strong_quorum_unreachable" } => null,
             StateConflict conflict => new ConfigurationError(string.Concat("the system database schema could not be created: ", conflict.Message)),
             BackendUnavailable unavailable => new ConfigurationError(string.Concat("the system database schema could not be created: ", unavailable.Message)),
         };

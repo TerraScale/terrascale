@@ -9,6 +9,7 @@ namespace TerraScale.QuicRpc;
 public static class QuicPlatform
 {
     private const string MsQuicLibrary = "libmsquic.so.2";
+    private const string NumaLibrary = "libnuma.so.1";
 
     private static readonly bool Supported = Probe();
 
@@ -17,8 +18,11 @@ public static class QuicPlatform
     [SupportedOSPlatformGuard("windows")]
     public static bool IsSupported => Supported;
 
+    public static void EnsureInitialized() => _ = Supported;
+
     private static bool Probe()
     {
+        _ = TryLoadBundledMsQuic();
         AssemblyLoadContext.Default.ResolvingUnmanagedDll += ResolveBundledMsQuic;
         return QuicListener.IsSupported && QuicConnection.IsSupported;
     }
@@ -26,6 +30,16 @@ public static class QuicPlatform
     private static IntPtr ResolveBundledMsQuic(Assembly assembly, string libraryName)
     {
         if (!OperatingSystem.IsLinux() || !libraryName.StartsWith("libmsquic", StringComparison.Ordinal))
+        {
+            return IntPtr.Zero;
+        }
+
+        return TryLoadBundledMsQuic();
+    }
+
+    private static IntPtr TryLoadBundledMsQuic()
+    {
+        if (!OperatingSystem.IsLinux())
         {
             return IntPtr.Zero;
         }
@@ -39,19 +53,55 @@ public static class QuicPlatform
             return IntPtr.Zero;
         }
 
-        string[] candidates =
-        [
-            Path.Combine(AppContext.BaseDirectory, MsQuicLibrary),
-            Path.Combine(AppContext.BaseDirectory, "runtimes", runtimeIdentifier, "native", MsQuicLibrary),
-        ];
-        foreach (var candidate in candidates)
+        foreach (var directory in SearchDirectories(runtimeIdentifier))
         {
-            if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
+            var candidate = Path.Combine(directory, MsQuicLibrary);
+            if (!File.Exists(candidate))
+            {
+                continue;
+            }
+
+            var numa = Path.Combine(directory, NumaLibrary);
+            if (File.Exists(numa))
+            {
+                _ = NativeLibrary.TryLoad(numa, out _);
+            }
+
+            if (NativeLibrary.TryLoad(candidate, out var handle))
             {
                 return handle;
             }
         }
 
-        return IntPtr.Zero;
+        _ = NativeLibrary.TryLoad(NumaLibrary, typeof(QuicPlatform).Assembly, DllImportSearchPath.AssemblyDirectory, out _);
+        return NativeLibrary.TryLoad(MsQuicLibrary, typeof(QuicPlatform).Assembly, DllImportSearchPath.AssemblyDirectory, out var extracted)
+            ? extracted
+            : IntPtr.Zero;
+    }
+
+    private static List<string> SearchDirectories(string runtimeIdentifier)
+    {
+        List<string> directories = [];
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        if (AppContext.GetData("NATIVE_DLL_SEARCH_DIRECTORIES") is string search)
+        {
+            foreach (var entry in search.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                Add(entry);
+                Add(Path.Combine(entry, "runtimes", runtimeIdentifier, "native"));
+            }
+        }
+
+        Add(AppContext.BaseDirectory);
+        Add(Path.Combine(AppContext.BaseDirectory, "runtimes", runtimeIdentifier, "native"));
+        return directories;
+
+        void Add(string directory)
+        {
+            if (directory.Length > 0 && seen.Add(directory))
+            {
+                directories.Add(directory);
+            }
+        }
     }
 }

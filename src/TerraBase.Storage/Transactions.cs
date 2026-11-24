@@ -106,20 +106,43 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
     internal sealed record class RollbackCommand(TaskCompletionSource Completion) : Command;
 }
 
-internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection reader, SqlTransactionOptions options, Ulid txId) : ISqlTransaction
+internal sealed class ReadTransaction : ISqlTransaction
 {
+    private readonly DatabaseSession _session;
+    private readonly SqliteConnection _reader;
+    private readonly TimeSpan _idleTimeout;
+    private readonly ITimer? _idleTimer;
     private readonly Lock _gate = new();
     private readonly StatementInfo _info = new();
     private int _statements;
     private bool _finished;
 
-    public Ulid TxId { get; } = txId;
+    public ReadTransaction(DatabaseSession session, SqliteConnection reader, SqlTransactionOptions options, Ulid txId, TimeSpan idleTimeout, TimeProvider time)
+    {
+        _session = session;
+        _reader = reader;
+        Options = options;
+        TxId = txId;
+        _idleTimeout = idleTimeout;
+        if (idleTimeout != Timeout.InfiniteTimeSpan && idleTimeout > TimeSpan.Zero)
+        {
+            _idleTimer = time.CreateTimer(static state => ((ReadTransaction)state!).Abandon(), this, idleTimeout, Timeout.InfiniteTimeSpan);
+        }
+    }
 
-    public SqlTransactionOptions Options { get; } = options;
+    public Ulid TxId { get; }
+
+    public SqlTransactionOptions Options { get; }
 
     public HashSet<string> ReadTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public List<SqlResultSet> Results { get; } = [];
+
+    public void Abandon()
+    {
+        _reader.Interrupt();
+        _ = Finish("ROLLBACK;");
+    }
 
     public ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
@@ -134,12 +157,17 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
             }
             else
             {
-                var executed = DatabaseSession.ExecuteOnReader(reader, statement, _statements++, _info, ReadTables, limitResults: true, cancellationToken);
+                _ = _idleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                var executed = DatabaseSession.ExecuteOnReader(_reader, statement, _statements++, _info, ReadTables, limitResults: true, cancellationToken);
                 outcome = executed switch
                 {
                     SqlResultSet result => Record(result),
                     SqlError error => error,
                 };
+                if (!_finished)
+                {
+                    _ = _idleTimer?.Change(_idleTimeout, Timeout.InfiniteTimeSpan);
+                }
             }
         }
 
@@ -150,7 +178,7 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
     {
         cancellationToken.ThrowIfCancellationRequested();
         TransactionCommitLocalResult outcome = Finish("COMMIT;")
-            ? session.NoOpCommit(Options.Mode)
+            ? _session.NoOpCommit(Options.Mode)
             : new StorageTimeout("transaction has finished");
         return ValueTask.FromResult(outcome);
     }
@@ -161,7 +189,7 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
         TransactionStageResult outcome;
         lock (_gate)
         {
-            outcome = _finished ? new StorageTimeout("transaction has finished") : session.StageRead(this);
+            outcome = _finished ? new StorageTimeout("transaction has finished") : _session.StageRead(this);
         }
 
         _ = Finish("ROLLBACK;");
@@ -197,8 +225,10 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
             }
 
             _finished = true;
-            _ = reader.Exec(sql);
-            session.ReleaseReader(reader);
+            _idleTimer?.Dispose();
+            _ = _reader.Exec(sql);
+            _session.UnregisterReadTransaction(this);
+            _session.ReleaseReader(_reader);
             return true;
         }
     }

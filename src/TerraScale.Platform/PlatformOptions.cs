@@ -24,6 +24,17 @@ public sealed record PlatformOptions(
 
     public static readonly Ulid DefaultStateDatabase = Ulid.Parse("00000000000000000000000007");
 
+    private static readonly string[] SecretFileKeys =
+    [
+        "TERRABASE_PEER_SECRET",
+        "TERRABASE_MASTER_KEY",
+        "TERRABASE_FILES_S3_ACCESS_KEY_ID",
+        "TERRABASE_FILES_S3_SECRET_ACCESS_KEY",
+        "TERRABASE_SHAPES_ACCESS_KEY_ID",
+        "TERRABASE_SHAPES_SECRET_ACCESS_KEY",
+        "TERRABASE_SHAPES_CDN_API_TOKEN",
+    ];
+
     public static PlatformOptions FromEnvironment(IDictionary environment)
     {
         ArgumentNullException.ThrowIfNull(environment);
@@ -36,6 +47,7 @@ public sealed record PlatformOptions(
             }
         }
 
+        ResolveSecretFiles(values);
         var reader = new EnvironmentReader(values);
         var options = new PlatformOptions(
             reader.Port("TS_PLATFORM_PORT", 8082),
@@ -57,6 +69,35 @@ public sealed record PlatformOptions(
         }
 
         return options;
+    }
+
+    private static void ResolveSecretFiles(Dictionary<string, string> values)
+    {
+        foreach (var key in SecretFileKeys)
+        {
+            var fileKey = key + "_FILE";
+            if (values.ContainsKey(key) || !values.TryGetValue(fileKey, out var path))
+            {
+                continue;
+            }
+
+            string text;
+            try
+            {
+                text = File.ReadAllText(path).Trim();
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                throw new ArgumentException($"{fileKey} must name a readable file: {error.Message}");
+            }
+
+            if (text.Length == 0)
+            {
+                throw new ArgumentException($"{fileKey} must contain a non-empty value.");
+            }
+
+            values[key] = text;
+        }
     }
 }
 

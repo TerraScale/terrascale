@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -130,15 +132,16 @@ internal static class ArchiveKeys
 
     public static string Manifest(Ulid databaseId) => string.Concat(DatabasePrefix(databaseId), "manifest.json");
 
-    public static string Snapshot(Ulid databaseId, CausalBookmark bookmark)
+    public static string Snapshot(Ulid databaseId, DateTimeOffset takenAtUtc, CausalBookmark bookmark)
     {
-        var sequence = 0L;
-        foreach (var (_, value) in bookmark.Entries)
-        {
-            sequence += value;
-        }
-
-        return string.Concat(DatabasePrefix(databaseId), "snapshots/", sequence.ToString("D20", CultureInfo.InvariantCulture), ".snap");
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(bookmark.Encode())).AsSpan(0, 8));
+        return string.Concat(
+            DatabasePrefix(databaseId),
+            "snapshots/",
+            takenAtUtc.ToUnixTimeMilliseconds().ToString("D16", CultureInfo.InvariantCulture),
+            "-",
+            hash,
+            ".snap");
     }
 
     public static string Segment(Ulid databaseId, CommitLogSegment segment) =>

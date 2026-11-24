@@ -237,13 +237,68 @@ internal sealed partial class DatabaseSession
         }
 
         var pending = ApplyPending([], persist: false);
-        return pending switch
+        var pendingFailure = pending switch
         {
             RemoteApplyOutcome => null,
             SchemaMismatch mismatch => new StorageCorrupted(DatabaseId, string.Concat("schema epoch mismatch during recovery: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture))),
             StorageCorrupted corrupted => corrupted,
             StorageBusy busy => new StorageCorrupted(DatabaseId, busy.Message),
         };
+        if (pendingFailure is not null)
+        {
+            return pendingFailure;
+        }
+
+        RecoverClockWatermark();
+        return null;
+    }
+
+    private void RecoverClockWatermark()
+    {
+        var maxHlc = HlcTimestamp.Zero;
+        List<SqlValue[]> metaRows = [];
+        if (_writer.Query(MetaStore.SelectAllMetaSql, metaRows).IsOk)
+        {
+            foreach (var row in metaRows)
+            {
+                if (!row[0].TryGetBlob(out var pk) || !row[1].TryGetBlob(out var blob))
+                {
+                    continue;
+                }
+
+                if (pk.Length == 0 && blob.Length == HlcTimestamp.EncodedSize)
+                {
+                    maxHlc = HlcCodec.Max(maxHlc, HlcCodec.Read(blob.Span));
+                }
+                else if (RowMeta.Decode(blob.Span) is { } meta)
+                {
+                    maxHlc = HlcCodec.Max(maxHlc, meta.RowHlc);
+                    foreach (var column in meta.Columns.Values)
+                    {
+                        maxHlc = HlcCodec.Max(maxHlc, column.Hlc);
+                    }
+                }
+            }
+        }
+
+        foreach (var log in Logs())
+        {
+            var last = log.LastSequence;
+            if (last <= 0)
+            {
+                continue;
+            }
+
+            if (log.Read(last, 1) is IReadOnlyList<CommitMetadata> { Count: > 0 } entries)
+            {
+                maxHlc = HlcCodec.Max(maxHlc, entries[^1].Hlc);
+            }
+        }
+
+        if (maxHlc > HlcTimestamp.Zero)
+        {
+            _context.Clock.Restore(maxHlc);
+        }
     }
 
     private StorageCorrupted? Track(string origin, OriginLog log)
@@ -515,6 +570,11 @@ internal sealed partial class DatabaseSession
         if (schemaChanged)
         {
             _writer.InvalidateSchemaCache();
+        }
+
+        foreach (var (log, _, _) in appended)
+        {
+            log.SealIfDue();
         }
 
         return SqliteStatus.Success;

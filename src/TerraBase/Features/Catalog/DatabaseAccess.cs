@@ -1,8 +1,10 @@
+using TerraBase.Cluster;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Rules;
 using TerraBase.Hosting;
+using TerraBase.Storage;
 
 namespace TerraBase.Features.Catalog;
 
@@ -16,8 +18,16 @@ public sealed record ResolvedProject(ProjectRecord Project, Caller Caller);
 
 public sealed record ResolvedDatabase(ProjectRecord Project, DatabaseRecord Database, Caller Caller, bool CanWrite, RulesAuth? EndUser);
 
-internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases databases, TimeProvider time)
+internal sealed class DatabaseAccess(
+    CatalogStore catalog,
+    TenantDatabases databases,
+    ClusterOptions cluster,
+    StorageEngineOptions storage,
+    AntiEntropyService antiEntropy,
+    TimeProvider time)
 {
+    private static readonly TimeSpan FirstOpenSyncBudget = TimeSpan.FromSeconds(5);
+
     public static readonly ResourceNotFound UnknownDatabase = new("the database does not exist", "unknown_database");
 
     private static readonly ResourceNotFound UnknownProject = new("the project does not exist", "unknown_project");
@@ -155,10 +165,31 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
         };
     }
 
-    public ValueTask<TenantReadyOutcome> OpenAsync(DatabaseRecord database, CancellationToken cancellationToken)
+    public async ValueTask<TenantReadyOutcome> OpenAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return databases.OpenOrCreateAsync(database.Id, database.KeyId, database.Strict, cancellationToken);
+        var path = Path.Combine(storage.RootDirectory, database.Id.ToString(), string.Concat(database.Id.ToString(), ".db"));
+        var existed = File.Exists(path);
+        var outcome = await databases.OpenOrCreateAsync(database.Id, database.KeyId, database.Strict, cancellationToken);
+        var opened = outcome switch
+        {
+            ISqlDatabaseSession => true,
+            BackendUnavailable => false,
+        };
+        if (!existed && opened && cluster.Peers.Count > 0)
+        {
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(FirstOpenSyncBudget);
+            try
+            {
+                _ = await antiEntropy.SyncAsync(database.Id, budget.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+
+        return outcome;
     }
 
     public async ValueTask<ProjectAuthorization> AuthorizeProjectAsync(

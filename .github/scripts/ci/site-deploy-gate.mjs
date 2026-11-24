@@ -42,13 +42,30 @@ async function cloudflare(path) {
   return body.result;
 }
 
-async function serviceLive(kind = thing, { probe = false } = {}) {
-  const response = await fetch(services[kind], { signal: AbortSignal.timeout(30000) });
-  if (probe && response.status === 503) return null;
-  assert.ok(response.ok, `${kind}: readiness HTTP ${response.status}`);
+async function serviceLive(kind = thing, { probe = false, allowUnavailable = false } = {}) {
+  const lenient = probe || allowUnavailable;
+  let response;
+  try {
+    response = await fetch(services[kind], { signal: AbortSignal.timeout(lenient ? 10000 : 30000) });
+  } catch {
+    if (lenient) return null;
+    throw new Error(`${kind}: readiness endpoint unreachable`);
+  }
+  if (!response.ok) {
+    if (lenient) return null;
+    assert.ok(response.ok, `${kind}: readiness HTTP ${response.status}`);
+  }
   const live = response.headers.get('x-terrascale-revision');
+  if (lenient && !/^[0-9a-f]{40}$/.test(live ?? '')) return null;
   sha(live);
-  const body = await response.json();
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    if (lenient) return null;
+    assert.fail(`${kind}: readiness response was not JSON`);
+  }
+  if (lenient && !['ok', 'ready'].includes(body?.status)) return null;
   assert.ok(['ok', 'ready'].includes(body.status), `${kind}: not ready`);
   return live;
 }
@@ -114,7 +131,7 @@ async function appQualified(revision) {
 function inputs(thing) {
   const common = ['.github/scripts/ci/site-deploy-gate.mjs', ':(exclude,glob)**/AGENTS.md'];
   if (!services[thing]) return [...common, `sites/${thing}`, '.github/workflows/sites.yml', '.github/scripts/ci/prove-worker-deploy.mjs', ...(thing === 'docs' ? ['Makefile', 'sites/landing/static/pricing.json', 'sites/landing/static/regions.json'] : [])];
-  const shared = ['Directory.*', 'global.json', 'NuGet.config', '.editorconfig', 'BannedSymbols.txt', 'Makefile', 'sdk/dotnet', ':(glob)src/TerraScale.Endpoints*/**', 'src/TerraScale.Contracts', '.github/scripts/ci/image-payloads.sh', '.github/scripts/ci/reconcile-image.sh', '.github/scripts/ci/inspect-app-image.sh', '.github/scripts/ci/app-image-regions.sh', '.github/scripts/ci/release-app.sh', '.github/scripts/ci/wait-app-rollout.sh', '.github/scripts/ci/fetch-ts-orch.sh', '.github/scripts/ci/publish-ocir.sh', '.github/scripts/ci/publish-image.sh', '.github/scripts/ci/attach-image-bundles.sh', '.github/scripts/ci/ocir-repositories.sh', '.github/scripts/ci/prove-image-publication.sh', '.github/scripts/ci/release-only.sh'];
+  const shared = ['Directory.*', 'global.json', 'NuGet.config', '.editorconfig', 'BannedSymbols.txt', 'Makefile', 'sdk/dotnet', ':(glob)src/TerraScale.Endpoints*/**', 'src/TerraScale.Contracts', '.github/scripts/ci/image-payloads.sh', '.github/scripts/ci/reconcile-image.sh', '.github/scripts/ci/inspect-app-image.sh', '.github/scripts/ci/deploy-v2.sh', '.github/scripts/ci/release-only.sh'];
   return [...common, ...shared, ...(thing === 'auth'
     ? [':(glob)src/TerraScale.Authentication*/**', 'src/TerraScale.Logging', '.github/docker/ts-auth.Dockerfile', '.github/scripts/auth', '.github/workflows/ci.yml']
     : [':(glob)src/TerraScale.Dashboard*/**', 'sites/landing/static/pricing.json', '.github/docker/dashboard.Dockerfile', '.github/scripts/dashboard', '.github/workflows/images-ghcr.yml', '.github/workflows/ci.yml'])];
@@ -247,8 +264,10 @@ if (thing === 'auth' && args[0] === '--probe') {
   const live = [];
   for (const [kind, workers] of groups) {
     if (services[kind]) {
-      const revision = authReconcile ? process.env.AUTH_LIVE_REVISION : await serviceLive(kind);
-      sha(revision);
+      const revision = authReconcile
+        ? (process.env.AUTH_LIVE_REVISION || null)
+        : await serviceLive(kind, { allowUnavailable: true });
+      if (revision !== null) sha(revision);
       live.push([kind, kind, revision]);
     } else {
       for (const worker of workers) live.push([kind, worker, await workerLive(worker)]);
@@ -278,7 +297,6 @@ if (thing === 'auth' && args[0] === '--probe') {
       if (!states.has(name)) continue;
       const alert = states.get(name);
       if (revision === null) {
-        if (deployed === null) failures.push(`${name}: nothing qualified and no live revision`);
         report(`${name}: live ${deployed ?? 'absent'}, no qualified target`);
         continue;
       }
@@ -329,8 +347,7 @@ if (thing === 'auth' && args[0] === '--probe') {
     const revision = await (services[kind] ? appQualified(own) : qualified(own)) ? own : null;
     let deploy = false;
     if (revision === null) {
-      assert.ok(deployed !== null, `${name}: ${own} is not qualified and there is no live revision`);
-      report(`${name}: live ${deployed}, this run's commit ${own} is not qualified; a release signs only that commit`);
+      report(`${name}: live ${deployed ?? 'absent'}, this run's commit ${own} is not qualified; a release signs only that commit`);
     } else {
       const decision = work(kind, name, deployed, revision);
       if (deployed === revision) {

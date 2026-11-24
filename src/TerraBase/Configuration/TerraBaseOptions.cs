@@ -1,5 +1,10 @@
+using System.Buffers.Text;
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace TerraBase.Configuration;
 
@@ -29,14 +34,19 @@ public sealed record TerraBaseOptions
 
     private static readonly string[] Keys =
     [
-        "port", "internal-port", "metrics-port", "postgres-port", "quic-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience",
-        "query-budget-seconds", "storage-threads", "atlas-url", "atlas-publish-key-file", "control-key-file", "master-key", "master-keys", "platform-url",
+        "port", "internal-port", "internal-bind", "internal-bind-any", "metrics-port", "postgres-port", "quic-port", "data-directory", "memory-budget",
+        "auth-issuer", "auth-audience", "query-budget-seconds", "storage-threads", "atlas-url", "atlas-publish-key-file", "control-key-file",
+        "master-key", "master-keys", "platform-url", "bootstrap",
         .. BackupSettings.Keys,
     ];
 
     public int Port { get; init; } = DefaultPort;
 
     public int InternalPort { get; init; } = DefaultInternalPort;
+
+    public IPAddress? InternalBindAddress { get; init; }
+
+    public bool BootstrapImmediate { get; init; }
 
     public int MetricsPort { get; init; } = DefaultMetricsPort;
 
@@ -114,6 +124,8 @@ public sealed record TerraBaseOptions
         {
             Port = values.Port("port", DefaultPort),
             InternalPort = values.Port("internal-port", DefaultInternalPort),
+            InternalBindAddress = InternalBind(values),
+            BootstrapImmediate = ParseFlag(values, "bootstrap") || IsTruthy(Environment.GetEnvironmentVariable("TS_BOOTSTRAP")),
             MetricsPort = values.Port("metrics-port", DefaultMetricsPort),
             PostgresPort = values.Port("postgres-port", DefaultPostgresPort),
             QuicPort = values.Port("quic-port", DefaultQuicPort),
@@ -226,6 +238,52 @@ public sealed record TerraBaseOptions
         return (issuer, audiences);
     }
 
+    private static IPAddress? InternalBind(SettingValues values)
+    {
+        if (values.Get("internal-bind") is { } configured)
+        {
+            var trimmed = configured.Trim();
+            if (trimmed is "*" or "0.0.0.0")
+            {
+                return IPAddress.Any;
+            }
+
+            if (IPAddress.TryParse(trimmed, out var parsed))
+            {
+                return parsed;
+            }
+
+            values.Fail("internal-bind must be an IP address or '*'");
+            return null;
+        }
+
+        return ParseFlag(values, "internal-bind-any") ? IPAddress.Any : null;
+    }
+
+    private static bool ParseFlag(SettingValues values, string key)
+    {
+        if (values.Get(key) is not { } raw)
+        {
+            return false;
+        }
+
+        if (IsTruthy(raw))
+        {
+            return true;
+        }
+
+        if (string.Equals(raw.Trim(), "false", StringComparison.OrdinalIgnoreCase) || raw.Trim() == "0")
+        {
+            return false;
+        }
+
+        values.Fail(key + " must be true or false");
+        return false;
+    }
+
+    private static bool IsTruthy(string? value) =>
+        value is not null && (string.Equals(value.Trim(), "true", StringComparison.OrdinalIgnoreCase) || value.Trim() == "1");
+
     private static Uri? ParseServiceUrl(SettingValues values, string key)
     {
         if (values.Get(key) is not { } url)
@@ -234,21 +292,63 @@ public sealed record TerraBaseOptions
         }
 
         if (!Uri.TryCreate(url, UriKind.Absolute, out var address)
-            || (address.Scheme != Uri.UriSchemeHttps && (address.Scheme != Uri.UriSchemeHttp || !address.IsLoopback))
+            || (address.Scheme != Uri.UriSchemeHttps && (address.Scheme != Uri.UriSchemeHttp || !IsInternalHttpHost(address)))
             || address.UserInfo.Length > 0 || address.Query.Length > 0 || address.Fragment.Length > 0)
         {
-            values.Fail(key + " must be an absolute https URL, or http on loopback, without user information, query or fragment");
+            values.Fail(key + " must be an absolute https URL, or http on loopback/internal/private network, without user information, query or fragment");
             return null;
         }
 
         return address;
     }
 
+    private static bool IsInternalHttpHost(Uri address)
+    {
+        if (address.IsLoopback)
+        {
+            return true;
+        }
+
+        var host = address.Host;
+        if (string.Equals(host, "host.docker.internal", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!IPAddress.TryParse(host, out var ip))
+        {
+            return false;
+        }
+
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+
+        if (ip.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return IPAddress.IsLoopback(ip);
+        }
+
+        Span<byte> bytes = stackalloc byte[4];
+        if (!ip.TryWriteBytes(bytes, out _))
+        {
+            return false;
+        }
+
+        return bytes[0] == 10
+            || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
+            || (bytes[0] == 192 && bytes[1] == 168)
+            || (bytes[0] == 100 && bytes[1] is >= 64 and <= 127)
+            || bytes[0] == 127;
+    }
+
     private static ECDsa? PrivateKey(SettingValues values, string path, string variable)
     {
-        if (FileText.Read(path) is not { } pem || Pem.ImportP256(pem, requirePrivate: true) is not { } key)
+        if (FileText.Read(path) is not { } text || Pem.ImportP256(text, requirePrivate: true) is not { } key)
         {
-            values.Fail(variable + " must name a readable PKCS#8 PEM P-256 private key");
+            values.Fail(variable + " must name a readable PKCS#8 PEM or JWK P-256 private key");
             return null;
         }
 
@@ -257,9 +357,9 @@ public sealed record TerraBaseOptions
 
     private static ECDsa? PublicKey(SettingValues values, string path)
     {
-        if (FileText.Read(path) is not { } pem || Pem.ImportP256(pem, requirePrivate: false) is not { } key)
+        if (FileText.Read(path) is not { } text || Pem.ImportP256(text, requirePrivate: false) is not { } key)
         {
-            values.Fail("TERRABASE_CONTROL_KEY_FILE must name a readable PEM P-256 public key");
+            values.Fail("TERRABASE_CONTROL_KEY_FILE must name a readable PEM or JWK P-256 public key");
             return null;
         }
 
@@ -267,16 +367,28 @@ public sealed record TerraBaseOptions
     }
 }
 
+internal sealed record EcJwk(string? Kty, string? Crv, string? X, string? Y, string? D);
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(EcJwk))]
+internal sealed partial class KeyMaterialJsonContext : JsonSerializerContext;
+
 internal static class Pem
 {
     private const string P256Oid = "1.2.840.10045.3.1.7";
 
-    public static ECDsa? ImportP256(string pem, bool requirePrivate)
+    public static ECDsa? ImportP256(string material, bool requirePrivate)
     {
+        var trimmed = material.Trim();
+        if (trimmed.StartsWith('{'))
+        {
+            return ImportJwkP256(trimmed, requirePrivate);
+        }
+
         var key = ECDsa.Create();
         try
         {
-            key.ImportFromPem(pem);
+            key.ImportFromPem(trimmed);
             var parameters = key.ExportParameters(includePrivateParameters: false);
             if (parameters.Curve.Oid.Value == P256Oid && (!requirePrivate || HasPrivate(key)))
             {
@@ -289,6 +401,58 @@ internal static class Pem
 
         key.Dispose();
         return null;
+    }
+
+    private static ECDsa? ImportJwkP256(string json, bool requirePrivate)
+    {
+        try
+        {
+            var jwk = JsonSerializer.Deserialize(json, KeyMaterialJsonContext.Default.EcJwk);
+            if (jwk is not { Kty: "EC", Crv: "P-256", X: { Length: > 0 } xText, Y: { Length: > 0 } yText })
+            {
+                return null;
+            }
+
+            var x = DecodeCoordinate(xText);
+            var y = DecodeCoordinate(yText);
+            if (x is null || y is null)
+            {
+                return null;
+            }
+
+            byte[]? d = null;
+            if (jwk.D is { Length: > 0 } dText)
+            {
+                d = DecodeCoordinate(dText);
+                if (d is null)
+                {
+                    return null;
+                }
+            }
+            else if (requirePrivate)
+            {
+                return null;
+            }
+
+            var parameters = new ECParameters
+            {
+                Curve = ECCurve.NamedCurves.nistP256,
+                Q = new ECPoint { X = x, Y = y },
+                D = d,
+            };
+            parameters.Validate();
+            return ECDsa.Create(parameters);
+        }
+        catch (Exception error) when (error is JsonException or FormatException or ArgumentException or CryptographicException)
+        {
+            return null;
+        }
+    }
+
+    private static byte[]? DecodeCoordinate(string encoded)
+    {
+        var bytes = Base64Url.DecodeFromChars(encoded);
+        return bytes.Length == 32 ? bytes : null;
     }
 
     private static bool HasPrivate(ECDsa key)

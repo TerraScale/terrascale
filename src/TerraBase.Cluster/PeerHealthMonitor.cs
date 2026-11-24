@@ -102,17 +102,23 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             client.ResetPeer(state.Info.NodeId);
         }
 
-        Record(state, success, timeProvider.GetElapsedTime(started));
+        var failures = Record(state, success, timeProvider.GetElapsedTime(started));
+        if (!success && failures >= options.UnreachableAfterFailures && failures % options.UnreachableAfterFailures == 0 && !IPAddress.TryParse(state.Info.Host, out _))
+        {
+            await RefreshAddressAsync(state, cancellationToken);
+        }
     }
 
-    private void Record(PeerState state, bool success, TimeSpan roundTrip)
+    private int Record(PeerState state, bool success, TimeSpan roundTrip)
     {
         var previous = state.Health.Status;
-        var next = state.Record(success, roundTrip, timeProvider.GetUtcNow(), options.UnreachableAfterFailures);
+        var (next, failures) = state.Record(success, roundTrip, timeProvider.GetUtcNow(), options.UnreachableAfterFailures);
         if (previous != next)
         {
             ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
         }
+
+        return failures;
     }
 
     private async ValueTask RegisterAsync(PeerState state, CancellationToken cancellationToken)
@@ -123,8 +129,23 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             return;
         }
 
+        state.SetResolvedAddress(address);
         client.UpsertPeer(new QuicPeer(state.Info.NodeId, state.Info.Region, new IPEndPoint(address, state.Info.QuicPort)));
         state.Registered = true;
+    }
+
+    private async ValueTask RefreshAddressAsync(PeerState state, CancellationToken cancellationToken)
+    {
+        if (await ResolveAsync(state.Info, cancellationToken) is not { } address)
+        {
+            return;
+        }
+
+        if (state.SetResolvedAddress(address))
+        {
+            client.UpsertPeer(new QuicPeer(state.Info.NodeId, state.Info.Region, new IPEndPoint(address, state.Info.QuicPort)));
+            client.ResetPeer(state.Info.NodeId);
+        }
     }
 
     private static async ValueTask<IPAddress?> ResolveAsync(PeerNodeInfo peer, CancellationToken cancellationToken)
@@ -168,12 +189,27 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
     {
         private readonly Lock _gate = new();
         private PeerHealth _health = new(info, PeerStatus.Suspect, TimeSpan.Zero, DateTimeOffset.MinValue);
+        private IPAddress? _resolvedAddress;
         private long _instanceId;
         private int _failures;
 
         public PeerNodeInfo Info { get; } = info;
 
         public bool Registered { get; set; }
+
+        public bool SetResolvedAddress(IPAddress address)
+        {
+            lock (_gate)
+            {
+                if (_resolvedAddress is { } previous && previous.Equals(address))
+                {
+                    return false;
+                }
+
+                _resolvedAddress = address;
+                return true;
+            }
+        }
 
         public PeerHealth Health
         {
@@ -186,7 +222,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
             }
         }
 
-        public PeerStatus Record(bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter)
+        public (PeerStatus Status, int Failures) Record(bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter)
         {
             lock (_gate)
             {
@@ -195,7 +231,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, QuicRpcClient clie
                 _health = success
                     ? new PeerHealth(Info, status, roundTrip, now)
                     : _health with { Status = status };
-                return status;
+                return (status, _failures);
             }
         }
 

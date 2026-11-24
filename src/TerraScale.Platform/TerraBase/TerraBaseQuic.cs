@@ -32,6 +32,7 @@ public sealed class TerraBaseQuic : IAsyncDisposable
                 Certificate = certificates.Certificate,
                 TrustedAuthorities = certificates.TrustedAuthorities,
                 IntermediateCertificates = certificates.Intermediates,
+                CertificateRotator = certificates.Rotator,
             },
             metrics,
             timeProvider,
