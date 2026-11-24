@@ -52,7 +52,7 @@ public sealed partial class TerraBaseSqlClient
             TerraBaseConnection.Json(new TerraBaseAgentDatabaseRequest(name, pointInTime, ttlSeconds), json.TerraBaseAgentDatabaseRequest),
             json.TerraBaseRestoreOperation, null, cancellationToken).ConfigureAwait(false);
         return await TerraBaseRestore.CompleteAsync(ProjectConnection(project), DatabasePath(project, source),
-            "/v1/projects/" + TerraBaseConnection.Segment(project, nameof(project)),
+            "/v1/projects/" + TerraScalePaths.Segment(project, nameof(project)),
             operation.Value, json.TerraBaseManagedDatabase, cancellationToken).ConfigureAwait(false);
     }
 
@@ -95,9 +95,9 @@ public sealed partial class TerraBaseSqlClient
         return (projectApiKey ?? throw new InvalidOperationException("The SQL client has no project credential.")).For(project);
     }
 
-    private static string DatabasesPath(string project) => $"/v1/projects/{TerraBaseConnection.Segment(project, nameof(project))}/databases";
+    private static string DatabasesPath(string project) => $"/v1/projects/{TerraScalePaths.Segment(project, nameof(project))}/databases";
 
-    private static string DatabasePath(string project, string database) => DatabasesPath(project) + "/" + TerraBaseConnection.Segment(database, nameof(database));
+    private static string DatabasePath(string project, string database) => DatabasesPath(project) + "/" + TerraScalePaths.Segment(database, nameof(database));
 
     private static void ValidateDatabaseTtl(int? ttlSeconds)
     {

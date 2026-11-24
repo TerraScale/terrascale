@@ -3,8 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 projects=(src/TerraScale.DotNet/TerraScale.DotNet.csproj
+    samples/sql-quickstart.cs
     scripts/check-nuget-vulnerabilities.cs)
 locks=(src/TerraScale.DotNet/packages.lock.json
+    samples/packages.lock.json
     scripts/packages.lock.json)
 diff -u <(printf '%s\n' "${locks[@]}" | sort) <(git ls-files '*packages.lock.json' | sort)
 for project in "${projects[@]}"; do

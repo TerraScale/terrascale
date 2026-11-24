@@ -53,7 +53,7 @@ public sealed partial class TerraBaseProjectClient
 
     private static string? Instant(DateTimeOffset? instant) => instant?.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffffzzz", CultureInfo.InvariantCulture);
 
-    private string DatabasePath(string databaseName) => path + "/databases/" + TerraBaseConnection.Segment(databaseName, nameof(databaseName));
+    private string DatabasePath(string databaseName) => path + "/databases/" + TerraScalePaths.Segment(databaseName, nameof(databaseName));
 }
 
 internal sealed record TerraBaseCreateDatabaseRequest(string Name, IReadOnlyList<string>? Regions, bool? AllRegions, TerraBaseConsistencyMode? DefaultConsistency = null);

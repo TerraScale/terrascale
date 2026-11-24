@@ -13,6 +13,9 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
 
     private const int MaxFrameBytes = 1024 * 1024;
 
+    private static readonly TimeSpan FrameDeadline = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan KeepAliveTimeout = TimeSpan.FromSeconds(20);
+
     private static readonly TerraBaseSqlSocketAnswer Cleared = new(null, "result", false, []);
     private static readonly TerraBaseSqlRequestOptions NoOptions = new();
 
@@ -52,7 +55,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
     internal static async Task<TerraBaseSqlSession> ConnectAsync(TerraBaseConnection connection, string path, TerraBaseBookmarkTracker bookmarks,
         TerraBaseConsistencyMode? consistency, CancellationToken cancellationToken) =>
         new(connection, path, bookmarks, consistency,
-            await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken, UpgradeHeaders(bookmarks, consistency)).ConfigureAwait(false));
+            await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken, UpgradeHeaders(bookmarks, consistency), KeepAliveTimeout).ConfigureAwait(false));
 
     public Task<TerraBaseSqlStatementResult> ExecuteAsync(string sql, IReadOnlyList<TerraBaseSqlValue>? args = null, CancellationToken cancellationToken = default) =>
         ExecuteAsync(new TerraBaseSqlStatement(sql, args), cancellationToken);
@@ -114,7 +117,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
                 {
                     await RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
-                catch (Exception error) when (error is TerraBaseException or WebSocketException or TimeoutException)
+                catch (Exception error) when (error is TerraBaseException or WebSocketException or TimeoutException or ObjectDisposedException)
                 {
                 }
             }
@@ -141,27 +144,32 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         if (disposed) return;
         disposed = true;
         await connecting.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-        var current = link;
-        if (current.Socket.State == WebSocketState.Open)
+        try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            try
+            var current = link;
+            if (current.Socket.State == WebSocketState.Open)
             {
-                await current.Socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, timeout.Token).ConfigureAwait(false);
-                await current.Receiving.WaitAsync(timeout.Token).ConfigureAwait(false);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5), connection.TimeProvider);
+                try
+                {
+                    await current.Socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, timeout.Token).ConfigureAwait(false);
+                    await current.Receiving.WaitAsync(timeout.Token).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException)
+                {
+                }
             }
-            catch (Exception error) when (error is WebSocketException or OperationCanceledException)
-            {
-            }
-        }
 
-        await closing.CancelAsync().ConfigureAwait(false);
-        current.Socket.Abort();
-        await current.Receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        current.Dispose();
-        closing.Dispose();
-        sending.Dispose();
-        connecting.Dispose();
+            await closing.CancelAsync().ConfigureAwait(false);
+            current.Socket.Abort();
+            await current.Receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            current.Dispose();
+            closing.Dispose();
+        }
+        finally
+        {
+            connecting.Release();
+        }
     }
 
     internal void Abort()
@@ -174,9 +182,15 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
 
     private Link Start(WebSocket socket)
     {
-        var started = new Link(socket);
+        var started = new Link(socket, connection.TimeProvider, Expire);
         started.Receiving = Task.Run(() => ReceiveAsync(started));
         return started;
+    }
+
+    private void Expire(Link current)
+    {
+        Drop(current, new TimeoutException($"TerraBase did not answer a SQL frame within {FrameDeadline.TotalSeconds:0} seconds."));
+        current.Socket.Abort();
     }
 
     private async Task<Link> CurrentAsync(CancellationToken cancellationToken)
@@ -190,7 +204,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
             ObjectDisposedException.ThrowIf(disposed, this);
             current = link;
             if (Volatile.Read(ref current.Failure) is null) return current;
-            var socket = await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken, UpgradeHeaders(bookmarks, Consistency)).ConfigureAwait(false);
+            var socket = await connection.ConnectWebSocketAsync(path, Subprotocol, cancellationToken, UpgradeHeaders(bookmarks, Consistency), KeepAliveTimeout).ConfigureAwait(false);
             await current.Receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             current.Dispose();
             var next = Start(socket);
@@ -243,6 +257,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
                     if (uncertain is { } failure) throw failure;
                     if (Volatile.Read(ref current.Failure) is { } dropped) throw Closed(dropped);
                     pending.Committing = type == "commit" || type == "execute" && (!transaction || current.Pending.Values.Any(other => other.Sent && other.Control));
+                    if (!current.Pending.Values.Any(other => other.Sent)) current.Arm(FrameDeadline);
                     pending.Sent = true;
                 }
                 await current.Socket.SendAsync(frame, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
@@ -258,9 +273,12 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }
         catch (Exception error) when (pending.Sent && !pending.Answer.Task.IsCompletedSuccessfully)
         {
-            Drop(current, error);
+            var canceled = error is OperationCanceledException && cancellationToken.IsCancellationRequested;
+            Drop(current, canceled ? new WebSocketException(WebSocketError.ConnectionClosedPrematurely, "A canceled SQL request closed the session's connection.", error) : error);
             current.Socket.Abort();
-            throw uncertain ?? Closed(error);
+            if (!canceled) throw uncertain ?? Closed(error);
+            if (uncertain is { } unknown) throw new OperationCanceledException(unknown.Message, unknown, cancellationToken);
+            throw;
         }
         finally
         {
@@ -307,11 +325,12 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
                 lock (stateGate)
                 {
                     transaction = answer.Transaction;
-                    if (answer.Error is { Code: "write_outcome_unknown" or "commit_uncertain" } unknown)
-                        uncertain = unknown.ToException();
+                    if (answer.Error is { } refusal && TerraBaseSqlErrorCodes.OutcomeUncertain(refusal.Code))
+                        uncertain = refusal.ToException();
                     if (answer.Id is { } id && current.Pending.TryRemove(id, out var pending)) pending.Answer.TrySetResult(answer);
                     else if (answer.Error is { } error) throw error.ToException();
                     if (uncertain is { } failure) throw failure;
+                    current.Arm(current.Pending.Values.Any(other => other.Sent) ? FrameDeadline : Timeout.InfiniteTimeSpan);
                 }
             }
         }
@@ -327,8 +346,9 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         lock (stateGate)
         {
             if (!ReferenceEquals(Volatile.Read(ref link), current)) return;
+            current.Arm(Timeout.InfiniteTimeSpan);
             if (current.Pending.Values.Any(pending => pending.Sent && pending.Committing))
-                uncertain ??= new TerraBaseSqlException(null, "The SQL session lost a committing answer; reconcile before repeating.", "write_outcome_unknown", 0, "08007", error);
+                uncertain ??= new TerraBaseSqlException(null, "The SQL session lost a committing answer; reconcile before repeating.", TerraBaseSqlErrorCodes.WriteOutcomeUnknown, 0, "08007", error);
             if (transaction && uncertain is null) lostTransaction = true;
             transaction = false;
             Volatile.Write(ref current.Failure, error);
@@ -354,18 +374,31 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
 
     private static Exception Closed(Exception cause) => cause switch
     {
-        TerraBaseException known => known,
+        TerraBaseException or TimeoutException or ObjectDisposedException => cause,
         OperationCanceledException => new ObjectDisposedException(nameof(TerraBaseSqlSession)),
         _ => new WebSocketException(WebSocketError.ConnectionClosedPrematurely, cause.Message, cause),
     };
 
-    private sealed class Link(WebSocket socket) : IDisposable
+    private sealed class Link : IDisposable
     {
-        public readonly WebSocket Socket = socket;
+        public readonly WebSocket Socket;
         public readonly ConcurrentDictionary<long, Pending> Pending = new();
         public Task Receiving = Task.CompletedTask;
         public Exception? Failure;
+        private readonly ITimer watchdog;
 
-        public void Dispose() => Socket.Dispose();
+        public Link(WebSocket socket, TimeProvider time, Action<Link> expire)
+        {
+            Socket = socket;
+            watchdog = time.CreateTimer(_ => expire(this), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+
+        public void Arm(TimeSpan deadline) => watchdog.Change(deadline, Timeout.InfiniteTimeSpan);
+
+        public void Dispose()
+        {
+            watchdog.Dispose();
+            Socket.Dispose();
+        }
     }
 }

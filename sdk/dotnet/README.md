@@ -40,7 +40,9 @@ ADO.NET and Dapper: `TerraBaseDbConnection` wraps a `TerraBaseSqlDatabase` as a 
 statements (`ExecuteNonQueryAsync`, `ExecuteScalarAsync`, `ExecuteDbDataReaderAsync`; the sync overloads throw —
 the SDK is async-only). Parameters map to `?` positional or `@name`/`:name`/`$name` named arguments. Transactions
 run over the SQL WebSocket session: `BeginTransactionAsync`/`CommitAsync`/`RollbackAsync` (Serializable only; the
-sync transaction methods throw like the other sync paths).
+sync transaction methods throw like the other sync paths). `CommandTimeout` defaults to 30 seconds over REST and the
+WebSocket session alike; `0` waits without a command deadline (REST requests stop at 10 minutes). An expired
+`CommandTimeout` throws `TimeoutException` and caller cancellation stays `OperationCanceledException`.
 
 The SDK's ADO.NET types follow SQLite's ADO.NET conventions. A command can run several statements in one request
 or inside an open transaction and return one result set per statement that returns columns. `DateTime`,
@@ -63,7 +65,8 @@ For Npgsql and other .NET Postgres clients, see the [.NET ORM guide](https://doc
   JSON metadata: the row becomes an object keyed by column name and a blob a base64 string.
 - A refused statement throws `TerraBaseSqlException` with `Code` (one of `TerraBaseSqlErrorCodes`, such as
   `unique_violation`), `Sqlstate` (such as `23505`) and `Statement` (zero-based index). A confirmed refusal rolls the request back;
-  `write_outcome_unknown` and `commit_uncertain` require reconciliation because the write may have committed.
+  `write_outcome_unknown`, `commit_uncertain` and `in_region_quorum_unconfirmed` set `OutcomeUncertain` and require
+  reconciliation because the write may have committed; the SDK never resends them.
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
 
@@ -72,6 +75,8 @@ For Npgsql and other .NET Postgres clients, see the [.NET ORM guide](https://doc
 
 Interactive transactions use the WebSocket session. The caller owns it; dispose closes it and rolls back an open
 transaction. A transaction lasts at most 5 seconds. Calls on one session may overlap; answers are matched by id.
+The session pings every 10 seconds and drops a connection that leaves a ping unanswered for 20 seconds or the oldest
+outstanding request unanswered for 60 seconds; waiting requests then fail with `TimeoutException`.
 
 ```csharp
 await using TerraBaseSqlSession session = await db.ConnectAsync(ct);
@@ -91,7 +96,9 @@ The upgrade goes through the caller's `HttpClient` and its handlers with
 the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT), and is
 never resent. A lost committing reply throws `write_outcome_unknown` (08007), and every later call throws the
 same error. If no committing request was sent, a lost open transaction throws `transaction_rolled_back` until
-`RollbackAsync` clears it; only then can the next call reconnect.
+`RollbackAsync` clears it; only then can the next call reconnect. Cancelling a sent request throws
+`OperationCanceledException` and closes the connection; the next call reconnects unless the canceled request could
+commit, which leaves `write_outcome_unknown` as the inner exception and on every later call.
 
 ### Consistency and bookmarks
 
@@ -114,9 +121,11 @@ await session.BeginStrongAsync(ct);
 ```
 
 `TerraBaseSqlRequestOptions.Bookmark` merges a bookmark from another process into one call; `ObserveBookmark` merges it
-into every later call. A strong call that loses a race throws `serialization_conflict` (40001, HTTP 409) and a schema
-change during the request `schema_mismatch`; both rolled back, and REST requests resend them at most twice. A bookmark
-or consistency the server does not accept throws `invalid_bookmark` or `invalid_consistency` (22023).
+into every later call. A strong call that loses a race throws `serialization_conflict` (40001, HTTP 409); it rolled
+back, and REST requests resend it at most twice. A bookmark or consistency the server does not accept throws
+`invalid_bookmark` or `invalid_consistency` (22023). Bookmarks hold at most 1024 characters: a supplied bookmark whose
+merge would exceed that throws `ArgumentException`, and an answer whose merge would exceed it replaces the tracked
+bookmark with the server's.
 `TerraBaseDbConnection.BeginTransactionAsync(IsolationLevel.Serializable)` begins a strong transaction.
 
 ## Live data
@@ -136,7 +145,7 @@ Each view contains immutable `TerraBaseSqlRecord` rows, matching SQL query resul
 `Offset`. `Status` is `Loading`, `Live` or `Reconnecting`. The SDK finishes the paged snapshot before
 publishing rows, applies commits in order and overlays regional provisional writes. WebSocket hints use
 bearer headers and trigger HTTP catch-up; HTTP long-polling takes over when hints are unavailable.
-Transient failures resume from the applied offset with backoff; `must_refetch` clears the view and starts
+Transient failures resume from the applied offset with backoff (a `Retry-After` waits at most 30 seconds); `must_refetch` clears the view and starts
 a new snapshot. Authentication and permission failures end enumeration. Cancel or dispose the enumerator
 to close its work. Each enumeration owns an independent subscription.
 
@@ -331,9 +340,10 @@ An earlier `HttpClient.Timeout` also throws `TimeoutException`; caller cancellat
 remains `OperationCanceledException`. The SDK resends safe GET/HEAD reads up to twice after `429 tenant_busy`,
 `503 auth_unavailable`, `storage_busy` or `capacity`, gateway 502 and 504 answers, or a lost connection. Each resend asks the
 `AccessTokenProvider` again and waits for `Retry-After` plus up to 250 ms, or full jitter over 250/500 ms; when that
-wait would pass the request deadline, the failure is thrown at once. Authentication errors never retry.
-The SDK does not exchange or cache tokens; caller-owned token providers must drop revoked/expired tokens
-and stop exchanging the refused key. `503 write_outcome_unknown` and all other errors are sent once. TerraBase
+wait would pass the request deadline, the failure is thrown at once. Authentication errors never retry except the single `ApiKey` refresh below.
+With `ApiKey`, a `401` other than `key_revoked` or `key_expired` drops the exchanged token and resends the request
+once with a fresh exchange. Caller-owned `AccessTokenProvider` tokens are never cached or refreshed by the SDK;
+those providers must drop revoked/expired tokens and stop exchanging the refused key. `503 write_outcome_unknown` and all other errors are sent once. TerraBase
 rejects `Idempotency-Key`; do not replay a write whose outcome is unknown.
 `TerraBaseHttp.CreateHandler()` fails a connection attempt after 10 seconds and replaces pooled connections every
 2 minutes, so long-lived clients follow DNS changes.

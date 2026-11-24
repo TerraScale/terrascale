@@ -49,7 +49,7 @@ public sealed partial class TerraScaleAuthClient
 
     internal string InstanceSlug { get; }
 
-    internal string ManagementRoute(string relative) => "/v1/" + TerraScaleAuthPaths.Escape(InstanceSlug) + relative;
+    internal string ManagementRoute(string relative) => "/v1/" + TerraScalePaths.Segment(InstanceSlug, nameof(InstanceSlug)) + relative;
 
 
 

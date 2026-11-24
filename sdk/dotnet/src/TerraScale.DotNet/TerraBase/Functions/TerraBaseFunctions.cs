@@ -31,5 +31,5 @@ public sealed partial class TerraBaseDatabase
     public Task DeleteFunctionAsync(string functionName, CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, FunctionPath(functionName), null, null, cancellationToken);
 
-    private string FunctionPath(string functionName) => path + "/functions/" + TerraBaseConnection.Segment(functionName, nameof(functionName));
+    private string FunctionPath(string functionName) => path + "/functions/" + TerraScalePaths.Segment(functionName, nameof(functionName));
 }

@@ -6,6 +6,12 @@ using System.Text.Unicode;
 
 namespace TerraScale.DotNet.TerraBase;
 
+internal sealed record MalformedBookmark;
+
+internal sealed record OversizedBookmark;
+
+internal readonly union BookmarkMerge(string, MalformedBookmark, OversizedBookmark);
+
 internal static class TerraBaseBookmark
 {
     public const int MaxEncodedLength = 1024;
@@ -13,17 +19,19 @@ internal static class TerraBaseBookmark
     private const int MaxRegionBytes = 64;
     private const byte FormatVersion = 1;
 
-    public static bool TryMerge(string current, string? observed, out string merged)
+    private static readonly MalformedBookmark Malformed = new();
+    private static readonly OversizedBookmark Oversized = new();
+
+    public static BookmarkMerge Merge(string current, string? observed)
     {
-        merged = current;
         if (string.IsNullOrEmpty(observed))
         {
-            return true;
+            return current;
         }
 
         if (!TryDecode(current, out var mine) || !TryDecode(observed, out var theirs))
         {
-            return false;
+            return Malformed;
         }
 
         Dictionary<string, ulong> newest = new(StringComparer.Ordinal);
@@ -33,13 +41,7 @@ internal static class TerraBaseBookmark
         }
 
         var encoded = Encode([.. newest.OrderBy(static pair => pair.Key, StringComparer.Ordinal)]);
-        if (encoded.Length > MaxEncodedLength)
-        {
-            return false;
-        }
-
-        merged = encoded;
-        return true;
+        return encoded.Length > MaxEncodedLength ? Oversized : encoded;
     }
 
     private static bool TryDecode(string encoded, out IReadOnlyList<KeyValuePair<string, ulong>> entries)
@@ -171,44 +173,39 @@ internal sealed class TerraBaseBookmarkTracker
         }
     }
 
-    public bool TryObserve(string? bookmark)
-    {
-        lock (gate)
-        {
-            if (!TerraBaseBookmark.TryMerge(current, bookmark, out var merged))
-            {
-                return false;
-            }
-
-            current = merged;
-            return true;
-        }
-    }
-
     public void Observe(string bookmark, string parameterName)
     {
         ArgumentNullException.ThrowIfNull(bookmark, parameterName);
-        if (!TryObserve(bookmark))
+        lock (gate)
         {
-            throw new ArgumentException("The bookmark must be one TerraScale-Bookmark value returned by TerraScale.", parameterName);
+            current = Requested(TerraBaseBookmark.Merge(current, bookmark), parameterName);
         }
     }
 
-    public string Outgoing(string? requested)
-    {
-        var tracked = Current;
-        return TerraBaseBookmark.TryMerge(tracked, requested, out var merged)
-            ? merged
-            : throw new ArgumentException("The bookmark must be one TerraScale-Bookmark value returned by TerraScale.", nameof(TerraBaseSqlRequestOptions.Bookmark));
-    }
+    public string Outgoing(string? requested) =>
+        Requested(TerraBaseBookmark.Merge(Current, requested), nameof(TerraBaseSqlRequestOptions.Bookmark));
 
     public void ObserveAnswer(string? bookmark, HttpStatusCode? status)
     {
-        if (!TryObserve(bookmark))
+        lock (gate)
         {
-            throw Invalid(status);
+            var merged = TerraBaseBookmark.Merge(current, bookmark);
+            current = merged switch
+            {
+                string next => next,
+                MalformedBookmark => throw Invalid(status),
+                OversizedBookmark => bookmark ?? throw Invalid(status),
+            };
         }
     }
+
+    private static string Requested(BookmarkMerge merged, string parameterName) => merged switch
+    {
+        string next => next,
+        MalformedBookmark => throw new ArgumentException("The bookmark must be one TerraScale-Bookmark value returned by TerraScale.", parameterName),
+        OversizedBookmark => throw new ArgumentException(
+            $"The bookmark merged with the tracked bookmark exceeds {TerraBaseBookmark.MaxEncodedLength} characters; start from a fresh client to drop regions.", parameterName),
+    };
 
     public void ObserveResponse(HttpResponseMessage response)
     {

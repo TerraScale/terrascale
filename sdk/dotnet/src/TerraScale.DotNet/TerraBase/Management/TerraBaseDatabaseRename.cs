@@ -7,7 +7,7 @@ public sealed partial class TerraBaseProjectClient
         TerraScaleIds.Validate(databaseId);
         ArgumentException.ThrowIfNullOrEmpty(name);
         var body = TerraBaseConnection.Json(new RequestBody { Name = name }, Json.RequestBody);
-        return (await connection.SendAsync(HttpMethod.Patch, path + "/databases/" + TerraBaseConnection.Segment(databaseId, nameof(databaseId)),
+        return (await connection.SendAsync(HttpMethod.Patch, path + "/databases/" + TerraScalePaths.Segment(databaseId, nameof(databaseId)),
             body, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 }

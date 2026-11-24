@@ -15,55 +15,55 @@ public sealed partial class TerraScaleAuthProjectsClient
         SendAsync(HttpMethod.Get, accessToken, projectId, "/organizations" + PageQuery("q", null, limit, after), TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationPage, HttpStatusCode.OK, cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganization>> GetOrganizationAsync(string accessToken, string projectId, string org, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}", TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganization, HttpStatusCode.OK, cancellationToken);
+        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}", TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganization, HttpStatusCode.OK, cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganization>> UpdateOrganizationAsync(string accessToken, string projectId, string org, TerraScaleAuthOrganizationRequest request, CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, $"/organizations/{Uri.EscapeDataString(org)}"), request,
+        client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}"), request,
             TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationRequest, TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganization,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 24 * 1024, cancellationToken);
 
     public Task<AuthOutcome> DeleteOrganizationAsync(string accessToken, string projectId, string org, CancellationToken cancellationToken = default) =>
-        DeleteAsync(accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}", cancellationToken);
+        DeleteAsync(accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}", cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationMembership>> AddOrganizationMemberAsync(string accessToken, string projectId, string org, TerraScaleAuthOrganizationMembershipRequest request, CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, $"/organizations/{Uri.EscapeDataString(org)}/memberships"), request,
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/memberships"), request,
             TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationMembershipRequest, TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationMembership,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 24 * 1024, cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationMembershipPage>> ListOrganizationMembersAsync(string accessToken, string projectId, string org, int? limit = null, string? after = null, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}/memberships" + PageQuery("q", null, limit, after), TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationMembershipPage, HttpStatusCode.OK, cancellationToken);
+        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/memberships" + PageQuery("q", null, limit, after), TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationMembershipPage, HttpStatusCode.OK, cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationMembership>> UpdateOrganizationMemberAsync(string accessToken, string projectId, string org, string user, TerraScaleAuthOrganizationMembershipRequest request, CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, $"/organizations/{Uri.EscapeDataString(org)}/memberships/{Uri.EscapeDataString(user)}"), request,
+        client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/memberships/{TerraScalePaths.Segment(user, nameof(user))}"), request,
             TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationMembershipRequest, TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationMembership,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 24 * 1024, cancellationToken);
 
     public Task<AuthOutcome> DeleteOrganizationMemberAsync(string accessToken, string projectId, string org, string user, CancellationToken cancellationToken = default) =>
-        DeleteAsync(accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}/memberships/{Uri.EscapeDataString(user)}", cancellationToken);
+        DeleteAsync(accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/memberships/{TerraScalePaths.Segment(user, nameof(user))}", cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationInvitation>> CreateOrganizationInvitationAsync(string accessToken, string projectId, string org, TerraScaleAuthOrganizationInvitationRequest request, CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, $"/organizations/{Uri.EscapeDataString(org)}/invitations"), request,
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/invitations"), request,
             TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationInvitationRequest, TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationInvitation,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 24 * 1024, cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationInvitationPage>> ListOrganizationInvitationsAsync(string accessToken, string projectId, string org, int? limit = null, string? after = null, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}/invitations" + PageQuery("q", null, limit, after), TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationInvitationPage, HttpStatusCode.OK, cancellationToken);
+        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/invitations" + PageQuery("q", null, limit, after), TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationInvitationPage, HttpStatusCode.OK, cancellationToken);
 
     public Task<AuthOutcome> RevokeOrganizationInvitationAsync(string accessToken, string projectId, string org, string invitation, CancellationToken cancellationToken = default) =>
-        DeleteAsync(accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}/invitations/{Uri.EscapeDataString(invitation)}", cancellationToken);
+        DeleteAsync(accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/invitations/{TerraScalePaths.Segment(invitation, nameof(invitation))}", cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationDomain>> AddOrganizationDomainAsync(string accessToken, string projectId, string org, TerraScaleAuthOrganizationDomainRequest request, CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, $"/organizations/{Uri.EscapeDataString(org)}/domains"), request,
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/domains"), request,
             TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationDomainRequest, TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationDomain,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 24 * 1024, cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationDomainPage>> ListOrganizationDomainsAsync(string accessToken, string projectId, string org, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}/domains", TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationDomainPage, HttpStatusCode.OK, cancellationToken);
+        SendAsync(HttpMethod.Get, accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/domains", TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationDomainPage, HttpStatusCode.OK, cancellationToken);
 
     public Task<AuthResult<TerraScaleAuthOrganizationDomain>> VerifyOrganizationDomainAsync(string accessToken, string projectId, string org, string domain, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Post, accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}/domains/{Uri.EscapeDataString(domain)}/verify", TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationDomain, HttpStatusCode.OK, cancellationToken);
+        SendAsync(HttpMethod.Post, accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/domains/{TerraScalePaths.Segment(domain, nameof(domain))}/verify", TerraScaleAuthOrganizationsJson.Default.TerraScaleAuthOrganizationDomain, HttpStatusCode.OK, cancellationToken);
 
     public Task<AuthOutcome> DeleteOrganizationDomainAsync(string accessToken, string projectId, string org, string domain, CancellationToken cancellationToken = default) =>
-        DeleteAsync(accessToken, projectId, $"/organizations/{Uri.EscapeDataString(org)}/domains/{Uri.EscapeDataString(domain)}", cancellationToken);
+        DeleteAsync(accessToken, projectId, $"/organizations/{TerraScalePaths.Segment(org, nameof(org))}/domains/{TerraScalePaths.Segment(domain, nameof(domain))}", cancellationToken);
 
 }

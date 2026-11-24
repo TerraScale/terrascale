@@ -142,7 +142,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     }
 
     private string InstanceRoute(string relative) =>
-        "/" + TerraScaleAuthPaths.Escape(client.InstanceSlug) + relative;
+        "/" + TerraScalePaths.Segment(client.InstanceSlug, nameof(client.InstanceSlug)) + relative;
 
     private string TokenRoute() => InstanceRoute("/oauth/token");
 }

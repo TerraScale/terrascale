@@ -19,6 +19,8 @@ public class TerraBaseException : HttpRequestException
 
     public int? OperationIndex { get; }
 
+    public bool OutcomeUncertain => TerraBaseSqlErrorCodes.OutcomeUncertain(ErrorCode);
+
     public string? Region { get; internal set; }
 
     public string? RequestId { get; private set; }
