@@ -364,15 +364,21 @@ internal sealed partial class PostgresConnection
             return PgErrors.PortalMemory;
         }
 
+        var unsent = Writer.Buffer.Length;
         for (var index = portal.Position; index < end; index++)
         {
             if (Writer.DataRow(current.Rows[index], shape, portal.ResultFormats) is { } encodeError)
             {
+                if (deferredCommit)
+                {
+                    Writer.Buffer.Truncate(unsent);
+                }
+
                 session.Portals.Remove(message.Portal);
                 return encodeError;
             }
 
-            if (Writer.ShouldFlush && !await Writer.FlushAsync(closed))
+            if (!deferredCommit && Writer.ShouldFlush && !await Writer.FlushAsync(closed))
             {
                 return new PgError("08006", "the client stopped reading results", Fatal: true);
             }
@@ -380,6 +386,7 @@ internal sealed partial class PostgresConnection
 
         if (await CommitDeferredAsync(deferredCommit) is { } commitError)
         {
+            Writer.Buffer.Truncate(unsent);
             session.Portals.Remove(message.Portal);
             return commitError;
         }

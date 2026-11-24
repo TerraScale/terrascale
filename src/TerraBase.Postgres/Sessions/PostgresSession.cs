@@ -39,6 +39,7 @@ internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlV
 
     public void Hold(PgResult result, long bytes)
     {
+        Columns ??= result.Columns;
         Result = result;
         _resultBytes = bytes;
     }
