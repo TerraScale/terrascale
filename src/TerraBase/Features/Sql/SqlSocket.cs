@@ -31,12 +31,15 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private const string TransactionExpired = "the transaction expired: it was open for more than 5 seconds and was rolled back";
 
+    private const int MaxAuthFrameBytes = 32 * 1024;
+
     private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(5);
 
     private readonly SqlRunner runner = services.Runner;
     private readonly DatabaseAccess access = services.Access;
     private readonly IClusterCoordinator coordinator = services.Coordinator;
     private readonly TimeProvider time = services.Time;
+    private readonly long _accepted = services.Time.GetTimestamp();
 
     private ResolvedDatabase? _target;
     private ISqlDatabaseSession? _session;
@@ -50,14 +53,14 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private bool InTransaction => _transaction is not null || _failed;
 
-    public async Task RunAsync(ResolvedDatabase? target, SqlCausality causality, CancellationToken cancellationToken)
+    public async Task RunAsync(ResolvedDatabase? target, IDisposable? preauthentication, SqlCausality causality, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(causality);
         _bookmark = causality.After;
         _mode = causality.Mode ?? target?.Database.DefaultConsistency ?? ConsistencyMode.Fast;
         if (target is null)
         {
-            _preauthentication = services.Sessions.BeginPreauthentication();
+            _preauthentication = preauthentication;
         }
         else if (await AdmitAsync(null, target, causality, cancellationToken) is { } refused)
         {
@@ -442,7 +445,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     }
 
     private TimeSpan IdleBudget() =>
-        _target is null ? AuthTimeout
+        _target is null ? AuthTimeout - time.GetElapsedTime(_accepted)
         : _transaction is not null ? QosPolicy.MaxTransaction - time.GetElapsedTime(_transactionStarted)
         : QosPolicy.IdleTimeout;
 
@@ -451,7 +454,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
         using var deadline = new ReceiveDeadline(time, IdleBudget(), ExpireAsync);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        input.Progress = deadline.Progress;
+        var authenticating = _target is null;
+        input.Progress = authenticating ? null : deadline.Progress;
         try
         {
             using var message = new MemoryStream();
@@ -467,6 +471,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                 if (read.MessageType == WebSocketMessageType.Binary)
                 {
                     await CloseAsync(WebSocketCloseStatus.InvalidMessageType, "frames are JSON text");
+                    return null;
+                }
+
+                if (authenticating && message.Length + read.Count > MaxAuthFrameBytes)
+                {
+                    await CloseAsync(WebSocketCloseStatus.MessageTooBig, "the auth frame is at most 32 KiB");
                     return null;
                 }
 

@@ -11,6 +11,8 @@ namespace TerraBase.Features.ControlPlane;
 
 internal readonly union SnapshotAcceptance(AcceptedSnapshot, InvalidInput, CredentialRejected, StateConflict, BackendUnavailable);
 
+internal readonly union SnapshotCommit(Completed, StateConflict);
+
 internal sealed record AcceptedSnapshot(ControlSnapshot Snapshot, bool Changed);
 
 internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider time)
@@ -67,9 +69,22 @@ internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider ti
                 return new StateConflict("a newer control snapshot is already applied", "stale_snapshot");
             }
 
-            var changed = _index.Snapshot?.Version != snapshot.Version;
+            return new AcceptedSnapshot(snapshot, _index.Snapshot?.Version != snapshot.Version);
+        }
+    }
+
+    public SnapshotCommit Commit(ControlSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        lock (_gate)
+        {
+            if (_index.Snapshot is { } current && current.Version > snapshot.Version)
+            {
+                return new StateConflict("a newer control snapshot is already applied", "stale_snapshot");
+            }
+
             Volatile.Write(ref _index, Index.Of(snapshot));
-            return new AcceptedSnapshot(snapshot, changed);
+            return new Completed();
         }
     }
 

@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
@@ -32,7 +33,11 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
 
     private const int MaxCachedTokens = 4096;
 
+    private const int MaxRefusedKeys = 4096;
+
     private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(30);
+
+    private static readonly TimeSpan RefusalLifetime = TimeSpan.FromSeconds(10);
 
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("0123456789abcdefghjkmnpqrstvwxyz");
 
@@ -41,6 +46,17 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
     private static readonly BackendUnavailable Busy = new("ts-auth could not exchange the API key; retry", "key_exchange_unavailable");
 
     private readonly MemoryCache _tokens = new(new MemoryCacheOptions { SizeLimit = MaxCachedTokens });
+
+    private readonly MemoryCache _refused = new(new MemoryCacheOptions { SizeLimit = MaxRefusedKeys });
+
+    private readonly TokenBucketRateLimiter _exchanges = new(new TokenBucketRateLimiterOptions
+    {
+        TokenLimit = 100,
+        TokensPerPeriod = 20,
+        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+        QueueLimit = 0,
+        AutoReplenishment = true,
+    });
 
     public static bool IsKey(string secret)
     {
@@ -70,16 +86,38 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
             return token;
         }
 
+        if (_refused.TryGetValue(cacheKey, out _))
+        {
+            return Refused;
+        }
+
+        using var permit = _exchanges.AttemptAcquire();
+        if (!permit.IsAcquired)
+        {
+            return Busy;
+        }
+
         var outcome = await RequestAsync(issuer, secret, project, cancellationToken);
         return outcome switch
         {
             IssuedToken issued => Remember(cacheKey, issued),
-            CredentialRejected refused => refused,
+            CredentialRejected refused => Forget(cacheKey, refused),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public void Dispose() => _tokens.Dispose();
+    public void Dispose()
+    {
+        _tokens.Dispose();
+        _refused.Dispose();
+        _exchanges.Dispose();
+    }
+
+    private CredentialRejected Forget(string cacheKey, CredentialRejected refused)
+    {
+        _refused.Set(cacheKey, true, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = time.GetUtcNow() + RefusalLifetime });
+        return refused;
+    }
 
     private string Remember(string cacheKey, IssuedToken issued)
     {

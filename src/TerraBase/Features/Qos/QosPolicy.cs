@@ -18,6 +18,8 @@ internal sealed record QosPolicy(int RequestsPerSecond, int Burst, int Concurren
 
     private static readonly QosPolicy Enterprise = new(2000, 4000, 64);
 
+    private static readonly QosPolicy Unowned = new(200, 400, 32);
+
     public int Sessions => Concurrency * 2;
 
     public static QosPolicy For(string plan) => plan switch
@@ -25,6 +27,7 @@ internal sealed record QosPolicy(int RequestsPerSecond, int Burst, int Concurren
         "starter" => Starter,
         "pro" or "team" => Pro,
         "enterprise" => Enterprise,
+        Tenant.UnownedPlan => Unowned,
         _ => Hobby,
     };
 
@@ -33,6 +36,10 @@ internal sealed record QosPolicy(int RequestsPerSecond, int Burst, int Concurren
 
 internal sealed record Tenant(Ulid OrganizationId, string Plan)
 {
+    public const string UnownedPlan = "unowned";
+
+    public static Tenant Unowned { get; } = new(Ulid.Empty, UnownedPlan);
+
     public QosPolicy Policy => QosPolicy.For(Plan);
 
     public int Bucket

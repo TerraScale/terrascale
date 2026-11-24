@@ -84,6 +84,42 @@ async function setPlan(plan: 'hobby' | 'enterprise'): Promise<void> {
   }
 }
 
+test('a caller that does not own the project cannot spend its organization request budget', async ({ request }) => {
+  await onLocalStack(async () => {
+    const credential = await token(request, 'sql:read sql:write');
+    const peerCredential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
+    saveSecret('session-peer', peerCredential);
+    const stranger = '7ZZZZZZZZZZZZZZZZZZZZZZZZZ';
+    const session = peer('http://127.0.0.1:8081');
+    const statuses: number[] = [];
+    try {
+      const status = () => new Promise<number>((resolve, reject) => {
+        const stream = session.request({
+          ':method': 'GET', ':path': `/v1/projects/${journey().projectId}/databases`,
+          'x-terrabase-peer-credential': peerCredential, 'x-terrabase-user-id': stranger,
+        });
+        stream.on('response', headers => resolve(Number(headers[':status'])));
+        stream.on('error', reject);
+        stream.resume();
+        stream.end();
+      });
+      let next = 0;
+      await Promise.all(Array.from({ length: 8 }, async () => {
+        while (next++ < 300) statuses.push(await status());
+      }));
+    } finally {
+      session.close();
+    }
+    expect(statuses).toHaveLength(300);
+    expect(statuses.filter(status => status !== 404)).toEqual([]);
+    const own = await request.post(api + path() + '/sql/execute', {
+      headers: { authorization: 'Bearer ' + credential }, data: { statements: [{ sql: 'SELECT 7' }] },
+    });
+    expect(own.status(), await own.text()).toBe(200);
+    expect((await own.json()).results[0].rows).toEqual([[7]]);
+  });
+});
+
 test('one serving process shares session caps and bounds incomplete messages without expiring pooled clients', async ({ request }) => {
   await onLocalStack(async () => {
     const credential = await token(request, 'sql:read sql:write');

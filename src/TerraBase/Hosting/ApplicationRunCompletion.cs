@@ -3,11 +3,17 @@ using ZLogger;
 
 namespace TerraBase.Hosting;
 
+internal sealed record ServicesStopped;
+
+internal sealed record ServiceFaulted(string Service);
+
+internal readonly union ApplicationRunOutcome(ServicesStopped, ServiceFaulted);
+
 internal sealed class ApplicationRunCompletion
 {
     public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public static async Task RunAsync(WebApplication app)
+    public static async Task<ApplicationRunOutcome> RunAsync(WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
         var logger = app.Services.GetRequiredService<ILogger<ApplicationRunCompletion>>();
@@ -20,7 +26,7 @@ internal sealed class ApplicationRunCompletion
         if (!await StartedAsync(app))
         {
             await app.DisposeAsync();
-            return;
+            return new ServicesStopped();
         }
 
         BackgroundService[] background = [.. app.Services.GetServices<IHostedService>().OfType<BackgroundService>()];
@@ -30,12 +36,20 @@ internal sealed class ApplicationRunCompletion
         var disposingAt = Stopwatch.GetTimestamp();
         await app.DisposeAsync();
         logger.ZLogInformation($"Shutdown completed: services and storage closed after {Stopwatch.GetElapsedTime(disposingAt).TotalMilliseconds:@ElapsedMilliseconds} ms");
+        return background.FirstOrDefault(static service => service.ExecuteTask is { IsFaulted: true }) is { } faulted
+            ? new ServiceFaulted(faulted.GetType().Name)
+            : new ServicesStopped();
 
         async Task ObserveAsync(BackgroundService service)
         {
             if (service.ExecuteTask is { } running)
             {
                 await running.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                if (running.Exception is { } fault)
+                {
+                    logger.ZLogCritical(fault, $"Background service {service.GetType().Name:@Service} faulted; the host exits with a failure code");
+                }
+
                 if (Interlocked.Read(ref stoppingAt) is var at and not 0)
                 {
                     logger.ZLogInformation($"Shutdown step {service.GetType().Name:@Step} completed after {Stopwatch.GetElapsedTime(at).TotalMilliseconds:@ElapsedMilliseconds} ms");

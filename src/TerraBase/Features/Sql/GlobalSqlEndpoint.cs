@@ -1,4 +1,5 @@
 using TerraBase.Features.Callers;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -15,7 +16,7 @@ internal sealed class GlobalSqlEndpoint(SqlFlow flow)
         Description("For API keys and project tokens narrowed to one database: the database is taken from the credential instead of the path.");
         Tags("Queries");
         AllowAnonymous();
-        Metadata(ListenerMetadata.Client);
+        Metadata(ListenerMetadata.Client, CallerTenantMetadata.Instance);
     }
 
     public override async ValueTask<ExecuteSqlResponse> HandleAsync(

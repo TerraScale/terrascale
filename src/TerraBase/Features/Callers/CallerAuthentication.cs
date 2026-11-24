@@ -158,8 +158,15 @@ internal static class CallerAuthenticationExtensions
             }
         }
 
-        return true;
+        return false;
     }
+
+    public static bool OperatesNode(Caller caller) => caller switch
+    {
+        PeerCaller => true,
+        ServiceCaller service => service.Grants.Contains("admin"),
+        AnonymousCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => false,
+    };
 
     private static IResult? Accept(HttpContext context, Caller caller)
     {

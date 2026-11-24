@@ -30,8 +30,32 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     public static ListenerMetadata Metrics { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Metrics);
 }
 
+internal sealed class ListenerConnections(int limit)
+{
+    private int _open;
+
+    public bool TryOpen()
+    {
+        if (Interlocked.Increment(ref _open) <= limit)
+        {
+            return true;
+        }
+
+        _ = Interlocked.Decrement(ref _open);
+        return false;
+    }
+
+    public void Close() => _ = Interlocked.Decrement(ref _open);
+}
+
 internal static class Listeners
 {
+    public const int MaxPublicConnections = 16 * 1024;
+
+    public const int MaxUpgradedConnections = 8 * 1024;
+
+    private static readonly TimeSpan RequestHeadersTimeout = TimeSpan.FromSeconds(10);
+
     private static readonly object ListenerKey = typeof(TerraBaseListener);
 
     public static TerraBaseListener? ArrivedOn(HttpContext context)
@@ -57,7 +81,9 @@ internal static class Listeners
         public void AddTerraBaseListeners(TerraBaseOptions options, IPAddress internalAddress)
         {
             ArgumentNullException.ThrowIfNull(options);
-            var loopbackOnly = options.PeersFile is null && options.IsDevelopment;
+            kestrel.Limits.MaxConcurrentUpgradedConnections = MaxUpgradedConnections;
+            kestrel.Limits.RequestHeadersTimeout = RequestHeadersTimeout;
+            var loopbackOnly = options.PeersFile is null;
             kestrel.Listen(internalAddress, options.InternalPort, listen =>
             {
                 listen.Protocols = HttpProtocols.Http2;
@@ -103,12 +129,17 @@ internal static class Listeners
     {
         public ListenOptions UseTerraBaseListener(TerraBaseListener listener)
         {
+            var budget = listener is TerraBaseListener.Client or TerraBaseListener.Postgres ? new ListenerConnections(MaxPublicConnections) : null;
             listen.Use(next => async connection =>
             {
+                if (budget is not null && !budget.TryOpen())
+                {
+                    connection.Abort();
+                    return;
+                }
+
                 connection.Items[ListenerKey] = listener;
-                var pressure = listener is TerraBaseListener.Client or TerraBaseListener.Postgres
-                    ? listen.ApplicationServices.GetRequiredService<PressureSignals>()
-                    : null;
+                var pressure = budget is null ? null : listen.ApplicationServices.GetRequiredService<PressureSignals>();
                 pressure?.ConnectionOpened();
                 try
                 {
@@ -117,6 +148,7 @@ internal static class Listeners
                 finally
                 {
                     pressure?.ConnectionClosed();
+                    budget?.Close();
                 }
             });
             return listen;

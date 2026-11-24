@@ -119,6 +119,11 @@ internal sealed class TenantAdmission(TimeProvider time, IMeterFactory meters)
     }
 }
 
+internal sealed record CallerTenantMetadata
+{
+    public static CallerTenantMetadata Instance { get; } = new();
+}
+
 internal static class TenantAdmissionExtensions
 {
     extension(WebApplication app)
@@ -127,22 +132,53 @@ internal static class TenantAdmissionExtensions
         {
             app.Use(async (context, next) =>
             {
-                if (!Tracked(context.Caller) || context.Request.RouteValues["project"] is not string reference
-                    || reference.Length != 26 || !Ulid.TryParse(reference, out var projectId))
+                var caller = context.Caller;
+                if (!Tracked(caller))
                 {
                     await next(context);
                     return;
                 }
 
-                var resolution = await context.RequestServices.GetRequiredService<TenantDirectory>().ForProjectAsync(projectId, context.RequestAborted);
-                await (resolution switch
+                var target = await TargetAsync(context, caller, context.RequestServices.GetRequiredService<TenantDirectory>());
+                await (target switch
                 {
                     Tenant tenant => EnterAsync(context, next, tenant),
-                    NoTenant or BackendUnavailable => next(context),
+                    ForeignProject => EnterAsync(context, next, Tenant.Unowned),
+                    NoTenant => next(context),
+                    BackendUnavailable unavailable => ErrorResults.Json(StatusCodes.Status503ServiceUnavailable, unavailable.Code, unavailable.Message,
+                        retryAfter: TimeSpan.FromSeconds(1)).ExecuteAsync(context),
                 });
             });
             return app;
         }
+    }
+
+    private static async ValueTask<CallerTenantResolution> TargetAsync(HttpContext context, Caller caller, TenantDirectory directory)
+    {
+        if (context.Request.RouteValues["project"] is string reference)
+        {
+            return reference.Length == 26 && Ulid.TryParse(reference, out var projectId)
+                ? await directory.ForCallerProjectAsync(caller, projectId, context.RequestAborted)
+                : NoTenant.Instance;
+        }
+
+        if (context.GetEndpoint()?.Metadata.GetMetadata<CallerTenantMetadata>() is null)
+        {
+            return NoTenant.Instance;
+        }
+
+        return caller switch
+        {
+            ApiKeyCaller key => await directory.ForOrganizationAsync(key.Key.OrganizationId, context.RequestAborted) switch
+            {
+                Tenant tenant => tenant,
+                NoTenant none => none,
+                BackendUnavailable unavailable => unavailable,
+            },
+            ProjectCaller token => await directory.ForCallerProjectAsync(caller, token.ProjectId, context.RequestAborted),
+            EndUserCaller endUser => await directory.ForCallerProjectAsync(caller, endUser.ProjectId, context.RequestAborted),
+            AnonymousCaller or PeerCaller or ServiceCaller or UserCaller => NoTenant.Instance,
+        };
     }
 
     private static Task EnterAsync(HttpContext context, RequestDelegate next, Tenant tenant)

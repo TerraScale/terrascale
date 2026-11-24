@@ -9,12 +9,20 @@ using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
 using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.Rules;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
 
-internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory http, TimeProvider time) : IDisposable
+internal sealed record UntrustedIssuer
+{
+    public static UntrustedIssuer Instance { get; } = new();
+}
+
+internal readonly union IssuerTrust(TrustedIssuer, UntrustedIssuer, BackendUnavailable);
+
+internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory http, CatalogStore catalog, TimeProvider time) : IDisposable
 {
     public const string HttpClientName = "ts-auth";
 
@@ -59,11 +67,17 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return new CredentialRejected("the bearer token is malformed", "invalid_token");
         }
 
-        if (Trust(unverified, platformIssuer) is not { } trusted)
+        var trust = await TrustAsync(unverified, platformIssuer, cancellationToken);
+        return trust switch
         {
-            return new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token");
-        }
+            TrustedIssuer trusted => await VerifyTrustedAsync(token, trusted, cancellationToken),
+            UntrustedIssuer => new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token"),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
 
+    private async ValueTask<CallerAuthenticationOutcome> VerifyTrustedAsync(string token, TrustedIssuer trusted, CancellationToken cancellationToken)
+    {
         if (await CurrentConfigurationAsync(trusted.Entry, cancellationToken) is not { } configuration)
         {
             return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
@@ -90,7 +104,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     public void Dispose() => _projects.Dispose();
 
-    private TrustedIssuer? Trust(JsonWebToken token, string platformIssuer)
+    private async ValueTask<IssuerTrust> TrustAsync(JsonWebToken token, string platformIssuer, CancellationToken cancellationToken)
     {
         if (string.Equals(token.Issuer, platformIssuer, StringComparison.Ordinal) && _platform is { } platform)
         {
@@ -100,26 +114,32 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         if (!Uri.TryCreate(token.Issuer, UriKind.Absolute, out var issuer) || issuer.Segments is not [.., var last] || !IsCanonicalUlid(last)
             || !Ulid.TryParse(last, out var project))
         {
-            return null;
+            return UntrustedIssuer.Instance;
         }
 
         var projectIssuer = new Uri(new Uri(platformIssuer), last).AbsoluteUri;
         if (!string.Equals(token.Issuer, projectIssuer, StringComparison.Ordinal))
         {
-            return null;
+            return UntrustedIssuer.Instance;
         }
 
         var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, last)).ToArray();
-        return new TrustedIssuer(projectIssuer, ProjectIssuer(projectIssuer), audiences, project);
+        if (_projects.TryGetValue(projectIssuer, out IssuerEntry? cached) && cached is { } existing)
+        {
+            return new TrustedIssuer(projectIssuer, existing, audiences, project);
+        }
+
+        var known = await catalog.GetProjectAsync(project, cancellationToken);
+        return known switch
+        {
+            ProjectRecord => new TrustedIssuer(projectIssuer, ProjectIssuer(projectIssuer), audiences, project),
+            ResourceNotFound => UntrustedIssuer.Instance,
+            BackendUnavailable unavailable => unavailable,
+        };
     }
 
     private IssuerEntry ProjectIssuer(string issuer)
     {
-        if (_projects.TryGetValue(issuer, out IssuerEntry? cached) && cached is { } existing)
-        {
-            return existing;
-        }
-
         var created = CreateIssuer(http, issuer);
         _projects.Set(issuer, created, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = ProjectIssuerIdle });
         return created;
@@ -278,7 +298,19 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return fresh.Configuration;
         }
 
-        return await ConfigurationAsync(entry.Manager, cancellationToken);
+        var failed = Interlocked.Read(ref entry.LastConfigurationFailureTimestamp);
+        if (failed != 0 && time.GetElapsedTime(failed) < UnknownKeyRefreshCooldown)
+        {
+            return null;
+        }
+
+        var configuration = await ConfigurationAsync(entry.Manager, cancellationToken);
+        if (configuration is null)
+        {
+            Interlocked.Exchange(ref entry.LastConfigurationFailureTimestamp, time.GetTimestamp());
+        }
+
+        return configuration;
     }
 
     private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
@@ -338,6 +370,7 @@ internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever 
     public SemaphoreSlim RefreshGate { get; } = new(1, 1);
     public volatile FreshConfigurationState? Fresh;
     public long LastRefreshAttemptTimestamp;
+    public long LastConfigurationFailureTimestamp;
     public bool LastRefreshFailed;
 }
 

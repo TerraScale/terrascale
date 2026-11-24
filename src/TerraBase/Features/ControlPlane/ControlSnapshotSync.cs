@@ -3,16 +3,37 @@ using TerraBase.Engine;
 using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Contracts.ControlPlane;
+using ZLogger;
 
 namespace TerraBase.Features.ControlPlane;
 
-internal readonly union SnapshotApplyOutcome(Completed, BackendUnavailable);
+internal sealed record SnapshotKeyRefused(Ulid DatabaseId, string Message, string Code);
 
-internal sealed class ControlSnapshotSync(CatalogStore catalog, TenantDatabases databases, DatabaseKeyring keyring, TerraBaseOptions options)
+internal readonly union SnapshotApplyOutcome(Completed, SnapshotKeyRefused, BackendUnavailable);
+
+internal readonly union SnapshotDatabaseCheck(Completed, SnapshotKeyRefused, BackendUnavailable);
+
+internal sealed class ControlSnapshotSync(
+    CatalogStore catalog, TenantDatabases databases, DatabaseKeyring keyring, TerraBaseOptions options, ILogger<ControlSnapshotSync> logger)
 {
     public async ValueTask<SnapshotApplyOutcome> ApplyAsync(ControlSnapshot snapshot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        foreach (var database in snapshot.Databases.Where(static database => database.State != ControlDatabaseState.Deleted))
+        {
+            var check = await CheckKeyAsync(database, cancellationToken);
+            SnapshotApplyOutcome? refusal = check switch
+            {
+                Completed => null,
+                SnapshotKeyRefused refused => refused,
+                BackendUnavailable unavailable => unavailable,
+            };
+            if (refusal is { } failed)
+            {
+                return failed;
+            }
+        }
+
         foreach (var organization in snapshot.Organizations)
         {
             var record = new OrganizationRecord(organization.Id, organization.Name, "control-plane", snapshot.IssuedAtUtc, organization.Plan, organization.Suspended);
@@ -73,28 +94,74 @@ internal sealed class ControlSnapshotSync(CatalogStore catalog, TenantDatabases 
         };
     }
 
+    private async ValueTask<SnapshotDatabaseCheck> CheckKeyAsync(ControlDatabase database, CancellationToken cancellationToken)
+    {
+        if (!keyring.KeyIds.Contains(database.DataKeyId, StringComparer.Ordinal))
+        {
+            logger.ZLogError($"Control snapshot refused: database {database.Id:@DatabaseId} names data key {database.DataKeyId:@DataKeyId} that this node does not hold");
+            return new SnapshotKeyRefused(database.Id, "the control snapshot names a data key this node does not hold", "unknown_data_key");
+        }
+
+        var existing = await catalog.GetDatabaseAsync(database.Id, cancellationToken);
+        return existing switch
+        {
+            DatabaseRecord found when !string.Equals(found.KeyId, database.DataKeyId, StringComparison.Ordinal) => Mismatch(database, found),
+            DatabaseRecord or ResourceNotFound => new Completed(),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private SnapshotKeyRefused Mismatch(ControlDatabase database, DatabaseRecord found)
+    {
+        logger.ZLogError($"Control snapshot refused: database {database.Id:@DatabaseId} is encrypted with data key {found.KeyId:@StoredKeyId} but the snapshot names {database.DataKeyId:@DataKeyId}");
+        return new SnapshotKeyRefused(database.Id, "the control snapshot names a different data key than the stored database", "data_key_mismatch");
+    }
+
     private async ValueTask<BackendUnavailable?> UpsertAsync(ControlDatabase database, CancellationToken cancellationToken)
     {
-        var keyId = database.DataKeyId is { Length: > 0 } configured && keyring.KeyIds.Contains(configured, StringComparer.Ordinal) ? configured : keyring.ActiveKeyId;
-        var existingOutcome = await catalog.GetDatabaseAsync(database.Id, cancellationToken);
-        var existing = existingOutcome switch
+        var existing = await catalog.GetDatabaseAsync(database.Id, cancellationToken);
+        return existing switch
         {
-            DatabaseRecord found => found,
-            ResourceNotFound or BackendUnavailable => null,
+            DatabaseRecord found => await UpsertAsync(database, found, cancellationToken),
+            ResourceNotFound => await UpsertAsync(database, null, cancellationToken),
+            BackendUnavailable unavailable => unavailable,
         };
-        var record = new DatabaseRecord(database.Id, database.ProjectId, database.Name, database.Regions, AllRegions: false, database.DefaultConsistency, database.Strict,
-            database.State, existing?.KeyId ?? keyId, existing?.BranchedFrom, existing?.PreviousName, database.CreatedAtUtc, existing?.ExpiresAt,
-            (existing?.Version ?? 0) + 1, database.StorageLimitBytes);
+    }
+
+    private async ValueTask<BackendUnavailable?> UpsertAsync(ControlDatabase database, DatabaseRecord? existing, CancellationToken cancellationToken)
+    {
+        var desired = new DatabaseRecord(database.Id, database.ProjectId, database.Name, database.Regions, AllRegions: false, database.DefaultConsistency, database.Strict,
+            database.State, database.DataKeyId, existing?.BranchedFrom, existing?.PreviousName, database.CreatedAtUtc, existing?.ExpiresAt,
+            existing?.Version ?? 1, database.StorageLimitBytes);
+        if (existing is not null && Same(existing, desired))
+        {
+            return await OpenAsync(existing, cancellationToken);
+        }
+
+        var record = desired with { Version = existing is null ? 1 : existing.Version + 1 };
         var outcome = await catalog.UpsertDatabaseAsync(record, cancellationToken);
         return outcome switch
         {
-            Completed when !record.PlacedIn(options.Region) => null,
-            Completed => await databases.OpenOrCreateAsync(record.Id, record.KeyId, record.Strict, cancellationToken) switch
-            {
-                ISqlDatabaseSession => null,
-                BackendUnavailable error => error,
-            },
+            Completed => await OpenAsync(record, cancellationToken),
             BackendUnavailable error => error,
         };
     }
+
+    private async ValueTask<BackendUnavailable?> OpenAsync(DatabaseRecord record, CancellationToken cancellationToken)
+    {
+        if (!record.PlacedIn(options.Region))
+        {
+            return null;
+        }
+
+        var opened = await databases.OpenOrCreateAsync(record.Id, record.KeyId, record.Strict, cancellationToken);
+        return opened switch
+        {
+            ISqlDatabaseSession => null,
+            BackendUnavailable error => error,
+        };
+    }
+
+    private static bool Same(DatabaseRecord existing, DatabaseRecord desired) =>
+        existing with { Regions = desired.Regions } == desired && existing.Regions.SequenceEqual(desired.Regions, StringComparer.Ordinal);
 }

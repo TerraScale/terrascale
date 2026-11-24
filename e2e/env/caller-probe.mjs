@@ -88,6 +88,21 @@ try {
     assert.equal(authCount(after) - authCount(before), 1, label + ' counted once');
     console.log(label + ': HTTP/2 ' + result.status + ' counted once');
   }
+  const customer = { ...peerHeader, 'X-TerraBase-User-Id': '00000000000000000000000009' };
+  for (const path of ['/v1/admin/node/pressure', '/v1/backup']) {
+    for (const [label, headers, expected] of [
+      ['unauthenticated', {}, 401],
+      ['customer user', customer, 403],
+      ['service caller without admin grant', caller, 403],
+    ]) {
+      const result = await request(path, headers, null);
+      assert.equal(result.status, expected, path + ' ' + label + ': ' + result.text);
+      console.log('node operator route ' + path + ' ' + label + ': ' + result.status);
+    }
+    const operated = await request(path, peerHeader, null);
+    assert.ok(operated.status === 200 || (path === '/v1/backup' && operated.status === 503), path + ' peer: ' + operated.text);
+    console.log('node operator route ' + path + ' peer: admitted');
+  }
   const acting = await request('/v1/management/organizations',
     { ...peerHeader, 'X-TerraBase-User-Id': '00000000000000000000000009' }, null);
   assert.equal(acting.status, 200, acting.text);

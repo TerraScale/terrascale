@@ -42,7 +42,11 @@ internal sealed class SqlSocketEndpoint(SqlSockets sockets, DatabaseAccess acces
         {
             SqlCausality causality => HttpContext.Caller switch
             {
-                AnonymousCaller => await sockets.ServeAsync(HttpContext, request.Project, request.Database, null, causality, cancellationToken),
+                AnonymousCaller => await sockets.ServeUnauthenticatedAsync(HttpContext, request.Project, request.Database, causality, cancellationToken) switch
+                {
+                    SocketClosed closed => closed,
+                    SqlRefusal refusal => refusal,
+                },
                 PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller =>
                     await access.DataAsync(HttpContext.Caller, request.Project, request.Database, cancellationToken) switch
                     {
@@ -59,6 +63,8 @@ internal sealed class SqlSocketEndpoint(SqlSockets sockets, DatabaseAccess acces
     }
 }
 
+internal readonly union SqlSocketServeOutcome(SocketClosed, SqlRefusal);
+
 internal sealed class SqlSockets(
     SqlRunner runner,
     DatabaseAccess access,
@@ -72,10 +78,27 @@ internal sealed class SqlSockets(
 
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
 
-    public async ValueTask<SocketClosed> ServeAsync(
-        HttpContext context, string? project, string? database, ResolvedDatabase? target, SqlCausality causality, CancellationToken cancellationToken)
+    public ValueTask<SocketClosed> ServeAsync(
+        HttpContext context, string? project, string? database, ResolvedDatabase target, SqlCausality causality, CancellationToken cancellationToken) =>
+        AcceptAsync(context, project, database, target, null, causality, cancellationToken);
+
+    public async ValueTask<SqlSocketServeOutcome> ServeUnauthenticatedAsync(
+        HttpContext context, string? project, string? database, SqlCausality causality, CancellationToken cancellationToken)
+    {
+        var admitted = sessions.BeginPreauthentication();
+        return admitted switch
+        {
+            TenantSessions.PreauthenticationSession preauthentication => await AcceptAsync(context, project, database, null, preauthentication, causality, cancellationToken),
+            TenantBusy busy => new SqlRefusal("server_busy", "too many sockets are waiting to authenticate; retry", "53300", 0, StatusCodes.Status503ServiceUnavailable,
+                busy.RetryAfter),
+        };
+    }
+
+    private async ValueTask<SocketClosed> AcceptAsync(HttpContext context, string? project, string? database, ResolvedDatabase? target,
+        TenantSessions.PreauthenticationSession? preauthentication, SqlCausality causality, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
+        using var pending = preauthentication;
         var offered = context.WebSockets.WebSocketRequestedProtocols;
         var v2 = offered.Contains(SqlWsFrameTypes.Subprotocol, StringComparer.Ordinal);
         var protocol = v2 ? SqlWsFrameTypes.Subprotocol : offered.Contains(LegacyProtocol, StringComparer.Ordinal) ? LegacyProtocol : null;
@@ -87,7 +110,7 @@ internal sealed class SqlSockets(
         });
         await using var connection = new SqlSocket(socket, input, v2, project, database,
             new SocketServices(runner, access, authentication, coordinator, tenants, sessions, time));
-        await connection.RunAsync(target, causality, cancellationToken);
+        await connection.RunAsync(target, pending, causality, cancellationToken);
         return new SocketClosed();
     }
 }

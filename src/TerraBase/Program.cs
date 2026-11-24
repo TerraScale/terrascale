@@ -108,6 +108,15 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     app.MapTerraScaleOpenApi().WithMetadata(ListenerMetadata.Client);
     app.MapTerraBaseMetrics();
     var bootstrap = app.Services.GetRequiredService<SystemBootstrap>();
-    await ApplicationRunCompletion.RunAsync(app);
-    return bootstrap.Failure is { } failure ? await FailAsync(failure.Message) : 0;
+    var outcome = await ApplicationRunCompletion.RunAsync(app);
+    if (bootstrap.Failure is { } failure)
+    {
+        return await FailAsync(failure.Message);
+    }
+
+    return outcome switch
+    {
+        ServicesStopped => 0,
+        ServiceFaulted faulted => await FailAsync(string.Concat("background service ", faulted.Service, " faulted")),
+    };
 }
