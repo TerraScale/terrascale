@@ -54,6 +54,12 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 101, Level = LogLevel.Information, Message = "Dashboard schema script {Script} applied on TerraBase strong mode.")]
         internal static partial void DashboardSchemaScriptApplied(this ILogger logger, string script);
 
+        [LoggerMessage(EventId = 105, Level = LogLevel.Information, Message = "Dashboard schema script {Script} had no recorded checksum; recorded the released SHA-256.")]
+        internal static partial void DashboardSchemaChecksumRecorded(this ILogger logger, string script);
+
+        [LoggerMessage(EventId = 106, Level = LogLevel.Critical, Message = "Dashboard schema script {Script} was applied with SHA-256 {Applied} but the released script is {Released}.")]
+        internal static partial void DashboardSchemaChecksumMismatch(this ILogger logger, string script, string applied, string released);
+
         [LoggerMessage(EventId = 16, Level = LogLevel.Warning, Message = "Readiness: ts-auth answered {StatusCode}")]
         internal static partial void ReadinessTsAuthAnswered(this ILogger logger, object? statusCode);
 
@@ -63,11 +69,7 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 18, Level = LogLevel.Warning, Message = "Readiness: TerraBase state unavailable ({ErrorType})")]
         internal static partial void ReadinessTerraBaseStateUnavailable(this ILogger logger, object? errorType);
 
-        [LoggerMessage(EventId = 102, Level = LogLevel.Warning, Message = "Readiness: ts-platform answered {StatusCode}")]
-        internal static partial void ReadinessTsPlatformAnswered(this ILogger logger, object? statusCode);
 
-        [LoggerMessage(EventId = 103, Level = LogLevel.Warning, Message = "Readiness: ts-platform unreachable ({ErrorType})")]
-        internal static partial void ReadinessTsPlatformUnreachable(this ILogger logger, object? errorType);
 
         [LoggerMessage(EventId = 19, Level = LogLevel.Warning, Message = "TerraBase refused plan {Plan} for organization {Organization}: {Status}")]
         internal static partial void TerraBaseRefusedPlanForOrganization(this ILogger logger, object? plan, object? organization, object? status);

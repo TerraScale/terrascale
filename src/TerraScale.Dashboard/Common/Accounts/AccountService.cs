@@ -299,7 +299,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 }
 
                 var selectedContext = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], selected, selectedProject);
-                await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, selectedContext, cancellationToken);
+                await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, time, selectedContext, cancellationToken);
                 return selectedContext with { Loaded = loadedAt };
             }
             var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
@@ -333,7 +333,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             }
 
             var context = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], active, project);
-            await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, context, cancellationToken);
+            await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, time, context, cancellationToken);
             return context with { Loaded = loadedAt };
         }
 

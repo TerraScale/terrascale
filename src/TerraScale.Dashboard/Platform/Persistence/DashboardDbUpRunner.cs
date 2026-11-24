@@ -1,3 +1,6 @@
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using Dapper;
 using DbUp.Engine;
 using DbUp.ScriptProviders;
@@ -8,8 +11,12 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
 {
     private const string SchemaPrefix = "TerraScale.Dashboard.Schema.";
     private const string Journal = "CREATE TABLE IF NOT EXISTS schema_versions (script_name TEXT NOT NULL PRIMARY KEY, applied_at TEXT NOT NULL)";
+    private const string ChecksumJournal = "CREATE TABLE IF NOT EXISTS schema_checksums (script_name TEXT NOT NULL PRIMARY KEY, sha256 TEXT NOT NULL)";
     private const string Applied = "SELECT script_name FROM schema_versions";
+    private const string AppliedChecksums =
+        "SELECT v.script_name AS Name, c.sha256 AS Sha256 FROM schema_versions v LEFT JOIN schema_checksums c ON c.script_name = v.script_name";
     private const string Record = "INSERT INTO schema_versions (script_name, applied_at) VALUES (@Name, @AppliedAt)";
+    private const string RecordChecksum = "INSERT INTO schema_checksums (script_name, sha256) VALUES (@Name, @Sha256)";
     private static readonly TimeSpan FirstRetry = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan LongestRetry = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StartupAttempt = TimeSpan.FromSeconds(10);
@@ -39,7 +46,7 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                logger.DashboardStateIsNotInitializedAt(error.GetType().Name);
+                logger.DashboardStateIsNotInitializedAt(StorageFailure.Describe(error));
             }
         }
 
@@ -76,7 +83,7 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
             }
             catch (Exception error)
             {
-                logger.DashboardStateIsNotInitializedAfter(attempt + 1, error.GetType().Name);
+                logger.DashboardStateIsNotInitializedAfter(attempt + 1, StorageFailure.Describe(error));
             }
         }
     }
@@ -88,15 +95,47 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
     {
         await using var connection = await storage.OpenAsync(cancellationToken);
         await connection.ExecuteAsync(Journal);
-        var applied = (await connection.QueryAsync<string>(Applied)).ToHashSet(StringComparer.Ordinal);
+        await connection.ExecuteAsync(ChecksumJournal);
+        var scripts = Scripts().ToDictionary(static script => script.Name, static script => Checksum(script.Contents), StringComparer.Ordinal);
+        var applied = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in await connection.QueryAsync<AppliedScriptRow>(AppliedChecksums))
+        {
+            applied.Add(row.Name);
+            if (!scripts.TryGetValue(row.Name, out var expected))
+            {
+                continue;
+            }
+
+            if (row.Sha256 is null)
+            {
+                await connection.ExecuteAsync(RecordChecksum, new { row.Name, Sha256 = expected });
+                logger.DashboardSchemaChecksumRecorded(row.Name);
+            }
+            else if (!string.Equals(row.Sha256, expected, StringComparison.Ordinal))
+            {
+                logger.DashboardSchemaChecksumMismatch(row.Name, row.Sha256, expected);
+                throw new InvalidDataException($"Applied dashboard schema script {row.Name} no longer matches its released checksum.");
+            }
+        }
+
         foreach (var script in Scripts().Where(script => !applied.Contains(script.Name)))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
             await connection.ExecuteAsync(script.Contents, transaction: transaction);
             await connection.ExecuteAsync(Record, new { script.Name, AppliedAt = time.GetUtcNow().UtcDateTime }, transaction);
+            await connection.ExecuteAsync(RecordChecksum, new { script.Name, Sha256 = scripts[script.Name] }, transaction);
             await transaction.CommitAsync(cancellationToken);
             logger.DashboardSchemaScriptApplied(script.Name);
         }
     }
+
+    private static string Checksum(string contents) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(contents)));
+}
+
+internal sealed class AppliedScriptRow
+{
+    public string Name { get; set; } = "";
+
+    public string? Sha256 { get; set; }
 }
