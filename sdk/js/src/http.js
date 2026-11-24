@@ -660,6 +660,7 @@ function sanitizeHttpDiagnosticValue(value, key, seen, depth) {
   /** @type {Record<string, unknown>} */
   const output = {};
   for (const [entryKey, entryValue] of Object.entries(value)) {
+    if (entryKey === "__proto__") continue;
     output[entryKey] = sanitizeHttpDiagnosticValue(
       entryValue,
       entryKey,

@@ -36,10 +36,11 @@ let nextTransportKey = 0;
 const tablePattern = /^(?!_tb_|turso_|sqlite_)[A-Za-z_][A-Za-z0-9_]{0,62}$/u;
 const retryable = new Set([408, 429, 500, 502, 503, 504]);
 const terminal = new Set(["invalid_request", "unsupported_table", "unknown_database", "unknown_table", "invalid_key", "key_revoked", "key_expired", "forbidden_scope", "rule_denied", "column_not_readable", "rules_invalid"]);
+const maximumDelayMs = 30_000;
 
 /** @param {number} attempt @param {number | undefined} retryAfter */
 function delay(attempt, retryAfter) {
-  return retryAfter !== undefined ? retryAfter * 1000 : Math.min(30_000, 250 * 2 ** attempt) * (0.5 + Math.random() / 2);
+  return retryAfter !== undefined ? Math.min(maximumDelayMs, retryAfter * 1000) : Math.min(maximumDelayMs, 250 * 2 ** attempt) * (0.5 + Math.random() / 2);
 }
 
 /** @param {number} ms @param {AbortSignal} signal */
@@ -194,7 +195,7 @@ export class V1TableShape {
           cdn = new ShapeCdn(this.#transport, this.#params, this.#filter);
           continue;
         }
-        if (isTerraBaseV1Error(error) && (terminal.has(error.code) || !retryable.has(error.status))) throw error;
+        if (isTerraBaseV1Error(error) && (terminal.has(error.code) || error.status === null || !retryable.has(error.status))) throw error;
         notifyStatus("reconnecting");
         await sleep(delay(attempt++, isTerraBaseV1Error(error) ? error.retryAfter : undefined), signal);
         continue;

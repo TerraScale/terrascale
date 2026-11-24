@@ -1,17 +1,17 @@
-import { TsAuthOidcClient } from "./ts-auth.js";
+import { TsAuthOidcClient } from "./ts-auth-oidc.js";
 import { TsAuthHttp } from "./http.js";
 import { requireId } from "./ids.js";
 import { err, ok } from "./result.js";
 import { TerraBaseV1Error } from "./v1/errors.js";
 
-/** @typedef {import("./ts-auth.js").TsAuthOidcUserInfo} BrowserUser */
-/** @typedef {import("./ts-auth.js").TsAuthOidcTokenResponse} Tokens */
+/** @typedef {import("./ts-auth-oidc.js").TsAuthOidcUserInfo} BrowserUser */
+/** @typedef {import("./ts-auth-oidc.js").TsAuthOidcTokenResponse} Tokens */
 /** @typedef {{ getItem(key: string): string | null | Promise<string | null>; setItem(key: string, value: string): void | Promise<void>; removeItem(key: string): void | Promise<void> }} BrowserAuthStorage */
 /** @typedef {{ project: string; clientId: string; authBaseUrl: string; redirectUri: string; storage?: BrowserAuthStorage; pkceStorage?: BrowserAuthStorage }} BrowserAuthConfig */
 
 /** A public tenant client. Credentials default to memory; secure storage is replaceable. */
 export class BrowserAuth {
-  /** @type {import("./ts-auth.js").TsAuthOidcClient} */
+  /** @type {import("./ts-auth-oidc.js").TsAuthOidcClient} */
   #oidc;
   #clientId;
   #redirect;

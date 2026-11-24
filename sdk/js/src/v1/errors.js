@@ -3,7 +3,7 @@ import { isJsonObject, parseExactJson } from "./json.js";
 
 /**
  * @typedef {object} TerraBaseV1ErrorInit
- * @property {number} status
+ * @property {number | null} status
  * @property {string} code
  * @property {string | undefined} [message]
  * @property {number | undefined} [retryAfter]
@@ -14,11 +14,11 @@ import { isJsonObject, parseExactJson } from "./json.js";
  */
 
 /**
- * A non-2xx TerraBase v1 response. `code` is the contract's `error.code`, or
- * `http_<status>` when the body carried no code.
+ * A TerraBase v1 error. `code` is the contract's `error.code`, or
+ * `http_<status>` when an HTTP response carried no code.
  */
 export class TerraBaseV1Error extends Error {
-  /** @type {number} HTTP status. */
+  /** @type {number | null} HTTP status or its SQL equivalent, when known. */
   status;
   /** @type {string} */
   code;
@@ -34,10 +34,12 @@ export class TerraBaseV1Error extends Error {
   headers;
   /** @type {string | undefined} Diagnostic X-Request-ID, when supplied by the responder. */
   requestId;
+  /** @type {boolean} The write may have committed. Reconcile its outcome before repeating it. */
+  outcomeUncertain;
 
   /** @param {TerraBaseV1ErrorInit} init */
   constructor(init) {
-    super(`TerraBase ${init.status} ${init.code}${init.message === undefined ? "" : `: ${init.message}`}`);
+    super(`TerraBase ${init.status === null ? "" : `${init.status} `}${init.code}${init.message === undefined ? "" : `: ${init.message}`}`);
     this.name = "TerraBaseV1Error";
     this.status = init.status;
     this.code = init.code;
@@ -47,6 +49,7 @@ export class TerraBaseV1Error extends Error {
     this.responseText = init.responseText ?? "";
     this.headers = new Headers(init.headers);
     this.requestId = this.headers.get("x-request-id") ?? undefined;
+    this.outcomeUncertain = uncertainCommitCodes.has(init.code);
   }
 }
 
@@ -57,6 +60,7 @@ export const V1ErrorCode = Object.freeze({
   invalidRules: "invalid_rules", unknownColumn: "unknown_column", constraintFailed: "constraint_failed",
   rowNotFound: "row_not_found", rowExists: "row_exists", noRules: "no_rules", unknownVersion: "unknown_version",
   versionMismatch: "version_mismatch", preconditionRequired: "precondition_required", writeOutcomeUnknown: "write_outcome_unknown",
+  commitUncertain: "commit_uncertain", inRegionQuorumUnconfirmed: "in_region_quorum_unconfirmed",
   invalidRequest: "invalid_request", invalidCursor: "invalid_cursor",
   keyRevoked: "key_revoked", keyExpired: "key_expired", authUnavailable: "auth_unavailable",
   invalidKey: "invalid_key", forbiddenScope: "forbidden_scope", notFound: "not_found",
@@ -114,20 +118,23 @@ export const SqlErrorCode = Object.freeze({
   notNullViolation: "not_null_violation", checkViolation: "check_violation", foreignKeyViolation: "foreign_key_violation",
   constraintViolation: "constraint_violation", forbiddenScope: "forbidden_scope", sqlSandbox: "sql_sandbox", serializationConflict: "serialization_conflict",
   schemaMismatch: "schema_mismatch", rowConflict: "row_conflict", invalidBookmark: "invalid_bookmark", storageBusy: "storage_busy",
-  requestTimeout: "request_timeout", writeOutcomeUnknown: "write_outcome_unknown",
+  requestTimeout: "request_timeout", writeOutcomeUnknown: V1ErrorCode.writeOutcomeUnknown,
+  commitUncertain: V1ErrorCode.commitUncertain, inRegionQuorumUnconfirmed: V1ErrorCode.inRegionQuorumUnconfirmed,
   tooLarge: "too_large", queryCanceled: "query_canceled", transactionRolledBack: "transaction_rolled_back",
   transactionAborted: "transaction_aborted", readOnlyTransaction: "read_only_transaction", transactionState: "transaction_state",
-  invalidRequest: "invalid_request", quotaExceeded: "quota_exceeded", tenantBusy: "tenant_busy",
+  invalidRequest: "invalid_request", invalidConsistency: "invalid_consistency", quotaExceeded: "quota_exceeded", tenantBusy: "tenant_busy",
   unauthorized: "unauthorized", unavailable: "unavailable", internalError: "internal_error",
   sqlError: "sql_error",
 });
 
 const retryableSqlCodes = new Set(["serialization_conflict", "schema_mismatch", "tenant_busy", "unavailable", "storage_busy"]);
+/** @type {ReadonlySet<string>} */
+const uncertainCommitCodes = new Set([V1ErrorCode.writeOutcomeUnknown, V1ErrorCode.commitUncertain, V1ErrorCode.inRegionQuorumUnconfirmed]);
 const conflictSqlstates = new Map([["serialization_conflict", "40001"], ["schema_mismatch", "40001"]]);
 
 /**
  * A refused SQL statement. `code` is a TerraScale code (see SqlErrorCode) and `sqlstate` its PostgreSQL SQLSTATE.
- * Over REST and outside a WebSocket transaction the whole request rolled back unless the code is write_outcome_unknown.
+ * Check `outcomeUncertain` before retrying a write.
  */
 export class SqlError extends TerraBaseV1Error {
   /** @type {number} Zero-based index of the failing statement. */

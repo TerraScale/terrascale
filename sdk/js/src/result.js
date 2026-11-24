@@ -133,10 +133,10 @@ const redactedUrl = "[redacted URL]";
 const sensitiveKeyPattern =
   /(?:^|[._-])(api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|jwt|private[._-]?key)(?:$|[._-])/iu;
 const sensitiveQueryKeyPattern =
-  /^(?:api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|token|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)$/iu;
+  /^(?:key|api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|token|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)$/iu;
 const bearerPattern = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu;
 const keyValuePattern =
-  /((?:api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)\s*[:=]\s*)(["']?)([^\s,;)}\]"']+)/giu;
+  /((?:\bkey["']?|api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)\s*[:=]\s*)(["']?)([^\s,;)}\]"']+)/giu;
 const urlPattern = /https?:\/\/[^\s<>"']+/giu;
 
 /**
@@ -177,6 +177,7 @@ function sanitizeDiagnosticValue(value, key, seen, depth) {
     /** @type {Record<string, unknown>} */
     const headers = {};
     value.forEach((entry, name) => {
+      if (name === "__proto__") return;
       headers[name] = sanitizeDiagnosticValue(entry, name, seen, depth + 1);
     });
     return headers;
@@ -190,6 +191,7 @@ function sanitizeDiagnosticValue(value, key, seen, depth) {
   /** @type {Record<string, unknown>} */
   const output = {};
   for (const [entryKey, entryValue] of Object.entries(value)) {
+    if (entryKey === "__proto__") continue;
     try {
       output[entryKey] = sanitizeDiagnosticValue(
         entryValue,
