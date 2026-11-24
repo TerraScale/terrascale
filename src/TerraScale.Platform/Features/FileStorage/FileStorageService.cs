@@ -59,6 +59,7 @@ public readonly union DeleteFileOutcome(FileDeleted, PlatformForbidden, Platform
 public sealed class FileStorageService(PlatformStore store, S3FileObjectStore objects, PlatformOptions options, PlatformMetrics metrics, TimeProvider timeProvider)
 {
     public static readonly TimeSpan UploadLifetime = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan UploadSettle = TimeSpan.FromMinutes(15);
     private const int MaxBuckets = 100;
     private const int Page = 50;
     private const int ScanRows = 1000;
@@ -417,8 +418,8 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
         CancellationToken cancellationToken)
     {
         var files = rows.RowsOf().Select(static row => (Id: row.Text(0), Status: row.Text(1), Expires: row.Number(2))).ToList();
-        var now = timeProvider.GetUtcNow().UnixMs();
-        if (files.Count > ScanRows || files.Exists(file => file.Status == "ready" || (file.Status == "pending" && file.Expires > now)))
+        var settled = (timeProvider.GetUtcNow() - UploadSettle).UnixMs();
+        if (files.Count > ScanRows || files.Exists(file => file.Status == "ready" || (file.Status == "pending" && file.Expires > settled)))
         {
             return LiveFiles;
         }

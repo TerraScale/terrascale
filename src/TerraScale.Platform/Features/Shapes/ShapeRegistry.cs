@@ -204,7 +204,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         [
             SqlValues.Statement(
                 "UPDATE platform_shapes SET owner = ?, lease_until = ? WHERE handle IN (SELECT handle FROM platform_shapes WHERE viewer_key = '' "
-                + "AND last_read_at > ? AND (owner = ? OR lease_until < ?) LIMIT ?)",
+                + "AND last_read_at > ? AND (owner = ? OR lease_until < ?) ORDER BY lease_until, handle LIMIT ?)",
                 ownerValue,
                 until,
                 SqlValues.Number((now - ActiveFor).UnixMs()),

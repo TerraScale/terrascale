@@ -52,11 +52,11 @@ public sealed record PlatformOptions(
         var options = new PlatformOptions(
             reader.Port("TS_PLATFORM_PORT", 8082),
             reader.Port("TS_PLATFORM_METRICS_PORT", 9093),
-            reader.HttpUri("TS_PLATFORM_TERRABASE_URL", new Uri("http://127.0.0.1:8081/")),
+            reader.HostLocalUri("TS_PLATFORM_TERRABASE_URL", new Uri("http://127.0.0.1:8081/")),
             QuicEndpointOptions.From(reader),
             reader.Hex("TERRABASE_PEER_SECRET", 32),
             reader.SecretsKey("TERRABASE_MASTER_KEY"),
-            reader.OptionalHttpUri("TERRABASE_AUTH_ISSUER"),
+            reader.OptionalSecureUri("TERRABASE_AUTH_ISSUER"),
             reader.Optional("TERRABASE_AUTH_AUDIENCE"),
             reader.Segment("TS_REGION"),
             reader.Segment("TS_NODE"),
@@ -188,15 +188,17 @@ public sealed record ShapeStorageOptions(
             bucket,
             reader.Token(keys[2]),
             reader.Token(keys[3]),
-            cdn.AbsoluteUri.EndsWith('/') ? cdn : new Uri(cdn.AbsoluteUri + "/"),
+            EnvironmentReader.Secure(keys[4], cdn.AbsoluteUri.EndsWith('/') ? cdn : new Uri(cdn.AbsoluteUri + "/")),
             reader.Token(keys[5]),
             reader.Token(keys[6]),
-            reader.HttpUri("TERRABASE_SHAPES_CDN_API", new Uri("https://api.cloudflare.com/client/v4/")));
+            EnvironmentReader.Secure("TERRABASE_SHAPES_CDN_API", reader.HttpUri("TERRABASE_SHAPES_CDN_API", new Uri("https://api.cloudflare.com/client/v4/"))));
     }
 }
 
 internal sealed class EnvironmentReader(IReadOnlyDictionary<string, string> values)
 {
+    private const string DockerHost = "host.docker.internal";
+
     public string? Optional(string key) => values.TryGetValue(key, out var value) ? value : null;
 
     public bool AnyOf(IReadOnlyList<string> keys) => keys.Any(values.ContainsKey);
@@ -286,11 +288,20 @@ internal sealed class EnvironmentReader(IReadOnlyDictionary<string, string> valu
             : throw new ArgumentException($"{key} must be an absolute http or https URL.");
     }
 
-    public Uri StorageUri(string key)
+    public Uri StorageUri(string key) => Secure(key, OptionalHttpUri(key) ?? throw new ArgumentException($"{key} is required."));
+
+    public Uri? OptionalSecureUri(string key) => OptionalHttpUri(key) is { } uri ? Secure(key, uri) : null;
+
+    public Uri HostLocalUri(string key, Uri fallback)
     {
-        var uri = OptionalHttpUri(key) ?? throw new ArgumentException($"{key} is required.");
-        return uri.Scheme == Uri.UriSchemeHttps || uri.IsLoopback
+        var uri = HttpUri(key, fallback);
+        return uri.Scheme == Uri.UriSchemeHttps || uri.IsLoopback || string.Equals(uri.Host, DockerHost, StringComparison.OrdinalIgnoreCase)
+            ? uri
+            : throw new ArgumentException($"{key} must use https unless it names a loopback address or {DockerHost}.");
+    }
+
+    public static Uri Secure(string key, Uri uri) =>
+        uri.Scheme == Uri.UriSchemeHttps || uri.IsLoopback
             ? uri
             : throw new ArgumentException($"{key} must use https unless it names a loopback address.");
-    }
 }

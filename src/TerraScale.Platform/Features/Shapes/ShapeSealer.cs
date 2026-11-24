@@ -16,8 +16,11 @@ public sealed class ShapeSealer(
     PlatformMetrics metrics)
 {
     private const int CacheLimit = 512;
+    private const long CacheBytes = 64L * 1024 * 1024;
     private const string ImmutableCache = "public, max-age=31536000, immutable";
-    private readonly ConcurrentDictionary<string, ShapeChunk> _chunks = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CachedChunk> _chunks = new(StringComparer.Ordinal);
+    private readonly Lock _cacheGate = new();
+    private long _cachedBytes;
 
     public async ValueTask<SyncShapeOutcome> SyncAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken)
     {
@@ -53,7 +56,7 @@ public sealed class ShapeSealer(
         var cacheKey = handle + ":" + offset.ToString(CultureInfo.InvariantCulture);
         if (_chunks.TryGetValue(cacheKey, out var cached))
         {
-            return cached;
+            return cached.Chunk;
         }
 
         var outcome = await registry.ChunkAsync(handle, offset, cancellationToken);
@@ -71,7 +74,7 @@ public sealed class ShapeSealer(
             {
                 byte[] bytes => crypto.Open(handle, bytes) switch
                 {
-                    ShapeChunk chunk => Remember(cacheKey, chunk),
+                    OpenedShapeChunk opened => Remember(cacheKey, opened.Chunk, opened.PlainBytes),
                     PlatformUnavailable unavailable => unavailable,
                 },
                 PlatformNotFound missing => missing,
@@ -103,17 +106,17 @@ public sealed class ShapeSealer(
             var outcome = await registry.CommitAsync(shape, info, snapshot.Rows.Count, cancellationToken);
             return outcome switch
             {
-                true => await PublishAsync(shape with { Head = offset, HeadDigest = snapshot.Digest }, chunk, cancellationToken),
+                true => await PublishAsync(shape with { Head = offset, HeadDigest = snapshot.Digest }, chunk, sealedChunk.PlainBytes, cancellationToken),
                 false => await RereadAsync(shape, name, cancellationToken),
                 PlatformUnavailable unavailable => unavailable,
             };
         }
     }
 
-    private async ValueTask<SyncShapeOutcome> PublishAsync(ShapeRecord shape, ShapeChunk chunk, CancellationToken cancellationToken)
+    private async ValueTask<SyncShapeOutcome> PublishAsync(ShapeRecord shape, ShapeChunk chunk, long plainBytes, CancellationToken cancellationToken)
     {
         metrics.ShapeChunk();
-        Remember(shape.Handle + ":" + chunk.Offset.ToString(CultureInfo.InvariantCulture), chunk);
+        _ = Remember(shape.Handle + ":" + chunk.Offset.ToString(CultureInfo.InvariantCulture), chunk, plainBytes);
         var pointerName = "head.json";
         var pointer = JsonSerializer.SerializeToUtf8Bytes(
             new ShapeHeadPointer(shape.Handle, chunk.Offset.ToString(CultureInfo.InvariantCulture), ShapeObjectStore.ObjectName(chunk.Offset, chunk.Digest)),
@@ -128,7 +131,7 @@ public sealed class ShapeSealer(
         };
         foreach (var retired in trimmed)
         {
-            _ = _chunks.TryRemove(shape.Handle + ":" + retired.Offset.ToString(CultureInfo.InvariantCulture), out _);
+            Forget(shape.Handle + ":" + retired.Offset.ToString(CultureInfo.InvariantCulture));
             var erasedOutcome = await objects.DeleteAsync(ShapeObjectStore.Key(shape.Handle, retired.Name), cancellationToken);
             var erased = erasedOutcome switch
             {
@@ -157,7 +160,7 @@ public sealed class ShapeSealer(
         {
             foreach (var key in _chunks.Keys.Where(key => key.StartsWith(handle + ":", StringComparison.Ordinal)))
             {
-                _ = _chunks.TryRemove(key, out _);
+                Forget(key);
             }
         }
 
@@ -213,16 +216,45 @@ public sealed class ShapeSealer(
         };
     }
 
-    private ShapeChunk Remember(string key, ShapeChunk chunk)
+    private ShapeChunk Remember(string key, ShapeChunk chunk, long bytes)
     {
-        if (_chunks.Count >= CacheLimit)
+        if (bytes > CacheBytes / 4)
         {
-            _chunks.Clear();
+            return chunk;
         }
 
-        _chunks[key] = chunk;
+        lock (_cacheGate)
+        {
+            if (_chunks.TryRemove(key, out var replaced))
+            {
+                _cachedBytes -= replaced.Bytes;
+            }
+
+            if (_chunks.Count >= CacheLimit || _cachedBytes + bytes > CacheBytes)
+            {
+                _chunks.Clear();
+                _cachedBytes = 0;
+            }
+
+            _chunks[key] = new CachedChunk(chunk, bytes);
+            _cachedBytes += bytes;
+        }
+
         return chunk;
     }
+
+    private void Forget(string key)
+    {
+        lock (_cacheGate)
+        {
+            if (_chunks.TryRemove(key, out var removed))
+            {
+                _cachedBytes -= removed.Bytes;
+            }
+        }
+    }
+
+    private sealed record CachedChunk(ShapeChunk Chunk, long Bytes);
 
     public static IReadOnlyList<ShapeOperation> Diff(IReadOnlyList<ShapeRowEntry> before, IReadOnlyList<ShapeRowEntry> after, bool filtered)
     {

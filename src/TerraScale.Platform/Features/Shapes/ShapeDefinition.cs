@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Frozen;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -22,14 +23,27 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
         $"where and columns are each at most once, non-empty, where at most {MaxWhere} and columns at most {MaxColumns} characters");
 
     public static readonly PlatformInvalidRequest UnsafeWhere = new(
-        "where may use this table's columns, literals, operators, CASE, CAST, COLLATE and deterministic functions; no subqueries, parameters or comments");
+        "where may use this table's columns, literals, operators, CASE, CAST, COLLATE and the functions abs, coalesce, ifnull, iif, nullif, length, "
+        + "octet_length, lower, upper, trim, ltrim, rtrim, substr, substring, instr, round, ceil, ceiling, floor, sign, typeof, min, max, likely, "
+        + "unlikely, likelihood, like, glob, date, time, datetime, julianday, unixepoch, strftime, json_extract, json_type, json_valid and "
+        + "json_array_length; no subqueries, parameters or comments",
+        "unsafe_where");
 
     private static readonly string[] ForbiddenWords =
     [
         "select", "from", "union", "intersect", "except", "join", "with", "insert", "update", "delete", "drop", "create", "alter",
         "attach", "detach", "pragma", "vacuum", "values", "returning", "window", "over", "limit", "offset", "order", "group",
-        "having", "reindex", "analyze", "random", "randomblob", "load_extension", "exists", "raise",
+        "having", "reindex", "analyze", "random", "randomblob", "load_extension", "exists", "raise", "regexp", "match",
     ];
+
+    private static readonly FrozenSet<string> AllowedFunctions = FrozenSet.Create(
+        StringComparer.OrdinalIgnoreCase,
+        "abs", "coalesce", "ifnull", "iif", "nullif", "length", "octet_length", "lower", "upper", "trim", "ltrim", "rtrim", "substr", "substring",
+        "instr", "round", "ceil", "ceiling", "floor", "sign", "typeof", "min", "max", "likely", "unlikely", "likelihood", "like", "glob",
+        "date", "time", "datetime", "julianday", "unixepoch", "strftime", "json_extract", "json_type", "json_valid", "json_array_length");
+
+    private static readonly FrozenSet<string> CallKeywords = FrozenSet.Create(
+        StringComparer.OrdinalIgnoreCase, "and", "or", "not", "in", "is", "cast", "case", "when", "then", "else", "between", "like", "glob", "escape");
 
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
 
@@ -176,34 +190,45 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
         }
 
         var depth = 0;
-        var quoted = false;
-        var word = new StringBuilder();
-        foreach (var character in where + " ")
+        var index = 0;
+        while (index < where.Length)
         {
-            if (character == '\'')
+            var character = where[index];
+            if (character is '\'' or '"')
             {
-                quoted = !quoted;
-                continue;
-            }
+                if (QuotedEnd(where, index) is not { } end)
+                {
+                    return false;
+                }
 
-            if (quoted)
-            {
+                var name = where[(index + 1)..(end - 1)];
+                index = end;
+                if (Calls(where, index) && (character == '\'' || !AllowedFunctions.Contains(name.Replace("\"\"", "\"", StringComparison.Ordinal))))
+                {
+                    return false;
+                }
+
                 continue;
             }
 
             if (char.IsAsciiLetterOrDigit(character) || character == '_')
             {
-                word.Append(character);
+                var start = index;
+                while (index < where.Length && (char.IsAsciiLetterOrDigit(where[index]) || where[index] == '_' || (where[index] == '.' && char.IsAsciiDigit(where[start]))))
+                {
+                    index++;
+                }
+
+                var word = where[start..index];
+                if (ForbiddenWordSet.Contains(word) || (Calls(where, index) && !AllowedFunctions.Contains(word) && !CallKeywords.Contains(word)))
+                {
+                    return false;
+                }
+
                 continue;
             }
 
-            if (word.Length > 0 && (ForbiddenWordSet.Contains(word.ToString()) || word[0] is '$' or ':' or '@'))
-            {
-                return false;
-            }
-
-            word.Clear();
-            if (character is ':' or '@' or '$')
+            if (!char.IsAscii(character) || character is '[' or '`' or ':' or '@' or '$')
             {
                 return false;
             }
@@ -218,9 +243,45 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
             {
                 return false;
             }
+
+            index++;
         }
 
-        return depth == 0 && !quoted;
+        return depth == 0;
+    }
+
+    private static int? QuotedEnd(string text, int open)
+    {
+        var quote = text[open];
+        var index = open + 1;
+        while (index < text.Length)
+        {
+            if (text[index] != quote)
+            {
+                index++;
+                continue;
+            }
+
+            if (index + 1 < text.Length && text[index + 1] == quote)
+            {
+                index += 2;
+                continue;
+            }
+
+            return index + 1;
+        }
+
+        return null;
+    }
+
+    private static bool Calls(string text, int index)
+    {
+        while (index < text.Length && char.IsWhiteSpace(text[index]))
+        {
+            index++;
+        }
+
+        return index < text.Length && text[index] == '(';
     }
 
     [GeneratedRegex(@"\A[A-Za-z_][A-Za-z0-9_]{0,62}\z", RegexOptions.CultureInvariant)]
@@ -229,11 +290,14 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
 public static class ShapeViewers
 {
-    public static string Key(CallerGrant grant, string? rulesVersion = null)
+    public static string? Key(AccessContext access, string? rulesVersion)
     {
-        ArgumentNullException.ThrowIfNull(grant);
-        return grant.EndUser
-            ? "user:" + grant.Subject + "|" + string.Join(',', grant.Roles.Order(StringComparer.Ordinal)) + "|" + rulesVersion
-            : "";
+        ArgumentNullException.ThrowIfNull(access);
+        if (!access.Grant.EndUser)
+        {
+            return "";
+        }
+
+        return access.Token is { } token ? "user:" + token.Digest + "|" + rulesVersion : null;
     }
 }

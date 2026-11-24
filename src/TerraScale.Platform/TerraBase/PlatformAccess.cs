@@ -35,6 +35,10 @@ public sealed record AccessContext(CallerGrant Grant, CallerCredential Credentia
     public Ulid Project => Grant.ProjectId;
 
     public bool IsAdministrator => !Grant.EndUser && !Grant.DatabaseRestricted;
+
+    public EndUserToken? Token { get; } = Grant.EndUser ? EndUserToken.Read(Credential) : null;
+
+    public bool Guest => Grant.Anonymous || Token is { Guest: true };
 }
 
 public sealed record DatabaseAccess(AccessContext Access, Ulid Database, string DatabaseName);

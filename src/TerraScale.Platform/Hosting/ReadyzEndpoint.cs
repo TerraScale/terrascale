@@ -33,7 +33,7 @@ public sealed class ReadyzEndpoint(
         var outcome = await terraBase.PingAsync(cancellationToken);
         return outcome switch
         {
-            TerraBaseHealthy => new HealthStatus("ready", options.Region, options.Node),
+            TerraBaseHealthy => new HealthStatus("ready", options.Region),
             PlatformUnavailable unavailable => unavailable,
         };
     }

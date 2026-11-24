@@ -71,7 +71,7 @@ Read and write policies are independent. Any matching policy permits that operat
 | Policy | Who it permits |
 | --- | --- |
 | `owner: true` | The end user whose signed subject matches the owner field in file metadata |
-| `public: true` | Signed-in users who are not guests; guests need `guests: true` on the policy |
+| `public: true` | Signed-in users who are not guests |
 | `roles: ['editor']` | End users with a matching trusted ts-auth role; role names are case-sensitive |
 
 For example, let every signed-in user read avatars while only their owner can write:
@@ -101,7 +101,7 @@ The SDK does not automatically retry mutations or signed transfers. If a respons
 
 Files and database data count together against the organization's existing [plan storage allowance](/pricing). Reserving an upload immediately counts its full declared size. Project usage exposes `fileBytes`, and includes those bytes in `storageBytes` and `logicalBytes`.
 
-Deleting a file prevents new downloads and queues physical cleanup. Expired or failed uploads also need cleanup. Their storage reservations are released after object deletion succeeds, so the usage total can take time to fall. Delete a bucket's files before calling `bucket.delete()`. It does not wait for cleanup: it erases the files you already deleted, and returns 409 while the bucket holds a completed file or an upload that has not expired. Deleting your account erases every bucket of its projects with their files.
+Deleting a file prevents new downloads and queues physical cleanup. Expired or failed uploads also need cleanup. Their storage reservations are released after object deletion succeeds, so the usage total can take time to fall. Delete a bucket's files before calling `bucket.delete()`. It does not wait for cleanup: it erases the files you already deleted, and returns 409 while the bucket holds a completed file or an upload that expired less than 15 minutes ago, so an upload already in flight cannot land in a deleted bucket. Deleting your account erases every bucket of its projects with their files.
 
 | Status | Meaning |
 | --- | --- |
@@ -109,7 +109,7 @@ Deleting a file prevents new downloads and queues physical cleanup. Expired or f
 | 401 | Missing, expired or invalid access token |
 | 403 | The token or bucket rules deny the operation |
 | 404 | The bucket or file is unavailable to this project |
-| 409 | An upload is incomplete, or a bucket still contains a completed file or an unexpired upload |
+| 409 | An upload is incomplete, or a bucket still contains a completed file or an upload that expired less than 15 minutes ago |
 | 429 | The shared database and file storage allowance is full |
 | 503 | File storage or usage accounting is temporarily unavailable |
 
@@ -122,7 +122,7 @@ All paths below start with `/v1/projects/{project}` and use Bearer authorization
 | POST | `/buckets` | 201 bucket, from `{ name, rules }` |
 | GET | `/buckets?after=ULID` | `{ items, next }` bucket page; project credentials only |
 | PUT | `/buckets/{bucket}/rules` | Bucket with replacement `{ rules }` |
-| DELETE | `/buckets/{bucket}` | 204 after a bucket without completed files or unexpired uploads is deleted |
+| DELETE | `/buckets/{bucket}` | 204 after a bucket without completed files or recent uploads is deleted |
 | POST | `/buckets/{bucket}/files/upload` | 201 signed upload capability |
 | POST | `/buckets/{bucket}/files/{file}/complete` | Verified file metadata |
 | GET | `/buckets/{bucket}/files?after=ULID` | `{ items, next }` readable file page |

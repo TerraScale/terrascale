@@ -413,6 +413,10 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 413, SQLSTATE 54000 — a statement's data exceeds the size limit. Send smaller data. Retry: no.
 
+### `too_many_streams`
+
+429 — the project already holds the most shape hint streams one server accepts. Close unused streams or wait. Retry: yes.
+
 ### `transaction_aborted`
 
 400, SQLSTATE 25P02 — the transaction was aborted by an earlier failed statement. Rerun the transaction from its start. Retry: yes.
@@ -463,7 +467,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `unsafe_where`
 
-400 — the shape's where clause is not one shapes accept. Simplify the where clause. Retry: no.
+400 — the shape's where clause uses a subquery, parameter, comment or a function outside the shape allowlist. Simplify the where clause. Retry: no.
 
 ### `unsupported_media_type`
 

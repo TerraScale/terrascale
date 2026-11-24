@@ -368,6 +368,72 @@ test('end users read only the rows and columns the rules allow, under handles bo
   }
 });
 
+test('one subject with different trusted claims never shares a shape handle, and where refuses functions outside the allowlist', async ({ request, rulesAccount: { current, page } }) => {
+  const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
+  const table = 'rules_teams_' + randomBytes(4).toString('hex');
+  const shape = `${database}/tables/${table}/shape`;
+  const owner = await ownerToken(request, current);
+  const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
+  const execute = async (sql: string) => {
+    const response = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql }] } });
+    expect(response.status(), sql).toBe(200);
+  };
+  const read = (credential: string, query: string, maxRedirects = 20) =>
+    request.get(`${shape}?${query}`, { headers: { authorization: 'Bearer ' + credential }, maxRedirects });
+  const bootstrap = async (credential: string) => {
+    const redirect = await read(credential, 'offset=-1', 0);
+    expect(redirect.status(), await redirect.text()).toBe(307);
+    const body = await answer<ShapeBody>(await request.get(api + redirect.headers()['location'], { headers: { authorization: 'Bearer ' + credential } }), 200);
+    expect(body.handle).toBe(redirect.headers()['tb-shape-handle']);
+    return { handle: body.handle, body, rows: body.changes.flatMap(change => change.ops.map(op => op.row)) };
+  };
+
+  await execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, team TEXT NOT NULL, body TEXT NOT NULL)`);
+  try {
+    await execute(`INSERT INTO ${table} (id, team, body) VALUES (1, 'red', 'r1'), (2, 'blue', 'b1')`);
+    for (const where of ['length(zeroblob(100000000)) > 0', '"zeroblob"(10) IS NOT NULL', "printf('%s', body) <> ''", "hex(randomblob(16)) <> ''", "unicode(body) > 0"]) {
+      await answer(await read(owner, 'offset=-1&where=' + encodeURIComponent(where), 0), 400, 'unsafe_where');
+    }
+    expect((await read(owner, 'offset=-1&where=' + encodeURIComponent("lower(body) = 'r1' AND coalesce(team, '') IN ('red', 'blue')"), 0)).status()).toBe(307);
+
+    await answer(await request.put(database + '/rules', {
+      headers: headers({ 'if-none-match': '*' }), data: { tables: { [table]: { read: 'row.team = auth.claims.team' } } },
+    }), 200);
+    const mint = await mintKey(page.request, current);
+    const user = ulid();
+    const teamToken = async (team: string) => {
+      const response = await request.post(`${auth}/v1/${current.projectId}/custom-tokens`, {
+        headers: { authorization: 'Bearer ' + mint }, data: { user_id: user, database: current.databaseId, claims: { team } },
+      });
+      expect(response.status()).toBe(200);
+      const credential = (await response.json()).access_token as string;
+      saveSecret('rules-claims-end-user-' + team, credential);
+      return credential;
+    };
+    const redToken = await teamToken('red');
+    const blueToken = await teamToken('blue');
+    const red = await bootstrap(redToken);
+    const blue = await bootstrap(blueToken);
+    expect(red.handle, 'callers with one subject but different trusted claims hold different shape handles').not.toBe(blue.handle);
+    expect(red.rows).toEqual([{ id: 1, team: 'red', body: 'r1' }]);
+    expect(blue.rows).toEqual([{ id: 2, team: 'blue', body: 'b1' }]);
+
+    const crossed = await answer<{ error: { handle: string } }>(await read(blueToken, `handle=${red.handle}&offset=${red.body.next_offset}`), 409, 'must_refetch');
+    expect(crossed.error.handle, "a caller presenting another claim set's handle is sent to its own shape").toBe(blue.handle);
+    const page0 = await read(blueToken, `handle=${red.handle}&offset=snap.${red.body.next_offset}.0`);
+    expect(page0.status(), "a caller cannot page another claim set's snapshot").toBe(409);
+
+    const again = await bootstrap(await teamToken('red'));
+    expect(again.handle, 'a fresh token with the same claims reuses the shape').toBe(red.handle);
+    expect(again.rows).toEqual(red.rows);
+    await answer(await request.put(database + '/rules', {
+      headers: headers({ 'if-match': `"${(await answer<RulesBody>(await request.get(database + '/rules', { headers: headers() }), 200)).version}"` }), data: { tables: {} },
+    }), 200);
+  } finally {
+    await execute(`DROP TABLE IF EXISTS ${table}`);
+  }
+});
+
 async function setRules(page: Page, rules: unknown): Promise<void> {
   const source = JSON.stringify(rules, null, 2);
   await page.locator('#rules-source').evaluate((editor: HTMLTextAreaElement, text: string) => {

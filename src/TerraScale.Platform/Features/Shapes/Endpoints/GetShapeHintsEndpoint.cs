@@ -10,14 +10,16 @@ public readonly union GetShapeHintsReply(
     PlatformUnauthorized,
     PlatformForbidden,
     PlatformNotFound,
+    PlatformQuotaExceeded,
     PlatformUnavailable);
 
-public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier notifier, TimeProvider timeProvider)
+public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier notifier, ShapeStreams streams, TimeProvider timeProvider)
     : EndpointWithoutRequest<GetShapeHintsReply>
 {
     private static readonly TimeSpan AuthWindow = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Recheck = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan Poll = TimeSpan.FromSeconds(2);
+    private static readonly PlatformQuotaExceeded TooManyStreams =
+        new($"a project holds at most {ShapeStreams.PerProject} shape hint streams on one server; retry", "too_many_streams");
 
     public override void Configure()
     {
@@ -74,7 +76,7 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
             return outcome switch
             {
                 ResolvedShape resolved when resolved.Shape.Handle != handle => ShapeReader.Refetch(resolved.Shape, "shape lineage changed"),
-                ResolvedShape resolved => await StreamAsync(await AcceptAsync(), route, resolved, offset, cancellationToken),
+                ResolvedShape resolved => await OpenAsync(route, resolved, offset, cancellationToken),
                 PlatformInvalidRequest invalid => invalid,
                 PlatformUnauthorized unauthorized => unauthorized,
                 PlatformForbidden forbidden => forbidden,
@@ -111,7 +113,7 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
 
         return resolvedAfterAuth switch
         {
-            ResolvedShape resolved => await StreamAsync(socket, route, resolved, offset, cancellationToken),
+            ResolvedShape resolved => await AdmitAsync(socket, route, resolved, offset, cancellationToken),
             PlatformInvalidRequest invalid => invalid,
             PlatformUnauthorized unauthorized => unauthorized,
             PlatformForbidden forbidden => forbidden,
@@ -120,11 +122,31 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
         };
     }
 
+    private async ValueTask<GetShapeHintsReply> OpenAsync(ShapeRouteRequest route, ResolvedShape resolved, long offset, CancellationToken cancellationToken)
+    {
+        using var lease = streams.TryOpen(resolved.Access.Access.Project);
+        return lease is null ? TooManyStreams : await StreamAsync(await AcceptAsync(), route, resolved, offset, cancellationToken);
+    }
+
+    private async ValueTask<ShapeSocketClosed> AdmitAsync(WebSocket socket, ShapeRouteRequest route, ResolvedShape resolved, long offset, CancellationToken cancellationToken)
+    {
+        using var lease = streams.TryOpen(resolved.Access.Access.Project);
+        if (lease is not null)
+        {
+            return await StreamAsync(socket, route, resolved, offset, cancellationToken);
+        }
+
+        _ = await SendAsync(socket, new ShapeHintFrame("error", Code: TooManyStreams.Code, RetryAfter: 1), cancellationToken);
+        await CloseAsync(socket, WebSocketCloseStatus.PolicyViolation);
+        return ShapeSocketClosed.Instance;
+    }
+
     private async ValueTask<ShapeSocketClosed> StreamAsync(WebSocket socket, ShapeRouteRequest route, ResolvedShape resolved, long offset, CancellationToken cancellationToken)
     {
         using var disconnected = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var receive = DrainAsync(socket, disconnected);
         var current = resolved;
+        var seen = resolved.Seen;
         var checkedAt = timeProvider.GetUtcNow();
         var open = await SendAsync(socket, new ShapeHintFrame("ready"), disconnected.Token);
         while (open && !disconnected.IsCancellationRequested)
@@ -144,13 +166,20 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
                 continue;
             }
 
-            await notifier.WaitAsync(current.Shape.Database, Poll, disconnected.Token);
+            var untilRecheck = Recheck - (timeProvider.GetUtcNow() - checkedAt);
+            var advanced = await notifier.WaitAsync(current.Shape.Database, seen, untilRecheck > TimeSpan.Zero ? untilRecheck : TimeSpan.Zero, disconnected.Token);
             if (disconnected.IsCancellationRequested)
             {
                 break;
             }
 
             var recheck = timeProvider.GetUtcNow() - checkedAt >= Recheck;
+            if (!advanced && !recheck)
+            {
+                continue;
+            }
+
+            var attempted = notifier.Version(current.Shape.Database);
             var refreshed = await reader.ResolveAsync(HttpContext, route, current.Query, disconnected.Token);
             var step = refreshed switch
             {
@@ -168,15 +197,11 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
                 break;
             }
 
-            current = refreshed switch
+            (current, seen, checkedAt) = refreshed switch
             {
-                ResolvedShape next => next,
-                PlatformInvalidRequest or PlatformUnauthorized or PlatformForbidden or PlatformNotFound or PlatformUnavailable => current,
+                ResolvedShape next => (next, next.Seen, timeProvider.GetUtcNow()),
+                PlatformInvalidRequest or PlatformUnauthorized or PlatformForbidden or PlatformNotFound or PlatformUnavailable => (current, attempted, checkedAt),
             };
-            if (recheck)
-            {
-                checkedAt = timeProvider.GetUtcNow();
-            }
         }
 
         await disconnected.CancelAsync();

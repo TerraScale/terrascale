@@ -40,7 +40,6 @@ public sealed class ShapeReader(
     public const int MaxChanges = 32;
     public const int ManifestObjects = 8;
     private static readonly TimeSpan LiveWait = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan LivePoll = TimeSpan.FromSeconds(2);
     private const int MaxLivePasses = 64;
 
     public async ValueTask<ResolveShapeOutcome> ResolveAsync(
@@ -251,7 +250,11 @@ public sealed class ShapeReader(
             return UpToDate(current.Shape, after, offsetText, NextCursor(cursor));
         }
 
-        await notifier.WaitAsync(current.Shape.Database, remaining < LivePoll ? remaining : LivePoll, cancellationToken);
+        if (!await notifier.WaitAsync(current.Shape.Database, current.Seen, remaining, cancellationToken))
+        {
+            return UpToDate(current.Shape, after, offsetText, NextCursor(cursor));
+        }
+
         var outcome = await ResolveAsync(context, route, current.Query, cancellationToken);
         return outcome switch
         {
@@ -272,6 +275,7 @@ public sealed class ShapeReader(
         DatabaseAccess database,
         CancellationToken cancellationToken)
     {
+        var seen = notifier.Version(database.Database);
         var outcome = await terraBase.ExecuteAsCallerAsync(route.Project, route.Database, database.Access.Credential, SqlValues.Batch(query.Select()), Bookmark(context), cancellationToken);
         return outcome switch
         {
@@ -290,16 +294,17 @@ public sealed class ShapeReader(
 
         async ValueTask<ResolveShapeOutcome> RegisterSnapshotAsync(ShapeSnapshot snapshot, string? rulesVersion)
         {
-            var outcome = await RegisterAsync(route, query, database, snapshot, rulesVersion, cancellationToken);
+            var outcome = await RegisterAsync(route, query, database, snapshot, rulesVersion, seen, cancellationToken);
             return outcome switch
             {
                 ResolvedShape resolved => resolved,
+                PlatformUnauthorized unauthorized => unauthorized,
                 PlatformUnavailable unavailable => unavailable,
             };
         }
     }
 
-    private readonly union RegisterResolvedShapeOutcome(ResolvedShape, PlatformUnavailable);
+    private readonly union RegisterResolvedShapeOutcome(ResolvedShape, PlatformUnauthorized, PlatformUnavailable);
 
     private async ValueTask<RegisterResolvedShapeOutcome> RegisterAsync(
         ShapeRouteRequest route,
@@ -307,9 +312,14 @@ public sealed class ShapeReader(
         DatabaseAccess database,
         ShapeSnapshot snapshot,
         string? rulesVersion,
+        long seen,
         CancellationToken cancellationToken)
     {
-        var viewer = ShapeViewers.Key(database.Access.Grant, rulesVersion);
+        if (ShapeViewers.Key(database.Access, rulesVersion) is not { } viewer)
+        {
+            return new PlatformUnauthorized("the end-user token's claims are unreadable", "invalid_token");
+        }
+
         var (handle, shapeId) = query.Lineage(database.Access.Organization, database.Access.Project, database.Database, viewer, snapshot.Columns);
         var shape = new ShapeRecord(handle, shapeId, database.Access.Organization, database.Access.Project, database.Database, route.Project, route.Database,
             query.Table, query.Where, query.Columns, viewer, 0, "");
@@ -325,7 +335,7 @@ public sealed class ShapeReader(
             var outcome = await sealer.SyncAsync(saved, snapshot, cancellationToken);
             return outcome switch
             {
-                ShapeRecord synced => new ResolvedShape(synced, database, query),
+                ShapeRecord synced => new ResolvedShape(synced, database, query, seen),
                 PlatformUnavailable unavailable => unavailable,
             };
         }

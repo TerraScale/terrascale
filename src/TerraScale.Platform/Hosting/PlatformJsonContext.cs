@@ -3,7 +3,7 @@ using Cysharp.Serialization.Json;
 
 namespace TerraScale.Platform.Hosting;
 
-public sealed record HealthStatus(string Status, string Region, string Node);
+public sealed record HealthStatus(string Status, string Region);
 
 public sealed record InternalLogPayload(string Project, string Database, string Id, string Method, string Path, int Status, long DurationMs);
 

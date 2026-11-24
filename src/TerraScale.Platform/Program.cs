@@ -75,6 +75,7 @@ try
         .AddSingleton<ShapeObjectStore>()
         .AddSingleton<ShapeCdn>()
         .AddSingleton<ShapeNotifier>()
+        .AddSingleton<ShapeStreams>()
         .AddSingleton<ShapeRegistry>()
         .AddSingleton<ShapeSealer>()
         .AddSingleton<ShapeReader>()
