@@ -11,6 +11,12 @@ internal readonly union UsageTotalsOutcome(IReadOnlyDictionary<string, long>, Ba
 
 internal readonly union UsageMonthsOutcome(IReadOnlyList<string>, BackendUnavailable);
 
+internal readonly union OrganizationCountersOutcome(OrganizationCounters, BackendUnavailable);
+
+internal sealed record OrganizationCounters(IReadOnlyList<ProjectCounters> Projects, bool Truncated);
+
+internal sealed record ProjectCounters(Ulid ProjectId, IReadOnlyDictionary<string, long> Metrics);
+
 public static class UsageMetrics
 {
     public const string Requests = "requests";
@@ -25,12 +31,16 @@ public static class UsageMetrics
 
     public const string StrongCommits = "strong_commits";
 
-    public static IReadOnlyList<string> All { get; } = [Requests, Reads, Writes, RowsRead, RowsWritten, StrongCommits];
+    public const string StorageByteHours = "storage_byte_hours";
+
+    public static IReadOnlyList<string> All { get; } = [Requests, Reads, Writes, RowsRead, RowsWritten, StrongCommits, StorageByteHours];
 }
 
 internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMeterFactory meters, ILogger<UsageMeter> logger) : BackgroundService
 {
     private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(10);
+
+    private const int OrganizationProjectLimit = 1000;
 
     private readonly ConcurrentDictionary<(string Scope, string Month, string Metric), long> _pending = new();
     private readonly Counter<long> _recorded = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.usage.recorded");
@@ -48,11 +58,26 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
             return;
         }
 
-        var month = Month(time.GetUtcNow());
-        _pending.AddOrUpdate((DatabaseScope(databaseId), month, metric), value, (_, current) => current + value);
-        _pending.AddOrUpdate((ProjectScope(projectId), month, metric), value, (_, current) => current + value);
-        _recorded.Add(value, new KeyValuePair<string, object?>("metric", metric));
+        Add(projectId, databaseId, Month(time.GetUtcNow()), metric, value);
     }
+
+    public void RecordStorage(Ulid projectId, Ulid databaseId, string month, long byteHours)
+    {
+        if (byteHours > 0)
+        {
+            Add(projectId, databaseId, month, UsageMetrics.StorageByteHours, byteHours);
+        }
+    }
+
+    public async ValueTask<OrganizationCountersOutcome> OrganizationAsync(Ulid organizationId, string month, CancellationToken cancellationToken) =>
+        await system.QueryAsync(SqlBuild.Statement(
+            "SELECT p.id, u.metric, u.value FROM (SELECT id FROM projects WHERE organization_id = ?1 ORDER BY id LIMIT ?2) AS p "
+            + "LEFT JOIN usage_counters AS u ON u.scope = 'project:' || p.id AND u.month = ?3 ORDER BY p.id",
+            SqlBuild.Id(organizationId), SqlBuild.Integer(OrganizationProjectLimit + 1), SqlBuild.Text(month)), cancellationToken) switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => Organization(rows, month),
+            BackendUnavailable unavailable => unavailable,
+        };
 
     public async ValueTask<UsageTotalsOutcome> ReadAsync(string scope, string month, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement("SELECT metric, value FROM usage_counters WHERE scope = ? AND month = ?", SqlBuild.Text(scope), SqlBuild.Text(month)),
@@ -130,6 +155,36 @@ internal sealed class UsageMeter(SystemDatabase system, TimeProvider time, IMete
 
             logger.ZLogWarning($"Usage flush failed and is retried: {failure:@Reason}");
         }
+    }
+
+    private void Add(Ulid projectId, Ulid databaseId, string month, string metric, long value)
+    {
+        _pending.AddOrUpdate((DatabaseScope(databaseId), month, metric), value, (_, current) => current + value);
+        _pending.AddOrUpdate((ProjectScope(projectId), month, metric), value, (_, current) => current + value);
+        _recorded.Add(value, new KeyValuePair<string, object?>("metric", metric));
+    }
+
+    private OrganizationCounters Organization(IReadOnlyList<IReadOnlyList<SqlValue>> rows, string month)
+    {
+        List<ProjectCounters> projects = [];
+        foreach (var group in rows.GroupBy(static row => row.TextAt(0), StringComparer.Ordinal).Take(OrganizationProjectLimit))
+        {
+            var scope = string.Concat("project:", group.Key);
+            Dictionary<string, long> metrics = new(StringComparer.Ordinal);
+            foreach (var metric in UsageMetrics.All)
+            {
+                metrics[metric] = _pending.GetValueOrDefault((scope, month, metric));
+            }
+
+            foreach (var row in group.Where(static row => row.OptionalTextAt(1) is not null))
+            {
+                metrics[row.TextAt(1)] = metrics.GetValueOrDefault(row.TextAt(1)) + row.IntegerAt(2);
+            }
+
+            projects.Add(new ProjectCounters(group.First().IdAt(0), metrics));
+        }
+
+        return new OrganizationCounters(projects, rows.Select(static row => row.TextAt(0)).Distinct(StringComparer.Ordinal).Count() > OrganizationProjectLimit);
     }
 
     private UsageTotalsOutcome Totals(IReadOnlyList<IReadOnlyList<SqlValue>> rows, string scope, string month)

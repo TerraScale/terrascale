@@ -101,6 +101,7 @@ internal static class CompleteMonths
 
         Console.WriteLine($"usage complete-month journey: history {History} writes=37, absent month=0, write at boundary-1tick in {Closed}, read at boundary in {Current}, invalid month=400, flushed months {History},{Closed},{Current} passed");
         Console.WriteLine("usage sql metering journey: " + await SqlMetering.RunAsync(http, cancellationToken));
+        Console.WriteLine("usage organization journey: " + await OrganizationUsage.RunAsync(services, http, cancellationToken));
     }
 
     private static async Task<IReadOnlyList<UsageReading>> FlushedAsync(HttpClient http, UsageTenant tenant, CancellationToken cancellationToken)

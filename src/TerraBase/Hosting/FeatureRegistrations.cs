@@ -61,6 +61,9 @@ internal static class FeatureRegistrations
             services.AddHostedService(static provider => provider.GetRequiredService<AtlasPublisher>());
             services.AddSingleton<UsageMeter>();
             services.AddHostedService(static provider => provider.GetRequiredService<UsageMeter>());
+            services.AddSingleton<StorageOwnership>();
+            services.AddSingleton<StorageSampler>();
+            services.AddHostedService(static provider => provider.GetRequiredService<StorageSampler>());
             services.AddSingleton<RequestLogRecorder>();
             services.AddHostedService(static provider => provider.GetRequiredService<RequestLogRecorder>());
             services.AddHostedService<DatabaseExpiry>();

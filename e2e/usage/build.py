@@ -24,6 +24,7 @@ with tempfile.TemporaryDirectory(prefix="usage-journey-") as directory:
         f'<Compile Include="{escape(str(temporary / "Program.cs"))}" />'
         f'<Compile Include="{escape(str(root / "e2e/usage/CompleteMonths.cs"))}" />'
         f'<Compile Include="{escape(str(root / "e2e/usage/SqlMetering.cs"))}" />'
+        f'<Compile Include="{escape(str(root / "e2e/usage/OrganizationUsage.cs"))}" />'
         '</ItemGroup></Target></Project>'
     )
     subprocess.run([

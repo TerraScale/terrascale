@@ -1,6 +1,8 @@
 using System.Text.Json.Serialization;
+using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
+using TerraScale.Contracts.Cluster;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -14,6 +16,8 @@ internal readonly union UsageResponse(UsageBody, InvalidInput, CredentialRejecte
 
 internal readonly union AnalyticsResponse(AnalyticsBody, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, BackendUnavailable);
 
+internal readonly union OrganizationUsageResponse(OrganizationUsageBody, InvalidInput, CredentialRejected, CallerForbidden, BackendUnavailable);
+
 public sealed record UsageInput(string? Project, string? Database, string? Month);
 
 public sealed record UsageBody(string Scope, string Month, IReadOnlyDictionary<string, long> Metrics);
@@ -24,15 +28,114 @@ public sealed record AllowanceBody(string Plan, int Databases);
 
 public sealed record AllowancesBody(IReadOnlyList<AllowanceBody> Plans);
 
+public sealed record OrganizationUsageInput(string? Organization, string? Month);
+
+public sealed record UsageTotalsBody(long Requests, long Reads, long Writes, long RowsRead, long RowsWritten, long StrongCommits, long StorageByteHours)
+{
+    public static UsageTotalsBody From(IReadOnlyDictionary<string, long> metrics)
+    {
+        ArgumentNullException.ThrowIfNull(metrics);
+        return new(metrics[UsageMetrics.Requests], metrics[UsageMetrics.Reads], metrics[UsageMetrics.Writes], metrics[UsageMetrics.RowsRead],
+            metrics[UsageMetrics.RowsWritten], metrics[UsageMetrics.StrongCommits], metrics[UsageMetrics.StorageByteHours]);
+    }
+
+    public static UsageTotalsBody Sum(IEnumerable<UsageTotalsBody> items) =>
+        items.Aggregate(new UsageTotalsBody(0, 0, 0, 0, 0, 0, 0), static (total, item) => new(
+            checked(total.Requests + item.Requests), checked(total.Reads + item.Reads), checked(total.Writes + item.Writes), checked(total.RowsRead + item.RowsRead),
+            checked(total.RowsWritten + item.RowsWritten), checked(total.StrongCommits + item.StrongCommits), checked(total.StorageByteHours + item.StorageByteHours)));
+}
+
+public sealed record ProjectUsageBody(
+    string ProjectId, long Requests, long Reads, long Writes, long RowsRead, long RowsWritten, long StrongCommits, long StorageByteHours)
+{
+    public static ProjectUsageBody From(string projectId, UsageTotalsBody usage)
+    {
+        ArgumentNullException.ThrowIfNull(usage);
+        return new(projectId, usage.Requests, usage.Reads, usage.Writes, usage.RowsRead, usage.RowsWritten, usage.StrongCommits, usage.StorageByteHours);
+    }
+
+    public UsageTotalsBody Totals() => new(Requests, Reads, Writes, RowsRead, RowsWritten, StrongCommits, StorageByteHours);
+}
+
+public sealed record OrganizationUsageBody(
+    string OrganizationId, string Month, bool Complete, DateTimeOffset AsOf, IReadOnlyList<string> Gaps, UsageTotalsBody Totals, IReadOnlyList<ProjectUsageBody> Projects);
+
 [JsonSourceGenerationOptions(System.Text.Json.JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(UsageInput))]
 [JsonSerializable(typeof(UsageBody))]
 [JsonSerializable(typeof(AnalyticsBody))]
 [JsonSerializable(typeof(AllowancesBody))]
+[JsonSerializable(typeof(OrganizationUsageInput))]
+[JsonSerializable(typeof(OrganizationUsageBody))]
 internal sealed partial class UsageJsonContext : JsonSerializerContext;
 
-internal sealed class UsageReports(UsageMeter usage, TimeProvider time)
+internal sealed class UsageReports(UsageMeter usage, IClusterCoordinator coordinator, TimeProvider time)
 {
+    public const string PeerUnhealthy = "peer_unhealthy";
+
+    public const string ProjectLimit = "project_limit";
+
+    public static CredentialRejected? Unauthenticated(Caller caller) => caller switch
+    {
+        AnonymousCaller => new CredentialRejected("organization usage needs an internal peer or service credential", "unauthorized"),
+        PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => null,
+    };
+
+    public static bool ReadsOrganizations(Caller caller) => caller switch
+    {
+        PeerCaller => true,
+        ServiceCaller service => service.Grants.Contains("usage.read") || service.Grants.Contains("admin"),
+        AnonymousCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => false,
+    };
+
+    public async ValueTask<OrganizationUsageResponse> OrganizationAsync(Caller caller, OrganizationUsageInput input, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        if (Unauthenticated(caller) is { } unauthenticated)
+        {
+            return unauthenticated;
+        }
+
+        if (!ReadsOrganizations(caller))
+        {
+            return new CallerForbidden("organization usage is only for internal peers and services with the usage.read grant", "forbidden_caller");
+        }
+
+        if (input.Organization is not { Length: 26 } organization || !Ulid.TryParse(organization, out var organizationId)
+            || !string.Equals(organizationId.ToString(), organization, StringComparison.Ordinal))
+        {
+            return new InvalidInput("organization must be a canonical uppercase ULID", "invalid_organization");
+        }
+
+        var asOf = time.GetUtcNow();
+        return Month(input.Month, asOf) switch
+        {
+            string month => await usage.OrganizationAsync(organizationId, month, cancellationToken) switch
+            {
+                OrganizationCounters counters => Organization(organization, month, asOf, counters),
+                BackendUnavailable => new BackendUnavailable("usage is unavailable; retry", "usage_unavailable"),
+            },
+            InvalidInput invalid => invalid,
+        };
+    }
+
+    private OrganizationUsageBody Organization(string organization, string month, DateTimeOffset asOf, OrganizationCounters counters)
+    {
+        List<ProjectUsageBody> projects = [.. counters.Projects.Select(static project => ProjectUsageBody.From(project.ProjectId.ToString(), UsageTotalsBody.From(project.Metrics)))];
+        List<string> gaps = [];
+        if (coordinator.Peers.Any(static peer => peer.Status != PeerStatus.Healthy))
+        {
+            gaps.Add(PeerUnhealthy);
+        }
+
+        if (counters.Truncated)
+        {
+            gaps.Add(ProjectLimit);
+        }
+
+        return new OrganizationUsageBody(organization, month, gaps.Count == 0, asOf, gaps, UsageTotalsBody.Sum(projects.Select(static project => project.Totals())), projects);
+    }
+
     public static UsageMonthParse Month(string? month, DateTimeOffset now) =>
         month is null ? UsageMeter.Month(now)
         : month is { Length: 7 } && DateTimeOffset.TryParseExact(string.Concat(month, "-01"), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
