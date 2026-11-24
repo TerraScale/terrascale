@@ -443,6 +443,8 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
   const ledger = 'rules_sql_ledger_' + suffix;
   const vault = 'rules_sql_vault_' + suffix;
   const renamed = 'rules_sql_renamed_' + suffix;
+  const view = 'rules_sql_view_' + suffix;
+  const audit = 'rules_sql_audit_' + suffix;
   const owner = await ownerToken(request, current);
   const ownerHeaders = { authorization: 'Bearer ' + owner };
   const run = (credential: string, sql: string) =>
@@ -466,9 +468,11 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await execute(`INSERT INTO ${notes} (id, owner, body, secret) VALUES (1, '${alice}', 'a1', 'pin-1111'), (2, '${alice}', 'a2', 'pin-2222'), (3, '${bob}', 'b1', 'pin-3333')`);
     await execute(`INSERT INTO ${ledger} (entry, owner, amount) VALUES (41, '${alice}', 100), (42, '${bob}', 200)`);
     await execute(`INSERT INTO ${vault} (id, pin) VALUES (1, 'vault-9999')`);
+    await execute(`CREATE VIEW ${view} AS SELECT id, owner, body FROM ${notes}`);
     await deploy({
       [notes]: { read: 'row.owner = auth.uid', columns: ['id', 'owner', 'body'], update: 'row.owner = auth.uid', delete: 'row.owner = auth.uid', writable: ['body'] },
       [ledger]: { read: 'row.owner = auth.uid', columns: ['owner'] },
+      [view]: { read: 'row.owner = auth.uid' },
     });
     const mint = await mintKey(page.request, current);
     const aliceToken = await endUserToken(request, mint, alice, current);
@@ -487,6 +491,10 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await allowed(`UPDATE ${notes} SET body = 'a1-edited' WHERE id = 1`);
     await allowed(`UPDATE ${notes} SET body = 'stolen' WHERE id = 3`);
     expect(await execute(`SELECT id, body FROM ${notes} ORDER BY id`)).toEqual([[1, 'a1-edited'], [2, 'a2'], [3, 'b1']]);
+    expect(await allowed(`SELECT DISTINCT m.body FROM ${ledger} AS l JOIN ${notes} AS n ON n.owner = l.owner, ${notes} AS m ORDER BY m.body`)).toEqual([['a1-edited'], ['a2']]);
+    expect(await allowed(`SELECT DISTINCT m.body FROM (${notes} AS m JOIN ${ledger} AS l ON l.owner = m.owner) ORDER BY m.body`)).toEqual([['a1-edited'], ['a2']]);
+    expect(await allowed(`SELECT count(*) FROM ${notes} AS a, ${notes} AS b`)).toEqual([[4]]);
+    expect(await allowed(`SELECT body FROM ${view} ORDER BY body`)).toEqual([['a1-edited'], ['a2']]);
 
     const refused = async (sql: string, code: string, details?: Record<string, string>) => {
       const response = await run(aliceToken, sql);
@@ -499,6 +507,15 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await refused(`WITH ${vault} AS (SELECT 1) SELECT 1; SELECT pin FROM ${vault}`, 'rule_denied');
     await refused(`WITH ${vault} AS (SELECT 1) SELECT pin FROM main.${vault}`, 'rule_denied', { operation: 'read', table: vault });
     await refused(`SELECT id FROM ${notes} WHERE id IN ${vault}`, 'rule_denied');
+    await refused(`SELECT 1 FROM ${notes} AS n JOIN ${ledger} AS l USING (owner), ${vault}`, 'rule_denied', { operation: 'read', table: vault });
+    await refused(`SELECT 1 FROM ${notes} AS n JOIN ${ledger} AS l ON l.owner = n.owner, (${vault})`, 'rule_denied', { operation: 'read', table: vault });
+    await refused(`WITH a AS (WITH b AS (SELECT id FROM ${notes}) SELECT id FROM b) SELECT id FROM a`, 'rule_denied');
+    await refused(`WITH _tb_rule_0 AS (SELECT pin FROM ${vault}) SELECT pin FROM _tb_rule_0`, 'rule_denied');
+    await refused(`UPDATE ${notes} SET body = body WHERE id = 1 RETURNING secret`, 'rule_denied');
+    await refused(`UPDATE ${notes} SET body = body WHERE id = 1 RETURNING *`, 'rule_denied');
+    await refused(`DELETE FROM ${notes} WHERE id = 1 RETURNING ${notes}.*`, 'rule_denied');
+    await refused(`UPDATE ${notes} SET (body, owner) = ('x', '${bob}') WHERE id = 1`, 'column_not_writable', { column: 'owner' });
+    await refused(`SELECT * FROM ${notes} WHERE body = "oid"`, 'column_not_readable', { column: 'oid' });
     await refused(`UPDATE ${notes} SET body = 'pwned' --`, 'rule_denied');
     await refused(`DELETE FROM ${notes} --`, 'rule_denied');
     await refused(`UPDATE ${notes} SET body = 'pwned' /* hidden */`, 'rule_denied');
@@ -512,9 +529,25 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await refused(`PRAGMA table_info('${notes}')`, 'rule_denied');
     await refused(`SELECT name FROM pragma_table_info('${notes}')`, 'rule_denied');
     await refused(`ALTER TABLE ${notes} RENAME TO _tb_x`, 'rule_denied');
+
+    await execute(`CREATE TRIGGER ${audit} AFTER UPDATE ON ${notes} BEGIN INSERT INTO ${vault} (pin) VALUES (OLD.secret); END`);
+    const triggered = await run(aliceToken, `UPDATE ${notes} SET body = 'via trigger' WHERE id = 2`);
+    await answer(triggered, 403, 'sql_sandbox');
+    console.log('end-user UPDATE whose trigger reads a hidden column -> 403 sql_sandbox');
+    await execute(`DROP TRIGGER ${audit}`);
+    expect(await execute(`SELECT pin FROM ${vault} ORDER BY id`)).toEqual([['vault-9999']]);
     expect(await execute(`SELECT id, body, secret FROM ${notes} ORDER BY id`)).toEqual([[1, 'a1-edited', 'pin-1111'], [2, 'a2', 'pin-2222'], [3, 'b1', 'pin-3333']]);
 
-    for (const sql of [`ALTER TABLE ${vault} RENAME TO _tb_${suffix}`, "PRAGMA table_info('_tb_meta')", "SELECT name FROM pragma_table_info('_tb_meta')"]) {
+    for (const sql of [
+      `ALTER TABLE ${vault} RENAME TO _tb_${suffix}`,
+      `ALTER TABLE ${vault} RENAME TO "_tb_${suffix}"`,
+      `ALTER TABLE ${vault} RENAME TO [_tb_${suffix}]`,
+      `ALTER TABLE ${vault} RENAME TO \`_tb_${suffix}\``,
+      `ALTER TABLE ${vault} RENAME TO '_tb_${suffix}'`,
+      `ALTER TABLE ${vault} RENAME /* hop */ TO -- hop\n _tb_${suffix}`,
+      "PRAGMA table_info('_tb_meta')",
+      "SELECT name FROM pragma_table_info('_tb_meta')",
+    ]) {
       const response = await run(owner, sql);
       await answer(response, 403, 'sql_sandbox');
       console.log('owner SQL on internal names refused -> 403 ' + sql);
@@ -523,6 +556,7 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     expect(await execute(`SELECT pin FROM ${renamed}`)).toEqual([['vault-9999']]);
     await deploy({});
   } finally {
+    await execute(`DROP VIEW IF EXISTS ${view}`);
     for (const table of [notes, ledger, vault, renamed]) await execute(`DROP TABLE IF EXISTS ${table}`);
   }
 });
