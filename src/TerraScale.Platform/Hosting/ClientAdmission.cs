@@ -9,7 +9,7 @@ namespace TerraScale.Platform.Hosting;
 
 public static class ClientAdmission
 {
-    public const int MaxRequestBodyBytes = 64 * 1024;
+    public const int MaxRequestBodyBytes = 128 * 1024;
 
     private static readonly IReadOnlyList<IPNetwork> PrivateNetworks =
     [

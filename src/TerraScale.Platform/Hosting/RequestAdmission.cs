@@ -10,14 +10,14 @@ public sealed class RequestAdmission(RequestDelegate next, PlatformAccess access
     public Task InvokeAsync(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.GetEndpoint()?.Metadata.GetMetadata<FunctionBodyLimit>() is { } limit)
+        var limit = context.GetEndpoint()?.Metadata.GetMetadata<FunctionBodyLimit>();
+        if ((limit is not null || context.Features.Get<IHttpRequestBodyDetectionFeature>() is { CanHaveBody: true })
+            && CallerCredential.From(context.Request, options.PeerSecret) is null)
         {
-            return AdmitFunctionBodyAsync(context, limit);
+            return ErrorResults.From(MissingCredential).ExecuteAsync(context);
         }
 
-        return context.Features.Get<IHttpRequestBodyDetectionFeature>() is { CanHaveBody: true } && CallerCredential.From(context.Request, options.PeerSecret) is null
-            ? ErrorResults.From(MissingCredential).ExecuteAsync(context)
-            : next(context);
+        return limit is null ? next(context) : AdmitFunctionBodyAsync(context, limit);
     }
 
     private async Task AdmitFunctionBodyAsync(HttpContext context, FunctionBodyLimit limit)
