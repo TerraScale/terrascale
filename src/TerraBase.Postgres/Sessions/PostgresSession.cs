@@ -21,15 +21,27 @@ internal sealed class PgPreparedStatement(string name, PgCommand command, int[] 
     public bool Described { get; set; }
 }
 
-internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlValue> parameters, short[] resultFormats)
+internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlValue> parameters, long parameterBytes, short[] resultFormats)
 {
+    private long? _resultBytes;
+
     public PgPreparedStatement Statement => statement;
 
     public IReadOnlyList<SqlValue> Parameters => parameters;
 
     public short[] ResultFormats => resultFormats;
 
-    public PgResult? Result { get; set; }
+    public PgResult? Result
+    {
+        get;
+        set
+        {
+            field = value;
+            _resultBytes = null;
+        }
+    }
+
+    public long Bytes => parameterBytes + (_resultBytes ??= Result is { } result ? PgValueCodec.Footprint(result.Rows) : 0);
 
     public int Position { get; set; }
 
@@ -82,6 +94,20 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
     public Dictionary<string, PgPreparedStatement> Statements { get; } = new(StringComparer.Ordinal);
 
     public Dictionary<string, PgPortal> Portals { get; } = new(StringComparer.Ordinal);
+
+    public long PortalBytes(string? except = null)
+    {
+        long total = 0;
+        foreach (var (name, portal) in Portals)
+        {
+            if (name != except)
+            {
+                total += portal.Bytes;
+            }
+        }
+
+        return total;
+    }
 
     public Dictionary<string, string> PendingReports { get; } = new(StringComparer.Ordinal);
 

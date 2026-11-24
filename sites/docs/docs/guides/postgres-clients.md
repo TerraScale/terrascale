@@ -69,13 +69,13 @@ After every commit the server reports the session's newest bookmark as the `terr
 ## Catalog queries, settings and notifications
 
 - The `pg_catalog` and `information_schema` views that drivers, ORMs and migration tools introspect are answered from the database's own tables: `pg_class`, `pg_attribute`, `pg_type`, `pg_index`, `pg_constraint`, `pg_namespace`, `pg_proc`, `pg_settings`, `information_schema.tables`, `information_schema.columns` and others. psql's `\d`, `\dt`, `\di`, `\l` and `\dn` work.
-- `LISTEN channel` delivers a notification for every committed change of the database, from any region, with a JSON payload carrying `database`, `tx`, `origin`, `sequence`, `schemaEpoch`, `mode` and `committedAt`. `UNLISTEN` stops it. `NOTIFY` answers `0A000`: notifications come from committed changes.
+- `LISTEN channel` delivers a notification for every committed change of the database, from any region, with a JSON payload carrying `database`, `tx`, `origin`, `sequence`, `schemaEpoch`, `mode` and `committedAt`. `UNLISTEN` stops it. A session listens on at most 64 channels (`54000` past that). `NOTIFY` answers `0A000`: notifications come from committed changes.
 - `SET` and `SHOW` work for the usual session settings (`client_encoding`, `DateStyle`, `TimeZone`, `search_path`, `application_name`, `statement_timeout`, `extra_float_digits` and others) and for `terrascale.consistency` and `terrascale.bookmark`. `server_version` reports Postgres 16.
 - Extensions, `CREATE SEQUENCE`, SQL-level `PREPARE`/`EXECUTE` (use the extended protocol), two-phase commit and `DROP SCHEMA` answer `0A000`.
 
 ## Prepared statements
 
-The extended protocol works: `Parse`/`Bind`/`Describe`/`Execute`/`Close`, with at most 256 named statements and 256 portals per session (`54000` past either). Untyped parameters are inferred from the statement's tables. Text and binary result formats both work. `Execute` with a row limit (`maxRows`) returns the rows in chunks, so drivers that fetch with a cursor work unchanged.
+The extended protocol works: `Parse`/`Bind`/`Describe`/`Execute`/`Close`, with at most 256 named statements and 256 portals per session, and at most 16 MiB of bound parameters and pending rows across all portals (`54000` past any of them). `Sync` closes the unnamed portal. Untyped parameters are inferred from the statement's tables. Text and binary result formats both work. `Execute` with a row limit (`maxRows`) returns the rows in chunks, so drivers that fetch with a cursor work unchanged.
 
 ## Timeouts and cancellation
 

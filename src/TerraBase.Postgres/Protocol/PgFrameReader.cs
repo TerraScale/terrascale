@@ -61,8 +61,9 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
     public long LastMessageStarted { get; private set; }
 
-    public async ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    public async ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, TimeSpan? ceiling, CancellationToken cancellationToken)
     {
+        var called = timeProvider.GetTimestamp();
         using var deadline = new CancellationTokenSource(timeout > TimeSpan.Zero ? timeout : TimeSpan.Zero, timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         long? started = null;
@@ -87,6 +88,11 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                 var first = started ??= timeProvider.GetTimestamp();
                 seen = discarded + buffer.Length;
                 var remaining = PostgresLimits.MessageBudget(seen) - timeProvider.GetElapsedTime(first);
+                if (ceiling is { } limit && limit - timeProvider.GetElapsedTime(called) is var left && left < remaining)
+                {
+                    remaining = left;
+                }
+
                 deadline.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
             }
 

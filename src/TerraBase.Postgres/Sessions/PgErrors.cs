@@ -1,4 +1,5 @@
 using System.Globalization;
+using TerraBase.Postgres.Hosting;
 using TerraBase.Postgres.Protocol;
 using TerraScale.Contracts.Cluster;
 
@@ -12,9 +13,19 @@ internal static class PgErrors
 
     public static PgError TransactionExpired { get; } = new("57014", "the transaction expired: it was open for more than 5 seconds and was rolled back", Fatal: true);
 
+    public static PgError AdministratorShutdown { get; } = new("57P01", "terminating connection due to administrator command", Fatal: true);
+
+    public static PgError CredentialRevoked { get; } = new("28000", "the credential for this session was revoked", Fatal: true);
+
     public static PgError ReadOnlyCredential { get; } = new("42501", "permission denied: this credential can only read");
 
     public static PgError ReadOnlyTransaction { get; } = new("25006", "cannot execute a write in a read-only transaction");
+
+    public static PgError PortalMemory { get; } =
+        new("54000", $"portals exceed the session budget of {PostgresLimits.MaxPortalBytes.ToString(CultureInfo.InvariantCulture)} bytes", Hint: "close portals or fetch fewer rows");
+
+    public static PgError TooManyChannels { get; } =
+        new("54000", $"at most {PostgresLimits.MaxChannels.ToString(CultureInfo.InvariantCulture)} LISTEN channels per session");
 
     public static PgError From(SqlError error) => new(error.SqlState, error.Message, Detail: error.Code);
 

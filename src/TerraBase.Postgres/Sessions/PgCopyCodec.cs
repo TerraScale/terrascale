@@ -301,9 +301,14 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
             }
 
             var extension = BinaryPrimitives.ReadInt32BigEndian(pending[(Signature.Length + 4)..]);
-            if (extension < 0 || pending.Length < Signature.Length + 8 + extension)
+            if (extension < 0 || extension > PostgresLimits.MaxCopyRecordBytes)
             {
-                return extension < 0 ? -1 : 0;
+                return -1;
+            }
+
+            if (pending.Length - Signature.Length - 8 < extension)
+            {
+                return 0;
             }
 
             _headerConsumed = true;
@@ -322,6 +327,11 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
             return 2;
         }
 
+        if (count < 0)
+        {
+            return -1;
+        }
+
         consumed = 2;
         var values = new SqlValue[count];
         for (var index = 0; index < count; index++)
@@ -333,13 +343,18 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
 
             var length = BinaryPrimitives.ReadInt32BigEndian(pending[consumed..]);
             consumed += 4;
-            if (length < 0)
+            if (length < -1)
+            {
+                return -1;
+            }
+
+            if (length == -1)
             {
                 values[index] = SqlValue.Null;
                 continue;
             }
 
-            if (pending.Length < consumed + length)
+            if (pending.Length - consumed < length)
             {
                 return 0;
             }
@@ -485,7 +500,7 @@ internal static class PgCopyWriter
                 if (!PgValueCodec.TryWrite(buffer, row[index], oid, binary: true))
                 {
                     buffer.Truncate(start);
-                    return new PgError("22P02", $"value of column {index + 1} cannot be encoded as {PgOid.FormatName(oid)}");
+                    return new PgError(PgValueCodec.EncodeFailureState(row[index], oid), $"value of column {index + 1} cannot be encoded as {PgOid.FormatName(oid)}");
                 }
             }
 

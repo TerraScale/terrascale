@@ -156,7 +156,7 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
             {
                 _buffer.Truncate(start);
                 var name = index < columns.Count ? columns[index].Name : (index + 1).ToString(CultureInfo.InvariantCulture);
-                return new PgError(oid is PgOid.Int2 or PgOid.Int4 ? "22003" : "22P02", $"value of column \"{name}\" cannot be represented as {PgOid.FormatName(oid)}");
+                return new PgError(PgValueCodec.EncodeFailureState(row[index], oid), $"value of column \"{name}\" cannot be represented as {PgOid.FormatName(oid)}");
             }
         }
 

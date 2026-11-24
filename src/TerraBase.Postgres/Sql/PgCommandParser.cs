@@ -7,11 +7,13 @@ namespace TerraBase.Postgres.Sql;
 internal static class PgCommandParser
 {
     public static PgParseResult Parse(string sql, PgRewriteContext context) =>
-        PgLexer.Tokenize(sql) switch
-        {
-            PgToken[] tokens => ParseTokens(sql, tokens, context),
-            PgError error => error,
-        };
+        sql.Contains('\0', StringComparison.Ordinal)
+            ? PgRewrite.NulCharacter
+            : PgLexer.Tokenize(sql) switch
+            {
+                PgToken[] tokens => ParseTokens(sql, tokens, context),
+                PgError error => error,
+            };
 
     public static PgQueryParseResult ParseQuery(string sql, PgRewriteContext context) =>
         Parse(sql, context) switch
@@ -862,6 +864,11 @@ internal static class PgCommandParser
                 {
                     var keyword = tokens.Text(index).ToUpperInvariant();
                     index += tokens.IsWord(index + 1, "AS") ? 2 : 1;
+                    if (index >= tokens.Count)
+                    {
+                        return null;
+                    }
+
                     var value = OptionValue(tokens, index);
                     switch (keyword)
                     {
@@ -877,6 +884,8 @@ internal static class PgCommandParser
                         case "ESCAPE" when value.Length == 1:
                             escape = value[0];
                             break;
+                        default:
+                            return null;
                     }
                 }
                 else if (tokens.IsWord(index, "FORCE"))

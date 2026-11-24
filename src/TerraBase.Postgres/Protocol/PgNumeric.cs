@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
@@ -9,6 +10,12 @@ internal static class PgNumeric
     private const ushort Positive = 0x0000;
     private const ushort Negative = 0x4000;
     private const ushort NotANumber = 0xC000;
+    private const int MaxIntegerDigits = 1000;
+    private const int MaxScale = 1000;
+    private const int MaxWeight = ((MaxIntegerDigits + 3) / 4) - 1;
+    private const int MinWeight = -((MaxScale + 3) / 4);
+    private const int MaxGroups = MaxWeight - MinWeight + 1;
+    private const int StackGroups = 256;
 
     public static bool IsDecimalText(ReadOnlySpan<char> text)
     {
@@ -40,6 +47,15 @@ internal static class PgNumeric
         return digits > 0;
     }
 
+    public static bool Fits(ReadOnlySpan<char> text)
+    {
+        var body = !text.IsEmpty && text[0] is '-' or '+' ? text[1..] : text;
+        var dot = body.IndexOf('.');
+        var integerDigits = (dot < 0 ? body : body[..dot]).TrimStart('0').Length;
+        var scale = dot < 0 ? 0 : body.Length - dot - 1;
+        return integerDigits <= MaxIntegerDigits && scale <= MaxScale;
+    }
+
     public static bool TryDecode(ReadOnlySpan<byte> value, out string text)
     {
         text = string.Empty;
@@ -52,9 +68,23 @@ internal static class PgNumeric
         var weight = BinaryPrimitives.ReadInt16BigEndian(value[2..]);
         var sign = BinaryPrimitives.ReadUInt16BigEndian(value[4..]);
         var scale = BinaryPrimitives.ReadInt16BigEndian(value[6..]);
-        if (count < 0 || scale < 0 || value.Length != 8 + (2 * count) || sign is not (Positive or Negative))
+        if (sign == NotANumber)
         {
-            return sign == NotANumber && TrySet(out text, "NaN");
+            return count == 0 && value.Length == 8 && TrySet(out text, "NaN");
+        }
+
+        if (sign is not (Positive or Negative) || count is < 0 or > MaxGroups || scale is < 0 or > MaxScale
+            || weight is < MinWeight or > MaxWeight || weight - count + 1 < MinWeight || value.Length != 8 + (2 * count))
+        {
+            return false;
+        }
+
+        for (var group = 0; group < count; group++)
+        {
+            if (BinaryPrimitives.ReadInt16BigEndian(value[(8 + (2 * group))..]) is < 0 or > 9999)
+            {
+                return false;
+            }
         }
 
         var integer = new StringBuilder();
@@ -97,20 +127,37 @@ internal static class PgNumeric
 
     public static bool TryEncode(ReadOnlySpan<char> text, PgMessageBuffer output)
     {
-        if (!IsDecimalText(text))
+        if (!IsDecimalText(text) || !Fits(text))
         {
             return false;
         }
 
-        var negative = text[0] == '-';
         var body = text[0] is '-' or '+' ? text[1..] : text;
         var dot = body.IndexOf('.');
         var integerPart = (dot < 0 ? body : body[..dot]).TrimStart('0');
         var fractionPart = dot < 0 ? [] : body[(dot + 1)..];
-        var scale = fractionPart.Length;
+        var length = ((integerPart.Length + 3) / 4) + ((fractionPart.Length + 3) / 4);
+        short[]? rented = null;
+        Span<short> groups = length <= StackGroups ? stackalloc short[StackGroups] : rented = ArrayPool<short>.Shared.Rent(length);
+        try
+        {
+            Encode(text[0] == '-', integerPart, fractionPart, groups[..length], output);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<short>.Shared.Return(rented);
+            }
+        }
+
+        return true;
+    }
+
+    private static void Encode(bool negative, ReadOnlySpan<char> integerPart, ReadOnlySpan<char> fractionPart, Span<short> groups, PgMessageBuffer output)
+    {
         var integerGroups = (integerPart.Length + 3) / 4;
         var fractionGroups = (fractionPart.Length + 3) / 4;
-        Span<short> groups = stackalloc short[integerGroups + fractionGroups];
         for (var group = 0; group < integerGroups; group++)
         {
             var end = integerPart.Length - ((integerGroups - 1 - group) * 4);
@@ -143,13 +190,11 @@ internal static class PgNumeric
         output.WriteInt16((short)count);
         output.WriteInt16((short)weight);
         output.WriteInt16(unchecked((short)(negative && count > 0 ? Negative : Positive)));
-        output.WriteInt16((short)scale);
+        output.WriteInt16((short)fractionPart.Length);
         for (var group = first; group <= last; group++)
         {
             output.WriteInt16(groups[group]);
         }
-
-        return true;
     }
 
     private static bool TrySet(out string target, string value)

@@ -35,7 +35,7 @@ internal sealed partial class PostgresConnection
         {
             if (_shuttingDown)
             {
-                return new PgError("57P01", "terminating connection due to administrator command", Fatal: true);
+                return PgErrors.AdministratorShutdown;
             }
 
             return scope.TimedOut ? PgErrors.StatementTimeout : PgErrors.QueryCanceled;
@@ -105,7 +105,7 @@ internal sealed partial class PostgresConnection
                 return PgErrors.ReadOnlyTransaction;
             }
 
-            var ensured = await EnsureTransactionAsync(block, cancellationToken);
+            var ensured = await EnsureTransactionAsync(block, access, cancellationToken);
             return ensured switch
             {
                 ISqlTransaction active => await ExecuteInTransactionAsync(active, statement, cancellationToken),

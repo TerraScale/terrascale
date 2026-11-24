@@ -174,14 +174,23 @@ internal sealed partial class PostgresConnection
             return new PgError("08P01", "bind message has an invalid number of parameter formats");
         }
 
+        var budget = PostgresLimits.MaxPortalBytes - session.PortalBytes(except: message.Portal);
+        long bytes = 0;
         var values = new SqlValue[message.Parameters.Length];
         for (var index = 0; index < values.Length; index++)
         {
             var format = message.ParameterFormats.Length == 0 ? (short)0 : message.ParameterFormats[Math.Min(index, message.ParameterFormats.Length - 1)];
-            if (!PgValueCodec.TryDecode(statement.ParameterOids[index], format, message.Parameters[index], out values[index]))
+            var oid = statement.ParameterOids[index];
+            if (!PgValueCodec.TryDecode(oid, format, message.Parameters[index], out values[index]))
             {
-                return new PgError("22P02",
-                    $"invalid input for parameter ${(index + 1).ToString(CultureInfo.InvariantCulture)} of type {PgOid.FormatName(statement.ParameterOids[index])}");
+                return new PgError(PgValueCodec.DecodeFailureState(oid, format),
+                    $"invalid input for parameter ${(index + 1).ToString(CultureInfo.InvariantCulture)} of type {PgOid.FormatName(oid)}");
+            }
+
+            bytes += PgValueCodec.Footprint(values[index]);
+            if (bytes > budget)
+            {
+                return PgErrors.PortalMemory;
             }
         }
 
@@ -195,7 +204,7 @@ internal sealed partial class PostgresConnection
             return new PgError("54000", $"at most {PostgresLimits.MaxPortals.ToString(CultureInfo.InvariantCulture)} portals per session");
         }
 
-        session.Portals[message.Portal] = new PgPortal(statement, values, message.ResultFormats) { Columns = statement.Described ? statement.Columns : null };
+        session.Portals[message.Portal] = new PgPortal(statement, values, bytes, message.ResultFormats) { Columns = statement.Described ? statement.Columns : null };
         Writer.Empty('2');
         return null;
     }
@@ -253,6 +262,11 @@ internal sealed partial class PostgresConnection
 
                 portal.Result = executed.Result;
                 portal.Columns = executed.Result?.Columns;
+                if (session.PortalBytes() > PostgresLimits.MaxPortalBytes)
+                {
+                    session.Portals.Remove(message.Name);
+                    return PgErrors.PortalMemory;
+                }
             }
             else
             {
@@ -342,6 +356,12 @@ internal sealed partial class PostgresConnection
         portal.Position = end;
         if (end < current.Rows.Count)
         {
+            if (session.PortalBytes() > PostgresLimits.MaxPortalBytes)
+            {
+                session.Portals.Remove(message.Portal);
+                return PgErrors.PortalMemory;
+            }
+
             Writer.Empty('s');
             return null;
         }

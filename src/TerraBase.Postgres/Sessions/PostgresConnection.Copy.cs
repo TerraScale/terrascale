@@ -35,13 +35,10 @@ internal sealed partial class PostgresConnection
         }
 
         var ownBlock = session.Transaction is null;
-        if (ownBlock)
-        {
-            session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
-        }
+        var block = session.Transaction ??= new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
 
         using var reader = new PgCopyReader(command.Options, [.. columns.Select(static column => column.Oid)]);
-        var (rows, failure) = await ReceiveAsync(reader, insert, cancellationToken);
+        var (rows, failure) = await ReceiveAsync(reader, insert, block.Started, cancellationToken);
         if (ownBlock)
         {
             failure = failure is null
@@ -88,12 +85,28 @@ internal sealed partial class PostgresConnection
         return (selected, null);
     }
 
-    private async ValueTask<(long Rows, PgError? Error)> ReceiveAsync(PgCopyReader reader, string insert, CancellationToken cancellationToken)
+    private async ValueTask<(long Rows, PgError? Error)> ReceiveAsync(PgCopyReader reader, string insert, long started, CancellationToken cancellationToken)
     {
         long rows = 0;
         while (true)
         {
-            var read = await Reader.ReadMessageAsync(PostgresLimits.IdleInTransactionTimeout, closed);
+            if (_shuttingDown)
+            {
+                return (rows, PgErrors.AdministratorShutdown);
+            }
+
+            if (_revoked)
+            {
+                return (rows, PgErrors.CredentialRevoked);
+            }
+
+            var remaining = PostgresLimits.MaxTransaction - session.Time.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero)
+            {
+                return (rows, PgErrors.TransactionExpired);
+            }
+
+            var read = await Reader.ReadMessageAsync(remaining, remaining, closed);
             var (records, done, error) = read switch
             {
                 PgFrontendMessage message => message switch
@@ -106,8 +119,7 @@ internal sealed partial class PostgresConnection
                         or PgFunctionCallMessage or PgPasswordMessage or PgUnknownMessage => (null, true, PgError.ProtocolViolation("unexpected message type during COPY from stdin")),
                 },
                 PgPeerClosed => (null, true, new PgError("08006", "connection lost during COPY", Fatal: true)),
-                PgIdleExpired => (null, true, new PgError("25P03", "terminating connection due to idle COPY", Fatal: true)),
-                PgIncompleteExpired => (null, true, new PgError("57P05", "incomplete message timeout exceeded", Fatal: true)),
+                PgIdleExpired or PgIncompleteExpired => (null, true, PgErrors.TransactionExpired),
                 PgReadInterrupted => (null, false, null),
                 PgError violation => (null, true, violation),
             };

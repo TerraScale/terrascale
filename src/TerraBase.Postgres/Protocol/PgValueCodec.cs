@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Unicode;
+using TerraBase.Postgres.Hosting;
 
 namespace TerraBase.Postgres.Protocol;
 
@@ -174,6 +175,30 @@ internal static class PgValueCodec
                 value = SqlValue.FromText(text);
                 return true;
         }
+    }
+
+    public static string EncodeFailureState(SqlValue value, int oid) =>
+        oid is PgOid.Int2 or PgOid.Int4 || (oid == PgOid.Numeric && NumericText(value) is { } numeric && !PgNumeric.Fits(numeric)) ? "22003" : "22P02";
+
+    public static string DecodeFailureState(int oid, short format) => format == BinaryFormatCode && oid == PgOid.Numeric ? "22P03" : "22P02";
+
+    public static long Footprint(SqlValue value) =>
+        value.TryGetText(out var text) ? (long)text.Length * sizeof(char)
+        : value.TryGetBlob(out var blob) ? blob.Length
+        : sizeof(long);
+
+    public static long Footprint(IReadOnlyList<IReadOnlyList<SqlValue>> rows)
+    {
+        long total = 0;
+        foreach (var row in rows)
+        {
+            foreach (var value in row)
+            {
+                total += Footprint(value);
+            }
+        }
+
+        return total;
     }
 
     public static bool TryParseBool(ReadOnlySpan<char> text, out bool value)
@@ -424,6 +449,11 @@ internal static class PgValueCodec
                 }
 
                 WriteJson(json, item);
+                if (json.BytesCommitted + json.BytesPending > PostgresLimits.MaxPortalBytes)
+                {
+                    return false;
+                }
+
                 span = span[length..];
             }
 

@@ -44,13 +44,13 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         {
             if (_shuttingDown)
             {
-                await FatalAsync(new PgError("57P01", "terminating connection due to administrator command", Fatal: true));
+                await FatalAsync(PgErrors.AdministratorShutdown);
                 return;
             }
 
             if (_revoked)
             {
-                await FatalAsync(new PgError("28000", "the credential for this session was revoked", Fatal: true));
+                await FatalAsync(PgErrors.CredentialRevoked);
                 return;
             }
 
@@ -61,7 +61,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
 
             var open = session.Transaction is { Failed: false } block ? block : null;
             var timeout = open is null ? PostgresLimits.SessionIdleTimeout : PostgresLimits.MaxTransaction - session.Time.GetElapsedTime(open.Started);
-            var read = await Reader.ReadMessageAsync(timeout, closed);
+            var read = await Reader.ReadMessageAsync(timeout, open is null ? null : timeout, closed);
             var proceed = read switch
             {
                 PgFrontendMessage when open is not null && session.Time.GetElapsedTime(open.Started, Reader.LastMessageStarted) > PostgresLimits.MaxTransaction =>
@@ -71,7 +71,9 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
                 PgIdleExpired => await FatalAsync(open is null
                     ? new PgError("57P05", "terminating connection due to idle-session timeout", Fatal: true)
                     : PgErrors.TransactionExpired),
-                PgIncompleteExpired => await FatalAsync(new PgError("57P05", "incomplete message timeout exceeded", Fatal: true)),
+                PgIncompleteExpired => await FatalAsync(open is null
+                    ? new PgError("57P05", "incomplete message timeout exceeded", Fatal: true)
+                    : PgErrors.TransactionExpired),
                 PgReadInterrupted => true,
                 PgError error => await FatalAsync(error),
             };
@@ -217,6 +219,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
     private async ValueTask<bool> SyncAsync()
     {
         session.SkipUntilSync = false;
+        session.Portals.Remove(string.Empty);
         return await ReadyAsync();
     }
 

@@ -21,14 +21,22 @@ internal sealed partial class PostgresConnection
         return PgResult.Command("BEGIN");
     }
 
-    private async ValueTask<PgTransactionResult> EnsureTransactionAsync(PostgresTransactionBlock block, CancellationToken cancellationToken)
+    private async ValueTask<PgTransactionResult> EnsureTransactionAsync(PostgresTransactionBlock block, SqlAccess access, CancellationToken cancellationToken)
     {
+        var lane = Lane(block, access);
         if (block.Active is { } active)
         {
-            return Existing(active);
+            if (lane == SqlAccess.Read || active.Options.Access == SqlAccess.Write)
+            {
+                return Existing(active);
+            }
+
+            block.Active = null;
+            await active.RollbackAsync(CancellationToken.None);
+            await active.DisposeAsync();
         }
 
-        var options = new SqlTransactionOptions(block.Mode, block.Access, session.Bookmark);
+        var options = new SqlTransactionOptions(block.Mode, lane, session.Bookmark);
         var begun = await session.Executor.BeginTransactionAsync(options, cancellationToken);
         return begun switch
         {
@@ -37,6 +45,9 @@ internal sealed partial class PostgresConnection
             ClusterTimeout timeout => PgErrors.From(timeout),
         };
     }
+
+    private static SqlAccess Lane(PostgresTransactionBlock block, SqlAccess access) =>
+        block.Access == SqlAccess.Read || (!block.Implicit && block.Mode == ConsistencyMode.Fast && access == SqlAccess.Read) ? SqlAccess.Read : SqlAccess.Write;
 
     private static PgTransactionResult Existing(ISqlTransaction transaction) => new(transaction);
 
