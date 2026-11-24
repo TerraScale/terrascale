@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           global-json-file: global.json
-      - uses: actions/setup-go@924b54b5c33e4db22c992f9c07a6ace671a59a21 # v6.5.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: sdk/go/go.mod
           cache: false

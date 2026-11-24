@@ -20,7 +20,13 @@ jobs:
       head_sha: ${{ inputs.head_sha || github.sha }}
       deny_paths: |
         .github/**
+        .github/docker/**
+        Directory.*
+        NuGet.config
         e2e/**
+        global.json
+        native/native-pin.env
+        sdk/go/scripts/install.sh
         src/TerraScale.Aspire/**
         src/TerraScale.Contracts/**
         src/TerraBase/**
