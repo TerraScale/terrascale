@@ -96,9 +96,9 @@ The upgrade goes through the caller's `HttpClient` and its handlers with
 the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT), and is
 never resent. A lost committing reply throws `write_outcome_unknown` (08007), and every later call throws the
 same error. If no committing request was sent, a lost open transaction throws `transaction_rolled_back` until
-`RollbackAsync` clears it; only then can the next call reconnect. Cancelling a sent request throws
-`OperationCanceledException` and closes the connection; the next call reconnects unless the canceled request could
-commit, which leaves `write_outcome_unknown` as the inner exception and on every later call.
+`RollbackAsync` clears it; only then can the next call reconnect. Cancelling a sent request closes the connection:
+a request that could commit throws `write_outcome_unknown` and every later call throws it too; any other request throws
+`OperationCanceledException` and the next call reconnects. A dropped connection throws `WebSocketException`.
 
 ### Consistency and bookmarks
 

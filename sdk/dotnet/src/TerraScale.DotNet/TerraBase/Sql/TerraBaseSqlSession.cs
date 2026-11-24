@@ -189,7 +189,12 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
 
     private void Expire(Link current)
     {
-        Drop(current, new TimeoutException($"TerraBase did not answer a SQL frame within {FrameDeadline.TotalSeconds:0} seconds."));
+        lock (stateGate)
+        {
+            if (!current.Overdue()) return;
+            Drop(current, new TimeoutException($"TerraBase did not answer a SQL frame within {FrameDeadline.TotalSeconds:0} seconds."));
+        }
+
         current.Socket.Abort();
     }
 
@@ -276,8 +281,8 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
             var canceled = error is OperationCanceledException && cancellationToken.IsCancellationRequested;
             Drop(current, canceled ? new WebSocketException(WebSocketError.ConnectionClosedPrematurely, "A canceled SQL request closed the session's connection.", error) : error);
             current.Socket.Abort();
-            if (!canceled) throw uncertain ?? Closed(error);
-            if (uncertain is { } unknown) throw new OperationCanceledException(unknown.Message, unknown, cancellationToken);
+            if (uncertain is { } unknown) throw unknown;
+            if (!canceled) throw Closed(error);
             throw;
         }
         finally
@@ -336,7 +341,9 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }
         catch (Exception error)
         {
-            Drop(current, error);
+            Drop(current, closing.IsCancellationRequested || error is TerraBaseException or WebSocketException
+                ? error
+                : new WebSocketException(WebSocketError.ConnectionClosedPrematurely, "The SQL session's connection closed.", error));
             socket.Abort();
         }
     }
@@ -372,10 +379,10 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         public bool Committing;
     }
 
-    private static Exception Closed(Exception cause) => cause switch
+    private Exception Closed(Exception cause) => cause switch
     {
-        TerraBaseException or TimeoutException or ObjectDisposedException => cause,
-        OperationCanceledException => new ObjectDisposedException(nameof(TerraBaseSqlSession)),
+        TerraBaseException or TimeoutException => cause,
+        OperationCanceledException or ObjectDisposedException when disposed => new ObjectDisposedException(nameof(TerraBaseSqlSession)),
         _ => new WebSocketException(WebSocketError.ConnectionClosedPrematurely, cause.Message, cause),
     };
 
@@ -385,15 +392,26 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         public readonly ConcurrentDictionary<long, Pending> Pending = new();
         public Task Receiving = Task.CompletedTask;
         public Exception? Failure;
+        private readonly TimeProvider time;
         private readonly ITimer watchdog;
+        private long due = long.MaxValue;
 
         public Link(WebSocket socket, TimeProvider time, Action<Link> expire)
         {
             Socket = socket;
+            this.time = time;
             watchdog = time.CreateTimer(_ => expire(this), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
 
-        public void Arm(TimeSpan deadline) => watchdog.Change(deadline, Timeout.InfiniteTimeSpan);
+        public void Arm(TimeSpan deadline)
+        {
+            Volatile.Write(ref due, deadline == Timeout.InfiniteTimeSpan
+                ? long.MaxValue
+                : time.GetTimestamp() + (long)(deadline.TotalSeconds * time.TimestampFrequency));
+            watchdog.Change(deadline, Timeout.InfiniteTimeSpan);
+        }
+
+        public bool Overdue() => time.GetTimestamp() >= Volatile.Read(ref due);
 
         public void Dispose()
         {

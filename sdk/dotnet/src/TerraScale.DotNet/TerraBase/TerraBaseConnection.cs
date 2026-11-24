@@ -378,17 +378,15 @@ internal sealed class TerraBaseConnection
                 if (regionPin is not null) socket.Options.SetRequestHeader(TerraBaseRegion.PinHeader, regionPin);
                 foreach (var (name, value) in requestHeaders ?? FrozenDictionary<string, string>.Empty) socket.Options.SetRequestHeader(name, value);
                 var target = new UriBuilder(new Uri(origin, path)) { Scheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
+                var upgrade = new SentFromOrigin(http, target);
                 try
                 {
-                    using var invoker = new HttpMessageInvoker(new SentFromOrigin(http, target));
+                    using var invoker = new HttpMessageInvoker(upgrade);
                     await socket.ConnectAsync(target, invoker, deadline.Token).ConfigureAwait(false);
                 }
-                catch (WebSocketException upgrade) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
+                catch (WebSocketException) when (upgrade.Refusal is not null)
                 {
-                    using var refused = new HttpResponseMessage(socket.HttpStatusCode) { Content = new ByteArrayContent([]) };
-                    foreach (var (name, values) in socket.HttpResponseHeaders ?? new Dictionary<string, IEnumerable<string>>())
-                        refused.Headers.TryAddWithoutValidation(name, values);
-                    var refusal = await TerraBaseException.FromResponseAsync(refused, upgrade, deadline.Token).ConfigureAwait(false);
+                    var refusal = upgrade.Refusal;
                     socket.Dispose();
                     if (!reauthorized && Reject(bearer, refusal))
                     {
@@ -513,8 +511,15 @@ internal sealed class TerraBaseConnection
 
     private sealed class SentFromOrigin(HttpClient http, Uri origin) : HttpMessageHandler
     {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), origin);
+        public TerraBaseException? Refusal { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), origin);
+            if (response.StatusCode != HttpStatusCode.SwitchingProtocols && !response.IsSuccessStatusCode)
+                Refusal = await TerraBaseException.FromResponseAsync(response, null, cancellationToken).ConfigureAwait(false);
+            return response;
+        }
     }
 
     private static void ValidateSecret(string? secret, string secretName)
