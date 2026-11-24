@@ -17,10 +17,10 @@ public sealed class RequestAdmission(RequestDelegate next, PlatformAccess access
             return ErrorResults.From(MissingCredential).ExecuteAsync(context);
         }
 
-        return limit is null ? next(context) : AdmitFunctionBodyAsync(context, limit);
+        return limit is null ? next(context) : AdmitFunctionBodyAsync(context, limit, context.RequestAborted);
     }
 
-    private async Task AdmitFunctionBodyAsync(HttpContext context, FunctionBodyLimit limit)
+    private async Task AdmitFunctionBodyAsync(HttpContext context, FunctionBodyLimit limit, CancellationToken cancellationToken)
     {
         var values = context.Request.RouteValues;
         var outcome = await FunctionTargets.ResolveAsync(
@@ -30,7 +30,7 @@ public sealed class RequestAdmission(RequestDelegate next, PlatformAccess access
             RouteValue(values, "database"),
             RouteValue(values, "function"),
             limit.Scopes,
-            context.RequestAborted);
+            cancellationToken);
         await (outcome switch
         {
             FunctionTarget => AdmitAsync(context, limit),
