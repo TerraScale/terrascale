@@ -423,7 +423,7 @@ impl SqlSession {
                 });
             };
             let mut sink = link.sink.lock().await;
-            let (waiter, mut answer) = oneshot::channel();
+            let (waiter, answer) = oneshot::channel();
             {
                 let state = lock(&self.shared.state);
                 if state.uncertain {
