@@ -32,7 +32,7 @@ internal static class OrganizationUsage
         var second = await ProjectAsync(http, organizationId, "usage-org-second", cancellationToken);
         var path = $"/v1/usage/organizations/{first.Organization}?month={Month}";
 
-        var empty = await ReadAsync(peer, path, cancellationToken);
+        var empty = await SettledAsync(peer, path, cancellationToken);
         UsageJourney.Require(empty.Projects.Count == 2 && empty.Totals.All(static metric => metric.Value == 0),
             "a new organization lists its projects with zero usage: " + empty);
 
@@ -42,10 +42,10 @@ internal static class OrganizationUsage
         await SqlAsync(http, second, "CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", cancellationToken);
         await SqlAsync(http, second, "INSERT INTO tags (name) VALUES ('x')", cancellationToken);
 
-        var metered = await ReadAsync(peer, path, cancellationToken);
+        var metered = await SettledAsync(peer, path, cancellationToken);
         var firstUsage = await UsageJourney.UsageAsync(http, first.ProjectUsage + "?month=" + Month, cancellationToken);
         var secondUsage = await UsageJourney.UsageAsync(http, second.ProjectUsage + "?month=" + Month, cancellationToken);
-        UsageJourney.Require(metered.Complete && metered.Gaps == 0 && metered.Month == Month && metered.AsOf == UsageJourneyClock.Boundary,
+        UsageJourney.Require(metered.Complete && metered.Gaps.Count == 0 && metered.Month == Month && metered.AsOf == UsageJourneyClock.Boundary,
             "a single healthy node answers complete usage as of the read: " + metered);
         UsageJourney.Require(metered.Project(first.Project)[UsageMetrics.Requests] == 3 && metered.Project(first.Project)[UsageMetrics.Writes] == 2
             && metered.Project(first.Project)[UsageMetrics.Reads] == 1 && metered.Project(first.Project)[UsageMetrics.RowsWritten] == 2
@@ -62,7 +62,7 @@ internal static class OrganizationUsage
             throw new InvalidOperationException("the owning node samples stored databases for the hour that ended");
         }
 
-        var stored = await ReadAsync(peer, path, cancellationToken);
+        var stored = await SettledAsync(peer, path, cancellationToken);
         var firstDatabase = await UsageJourney.UsageAsync(http, first.DatabaseUsage + "?month=" + Month, cancellationToken);
         var secondDatabaseUsage = await UsageJourney.UsageAsync(http, second.DatabaseUsage + "?month=" + Month, cancellationToken);
         var firstBytes = stored.Project(first.Project)[UsageMetrics.StorageByteHours];
@@ -72,9 +72,24 @@ internal static class OrganizationUsage
             "one hour of storage is counted once per database and adds up per project and organization: " + stored);
         UsageJourney.Require(sample.ByteHours >= firstBytes + secondBytes, "the node sample covers the organization's databases: " + sample);
 
+        var repeatOutcome = await sampler.SampleAsync(UsageJourneyClock.Boundary.AddHours(1), cancellationToken);
+        if (repeatOutcome switch { StorageSample taken => taken, BackendUnavailable => null } is not { Month: Month, Databases: 0, ByteHours: 0 })
+        {
+            throw new InvalidOperationException("sampling the same UTC hour again records nothing");
+        }
+
+        var repeated = await SettledAsync(peer, path, cancellationToken);
+        UsageJourney.Require(repeated.Project(first.Project)[UsageMetrics.StorageByteHours] == firstBytes && repeated.Project(second.Project)[UsageMetrics.StorageByteHours] == secondBytes
+            && repeated.Totals[UsageMetrics.StorageByteHours] == firstBytes + secondBytes && repeated.Complete,
+            "a second sample of the same UTC hour adds no storage: " + repeated);
+
+        var unsampled = await ReadAsync(peer, $"/v1/usage/organizations/{first.Organization}?month=2028-02", cancellationToken);
+        UsageJourney.Require(!unsampled.Complete && unsampled.Gaps.SequenceEqual([UsageReports.StorageIncomplete]),
+            "a month whose hours were never sampled is not complete: " + unsampled);
+
         var current = await ReadAsync(peer, $"/v1/usage/organizations/{first.Organization}", cancellationToken);
         UsageJourney.Require(current.Month == Month, "an omitted month reads the current UTC month: " + current.Month);
-        var unknown = await ReadAsync(peer, $"/v1/usage/organizations/{Ulid.NewUlid()}?month={Month}", cancellationToken);
+        var unknown = await SettledAsync(peer, $"/v1/usage/organizations/{Ulid.NewUlid()}?month={Month}", cancellationToken);
         UsageJourney.Require(unknown.Complete && unknown.Projects.Count == 0, "an organization without projects has no usage: " + unknown);
 
         var refusals = new List<string>();
@@ -95,7 +110,7 @@ internal static class OrganizationUsage
         refusals.Add(await RefusedAsync(keyed, path, HttpStatusCode.Forbidden, "forbidden_caller", cancellationToken));
 
         return string.Create(CultureInfo.InvariantCulture,
-            $"projects=2 requests={metered.Totals[UsageMetrics.Requests]} writes={metered.Totals[UsageMetrics.Writes]} reads={metered.Totals[UsageMetrics.Reads]} complete={metered.Complete} storage counted once refusals={string.Join(',', refusals)}");
+            $"projects=2 requests={metered.Totals[UsageMetrics.Requests]} writes={metered.Totals[UsageMetrics.Writes]} reads={metered.Totals[UsageMetrics.Reads]} complete={metered.Complete} storage counted once per hour, unsampled month incomplete, refusals={string.Join(',', refusals)}");
     }
 
     private static async Task<UsageTenant> ProjectAsync(HttpClient http, string organization, string name, CancellationToken cancellationToken)
@@ -123,6 +138,18 @@ internal static class OrganizationUsage
         UsageJourney.Require(status == HttpStatusCode.OK, $"{sql}: {status}");
     }
 
+    private static async Task<OrganizationReading> SettledAsync(HttpClient http, string path, CancellationToken cancellationToken)
+    {
+        var reading = await ReadAsync(http, path, cancellationToken);
+        for (var attempt = 0; attempt < 60 && reading.Gaps.Contains(UsageReports.FlushPending); attempt++)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
+            reading = await ReadAsync(http, path, cancellationToken);
+        }
+
+        return reading;
+    }
+
     private static async Task<OrganizationReading> ReadAsync(HttpClient http, string path, CancellationToken cancellationToken)
     {
         using var body = await UsageJourney.GetAsync(http, path, cancellationToken);
@@ -131,7 +158,7 @@ internal static class OrganizationUsage
             .ToDictionary(static project => Text(project.GetProperty("projectId")), Metrics, StringComparer.Ordinal);
         return new OrganizationReading(Text(root.GetProperty("month")), root.GetProperty("complete").GetBoolean(),
             DateTimeOffset.Parse(Text(root.GetProperty("asOf")), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-            root.GetProperty("gaps").GetArrayLength(), Metrics(root.GetProperty("totals")), projects);
+            [.. root.GetProperty("gaps").EnumerateArray().Select(Text)], Metrics(root.GetProperty("totals")), projects);
     }
 
     private static Dictionary<string, long> Metrics(JsonElement usage) => new(StringComparer.Ordinal)
@@ -169,10 +196,10 @@ internal static class OrganizationUsage
 }
 
 internal sealed record OrganizationReading(
-    string Month, bool Complete, DateTimeOffset AsOf, int Gaps, IReadOnlyDictionary<string, long> Totals, IReadOnlyDictionary<string, Dictionary<string, long>> Projects)
+    string Month, bool Complete, DateTimeOffset AsOf, IReadOnlyList<string> Gaps, IReadOnlyDictionary<string, long> Totals, IReadOnlyDictionary<string, Dictionary<string, long>> Projects)
 {
     public IReadOnlyDictionary<string, long> Project(string id) => Projects[id];
 
     public override string ToString() => string.Create(CultureInfo.InvariantCulture,
-        $"{Month} complete={Complete} gaps={Gaps} totals={{{string.Join(',', Totals.Select(static metric => $"{metric.Key}={metric.Value}"))}}} projects={Projects.Count}");
+        $"{Month} complete={Complete} gaps={string.Join('|', Gaps)} totals={{{string.Join(',', Totals.Select(static metric => $"{metric.Key}={metric.Value}"))}}} projects={Projects.Count}");
 }

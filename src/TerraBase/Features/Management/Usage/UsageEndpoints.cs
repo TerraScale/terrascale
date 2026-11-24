@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
@@ -69,11 +70,17 @@ public sealed record OrganizationUsageBody(
 [JsonSerializable(typeof(OrganizationUsageBody))]
 internal sealed partial class UsageJsonContext : JsonSerializerContext;
 
-internal sealed class UsageReports(UsageMeter usage, IClusterCoordinator coordinator, TimeProvider time)
+internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, StorageOwnership ownership, IClusterCoordinator coordinator, TimeProvider time)
 {
     public const string PeerUnhealthy = "peer_unhealthy";
 
     public const string ProjectLimit = "project_limit";
+
+    public const string FlushPending = "usage_flush_pending";
+
+    public const string StorageIncomplete = "storage_sample_incomplete";
+
+    private static readonly TimeSpan SampleGrace = TimeSpan.FromMinutes(15);
 
     public static CredentialRejected? Unauthenticated(Caller caller) => caller switch
     {
@@ -110,16 +117,41 @@ internal sealed class UsageReports(UsageMeter usage, IClusterCoordinator coordin
         var asOf = time.GetUtcNow();
         return Month(input.Month, asOf) switch
         {
-            string month => await usage.OrganizationAsync(organizationId, month, cancellationToken) switch
-            {
-                OrganizationCounters counters => Organization(organization, month, asOf, counters),
-                BackendUnavailable => new BackendUnavailable("usage is unavailable; retry", "usage_unavailable"),
-            },
+            string month => await OrganizationAsync(organization, organizationId, month, asOf, cancellationToken),
             InvalidInput invalid => invalid,
         };
     }
 
-    private OrganizationUsageBody Organization(string organization, string month, DateTimeOffset asOf, OrganizationCounters counters)
+    public static long ExpectedStorageHours(string month, DateTimeOffset asOf)
+    {
+        var start = DateTimeOffset.ParseExact(string.Concat(month, "-01"), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+        var end = start.AddMonths(1);
+        var horizon = asOf - SampleGrace < end ? asOf - SampleGrace : end;
+        return horizon > start ? (long)Math.Floor((horizon - start) / StorageSampler.Slot) : 0;
+    }
+
+    private async ValueTask<OrganizationUsageResponse> OrganizationAsync(string organization, Ulid organizationId, string month, DateTimeOffset asOf, CancellationToken cancellationToken)
+    {
+        var coverageOutcome = await ledger.CoverageAsync(month, cancellationToken);
+        var coverage = coverageOutcome switch
+        {
+            IReadOnlyDictionary<string, long> hours => hours,
+            BackendUnavailable => null,
+        };
+        if (coverage is null)
+        {
+            return new BackendUnavailable("usage is unavailable; retry", "usage_unavailable");
+        }
+
+        var countersOutcome = await usage.OrganizationAsync(organizationId, month, cancellationToken);
+        return countersOutcome switch
+        {
+            OrganizationCounters counters => Organization(organization, month, asOf, counters, coverage),
+            BackendUnavailable => new BackendUnavailable("usage is unavailable; retry", "usage_unavailable"),
+        };
+    }
+
+    private OrganizationUsageBody Organization(string organization, string month, DateTimeOffset asOf, OrganizationCounters counters, IReadOnlyDictionary<string, long> coverage)
     {
         List<ProjectUsageBody> projects = [.. counters.Projects.Select(static project => ProjectUsageBody.From(project.ProjectId.ToString(), UsageTotalsBody.From(project.Metrics)))];
         List<string> gaps = [];
@@ -133,13 +165,24 @@ internal sealed class UsageReports(UsageMeter usage, IClusterCoordinator coordin
             gaps.Add(ProjectLimit);
         }
 
+        if (!counters.Settled || usage.FlushFailing)
+        {
+            gaps.Add(FlushPending);
+        }
+
+        var expected = ExpectedStorageHours(month, asOf);
+        if (ownership.Nodes().Any(node => coverage.GetValueOrDefault(node) < expected))
+        {
+            gaps.Add(StorageIncomplete);
+        }
+
         return new OrganizationUsageBody(organization, month, gaps.Count == 0, asOf, gaps, UsageTotalsBody.Sum(projects.Select(static project => project.Totals())), projects);
     }
 
     public static UsageMonthParse Month(string? month, DateTimeOffset now) =>
         month is null ? UsageMeter.Month(now)
-        : month is { Length: 7 } && DateTimeOffset.TryParseExact(string.Concat(month, "-01"), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.AssumeUniversal, out _) ? month
+        : month is { Length: 7 } && DateTimeOffset.TryParseExact(string.Concat(month, "-01"), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal, out _) ? month
         : new InvalidInput("month is YYYY-MM", "invalid_month");
 
     public async ValueTask<UsageOutcome> UsageAsync(string scope, string? month, CancellationToken cancellationToken) =>
