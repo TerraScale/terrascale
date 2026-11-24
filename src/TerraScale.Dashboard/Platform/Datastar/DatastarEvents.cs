@@ -33,6 +33,12 @@ namespace TerraScale.Dashboard.Platform.Datastar
             await context.Response.WriteAsync(html, cancellationToken);
         }
 
+        public static async Task KeepAliveAsync(HttpContext context, CancellationToken cancellationToken)
+        {
+            await context.Response.WriteAsync(": keepalive\n\n", cancellationToken);
+            await context.Response.Body.FlushAsync(cancellationToken);
+        }
+
         public static async Task PatchSignalsAsync(HttpContext context, object signals)
         {
             if (!context.Response.HasStarted)

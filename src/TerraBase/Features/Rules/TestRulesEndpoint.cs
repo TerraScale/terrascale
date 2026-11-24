@@ -57,7 +57,7 @@ internal sealed class TestRulesEndpoint(RulesService rules, RulesStore store, Da
             {
                 ISqlDatabaseSession session => request.Rules is { } draft
                     ? await SimulateAsync(session, draft, draft: true, simulation, cancellationToken)
-                    : await store.CurrentAsync(resolved.Database.Id, cancellationToken) switch
+                    : await store.CurrentAsync(resolved.Database.Id, fresh: true, cancellationToken) switch
                     {
                         StoredRules current => await SimulateAsync(session, current.Rules, draft: false, simulation, cancellationToken),
                         ResourceNotFound => await SimulateAsync(session, new RulesSet(new Dictionary<string, RulesTable>()), draft: false, simulation, cancellationToken),

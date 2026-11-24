@@ -39,7 +39,7 @@ public sealed record DatabaseBody(
     {
         ArgumentNullException.ThrowIfNull(database);
         IReadOnlyList<string> regions = [.. database.Regions.Order(StringComparer.Ordinal)];
-        var home = regions.Contains(region, StringComparer.Ordinal) || regions.Count == 0 ? region : regions[0];
+        var home = database.Regions.Count > 0 ? database.Regions[0] : region;
         return new(database.Id.ToString(), database.ProjectId.ToString(), database.Name, database.BranchedFrom?.ToString(), database.CreatedAt, database.CreatedAt, region,
             home, [.. regions.Where(item => item != home)], regions, database.AllRegions, database.Version, ConsistencyHeaders.Format(database.DefaultConsistency),
             database.Strict, CatalogStore.State(database.State), database.PreviousName, database.ExpiresAt,

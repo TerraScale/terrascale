@@ -1,10 +1,12 @@
 using System.Diagnostics.Metrics;
+using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
+using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.RateLimiting;
@@ -106,7 +108,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             }
         }
 
-        throw ApiException.Unavailable();
+        throw ApiException.Unavailable(new TimeoutException("Rate-limit contention retries exhausted."));
     }
 
     public async Task<bool> ClaimLockoutNoticeAsync(string instanceId, string purpose, string userId, DateTimeOffset until, CancellationToken cancellationToken)
@@ -263,7 +265,9 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
 
     private static bool Transient(Exception? failure) => failure switch
     {
-        TimeoutException => true,
+        TerraBaseUnavailableException => true,
+        TerraBaseException { ErrorCode: TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable or "storage_busy" } => true,
+        TimeoutException or WebSocketException => true,
         HttpRequestException { StatusCode: null } => true,
         HttpRequestException { StatusCode: { } status } => (int)status >= 500 || status is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.MisdirectedRequest,
         ApiException { Status: StatusCodes.Status503ServiceUnavailable } inner => Transient(inner.InnerException),
@@ -332,7 +336,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             }
         }
 
-        throw ApiException.Unavailable();
+        throw ApiException.Unavailable(new TimeoutException("Rate-limit contention retries exhausted."));
     }
 
     internal readonly record struct Admission(string Key, long Window, AttemptRejection? Rejection);

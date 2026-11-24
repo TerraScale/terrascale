@@ -14,7 +14,7 @@ public static class LiveDatabaseView
         var sessions = http.RequestServices.GetRequiredService<DashboardSessions>();
         var accounts = http.RequestServices.GetRequiredService<AccountService>();
         var databases = http.RequestServices.GetRequiredService<DatabaseService>();
-        var live = new LiveView(http.RequestServices.GetRequiredService<TimeProvider>());
+        var live = new LiveView(http.RequestServices.GetRequiredService<TimeProvider>(), http.RequestServices.GetRequiredService<IHostApplicationLifetime>());
         async Task<LiveFragment> ReadAsync(CancellationToken cancellationToken)
         {
             try

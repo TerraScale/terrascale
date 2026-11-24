@@ -34,7 +34,7 @@ internal sealed class RegionDirectory(TerraBaseOptions options, ControlSnapshots
             return new InvalidInput(string.Concat("unknown region ", unknown, "; the regions are ", string.Join(", ", known.Order(StringComparer.Ordinal))), "unknown_region");
         }
 
-        return Checked([.. requested.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)]);
+        return Checked([.. requested.Distinct(StringComparer.Ordinal)]);
     }
 
     public RegionSelection CheckSet(IReadOnlyList<string>? requested)
