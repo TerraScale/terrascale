@@ -40,16 +40,20 @@ const heartbeatIntervalMs = 20_000;
 const statusByCode = new Map([
   [SqlErrorCode.invalidRequest, 400], [SqlErrorCode.invalidBookmark, 400], [SqlErrorCode.invalidConsistency, 400],
   ["syntax_error", 400], ["undefined_table", 400], ["undefined_column", 400], ["duplicate_object", 400],
-  ["sql_error", 400], ["transaction_state", 400], ["transaction_rolled_back", 400], ["query_canceled", 400],
+  ["sql_error", 400], ["transaction_state", 400], ["transaction_rolled_back", 400], [SqlErrorCode.transactionAborted, 400], ["query_canceled", 400],
   ["check_violation", 400], ["not_null_violation", 400], ["foreign_key_violation", 400], ["unique_violation", 400],
   ["primary_key_violation", 400], ["constraint_violation", 400],
   ["unauthorized", 401],
-  ["forbidden_scope", 403], ["sql_sandbox", 403], ["rule_denied", 403], ["column_not_readable", 403], ["rules_invalid", 403],
+  ["forbidden_scope", 403], ["sql_sandbox", 403], ["rule_denied", 403], ["column_not_readable", 403], ["column_not_writable", 403], ["rules_invalid", 403],
+  ["database_not_local", 404], ["database_not_found", 404], ["project_not_found", 404], ["not_found", 404],
   ["serialization_conflict", 409], ["row_conflict", 409],
   ["too_large", 413], ["quota_exceeded", 429], ["tenant_busy", 429],
   [SqlErrorCode.writeOutcomeUnknown, 503], [SqlErrorCode.commitUncertain, 503], [SqlErrorCode.inRegionQuorumUnconfirmed, 503],
   ["unavailable", 503], ["storage_busy", 503], ["storage_corrupted", 503], ["io_error", 503],
-  ["strong_quorum_unreachable", 503], ["system_catalog_timeout", 503],
+  ["strong_quorum_unreachable", 503], ["system_catalog_timeout", 503], ["system_catalog_busy", 503], ["system_catalog_error", 503],
+  ["raft_not_ready", 503], ["raft_quorum", 503], ["raft_leader_moving", 503], ["region_unreachable", 503],
+  ["participant_behind", 503], ["vote_canceled", 503], ["bootstrap_strong_required", 503],
+  ["master_key_missing", 503], ["database_key_mismatch", 503], ["database_key_invalid", 503],
   ["request_timeout", 504], ["internal_error", 500],
 ]);
 
