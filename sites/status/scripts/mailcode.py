@@ -1,9 +1,3 @@
-"""Reads the newest TerraScale verification code mailed to an address.
-
-recover-canaries.py uses it for the one-time owner password reset after a production reset.
-The shared mailbox password is read from ~/.config/terrascale/mailbox-password (0600) and never
-printed or passed as an argument.
-"""
 import email
 import email.header
 import email.utils
@@ -13,7 +7,6 @@ import re
 import ssl
 import time
 
-MAILBOX = 'mariogk@terrascale.tech'
 HOST = 'imap.purelymail.com'
 PASSWORD_FILE = os.path.expanduser('~/.config/terrascale/mailbox-password')
 SUBJECT = re.compile(r'^(\d{6}) is your TerraScale')
@@ -25,11 +18,13 @@ def code_from(subject):
 
 
 def latest_code(address, since, wait=180):
-    """Returns [code] for the newest code mail to address sent at or after since, or [] after wait seconds."""
+    mailbox = os.environ.get('TS_STATUS_MAILBOX', '').strip()
+    if not mailbox:
+        raise ValueError('TS_STATUS_MAILBOX must be set')
     with open(PASSWORD_FILE) as handle:
         password = handle.read().strip()
     box = imaplib.IMAP4_SSL(HOST, 993, ssl_context=ssl.create_default_context(), timeout=20)
-    box.login(MAILBOX, password)
+    box.login(mailbox, password)
     del password
     try:
         box.select('INBOX', readonly=True)

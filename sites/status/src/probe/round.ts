@@ -214,9 +214,12 @@ export async function checkNow(env: Env, endpoints: readonly RoundEndpoint[]): P
 const ENDPOINTS = `SELECT e.id, e.url, e.headers, e.expect_status AS expectStatus, e.blocked_status AS blockedStatus,
     e.keyword, e.assertions, e.extract, e.indirect, e.component_id AS componentId, e.kind, e.probe,
     e.region_code AS regionCode, e.live_since AS liveSince
-  FROM endpoints e JOIN components c ON c.id = e.component_id WHERE c.lifecycle = 'active'`;
+  FROM active_endpoints e JOIN components c ON c.id = e.component_id WHERE c.lifecycle = 'active'`;
 
-const COMPONENTS = "SELECT id, name FROM components WHERE lifecycle = 'active'";
+const COMPONENTS = `SELECT c.id, c.name,
+    EXISTS (SELECT 1 FROM endpoints e WHERE e.component_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM active_endpoints e WHERE e.component_id = c.id) AS retired
+  FROM components c WHERE c.lifecycle = 'active'`;
 
 // Maintenance in progress at ?1, with the components it covers (null: all).
 const MAINTENANCE = `SELECT ic.component_id AS componentId FROM incidents i
@@ -478,6 +481,7 @@ export async function runRound(env: Env, at: number, previous: RoundState): Prom
 
   // Incidents go in their own batch, so a failure there never loses samples.
   const open = (openResult?.results ?? []) as OpenAuto[];
+  const components = (componentsResult?.results ?? []) as { id: string; name: string; retired: number }[];
   const stepped = step(
     adopt(
       previous.trackers,
@@ -492,13 +496,14 @@ export async function runRound(env: Env, at: number, previous: RoundState): Prom
           ),
       ),
       evaluated.samples,
-      (componentsResult?.results ?? []) as { id: string; name: string }[],
+      components,
       ((maintenanceResult?.results ?? []) as { componentId: string | null }[]).map((row) => row.componentId),
     ),
     at,
     {
       newId,
       touched: new Set(open.filter((row) => row.touched === 1).map((row) => row.id)),
+      retired: new Set(components.filter((component) => component.retired === 1).map((component) => component.id)),
     },
   );
   if (stepped.actions.length > 0) await env.STATUS_DB.batch(actionStatements(env.STATUS_DB, stepped.actions, time));

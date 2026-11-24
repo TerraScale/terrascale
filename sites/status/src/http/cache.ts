@@ -1,7 +1,3 @@
-/* Edge cache keys. A key holds the path, the fragment flag and only the
-   query parameters a route declares, each checked against its allowed
-   values, so arbitrary query strings can never bypass the cache. */
-
 /** Allowed query parameters of a route and the check each value must pass. */
 export type QuerySpec = Readonly<Record<string, (value: string) => boolean>>;
 

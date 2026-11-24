@@ -13,7 +13,7 @@ import { isId } from "./ids";
 import { admin } from "./admin";
 import { regionLatencyPayload } from "./api/latency";
 import { deliverDue, runOutbox } from "./notify/outbox";
-import { subscriptions } from "./notify/subscribe";
+import { clientKey, subscriptions } from "./notify/subscribe";
 import { statuspage, type StatuspageName } from "./api/statuspage";
 import { incidentsPayload, latencyPayload, regionsPayload, statusPayload } from "./api/v1";
 import { loadDays, loadDetails, loadPeriods } from "./db/details";
@@ -440,6 +440,13 @@ export default {
 
     const fragment = url.searchParams.get("fragment") === "main";
     const query = readQuery(url, match.value.query);
+    const searchingHistory = url.pathname === "/history" && query.q !== undefined;
+    if (searchingHistory && !(await env.HISTORY_SEARCH_LIMITER.limit({ key: clientKey(request) })).success) {
+      return secure(
+        new Response("Too many history searches.", { status: 429, headers: { "retry-after": "60" } }),
+        false,
+      );
+    }
     return edgeCached(
       request,
       ctx,
@@ -457,8 +464,9 @@ export default {
           },
           request,
         ),
-      match.value.query,
-      env.ROUND_NOW === "1",
+      query,
+      fragment,
+      searchingHistory || env.ROUND_NOW === "1",
     );
   },
 
