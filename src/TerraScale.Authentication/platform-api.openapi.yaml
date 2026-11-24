@@ -1449,8 +1449,8 @@ paths:
         of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant.
         Machine tokens omit auth_time; accepted time is copied unchanged without clamping or renewal.
         Refresh and exchange do not prove MFA completion or renew authentication.
-        A subject token an AI agent obtained for its owner (agent_id, agent_scope and act claims) mints a token that
-        keeps agent_id and act.sub = the agent, with scopes intersected with the agent's live delegation: mcp:read
+        A subject token an AI agent obtained for its owner (agent_id, agent_scope and act claims; audience only the
+        platform issuer) mints only a project token (no project answers invalid_target); it keeps agent_id and act.sub = the agent, with scopes intersected with the agent's live delegation: mcp:read
         allows only databases:read and sql:read, mcp:write adds databases:write and sql:write, and neither ever
         allows an auth:* scope. A delegation that allows nothing at the target answers invalid_scope.
       security:

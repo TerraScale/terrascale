@@ -28,7 +28,7 @@ export async function exchangeForProject(request: APIRequestContext, subject: st
     headers: { Authorization: 'Basic ' + Buffer.from(`${dashboardClient}:${dashboardSecret()}`).toString('base64') },
     form: {
       grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange', subject_token: subject, subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-      organization, project, ...(scope ? { scope } : {}),
+      organization, ...(project ? { project } : {}), ...(scope ? { scope } : {}),
     },
   });
   return { status: response.status(), body: await response.json() };

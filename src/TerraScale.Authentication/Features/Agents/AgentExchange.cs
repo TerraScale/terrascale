@@ -106,7 +106,7 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
         context.Items[Fence] = current;
         logger.ZLogInformation($"Agent token exchanged for agent {agentId} of owner {ownerId}");
         return OidcResults.SignIn(options, current.Owner.Value with { MultiFactor = false, MfaMethod = null, SessionId = null }, current.Agent.Value.CreatedAt, [],
-            OidcIssuer.SignInAudiences(options),
+            [OidcIssuer.Issuer(options).AbsoluteUri],
             agent: new(agentId, [.. scopes.Intersect(current.Agent.Value.AllowedScopes, StringComparer.Ordinal)]), lifetime: lifetime);
     }
 

@@ -339,13 +339,13 @@ public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAu
     public override void Configure()
     {
         Post($"{Organization}/projects");
-        this.Describe("create_project", "Create a project", "Needs the member organization role. The caller becomes the project's explicit admin. 409 name_taken.", "Projects", typeof(NameRequest), StatusCodes.Status201Created, typeof(ProjectBody), conflict: true);
+        this.Describe("create_project", "Create a project", "Needs the member organization role, or the admin role for an AI agent acting for the caller with mcp:write. The caller becomes the project's explicit admin. 409 name_taken.", "Projects", typeof(NameRequest), StatusCodes.Status201Created, typeof(ProjectBody), conflict: true);
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var project = await platform.CreateProjectAsync(caller.Id, this.RouteId("organization"), name, cancellationToken);
+        var project = await platform.CreateProjectAsync(caller.Id, this.RouteId("organization"), name, caller.ActingAgentId is null ? Roles.Member : Roles.Admin, cancellationToken);
         return TypedResults.Json(Map(project, Roles.Admin), PlatformApiJson.Default.ProjectBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"{Organizations}/{project.OrganizationId}/projects/{project.Id}");
     }

@@ -163,6 +163,11 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         }
 
         var project = Parameter(request, "project");
+        if (agentId is not null && project is null)
+        {
+            return OidcResults.Forbid(OidcErrors.InvalidTarget, "An AI agent's delegation reaches TerraBase only through a project token; send the project parameter.");
+        }
+
         IReadOnlyList<string> allowed;
         try
         {

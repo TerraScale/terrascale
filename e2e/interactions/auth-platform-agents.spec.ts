@@ -104,10 +104,19 @@ test('a TerraScale account enrolls an agent, the dashboard exchanges its token f
       expect(userInfo.status()).toBe(200);
       expect((await userInfo.json()).sub).toBe(ownerId);
       expect(acting.agent_scope).toBe('mcp:read mcp:write');
+      expect([acting.aud].flat()).toEqual([acting.iss]);
+
+      const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
+      expect((await request.get(databases, { headers: { Authorization: 'Bearer ' + exchanged } })).status()).toBe(401);
+      expect(await exchangeForProject(request, exchanged, current.organizationId, ''))
+        .toEqual({ status: 400, body: expect.objectContaining({ error: 'invalid_target' }) });
 
       const projectToken = await exchangeForProject(request, exchanged, current.organizationId, current.projectId);
       expect(projectToken.status).toBe(200);
-      const projectClaims = claims(projectToken.body.access_token as string);
+      const projectAccess = projectToken.body.access_token as string;
+      saveSecret('platform-agent-project-token', projectAccess);
+      expect((await request.get(databases, { headers: { Authorization: 'Bearer ' + projectAccess } })).status()).toBe(200);
+      const projectClaims = claims(projectAccess);
       expect(projectClaims).toMatchObject({ sub: ownerId, agent_id: agentId, act: { sub: agentId }, org_id: current.organizationId, project_id: current.projectId });
       expect((projectClaims.scope as string).split(' ').sort()).toEqual(['databases:read', 'databases:write', 'sql:read', 'sql:write']);
       expect(await exchangeForProject(request, exchanged, current.organizationId, current.projectId, 'auth:read'))
@@ -115,13 +124,19 @@ test('a TerraScale account enrolls an agent, the dashboard exchanges its token f
 
       const readGranted = await agentToken(request, agent, approvedAgent, kid, 'owner', 'mcp:read');
       expect(readGranted.status).toBe(200);
-      const readOwner = await exchangeAgentToken(request, readGranted.body.access_token as string);
+      const readToken = readGranted.body.access_token as string;
+      saveSecret('platform-agent-read-token', readToken);
+      const readOwner = await exchangeAgentToken(request, readToken);
       expect(readOwner.status).toBe(200);
       const readExchanged = readOwner.body.access_token as string;
+      saveSecret('platform-agent-read-owner-token', readExchanged);
       expect(claims(readExchanged)).toMatchObject({ agent_id: agentId, act: { sub: agentId }, agent_scope: 'mcp:read' });
+      expect((await request.get(databases, { headers: { Authorization: 'Bearer ' + readExchanged } })).status()).toBe(401);
       const readProject = await exchangeForProject(request, readExchanged, current.organizationId, current.projectId);
       expect(readProject.status).toBe(200);
-      expect((claims(readProject.body.access_token as string).scope as string).split(' ').sort()).toEqual(['databases:read', 'sql:read']);
+      const readProjectAccess = readProject.body.access_token as string;
+      saveSecret('platform-agent-read-project-token', readProjectAccess);
+      expect((claims(readProjectAccess).scope as string).split(' ').sort()).toEqual(['databases:read', 'sql:read']);
       for (const scope of ['databases:write', 'sql:write', 'auth:write']) {
         expect(await exchangeForProject(request, readExchanged, current.organizationId, current.projectId, scope))
           .toEqual({ status: 400, body: expect.objectContaining({ error: 'invalid_scope' }) });
