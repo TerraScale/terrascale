@@ -189,9 +189,10 @@ public sealed class OidcTokens : IDisposable
 
     private async Task<OpenIdConnectConfiguration?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
-        if (entry.FreshConfiguration is { } fresh && _time.GetElapsedTime(entry.LastRefreshTimestamp) < FreshConfigurationLifetime)
+        var fresh = entry.Fresh;
+        if (fresh is not null && _time.GetElapsedTime(fresh.FetchedTimestamp) < FreshConfigurationLifetime)
         {
-            return fresh;
+            return fresh.Configuration;
         }
 
         return await ConfigurationAsync(entry.Manager, cancellationToken);
@@ -202,17 +203,24 @@ public sealed class OidcTokens : IDisposable
         await entry.RefreshGate.WaitAsync(cancellationToken);
         try
         {
-            if (entry.LastRefreshTimestamp != 0 && _time.GetElapsedTime(entry.LastRefreshTimestamp) < UnknownKeyRefreshCooldown)
+            if (entry.LastRefreshAttemptTimestamp != 0 && _time.GetElapsedTime(entry.LastRefreshAttemptTimestamp) < UnknownKeyRefreshCooldown)
             {
-                return entry.FreshConfiguration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
+                if (entry.LastRefreshFailed)
+                {
+                    return null;
+                }
+
+                return entry.Fresh?.Configuration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
             }
 
             entry.Manager.RequestRefresh();
             var fetched = await FetchFreshAsync(entry, cancellationToken);
-            entry.LastRefreshTimestamp = _time.GetTimestamp();
+            var now = _time.GetTimestamp();
+            entry.LastRefreshAttemptTimestamp = now;
+            entry.LastRefreshFailed = fetched is null;
             if (fetched is not null)
             {
-                entry.FreshConfiguration = fetched;
+                entry.Fresh = new FreshConfigurationState(fetched, now);
             }
 
             return fetched;
@@ -236,13 +244,16 @@ public sealed class OidcTokens : IDisposable
         }
     }
 
+    private sealed record FreshConfigurationState(OpenIdConnectConfiguration Configuration, long FetchedTimestamp);
+
     private sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
     {
         public string MetadataAddress { get; } = metadataAddress;
         public HttpDocumentRetriever Retriever { get; } = retriever;
         public ConfigurationManager<OpenIdConnectConfiguration> Manager { get; } = manager;
         public SemaphoreSlim RefreshGate { get; } = new(1, 1);
-        public volatile OpenIdConnectConfiguration? FreshConfiguration;
-        public long LastRefreshTimestamp;
+        public volatile FreshConfigurationState? Fresh;
+        public long LastRefreshAttemptTimestamp;
+        public bool LastRefreshFailed;
     }
 }

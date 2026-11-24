@@ -241,8 +241,9 @@ if (args[0] === '--qualify-main') {
   const own = process.env.GITHUB_SHA;
   sha(own);
   const ok = await appQualified(own);
+  if (!ok) report(`${thing}: ${own} tree is not yet qualified on a PR run; deferring deploy until main all-green completes`);
+  appendFileSync(process.env.GITHUB_OUTPUT, `qualified=${ok}\n`);
   console.log(`GitHub API reads: ${reads}`);
-  assert.ok(ok, `${thing}: ${own} tree was not qualified by a passing PR CI run (all-green + journey)`);
 } else if (thing === 'auth' && args[0] === '--probe') {
   const revision = await serviceLive(thing, { probe: true });
   const result = revision === null ? 'unavailable=true' : `revision=${revision}`;

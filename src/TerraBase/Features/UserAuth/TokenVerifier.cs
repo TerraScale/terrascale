@@ -272,9 +272,10 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private async Task<OpenIdConnectConfiguration?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
-        if (entry.FreshConfiguration is { } fresh && time.GetElapsedTime(entry.LastRefreshTimestamp) < FreshConfigurationLifetime)
+        var fresh = entry.Fresh;
+        if (fresh is not null && time.GetElapsedTime(fresh.FetchedTimestamp) < FreshConfigurationLifetime)
         {
-            return fresh;
+            return fresh.Configuration;
         }
 
         return await ConfigurationAsync(entry.Manager, cancellationToken);
@@ -285,17 +286,24 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         await entry.RefreshGate.WaitAsync(cancellationToken);
         try
         {
-            if (entry.LastRefreshTimestamp != 0 && time.GetElapsedTime(entry.LastRefreshTimestamp) < UnknownKeyRefreshCooldown)
+            if (entry.LastRefreshAttemptTimestamp != 0 && time.GetElapsedTime(entry.LastRefreshAttemptTimestamp) < UnknownKeyRefreshCooldown)
             {
-                return entry.FreshConfiguration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
+                if (entry.LastRefreshFailed)
+                {
+                    return null;
+                }
+
+                return entry.Fresh?.Configuration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
             }
 
             entry.Manager.RequestRefresh();
             var fetched = await FetchFreshAsync(entry, cancellationToken);
-            entry.LastRefreshTimestamp = time.GetTimestamp();
+            var now = time.GetTimestamp();
+            entry.LastRefreshAttemptTimestamp = now;
+            entry.LastRefreshFailed = fetched is null;
             if (fetched is not null)
             {
-                entry.FreshConfiguration = fetched;
+                entry.Fresh = new FreshConfigurationState(fetched, now);
             }
 
             return fetched;
@@ -320,14 +328,17 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     }
 }
 
+internal sealed record FreshConfigurationState(OpenIdConnectConfiguration Configuration, long FetchedTimestamp);
+
 internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
 {
     public string MetadataAddress { get; } = metadataAddress;
     public HttpDocumentRetriever Retriever { get; } = retriever;
     public ConfigurationManager<OpenIdConnectConfiguration> Manager { get; } = manager;
     public SemaphoreSlim RefreshGate { get; } = new(1, 1);
-    public volatile OpenIdConnectConfiguration? FreshConfiguration;
-    public long LastRefreshTimestamp;
+    public volatile FreshConfigurationState? Fresh;
+    public long LastRefreshAttemptTimestamp;
+    public bool LastRefreshFailed;
 }
 
 internal sealed record TrustedIssuer(string Issuer, IssuerEntry Entry, IReadOnlyList<string> Audiences, Ulid? Tenant);

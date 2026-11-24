@@ -506,6 +506,8 @@ jobs:
       !cancelled() && needs.checks.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
+    outputs:
+      qualified: ${{ steps.qualify.outputs.qualified }}
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
@@ -523,8 +525,9 @@ jobs:
       actions: read
     steps: &production-steps
       - *checkout
-      - name: Verify commit tree passed PR CI (all-green + journey)
-        if: github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only'
+      - id: qualify
+        name: Check if commit tree already passed PR CI (all-green + journey)
+        if: (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only') && env.QUALIFIED_BY_ALL_GREEN != 'true'
         working-directory: terrascale
         env:
           GH_TOKEN: ${{ github.token }}
@@ -535,15 +538,18 @@ jobs:
           revision: ${{ github.sha }}
           qualification: terrabase-maintenance
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        if: steps.qualify.outputs.qualified != 'false'
         with:
           global-json-file: terrascale/global.json
       - name: Pinned native libraries
+        if: steps.qualify.outputs.qualified != 'false'
         uses: ./terrascale/.github/actions/native-libs
         with:
           dir: terrascale
           runtimes: linux-arm64
       # Production runs linux/arm64 natively on ubuntu-24.04-arm: publish once, wrap in the chiseled image, attest, and roll out via ts-orch.
       - name: Publish the linux/arm64 runtime payload
+        if: steps.qualify.outputs.qualified != 'false'
         working-directory: terrascale
         run: |
           docker buildx create --use --driver docker-container --bootstrap > "$RUNNER_TEMP/builder.log" 2>&1 &
@@ -552,12 +558,14 @@ jobs:
           bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
           wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: steps.qualify.outputs.qualified != 'false'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
       # Public images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-platform,ts-auth}:<sha> and :main.
       - id: image
+        if: steps.qualify.outputs.qualified != 'false'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ runner.temp }}/image-payloads
@@ -572,6 +580,7 @@ jobs:
           push: true
       - id: digest
         name: Verify the published linux/arm64 child
+        if: steps.qualify.outputs.qualified != 'false'
         env:
           INDEX: ${{ steps.image.outputs.digest }}
         run: |
@@ -588,19 +597,21 @@ jobs:
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
       - name: Record the build-only digest (no release)
-        if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+        if: steps.qualify.outputs.qualified != 'false' && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
         env:
           INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
       - id: provenance
         name: Attest build provenance (linux/arm64 child)
+        if: steps.qualify.outputs.qualified != 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
           subject-digest: ${{ steps.digest.outputs.arm64 }}
           push-to-registry: true
       - name: Generate the linux/arm64 child SBOM
+        if: steps.qualify.outputs.qualified != 'false'
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
@@ -609,6 +620,7 @@ jobs:
           upload-artifact: false
       - id: sbom
         name: Attest the SBOM
+        if: steps.qualify.outputs.qualified != 'false'
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
@@ -616,21 +628,69 @@ jobs:
           sbom-path: ${{ runner.temp }}/sbom.spdx.json
           push-to-registry: true
       - name: Verify the attestations
+        if: steps.qualify.outputs.qualified != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: gh attestation verify "oci://ghcr.io/terrascale/${SERVICE}@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
       - name: Deploy through ts-orch
-        if: github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only'
+        if: steps.qualify.outputs.qualified != 'false' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
         working-directory: terrascale
         env:
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "ghcr.io/terrascale/${SERVICE}@${ARM64}"
 
+  main-fallback:
+    needs: [changes, checks, all-green, main]
+    if: >-
+      !cancelled() && needs.all-green.result == 'success' && needs.main.outputs.qualified == 'false'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
+    concurrency:
+      group: production-terrabase
+      cancel-in-progress: false
+    env:
+      AREA: terrabase
+      SERVICE: terrabase
+      QUALIFIED_BY_ALL_GREEN: 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      actions: read
+    steps: *production-steps
+
   main-platform:
     needs: [changes, checks]
     if: >-
       !cancelled() && needs.checks.result == 'success'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && contains(fromJSON(needs.changes.outputs.main), 'platform') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
+    outputs:
+      qualified: ${{ steps.qualify.outputs.qualified }}
+    concurrency:
+      group: production-platform
+      cancel-in-progress: false
+    env:
+      AREA: platform
+      SERVICE: ts-platform
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      actions: read
+    steps: *production-steps
+
+  main-platform-fallback:
+    needs: [changes, checks, all-green, main-platform]
+    if: >-
+      !cancelled() && needs.all-green.result == 'success' && needs.main-platform.outputs.qualified == 'false'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'platform') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
     concurrency:
@@ -639,6 +699,7 @@ jobs:
     env:
       AREA: platform
       SERVICE: ts-platform
+      QUALIFIED_BY_ALL_GREEN: 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     permissions:

@@ -233,13 +233,13 @@ internal sealed class ReadTransaction : ISqlTransaction
 
             _finished = true;
             _idleTimer?.Dispose();
-            _ = _reader.Exec(sql);
-            _session.UnregisterReadTransaction(this);
             lock (_interruptGate)
             {
                 _ownedReader = null;
             }
 
+            _ = _reader.Exec(sql);
+            _session.UnregisterReadTransaction(this);
             _session.ReleaseReader(_reader);
             return true;
         }

@@ -323,7 +323,7 @@ public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollec
             return Conflict(staged, "wounded");
         }
 
-        if (!tally.WithinLease)
+        if (tally.Prepared >= tally.Required && !tally.WithinLease)
         {
             return new ClusterTimeout("strong quorum was reached after the lock lease budget");
         }

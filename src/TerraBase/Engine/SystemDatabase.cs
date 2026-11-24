@@ -168,7 +168,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
                 && (immediateFallback || (time.GetElapsedTime(started) >= fallbackDelay && anyRemotePeerReachable?.Invoke() != true));
             SystemSetupOutcome? settled = await QueryAsync(SqlBuild.Statement("SELECT name FROM sqlite_schema WHERE type = 'table'"), cancellationToken) switch
             {
-                IReadOnlyList<IReadOnlyList<SqlValue>> rows => await SettleAsync(Missing([.. rows.Select(static row => row.TextAt(0))]), bootstrap, allowSingleRegionBootstrap, cancellationToken),
+                IReadOnlyList<IReadOnlyList<SqlValue>> rows => await SettleAsync(Missing([.. rows.Select(static row => row.TextAt(0))]), bootstrap, allowSingleRegionBootstrap, immediateFallback, cancellationToken),
                 BackendUnavailable failure => new ConfigurationError(string.Concat("the system database schema could not be read: ", failure.Message)),
             };
             if (settled is { } outcome)
@@ -183,7 +183,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
     private static SqlStatement[] Missing(HashSet<string> present) =>
         [.. Tables.Where(table => !present.Contains(table.Table)).Select(static table => SqlBuild.Statement(table.Sql))];
 
-    private async ValueTask<SystemSetupOutcome?> SettleAsync(SqlStatement[] missing, bool bootstrap, bool allowSingleRegionBootstrap, CancellationToken cancellationToken)
+    private async ValueTask<SystemSetupOutcome?> SettleAsync(SqlStatement[] missing, bool bootstrap, bool allowSingleRegionBootstrap, bool immediateFallback, CancellationToken cancellationToken)
     {
         if (missing.Length == 0)
         {
@@ -195,13 +195,13 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             return null;
         }
 
-        if (bootstrap)
+        if (bootstrap && !immediateFallback)
         {
             var outcome = await WriteAsync(missing, ConsistencyMode.Strong, cancellationToken);
             var strongSettled = outcome switch
             {
                 SqlWriteResult => (SystemSetupOutcome?)new Completed(),
-                BackendUnavailable { Code: "strong_quorum_unreachable" } => null,
+                BackendUnavailable { Code: "strong_quorum_unreachable" or "system_catalog_timeout" } => null,
                 StateConflict conflict => new ConfigurationError(string.Concat("the system database schema could not be created: ", conflict.Message)),
                 BackendUnavailable unavailable => new ConfigurationError(string.Concat("the system database schema could not be created: ", unavailable.Message)),
             };
@@ -215,7 +215,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         return localOutcome switch
         {
             SqlWriteResult => new Completed(),
-            BackendUnavailable { Code: "in_region_quorum_unconfirmed" or "strong_quorum_unreachable" } => null,
+            BackendUnavailable { Code: "in_region_quorum_unconfirmed" or "strong_quorum_unreachable" or "system_catalog_timeout" } => null,
             StateConflict conflict => new ConfigurationError(string.Concat("the system database schema could not be created: ", conflict.Message)),
             BackendUnavailable unavailable => new ConfigurationError(string.Concat("the system database schema could not be created: ", unavailable.Message)),
         };
