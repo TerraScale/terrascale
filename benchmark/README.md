@@ -52,12 +52,10 @@ benchmark/bin/ts-bench \
 | `sql_rest_batch` | C#, Go, Rust | Multi-statement transactional `INSERT` batch (`--batch-size` statements per request). |
 | `sql_ws_transaction` | C#, Go, Rust | Persistent WebSocket SQL session (`terrascale.sql.v1`), `INSERT` + `SELECT` inside `Transaction`. |
 | `dashboard_roundtrip` | C#, Go, Rust | HTTP `GET /health/live` + `GET /.well-known/oauth-authorization-server` against `TerraScale.Dashboard`. |
-| `efcore_roundtrip` | C# | `TerraScale.EntityFrameworkCore` insert (`SaveChangesAsync`) + read (`AsNoTracking().SingleAsync`). |
 
 ## Library microbenchmarks
 
 BenchmarkDotNet microbenchmarks for shared .NET libraries remain under `benchmark/dotnet/`:
 
 - `benchmark/dotnet/TerraScale.Endpoints.Benchmarks`
-- `benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks`
 - `benchmark/dotnet/TerraScale.Logging.Benchmarks`

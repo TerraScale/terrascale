@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/SDK/">
     <Project Path="src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
-    <Project Path="src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
   </Folder>
 </Solution>

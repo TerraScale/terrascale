@@ -42,6 +42,13 @@ the SDK is async-only). Parameters map to `?` positional or `@name`/`:name`/`$na
 run over the SQL WebSocket session: `BeginTransactionAsync`/`CommitAsync`/`RollbackAsync` (Serializable only; the
 sync transaction methods throw like the other sync paths).
 
+The SDK's ADO.NET types follow SQLite's ADO.NET conventions. A command can run several statements in one request
+or inside an open transaction and return one result set per statement that returns columns. `DateTime`,
+`DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid` and `decimal` arguments are sent as text and
+`GetFieldValue<T>` reads them back.
+
+For EF Core, see [EF Core over the Postgres wire](https://docs.terrascale.tech/guides/orm-dotnet#ef-core-over-the-postgres-wire).
+
 - `ApiKey` is a project or organization API key from the dashboard. The client exchanges it at ts-auth
   (`client_credentials`) for an access token to the project named in `Database(projectId, …)`, caches the token and
   renews it before it expires; concurrent calls share one exchange and the key goes only to ts-auth. Pass
@@ -113,19 +120,6 @@ into every later call. A strong call that loses a race throws `serialization_con
 change during the request `schema_mismatch`; both rolled back, and REST requests resend them at most twice. A bookmark
 or consistency the server does not accept throws `invalid_bookmark` or `invalid_consistency` (22023).
 `TerraBaseDbConnection.BeginTransactionAsync(IsolationLevel.Serializable)` begins a strong transaction.
-
-## Entity Framework Core
-
-`TerraScale.EntityFrameworkCore` is the EF Core 10 provider for TerraBase:
-`options.UseTerraBase(database)` with a `TerraBaseSqlDatabase`, or `options.UseTerraBase(connectionString)`.
-`SaveChangesAsync` sends the change set as one atomic `/sql/execute` request, explicit transactions run over the SQL
-WebSocket session, and `MigrateAsync`/`EnsureCreatedAsync` work against TerraBase. Setup, options, transactions,
-migrations and limits: [Entity Framework Core provider](src/TerraScale.EntityFrameworkCore/README.md).
-
-The ADO.NET types behind it follow SQLite's ADO.NET conventions: a command may hold several statements, which run as
-one request (or inside the open transaction) and read back as one result set per statement that returns columns;
-`DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid` and `decimal` arguments are sent as text and
-`GetFieldValue<T>` reads them back.
 
 ## Live data
 
@@ -254,11 +248,10 @@ HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See 
 
 ## Base URL rules
 
-Every `BaseAddress` and `AuthAddress` option, `TerraBaseStaticEndpointResolver`, `TERRASCALE_BASE_URL` and the
-`Endpoint` and `AuthEndpoint` of the EF Core connection string follow the origin rule of
-[`sdk/SQL-API.md`](../SQL-API.md#client). Building the client or resolver throws `ArgumentException`, before any
-request, for a base address with user info or a path, a string of more than 2,048 characters, a name of more than 253
-characters or with a label of more than 63, a label that begins or ends with a hyphen or begins with `xn--`, the name
+Every `BaseAddress` and `AuthAddress` option, `TerraBaseStaticEndpointResolver`, and `TERRASCALE_BASE_URL`
+follow the origin rule in [`sdk/SQL-API.md`](../SQL-API.md#client). Building the client or resolver throws
+`ArgumentException` before any request for a base address with user info or a path, a string of more than 2,048 characters, a name of more
+than 253 characters or with a label of more than 63, a label that begins or ends with a hyphen or begins with `xn--`, the name
 `loopback`, and the unspecified addresses `0.0.0.0`, `[::]` and `[::ffff:0:0]` in any spelling. A `Uri` option is
 parsed first by the caller's `new Uri(...)`, which refuses some of these strings with its own `UriFormatException`.
 
