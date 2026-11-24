@@ -39,11 +39,7 @@ namespace TerraScale.Dashboard.Features.Data
 
                 if (action == "sql/check")
                 {
-                    var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
-                    var invalid = diagnostics.Any(item => item.Severity == "error");
-                    return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, data, saved,
-                        formError: form["sql"].ToString().Trim().Length == 0 ? SqlValidation.Error("") : "",
-                        sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : TypedResults.Json(diagnostics);
+                    return TypedResults.Json(SqlValidation.Diagnostics(form["sql"].ToString()));
                 }
                 if (action is "sql" or "saved-queries")
                 {
@@ -158,7 +154,7 @@ namespace TerraScale.Dashboard.Features.Data
         }
 
         internal static async Task<IResult> PageAsync(HttpContext http, AccountContext context, string id, DataService data, SavedQueryService saved,
-            string formError = "", string dialog = "", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, bool sqlChecked = false, string sqlNotice = "", string runUrl = "")
+            string formError = "", string dialog = "", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, string sqlNotice = "", string runUrl = "")
         {
             DatabaseRecord database;
             try { database = DatabaseService.Database(context, id); }
@@ -220,9 +216,10 @@ namespace TerraScale.Dashboard.Features.Data
                     catch (Exception error) when (SqlWorkspace.Unavailable(error) && !http.RequestAborted.IsCancellationRequested)
                     { sqlNotice = "This query result is unavailable right now. The statement was not run again; reload to retry."; }
                 }
-                if (sql.Length == 0 && submitted is null)
+                if (submitted is null && http.Request.Query["savedQueryId"].ToString() is { Length: > 0 } savedQueryId
+                    && queries.FirstOrDefault(query => query.Id == savedQueryId) is { } chosen)
                 {
-                    sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "";
+                    sql = chosen.Sql;
                 }
 
                 try { catalog = await data.CatalogAsync(context, id, http.RequestAborted); }
@@ -244,7 +241,7 @@ namespace TerraScale.Dashboard.Features.Data
                 runUrl = QueryHelpers.AddQueryString(QueryHelpers.AddQueryString(runUrl, "organizationId", scope.OrganizationId), "projectId", scope.ProjectId);
             }
             var page = new DataPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("sql")), database, errorMessage, formError, dialog,
-                sql, sqlResult, queries, queryName, catalog, history, sqlChecked, catalogError, sqlNotice, runUrl);
+                sql, sqlResult, queries, queryName, catalog, history, CatalogError: catalogError, SqlNotice: sqlNotice, RunUrl: runUrl);
             if (http.Request.IsDatastarRequest)
             {
                 if (http.Request.Path.StartsWithSegments("/api/v1/dashboard/data/saved-queries"))

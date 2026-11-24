@@ -15,3 +15,14 @@
 .ts-rules-history .ts-rows-meta {
   overflow-wrap: anywhere;
 }
+
+.ts-rules-history .ts-rows > li {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+#rules-alerts:not(:has(> :not(input[type="hidden"]))),
+#rules-problems:not(:has(*)),
+#rules-diff:not(:has(*)),
+#rules-result:not(:has(*)) {
+  display: none;
+}

@@ -1,8 +1,4 @@
-/* Dashboard stylesheet entry point, bundled by web/build/build-css.mjs into the
-   single file served at /css/terrascale.css. Feature styles live next to
-   their feature under src/TerraScale.Dashboard/Features/. */
-
-@layer base, layout, components, features, utilities;
+@layer base, layout, components, features;
 
 @import "tokens.css";
 @import "base.css" layer(base);
@@ -19,7 +15,6 @@
 @import "sdk-tabs.css" layer(components);
 @import "../../../Common/UI/region-map.css" layer(components);
 
-/* Feature styles. */
 @import "../../../Features/Home/home.css" layer(features);
 @import "../../../Features/Databases/databases.css" layer(features);
 @import "../../../Features/FileStorage/files.css" layer(features);
@@ -36,9 +31,7 @@
 @import "../../../Features/Backups/backups.css" layer(features);
 @import "../../../Features/Organizations/organization.css" layer(features);
 @import "../../../Features/Profile/profile.css" layer(features);
-@import "../../../Features/Admin/admin.css" layer(features);
+@import "../../../Features/Support/support.css" layer(features);
 @import "../../../Features/Auth/auth.css" layer(features);
 @import "../../../Features/Onboarding/onboarding.css" layer(features);
 @import "../../../Features/NotFound/not-found.css" layer(features);
-
-@import "utilities.css" layer(utilities);

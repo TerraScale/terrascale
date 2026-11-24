@@ -1,6 +1,3 @@
-// <ts-code-editor> upgrades the textarea it wraps into a Monaco editor. The
-// textarea stays in the form as the submitted value (and as the control when
-// JavaScript is unavailable); the editor and the textarea mirror each other.
 import { copySavedQuery } from './saved-query.js';
 
 document.addEventListener('click', event => {
@@ -16,8 +13,6 @@ const fontSize = 13;
 const lineHeight = 20;
 const padding = 12;
 
-// Monaco is downloaded and started in the background as soon as the page has
-// finished loading, whether or not an editor is on screen yet.
 const pageLoaded = new Promise(resolve => {
   if (document.readyState === 'complete') {
     resolve();
@@ -29,12 +24,10 @@ const monaco = pageLoaded
   .then(() => Promise.all([import('./monaco.js'), document.fonts.load(`${fontSize}px "Geist Mono"`)]))
   .then(([module]) => module.load())
   .catch(error => {
-    // The textareas stay usable as plain fields.
     console.warn('Code editor unavailable:', error);
     return null;
   });
 
-// Every field gets its own model; ids and names may repeat across forms.
 let models = 0;
 
 class CodeEditor extends HTMLElement {
@@ -61,8 +54,6 @@ class CodeEditor extends HTMLElement {
     this.style.height = `${rows * lineHeight + padding * 2 + 2}px`;
     this.append(container);
 
-    // A Uri per model: modern-monaco's fallback model URI is a plain string,
-    // which Monaco's marker lookups never match, so diagnostics would not show.
     const language = this.dataset.language || 'plaintext';
     const extension = language === 'javascript' ? 'js' : language;
     const uri = api.Uri.file(`/${++models}/${textarea.name || 'field'}.${extension}`);
@@ -70,7 +61,6 @@ class CodeEditor extends HTMLElement {
     const editor = api.editor.create(container, {
       model,
       theme: 'terrascale',
-      // Tab indents code; announce the key that lets it move focus instead.
       ariaLabel: `${textarea.labels[0]?.textContent.trim() || textarea.name}. Press Ctrl+M to toggle Tab moving focus.`,
       readOnly: textarea.readOnly,
       fontFamily: getComputedStyle(this).getPropertyValue('--ts-font-mono').trim(),
@@ -100,8 +90,6 @@ class CodeEditor extends HTMLElement {
       scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
     });
 
-    // Editor → textarea keeps the form value current; textarea → editor picks
-    // up anything else that writes the field (form reset, scripts, autofill).
     let syncing = false;
     const toTextarea = model.onDidChangeContent(() => {
       syncing = true;
@@ -115,9 +103,6 @@ class CodeEditor extends HTMLElement {
       }
     };
     const onReset = () => setTimeout(toEditor);
-    // Labels and failed validation focus the editor rather than the hidden
-    // textarea; the textarea keeps focus when something targets it directly.
-    // Its :user-invalid state still marks the editor frame.
     const focusEditor = event => {
       event.preventDefault();
       editor.focus();
@@ -130,17 +115,13 @@ class CodeEditor extends HTMLElement {
     textarea.tabIndex = -1;
     textarea.ariaHidden = 'true';
 
-    // Ctrl/Cmd+Enter submits the surrounding form, like a query console. An
-    // action is scoped to this editor; addCommand would bind every editor on
-    // the page to the last form registered.
-    const submit = textarea.readOnly ? null : editor.addAction({
+    const submit = textarea.readOnly || this.dataset.submitShortcut === 'false' ? null : editor.addAction({
       id: 'terrascale.submitForm',
       label: 'Submit form',
       keybindings: [api.KeyMod.CtrlCmd | api.KeyCode.Enter],
       run: () => textarea.form?.requestSubmit(),
     });
 
-    // SQL editors in the SQL console complete and check against its catalog.
     const sqlHost = language === 'sql' ? this.closest('[data-sql-catalog]') : null;
     const sql = sqlHost && import('./sql.js')
       .then(module => module.attach(api, editor, textarea, sqlHost))

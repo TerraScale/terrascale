@@ -1,35 +1,58 @@
 @keyframes ts-button-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes ts-progress-pulse {
-  50% { opacity: 0.5; }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 @keyframes ts-progress-slide {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(250%); }
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
 }
 
 @keyframes ts-skeleton-shimmer {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
 }
 
 @keyframes ts-loading-in {
-  from { opacity: 0; }
+  from {
+    opacity: 0;
+  }
 }
 
 @keyframes ts-loading-out {
-  to { opacity: 0; }
+  to {
+    opacity: 0;
+  }
 }
 
 @keyframes ts-btn-pending {
-  to { opacity: 0.75; }
+  to {
+    opacity: 0.75;
+  }
 }
 
 @keyframes ts-btn-pending-label {
-  to { color: transparent; opacity: 0.75; }
+  to {
+    color: transparent;
+    opacity: 0.75;
+  }
 }
 
 body.ts-nav-pending::before {
@@ -43,7 +66,8 @@ body.ts-nav-pending::before {
   border-radius: var(--ts-radius-pill);
   background: var(--ts-link);
   pointer-events: none;
-  animation: ts-loading-in var(--ts-base) linear 300ms backwards,
+  animation:
+    ts-loading-in var(--ts-base) linear 300ms backwards,
     ts-progress-slide var(--ts-loop) ease-in-out 300ms infinite backwards;
 }
 
@@ -67,8 +91,8 @@ body.ts-nav-pending::before {
 }
 
 .ts-btn.ts-btn-loading {
-  opacity: 1;
   position: relative;
+  opacity: 1;
   cursor: progress;
   animation: ts-btn-pending var(--ts-base) var(--ts-ease) var(--ts-fast) forwards;
 }
@@ -83,7 +107,8 @@ body.ts-nav-pending::before {
 
 .ts-btn-spinner {
   position: absolute;
-  animation: ts-loading-in var(--ts-base) var(--ts-ease) var(--ts-fast) backwards,
+  animation:
+    ts-loading-in var(--ts-base) var(--ts-ease) var(--ts-fast) backwards,
     ts-button-spin 700ms linear infinite;
 }
 
@@ -96,15 +121,16 @@ body.ts-nav-pending::before {
   display: block;
   height: var(--ts-s3);
   border-radius: var(--ts-radius-sm);
-  background: linear-gradient(90deg, var(--ts-selected) 35%, var(--ts-line-strong) 50%, var(--ts-selected) 65%) 0 0 / 200% 100%;
-  animation: ts-loading-in var(--ts-base) linear var(--ts-fast) backwards,
+  background: linear-gradient(90deg, var(--ts-surface-2) 35%, var(--ts-surface-3) 50%, var(--ts-surface-2) 65%) 0 0 / 200% 100%;
+  animation:
+    ts-loading-in var(--ts-base) linear var(--ts-fast) backwards,
     ts-skeleton-shimmer var(--ts-loop) linear var(--ts-fast) infinite;
 }
 
 .ts-skeleton-table {
   height: calc(4 * var(--ts-s12));
   border-radius: 0;
-  mask: repeating-linear-gradient(to bottom, transparent 0 18px, #000 18px 30px, transparent 30px var(--ts-s12));
+  mask: repeating-linear-gradient(to bottom, transparent 0 18px, black 18px 30px, transparent 30px var(--ts-s12));
 }
 
 .ts-skeleton-chart {
@@ -118,7 +144,7 @@ body.ts-nav-pending::before {
 
 body.ts-nav-pending .ts-measurement-loading {
   position: absolute;
-  top: var(--ts-s3);
+  top: calc(var(--ts-s12) + var(--ts-s3));
   left: 50%;
   z-index: var(--ts-z-sticky);
   display: flex;
@@ -154,18 +180,16 @@ body.ts-nav-pending .ts-measurement-loading {
   transition: width var(--ts-base) var(--ts-ease);
 }
 
-.ts-progress-bar[data-progress="33"] { width: 33%; }
-.ts-progress-bar[data-progress="66"] { width: 66%; }
-.ts-progress-bar[data-progress="100"] { width: 100%; }
+.ts-progress-bar[data-progress="33"] {
+  width: 33%;
+}
 
-.ts-progress-bar-success { background: var(--ts-success); }
-.ts-progress-bar-warning { background: var(--ts-warning); }
-.ts-progress-bar-danger { background: var(--ts-danger); }
+.ts-progress-bar[data-progress="66"] {
+  width: 66%;
+}
 
-@media (max-width: 47.99rem) {
-  body.ts-nav-pending .ts-measurement-loading {
-    top: calc(var(--ts-s3) + var(--ts-control-h-lg) + var(--ts-s2));
-  }
+.ts-progress-bar[data-progress="100"] {
+  width: 100%;
 }
 
 @media (prefers-reduced-motion: reduce) {

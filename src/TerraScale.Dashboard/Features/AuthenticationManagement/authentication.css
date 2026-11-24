@@ -2,14 +2,46 @@
   gap: var(--ts-s6);
 }
 
-.ts-idp > .ts-page-header > .ts-page-title {
-  font-size: var(--ts-fs-2xl);
+.ts-idp-more {
+  flex: none;
 }
 
-.ts-idp-tabs {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: thin;
+.ts-idp-more > .ts-tab {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ts-idp-more > .ts-tab > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+#auth-more {
+  max-height: min(26rem, calc(100dvh - 2 * var(--ts-s4)));
+}
+
+.ts-idp-more > .ts-tab[data-active="true"],
+.ts-idp-more:has(> :popover-open) > .ts-tab {
+  color: var(--ts-ink);
+}
+
+.ts-idp-more > .ts-tab[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ts-accent);
+}
+
+.ts-idp-more > .ts-tab:focus-visible {
+  outline: var(--ts-ring);
+  outline-offset: -2px;
 }
 
 .ts-idp-settings > .ts-card-body,
@@ -36,8 +68,8 @@
 }
 
 .ts-idp-brand-fields.ts-card-flush > .ts-card-body {
-  padding: var(--ts-s5);
   gap: var(--ts-s4);
+  padding: var(--ts-s5);
 }
 
 .ts-idp-content {
@@ -64,6 +96,14 @@
   min-width: 0;
 }
 
+.ts-idp-copy-row > .ts-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-control-h-sm);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+}
+
 .ts-idp-copy-value {
   min-width: 0;
   color: var(--ts-ink-2);
@@ -76,6 +116,10 @@
 
 .ts-idp-kv {
   align-items: center;
+}
+
+.ts-idp-kv .ts-idp-copy-row {
+  justify-content: space-between;
 }
 
 .ts-table .ts-idp-copy {
@@ -120,12 +164,9 @@
 }
 
 .ts-idp-provider .ts-idp-kv {
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
   align-content: start;
-}
-
-.ts-idp-provider .ts-idp-kv {
-  grid-template-columns: minmax(0, 1fr);
   gap: var(--ts-s1);
 }
 
@@ -209,16 +250,23 @@
   min-width: 0;
 }
 
+.ts-idp-branding .ts-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
 .ts-idp-range {
   display: flex;
   align-items: center;
   gap: var(--ts-s3);
+  min-height: var(--ts-control-h);
 }
 
 .ts-idp-range > input[type="range"] {
   flex: 1;
   min-width: 0;
-  accent-color: var(--ts-accent-fill);
+  height: var(--ts-s6);
+  margin: 0;
+  accent-color: var(--ts-accent);
 }
 
 .ts-idp-range > .ts-input {
@@ -226,8 +274,13 @@
   width: 72px;
 }
 
-.ts-idp-colors {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
+.ts-idp-branding .ts-idp-colors {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#auth-brand-footer {
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .ts-idp-brand-preview {
@@ -236,11 +289,6 @@
   display: grid;
   gap: var(--ts-s3);
   min-width: 0;
-}
-
-.ts-idp-brand-fields .ts-card-body {
-  display: grid;
-  gap: var(--ts-s4);
 }
 
 .ts-idp-brand-toolbar {
@@ -272,12 +320,12 @@
 }
 
 .ts-idp-brand-canvas {
-  --brand-canvas: #151515;
-  --brand-background: #151515;
-  --brand-text: #f2f2f2;
-  --brand-surface: #1b1b1b;
-  --brand-line: #ffffff24;
-  --brand-muted: #a8a8a8;
+  --brand-canvas: var(--ts-canvas);
+  --brand-background: var(--ts-canvas);
+  --brand-text: var(--ts-ink);
+  --brand-surface: var(--ts-surface);
+  --brand-line: var(--ts-line-strong);
+  --brand-muted: var(--ts-ink-2);
   display: grid;
   align-content: center;
   justify-items: center;
@@ -295,7 +343,7 @@
   --brand-background: #ffffff;
   --brand-text: #0a0a0a;
   --brand-surface: #fafafa;
-  --brand-line: #00000024;
+  --brand-line: rgb(0 0 0 / 0.14);
   --brand-muted: #4d4d4d;
   color-scheme: light;
 }
@@ -342,7 +390,7 @@
 }
 
 .ts-idp-brand-card h3 {
-  font-size: var(--brand-title-size, 24px);
+  font-size: var(--brand-title-size, var(--ts-fs-2xl));
   line-height: var(--ts-lh-tight);
   text-align: center;
   overflow-wrap: anywhere;
@@ -382,6 +430,12 @@
   color: var(--brand-footer-text, var(--brand-muted));
 }
 
+.ts-idp-brand-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-s6);
+}
+
 .ts-idp-brand-powered {
   font-size: var(--ts-fs-xs);
   text-align: center;
@@ -392,6 +446,15 @@
 }
 
 @container page (width < 480px) {
+  .ts-idp-branding .ts-idp-colors {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-idp-brand-fields > .ts-card-foot .ts-btn {
+    padding-inline: var(--ts-s3);
+    font-size: var(--ts-fs-sm);
+  }
+
   .ts-idp-brand-canvas {
     min-height: 440px;
     padding: var(--ts-s3);

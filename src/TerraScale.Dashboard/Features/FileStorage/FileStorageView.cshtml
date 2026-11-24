@@ -17,7 +17,7 @@
     @if (Model.Error is { } error) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@error</p><a class="ts-link" href="/storage">Reload files</a></div> }
     @if (listing is not null)
     {
-        <header class="ts-page-header"><div class="ts-page-heading"><h1 class="ts-page-title">File storage</h1></div><div class="ts-page-actions">@if (canWrite) { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>New bucket</span></button> }</div></header>
+        <header class="ts-page-header"><div class="ts-page-heading"><h1 class="ts-page-title">File storage</h1></div><div class="ts-page-actions">@if (canWrite && listing.Buckets.Items.Count > 0) { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>New bucket</span></button> }</div></header>
         @if (listing.Buckets.Items.Count == 0)
         {
             <section class="ts-card ts-card-boxed ts-card-flush"><div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">No buckets yet.</p>@if (canWrite) { <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-bucket">@Icons.Render("Plus", 16)<span>New bucket</span></button> }</div></div></section>
@@ -60,13 +60,17 @@ else
 {
     var name = selected?.Name ?? "Bucket";
     <a class="ts-files-back" href="/storage">@Icons.Render("ArrowLeft", 16)<span>Files</span></a>
-    <header class="ts-page-header"><div class="ts-page-heading"><div class="ts-files-title"><span class="ts-files-icon ts-files-icon-lg" data-kind="bucket" aria-hidden="true">@Icons.Render("FolderOpen", 22)</span><h1 class="ts-page-title ts-truncate">@name</h1></div></div><div class="ts-page-actions">@if (canWrite && selected is not null && listing?.Files is not null) { <button class="ts-btn ts-btn-primary" type="button" data-upload-browse>@Icons.Render("Upload", 16)<span>Upload</span></button> }</div></header>
+    <header class="ts-page-header"><div class="ts-page-heading"><div class="ts-files-title"><span class="ts-files-icon ts-files-icon-lg" data-kind="bucket" aria-hidden="true">@Icons.Render("FolderOpen", 22)</span><h1 class="ts-page-title ts-truncate">@name</h1></div></div><div class="ts-page-actions">@if (canWrite && !Model.Settings && selected is not null && listing?.Files is not null) { <button class="ts-btn ts-btn-primary" type="button" data-upload-browse>@Icons.Render("Upload", 16)<span>Upload</span></button> }</div></header>
     @if (selected is not null)
     {
-        <nav class="ts-tabs" aria-label="Bucket sections"><a class="ts-tab" href="@FileStorageEndpoints.BucketPath(bucketId)" aria-current="@(Model.Settings ? null : "page")">Files</a>@if (canWrite) { <a class="ts-tab" href="@(FileStorageEndpoints.BucketPath(bucketId) + "&tab=settings")" aria-current="@(Model.Settings ? "page" : null)">Settings</a> }</nav>
+        <nav class="ts-tabs" aria-label="Bucket sections"><a class="ts-tab" href="@FileStorageEndpoints.BucketPath(bucketId)" aria-current="@(Model.Settings ? null : "page")">Files</a><a class="ts-tab" href="@(FileStorageEndpoints.BucketPath(bucketId) + "&tab=settings")" aria-current="@(Model.Settings ? "page" : null)">Settings</a></nav>
     }
     @if (Model.Error is { } error) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@error</p><a class="ts-link" href="@FileStorageEndpoints.BucketPath(bucketId)">Reload bucket</a></div> }
-    @if (selected is not null)
+    @if (selected is not null && Model.Settings)
+    {
+        @(await RenderPartialAsync<BucketSide, BucketSideModel>(BucketSideModel.For(Model)))
+    }
+    else if (selected is not null)
     {
         var files = listing?.Files;
         if (files is not null && canWrite)
@@ -99,15 +103,10 @@ else
             </section>
         }
         @(await RenderPartialAsync<BucketStats, BucketSideModel>(BucketSideModel.For(Model)))
-        <div class="ts-columns">
-            <div class="ts-columns-main">
-                @if (files is not null)
-                {
-                    @(await RenderPartialAsync<BucketFilesCard, BucketFilesCardModel>(BucketFilesCardModel.For(Model)))
-                }
-            </div>
-            @(await RenderPartialAsync<BucketSide, BucketSideModel>(BucketSideModel.For(Model)))
-        </div>
+        @if (files is not null)
+        {
+            @(await RenderPartialAsync<BucketFilesCard, BucketFilesCardModel>(BucketFilesCardModel.For(Model)))
+        }
     }
 }
 </main>

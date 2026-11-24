@@ -1,4 +1,3 @@
-// Unsaved preview only. Persistent settings belong to ts-auth, never browser storage.
 const form = document.getElementById('auth-branding-form');
 if (form) {
   const root = document.getElementById('auth-brand-preview');
@@ -31,12 +30,12 @@ if (form) {
     const white = [255, 255, 255], black = [10, 10, 10], away = light ? black : white;
     const on = color => contrast(color, white) >= contrast(color, black) ? white : black;
     const push = (color, target, valid) => { for (let i = 0; i < 60 && !valid(color.map(Math.round)); i++) color = mix(color, target, .06); return color.map(Math.round); };
-    const surfaces = (light ? ['#ffffff', '#fafafa', '#f4f4f5'] : ['#151515', '#1b1b1b', '#222222']).map(rgb);
+    const surfaces = (light ? ['#ffffff', '#fafafa', '#f4f4f5'] : ['#0a0a0a', '#141414', '#1a1a1a']).map(rgb);
     const custom = accent || background || text;
     const fill = custom ? push(rgb(accent || '#2158e8'), away, color => surfaces.slice(0, 2).every(surface => contrast(color, surface) >= 3) && contrast(color, on(color)) >= 4.5) : rgb('#2158e8');
     style.setProperty('--brand-accent', toHex(fill));
     style.setProperty('--brand-on-accent', toHex(on(fill)));
-    style.setProperty('--brand-text', text ? toHex(push(rgb(text), away, color => surfaces.every(surface => contrast(color, surface) >= 4.5))) : light ? '#0a0a0a' : '#f2f2f2');
+    style.setProperty('--brand-text', text ? toHex(push(rgb(text), away, color => surfaces.every(surface => contrast(color, surface) >= 4.5))) : light ? '#0a0a0a' : '#fafafa');
     if (background) {
       style.setProperty('--brand-background', background);
       style.setProperty('--brand-footer-text', toHex(push(text ? rgb(text) : on(rgb(background)), on(rgb(background)), color => contrast(color, rgb(background)) >= 4.5)));
@@ -67,7 +66,6 @@ if (form) {
     document.querySelector('[data-brand-dirty]').hidden = snapshot() === original;
   };
   document.querySelector('[data-brand-size]').addEventListener('input', event => { field('title_size').value = event.target.value; render(); });
-    // Controls use the form attribute to keep the toolbar beside the heading.
   document.addEventListener('input', event => { if (event.target.form === form) { document.querySelector('[data-brand-size]').value = field('title_size').value; render(); } });
   form.addEventListener('reset', event => { event.preventDefault(); saved.forEach(([name, value]) => { field(name).value = value; }); render(); });
   document.querySelector('[data-brand-defaults]')?.addEventListener('click', () => {

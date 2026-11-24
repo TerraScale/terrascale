@@ -1,14 +1,11 @@
-/* Page container, page actions, and layout helpers. Pages space their
-   blocks with gap, never with margins, so rhythm stays consistent. */
-
 .ts-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  gap: var(--ts-s10);
+  gap: var(--ts-s6);
   width: 100%;
-  padding-top: var(--ts-s8);
-  padding-inline: clamp(var(--ts-s4), 2.5vw, var(--ts-s10));
+  padding-top: var(--ts-s6);
+  padding-inline: var(--ts-page-gutter);
   padding-bottom: var(--ts-s12);
 }
 
@@ -27,17 +24,17 @@
 }
 
 .ts-page-title {
-  font-size: var(--ts-fs-lg);
+  font-size: var(--ts-fs-2xl);
   font-weight: 600;
-  letter-spacing: var(--ts-heading-tracking);
+  letter-spacing: -0.025em;
   line-height: var(--ts-lh-tight);
 }
 
 .ts-page-actions {
   display: flex;
-  justify-content: flex-end;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--ts-s2);
 }
 
@@ -45,7 +42,6 @@
   display: none;
 }
 
-/* Tabs on the left, filters on the right. */
 .ts-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -60,7 +56,6 @@
   padding-bottom: var(--ts-s2);
 }
 
-/* Grids. */
 .ts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
@@ -73,10 +68,14 @@
   gap: var(--ts-s4);
 }
 
-.ts-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.ts-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ts-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 
-/* Main column plus a narrower aside. */
+.ts-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .ts-split {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
@@ -86,8 +85,8 @@
 
 .ts-columns {
   display: grid;
-  gap: var(--ts-s4);
   grid-template-columns: minmax(0, 1fr);
+  gap: var(--ts-s4);
 }
 
 .ts-columns-main,
@@ -102,13 +101,19 @@
 .ts-stack-sm,
 .ts-stack-lg {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--ts-s4);
   min-width: 0;
 }
 
-.ts-stack-sm { gap: var(--ts-s2); }
-.ts-stack-lg { gap: var(--ts-s6); }
+.ts-stack-sm {
+  gap: var(--ts-s2);
+}
+
+.ts-stack-lg {
+  gap: var(--ts-s6);
+}
 
 .ts-row,
 .ts-row-between {
@@ -127,9 +132,6 @@
   justify-content: flex-end;
 }
 
-/* The sidebar consumes 256px on desktop; query the page column instead of
-   the viewport before adding columns. Container rems use the 14px root font
-   (unlike media-query rems), so use px for the 60rem/960px breakpoint. */
 @container page (width >= 960px) {
   .ts-columns {
     grid-template-columns: minmax(0, 1fr) 340px;
@@ -142,7 +144,10 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Stacked split columns keep the hairline between sections. */
+  .ts-split {
+    gap: var(--ts-s6);
+  }
+
   .ts-split > * + * {
     padding-top: var(--ts-s6);
     border-top: 1px solid var(--ts-line);
@@ -152,9 +157,20 @@
 @media (max-width: 47.99rem) {
   .ts-page {
     gap: var(--ts-s5);
-    padding-top: calc(var(--ts-s3) + var(--ts-control-h-lg) + var(--ts-s4));
-    padding-inline: var(--ts-s4);
+    padding-top: var(--ts-s4);
     padding-bottom: var(--ts-s6);
+  }
+
+  .ts-split {
+    gap: var(--ts-s5);
+  }
+
+  .ts-split > * + * {
+    padding-top: var(--ts-s5);
+  }
+
+  .ts-page-title {
+    font-size: var(--ts-fs-xl);
   }
 }
 
@@ -164,7 +180,6 @@
   }
 }
 
-/* Text helpers. */
 .ts-meta {
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-sm);
@@ -202,6 +217,19 @@
 .ts-link {
   color: var(--ts-link);
   font-weight: 500;
+}
+
+:is(.ts-page, .ts-card-body, .ts-stack, .ts-stack-sm, .ts-stack-lg) > .ts-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  min-height: var(--ts-s6);
+}
+
+@media (max-width: 47.99rem) {
+  :is(.ts-page, .ts-card-body, .ts-stack, .ts-stack-sm, .ts-stack-lg) > .ts-link {
+    min-height: var(--ts-control-h-sm);
+  }
 }
 
 .ts-section-title {

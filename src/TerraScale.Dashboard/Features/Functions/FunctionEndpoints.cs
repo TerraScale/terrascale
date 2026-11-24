@@ -1,9 +1,11 @@
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
+using RazorSlices;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.Clients;
+using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Functions
 {
@@ -16,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Functions
     public sealed record FunctionsPage(ShellModel Shell, DatabaseRecord Database, IReadOnlyList<FunctionRecord> Functions, FunctionRecord? Selected,
         string? InvokeUrl, IReadOnlyList<FunctionInvocation> Logs, string Error, bool NoAccess, string DeleteName,
         string Notice = "", FunctionForm? Form = null, string RunEvent = "", string RunResult = "", string RunError = "",
-        string LogsTrigger = "", string LogsStatus = "", string DeployError = "", TerraBaseFunctionStats? Stats = null,
+        string LogsTrigger = "", string LogsStatus = "", TerraBaseFunctionStats? Stats = null,
         IReadOnlyList<TerraBaseFunctionSecret>? Secrets = null, string SecretName = "", string SecretError = "", string RunQuery = "")
     {
         public string Window => Stats?.Window ?? "24h";
@@ -152,22 +154,24 @@ namespace TerraScale.Dashboard.Features.Functions
             var trigger = form["trigger"].ToString() is "http" or "cron" ? form["trigger"].ToString() : "";
             var status = form["status"].ToString() is "ok" or "error" ? form["status"].ToString() : "";
             var inPlace = intent is "trigger" or "code" && http.Request.IsDatastarRequest;
-            FunctionRecord? before = null;
             try
             {
                 if (inPlace)
                 {
-                    before = await functions.ReadAsync(context, database, name, http.RequestAborted);
+                    var before = await functions.ReadAsync(context, database, name, http.RequestAborted);
                     if (before is null)
                     {
-                        var missingLogs = Filter([], trigger, status);
-                        await PatchDeployAsync(http, functions, context, database, null, missingLogs, "", "This function does not exist.", trigger, status);
+                        await PatchDeployErrorAsync(http, "This function does not exist.");
                         return TypedResults.Empty;
                     }
 
                     if (intent == "trigger")
                     {
-                        source = before.Source ?? "";
+                        source = before.Source is { } existingSource ? existingSource : "";
+                    }
+                    else if (intent == "code")
+                    {
+                        cron = before.Cron is { Length: > 0 } existingCron ? existingCron : "";
                     }
                 }
 
@@ -175,7 +179,15 @@ namespace TerraScale.Dashboard.Features.Functions
                 if (inPlace)
                 {
                     var logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
-                    await PatchDeployAsync(http, functions, context, database, saved, logs, "Function deployed.", "", trigger, status);
+                    if (intent == "trigger")
+                    {
+                        await PatchTriggerAsync(http, functions, context, database, saved, logs, "Function deployed.", trigger, status);
+                    }
+                    else
+                    {
+                        await PatchDeployAsync(http, functions, context, database, saved, logs, "Function deployed.", trigger, status);
+                    }
+
                     return TypedResults.Empty;
                 }
 
@@ -185,8 +197,7 @@ namespace TerraScale.Dashboard.Features.Functions
             {
                 if (inPlace)
                 {
-                    var logs = before is null ? [] : Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
-                    await PatchDeployAsync(http, functions, context, database, before, logs, "", FailureText(error), trigger, status);
+                    await PatchDeployErrorAsync(http, FailureText(error));
                     return TypedResults.Empty;
                 }
 
@@ -261,13 +272,41 @@ namespace TerraScale.Dashboard.Features.Functions
                 secretName: delete ? "" : secret, secretError: message);
         }
 
-        private static async Task PatchDeployAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, FunctionRecord? saved,
-            IReadOnlyList<FunctionInvocation> logs, string notice, string error, string trigger, string status)
+        private static async Task PatchDeployAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, FunctionRecord saved,
+            IReadOnlyList<FunctionInvocation> logs, string notice, string trigger, string status)
         {
-            var stats = saved is null ? null : await ReadStatsAsync(http, functions, context, database, saved.Name);
+            var stats = await ReadStatsAsync(http, functions, context, database, saved.Name);
             var page = new FunctionsPage(ShellModel.For(http, context, database.Name + " · Functions"), database, [], saved,
-                saved is null ? null : FunctionBackend.InvokeUrl(context, database, saved.Name), logs, "", false, "", notice, null, "", "", "", LogsTrigger: trigger, LogsStatus: status, DeployError: error, Stats: stats);
+                FunctionBackend.InvokeUrl(context, database, saved.Name), logs, "", false, "", notice, null, "", "", "", LogsTrigger: trigger, LogsStatus: status, Stats: stats);
             await DatastarEvents.PatchElementsAsync(http, FunctionsDeployView.Create(page));
+        }
+
+        private static async Task PatchTriggerAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, FunctionRecord saved,
+            IReadOnlyList<FunctionInvocation> logs, string notice, string trigger, string status)
+        {
+            var stats = await ReadStatsAsync(http, functions, context, database, saved.Name);
+            var savedCron = saved.Cron is { Length: > 0 } value ? value : "";
+            var page = new FunctionsPage(ShellModel.For(http, context, database.Name + " · Functions"), database, [], saved,
+                FunctionBackend.InvokeUrl(context, database, saved.Name), logs, "", false, "", notice, null, "", "", "", LogsTrigger: trigger, LogsStatus: status, Stats: stats);
+            var html = "<div id=\"function-notice-wrap\"><div class=\"ts-alert ts-alert-success\" role=\"status\"><p class=\"ts-alert-body\" id=\"function-notice\">"
+                + HtmlEncoder.Default.Encode(notice) + "</p></div></div>"
+                + await RenderSliceAsync(http, FunctionsStatsView.Create(page))
+                + await RenderSliceAsync(http, FunctionsSideView.Create(new(page, savedCron)))
+                + "<input type=\"hidden\" id=\"function-code-cron\" name=\"cron\" value=\"" + HtmlEncoder.Default.Encode(savedCron) + "\" />";
+            await DatastarEvents.PatchElementsAsync(http, html, http.RequestAborted);
+        }
+
+        private static Task PatchDeployErrorAsync(HttpContext http, string message)
+        {
+            return DatastarEvents.PatchElementsAsync(http, "<div id=\"function-notice-wrap\"><div class=\"ts-alert ts-alert-danger\" role=\"alert\"><p class=\"ts-alert-body\" id=\"function-deploy-error\">"
+                + HtmlEncoder.Default.Encode(message) + "</p></div></div>", http.RequestAborted);
+        }
+
+        private static async Task<string> RenderSliceAsync(HttpContext http, RazorSlice slice)
+        {
+            slice.HttpContext = http;
+            slice.ServiceProvider = http.RequestServices;
+            return await slice.RenderAsync(cancellationToken: http.RequestAborted);
         }
 
         internal static async Task<IResult> InvokeAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FunctionBackend functions)
@@ -407,7 +446,7 @@ namespace TerraScale.Dashboard.Features.Functions
             };
         }
 
-        private static RazorSlices.RazorSlice<FunctionsPage> View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
+        private static RazorSlice<FunctionsPage> View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
             IReadOnlyList<FunctionInvocation> logs, string error = "", int status = 200, bool noAccess = false, string deleteName = "", string notice = "", FunctionForm? form = null,
             string runEvent = "", string runResult = "", string runError = "", string logsTrigger = "", string logsStatus = "", TerraBaseFunctionStats? stats = null,
             IReadOnlyList<TerraBaseFunctionSecret>? secrets = null, string secretName = "", string secretError = "", string runQuery = "")

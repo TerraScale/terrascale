@@ -10,7 +10,7 @@
     @if (Model.Error.Length > 0 && Model.DialogId.Length == 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error @if (Model.InvalidField is { } field) { <a class="ts-link" href="#@field">Review the field</a> }</p></div> }
     @if (Model.Status.Length > 0) { <p role="status" aria-live="polite" class="ts-alert ts-alert-success">@Model.Status</p> }
     <dl class="ts-stats" aria-label="Account summary"><div class="ts-stat"><dt class="ts-stat-label">Scope roles</dt><dd class="ts-stat-value">@Model.ScopeRoleCount</dd></div><div class="ts-stat"><dt class="ts-stat-label">Listed capabilities</dt><dd class="ts-stat-value">@Model.Permissions.Length</dd></div><div class="ts-stat"><dt class="ts-stat-label">Sessions</dt><dd class="ts-stat-value">@(Model.Sessions?.Count.ToString() ?? "Not loaded")</dd></div></dl>
-    <nav class="ts-tabs ts-profile-tabs" aria-label="Profile sections">@foreach (var tab in Tabs) { <a class="ts-tab" href="/profile?tab=@tab.Key" aria-current="@(Model.Tab == tab.Key ? "page" : null)">@tab.Title</a> }</nav>
+    <nav class="ts-tabs" aria-label="Profile sections" data-init="el.scrollWidth > el.clientWidth &amp;&amp; el.querySelector('[aria-current=page]')?.scrollIntoView({block: 'nearest', inline: 'center'})">@foreach (var tab in Tabs) { <a class="ts-tab" href="/profile?tab=@tab.Key" aria-current="@(Model.Tab == tab.Key ? "page" : null)">@tab.Title</a> }</nav>
     @if (Model.Tab == "profile")
     {
         <div class="ts-profile-settings">

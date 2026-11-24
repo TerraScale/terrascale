@@ -1,33 +1,75 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Rules.RulesPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+@using TerraScale.Dashboard.Features.Rules
 @inject AssetUrls Assets
 <main class="ts-page" data-database-id="@Model.Database.Id">
-@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "rules")))
-<h1 class="ts-sr-only">Rules</h1>
-@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesAlertsView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
-<div class="ts-columns">
-<div class="ts-columns-main ts-stack">
-<section class="ts-card ts-card-boxed" id="rules-editor-card" aria-labelledby="rules-editor-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="rules-editor-title">Rules</h2></div>@if(!Model.CanWrite){<div class="ts-card-actions"><span class="ts-meta">Read-only</span></div>}</header><div class="ts-card-body ts-stack">
-<form method="post" action="/api/v1/dashboard/rules/deploy" class="ts-form ts-stack" id="rules-form" data-on:submit="@("@post('/api/v1/dashboard/rules/deploy', {contentType:'form'})")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" />
-<div class="ts-field"><label class="ts-label" for="rules-source">Rules JSON</label><ts-code-editor class="ts-code-editor" data-language="json"><textarea class="ts-input ts-mono" id="rules-source" name="source" rows="18" required spellcheck="false" autocapitalize="off" autocomplete="off" readonly="@(Model.CanWrite ? null : "readonly")">@Model.Source</textarea></ts-code-editor></div>
-</form>
-@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesProblemsView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
-</div>@if(Model.CanWrite){<footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit" form="rules-form">Deploy rules</button></footer>}</section>
-@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesDiffView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
-<section class="ts-card ts-card-boxed" id="rules-playground" aria-labelledby="rules-playground-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="rules-playground-title">Playground</h2></div></header><div class="ts-card-body ts-stack">
-<div class="ts-form-grid"><div class="ts-field"><label class="ts-label" for="rules-operation">Operation</label><select class="ts-select" id="rules-operation" name="operation" form="rules-form">@foreach(var operation in TerraScale.Dashboard.Features.Rules.RulesBackend.Operations){<option value="@operation" selected="@(Model.Playground.Operation == operation)">@operation</option>}</select></div>
-<div class="ts-field"><label class="ts-label" for="rules-table">Table</label><input class="ts-input ts-mono" id="rules-table" name="table" form="rules-form" list="rules-tables" value="@Model.Playground.Table" maxlength="128" autocomplete="off" spellcheck="false" placeholder="todos" /><datalist id="rules-tables">@foreach(var table in Model.Tables){<option value="@table"></option>}</datalist></div></div>
-<div class="ts-field"><label class="ts-label" for="rules-auth">Auth</label><textarea class="ts-input ts-mono" id="rules-auth" name="auth" form="rules-form" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off">@Model.Playground.Auth</textarea></div>
-<div class="ts-field"><label class="ts-label" for="rules-row">Row</label><textarea class="ts-input ts-mono" id="rules-row" name="row" form="rules-form" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off">@Model.Playground.Row</textarea></div>
-<div class="ts-field"><label class="ts-label" for="rules-new">New</label><textarea class="ts-input ts-mono" id="rules-new" name="new" form="rules-form" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off">@Model.Playground.New</textarea></div>
-@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesResultView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
-</div><footer class="ts-card-foot"><button class="ts-btn ts-btn-secondary" type="submit" form="rules-form" formaction="/api/v1/dashboard/rules/test" data-on:click="@("evt.preventDefault(); @post('/api/v1/dashboard/rules/test', {contentType:'form', selector:'#rules-form'})")">Run test</button></footer></section>
-</div>
-<div class="ts-columns-side">
-@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesHistoryView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
-</div>
-</div>
-<script type="module" src="@Assets.Url("js/code-editor.js")" nonce="@Model.Shell.Nonce"></script>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "rules", Databases: Model.Shell.Context.Project?.Databases.Values)))
+    <h1 class="ts-sr-only">Rules</h1>
+    @(await RenderPartialAsync<RulesAlertsView, RulesPage>(Model))
+    <div class="ts-columns">
+        <div class="ts-columns-main ts-stack">
+            <section class="ts-card ts-card-boxed" id="rules-editor-card" aria-labelledby="rules-editor-title">
+                <header class="ts-card-head">
+                    <div class="ts-card-heading"><h2 class="ts-card-title" id="rules-editor-title">Rules</h2></div>
+                    @if (!Model.CanWrite)
+                    {
+                        <div class="ts-card-actions"><span class="ts-meta">Read-only</span></div>
+                    }
+                </header>
+                <div class="ts-card-body ts-stack">
+                    <form method="post" action="/api/v1/dashboard/rules/deploy" class="ts-form ts-stack" id="rules-form" data-on:submit="evt.preventDefault(); @@post(evt.submitter?.getAttribute('formaction') || el.getAttribute('action'), {contentType:'form'})">
+                        <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                        <input type="hidden" name="databaseId" value="@Model.Database.Id" />
+                        <div class="ts-field">
+                            <label class="ts-sr-only" for="rules-source">Rules JSON</label>
+                            <ts-code-editor class="ts-code-editor" data-language="json" data-submit-shortcut="false"><textarea class="ts-input ts-mono" id="rules-source" name="source" rows="12" required spellcheck="false" autocapitalize="off" autocomplete="off" readonly="@(Model.CanWrite ? null : "readonly")">@Model.Source</textarea></ts-code-editor>
+                        </div>
+                    </form>
+                    @(await RenderPartialAsync<RulesProblemsView, RulesPage>(Model))
+                </div>
+                @if (Model.CanWrite)
+                {
+                    <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit" form="rules-form">Deploy rules</button></footer>
+                }
+            </section>
+            @(await RenderPartialAsync<RulesDiffView, RulesPage>(Model))
+            <section class="ts-card ts-card-boxed" id="rules-playground" aria-labelledby="rules-playground-title">
+                <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="rules-playground-title">Playground</h2></div></header>
+                <div class="ts-card-body ts-stack">
+                    <div class="ts-form-grid">
+                        <div class="ts-field">
+                            <label class="ts-label" for="rules-operation">Operation</label>
+                            <select class="ts-select" id="rules-operation" name="operation" form="rules-form">
+                                @foreach (var operation in RulesBackend.Operations)
+                                {
+                                    <option value="@operation" selected="@(Model.Playground.Operation == operation)">@operation</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="ts-field">
+                            <label class="ts-label" for="rules-table">Table</label>
+                            <input class="ts-input ts-mono" id="rules-table" name="table" form="rules-form" list="rules-tables" value="@Model.Playground.Table" maxlength="128" autocomplete="off" spellcheck="false" placeholder="todos" data-on:keydown="evt.key === 'Enter' &amp;&amp; !evt.isComposing &amp;&amp; (evt.preventDefault(), el.form?.requestSubmit(document.getElementById('rules-test-button')))" />
+                            <datalist id="rules-tables">
+                                @foreach (var table in Model.Tables)
+                                {
+                                    <option value="@table"></option>
+                                }
+                            </datalist>
+                        </div>
+                    </div>
+                    <div class="ts-field"><label class="ts-label" for="rules-auth">Auth</label><textarea class="ts-input ts-mono" id="rules-auth" name="auth" form="rules-form" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off">@Model.Playground.Auth</textarea></div>
+                    <div class="ts-field"><label class="ts-label" for="rules-row">Row</label><textarea class="ts-input ts-mono" id="rules-row" name="row" form="rules-form" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off">@Model.Playground.Row</textarea></div>
+                    <div class="ts-field"><label class="ts-label" for="rules-new">New</label><textarea class="ts-input ts-mono" id="rules-new" name="new" form="rules-form" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off">@Model.Playground.New</textarea></div>
+                    @(await RenderPartialAsync<RulesResultView, RulesPage>(Model))
+                </div>
+                <footer class="ts-card-foot"><button class="ts-btn ts-btn-secondary" id="rules-test-button" type="submit" form="rules-form" formaction="/api/v1/dashboard/rules/test">Run test</button></footer>
+            </section>
+        </div>
+        <div class="ts-columns-side">
+            @(await RenderPartialAsync<RulesHistoryView, RulesPage>(Model))
+        </div>
+    </div>
+    <script type="module" src="@Assets.Url("js/code-editor.js")" nonce="@Model.Shell.Nonce"></script>
 </main>
 @functions {
     public ShellModel LayoutModel => Model.Shell;

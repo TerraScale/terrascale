@@ -1,7 +1,7 @@
-/* Notification inbox. */
+#alerts-content {
+  display: contents;
+}
 
-/* The dialog's filter tabs are buttons that fetch the filtered inbox through
-   Datastar instead of links, so they lose the native button chrome. */
 #ts-notifications-body button.ts-tab {
   appearance: none;
   border: 0;
@@ -9,26 +9,26 @@
   cursor: pointer;
 }
 
-/* Filter tabs on the left, summary on the right, no hairline under the tabs. */
 .ts-notifications-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: var(--ts-s2) var(--ts-s3);
+  gap: var(--ts-s3) var(--ts-s4);
+  border-bottom: 1px solid var(--ts-line);
 }
 
 .ts-notifications-toolbar > .ts-tabs {
   border-bottom: 0;
 }
 
-/* Dialog only: read-all sits beside the summary as one right-aligned group. */
 .ts-notifications-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--ts-s3);
+  padding-bottom: var(--ts-s2);
 }
 
 .ts-notification-list {
@@ -48,13 +48,11 @@
   border-bottom: 1px solid var(--ts-line);
 }
 
-/* Long titles and bodies wrap inside the row instead of widening the card. */
 .ts-notification > .ts-stack-sm {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-/* Titles stay ink rather than link blue; unread is bold, read recedes. */
 .ts-notification .ts-strong {
   color: var(--ts-ink);
   font-weight: 600;
@@ -89,8 +87,37 @@
   background: var(--tone);
 }
 
+#ts-notifications-dialog .ts-notifications-toolbar {
+  border-bottom: 0;
+}
+
+#ts-notifications-dialog .ts-notifications-toolbar > .ts-tabs {
+  width: 100%;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+#ts-notifications-dialog .ts-notifications-actions {
+  width: 100%;
+  justify-content: space-between;
+  padding-bottom: 0;
+}
 
 @media (max-width: 47.99rem) {
+  .ts-notifications-toolbar {
+    border-bottom: 0;
+  }
+
+  .ts-notifications-toolbar > .ts-tabs {
+    width: 100%;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-notifications-actions {
+    width: 100%;
+    justify-content: space-between;
+    padding-bottom: 0;
+  }
+
   .ts-notification {
     grid-template-columns: auto minmax(0, 1fr);
   }

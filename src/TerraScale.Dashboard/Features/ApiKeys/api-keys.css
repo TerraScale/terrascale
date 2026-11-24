@@ -29,21 +29,66 @@
   }
 }
 
+#credentials > .ts-card-head {
+  align-items: center;
+}
+
+#credentials > .ts-card-head > .ts-card-actions {
+  max-width: 100%;
+  min-width: 0;
+}
+
 .ts-apikeys-filters {
+  flex-wrap: wrap;
   justify-content: flex-end;
+  max-width: 100%;
 }
 
 .ts-apikeys-filters > .ts-input {
-  flex: 0 1 auto;
+  flex: 1 1 220px;
   width: 240px;
+  max-width: 100%;
 }
 
 .ts-apikeys-filters > .ts-select {
-  flex: 0 1 auto;
+  flex: 0 1 160px;
   width: 160px;
+  max-width: 100%;
+}
+
+@container page (width < 640px) {
+  #credentials > .ts-card-head > .ts-card-actions {
+    flex: 1 1 100%;
+  }
+
+  .ts-apikeys-filters {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .ts-apikeys-filters > .ts-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .ts-apikeys-filters > .ts-select {
+    flex: 1 1 calc(50% - var(--ts-s3) / 2);
+    min-width: 140px;
+    width: auto;
+  }
+}
+
+@container page (width < 420px) {
+  .ts-apikeys-filters > .ts-select {
+    flex-basis: 100%;
+    width: 100%;
+  }
 }
 
 .ts-apikeys-table .ts-apikeys-name > a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-control-h-sm);
   color: var(--ts-ink);
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -78,6 +123,25 @@
   flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
+}
+
+@container page (width < 768px) {
+  .ts-apikeys-table td[data-label] {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+    gap: var(--ts-s2);
+  }
+
+  .ts-apikeys-table td[data-label]::before {
+    color: var(--ts-ink-3);
+    font-size: var(--ts-fs-sm);
+  }
+
+  .ts-apikeys-table td.ts-meta {
+    color: var(--ts-ink-2);
+  }
 }
 
 .ts-apikeys-actions > .ts-icon-btn:hover {
@@ -410,24 +474,8 @@ dialog.ts-apikeys-secret-dialog .ts-dialog-content > * {
 }
 
 @media (max-width: 540px) {
-  .ts-apikeys-filters > .ts-input,
-  .ts-apikeys-filters > .ts-select {
-    flex-basis: 100%;
-    width: 100%;
-  }
-
   .ts-apikeys-selects {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ts-apikeys-kv {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--ts-s4);
-  }
-
-  .ts-apikeys-kv > div {
-    display: grid;
-    gap: var(--ts-s1);
   }
 
   .ts-apikeys-secret-foot {

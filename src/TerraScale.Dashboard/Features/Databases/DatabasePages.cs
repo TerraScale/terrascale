@@ -3,266 +3,276 @@ using Microsoft.AspNetCore.Html;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Features.Home;
 
-namespace TerraScale.Dashboard.Features.Databases
+namespace TerraScale.Dashboard.Features.Databases;
+
+public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
+    string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
 {
-    public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
-        string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
+    public string Notice { get; init; } = "";
+    public string CreatedName { get; init; } = "";
+    public AccountContext Context => Shell.Context;
+    public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
+    public int Ready => All.Count(database => database.Status == "ready");
+    public int Progress => All.Count(database => database.Status is "provisioning" or "accepted" or "pending");
+    public int Failed => All.Count(database => database.Status == "failed");
+    public IReadOnlyList<string> Serving(DatabaseRecord database)
     {
-        public string Notice { get; init; } = "";
-        public string CreatedName { get; init; } = "";
-        public AccountContext Context => Shell.Context;
-        public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
-        public int Ready => All.Count(database => database.Status == "ready");
-        public int Progress => All.Count(database => database.Status is "provisioning" or "accepted" or "pending");
-        public int Failed => All.Count(database => database.Status == "failed");
-        public IReadOnlyList<string> Serving(DatabaseRecord database)
+        return DatabaseService.ServingRegions(database);
+    }
+
+    public IReadOnlyList<string> Regions => [.. All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Common.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase)];
+    public IReadOnlyList<string>? Selection { get; init; }
+    public IReadOnlyList<string> Selected => Selection
+        ?? ((Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase)) ?? (Choices is [var first, ..] ? first : null))?.Code is { } code ? [code] : []);
+    public RegionMapModel RegionMap => new("create-database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))), Selected)
+    {
+        Bleed = true,
+        OrderField = "regionOrder",
+        Minimum = DatabasePlacementEndpoints.Minimum
+    };
+    public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
+    public static string Tone(string status)
+    {
+        return status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
+    }
+
+    public static string RegionDisplay(string code)
+    {
+        return code switch { "" => "Not configured", _ => TerraScale.Dashboard.Common.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
+    }
+
+    public DatabaseListMetrics? Metrics { get; init; }
+    public string Range { get; init; } = "24h";
+    public string RangePath(string range)
+    {
+        return "/databases?" + (Search.Length > 0 ? "q=" + Uri.EscapeDataString(Search) + "&" : "") + "range=" + range + "#project-databases";
+    }
+
+    public string ClearPath => "/databases?range=" + Range + "#project-databases";
+    public IEnumerable<(string Label, string? Value, string Title, AnalyticsLinePlot? Trend, string Hue)> Cells(string databaseId)
+    {
+        var metric = Metrics?.Databases.GetValueOrDefault(databaseId);
+        yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Common.Charts.ChartGeometry.Compact(reads) : null, metric?.Reads is { } r ? ValueFormat.Plural(r, "read") + " in " + Range : "", metric?.ReadTrend, "ts-cat-1");
+        yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Common.Charts.ChartGeometry.Compact(writes) : null, metric?.Writes is { } w ? ValueFormat.Plural(w, "write") + " (puts, patches and deletes) in " + Range : "", metric?.WriteTrend, "ts-cat-2");
+        yield return ("Storage", metric?.StorageBytes is { } bytes ? MetricFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? ValueFormat.Plural(b, "byte") + " in the latest bucket, summed across every reporting region" : "", null, "");
+        yield return ("p95 latency", metric?.P95Ms is { } ms ? MetricFormat.Latency(ms) : null, "Highest region p95 in the latest bucket", null, "");
+    }
+}
+
+public sealed record DatabaseListMetric(long? Reads, long? Writes, long? StorageBytes, double? P95Ms, AnalyticsLinePlot? ReadTrend, AnalyticsLinePlot? WriteTrend);
+
+public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseListMetric> Databases, string Message)
+{
+    private static readonly string[] Writes = ["put", "patch", "delete"];
+    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
+
+    public static async Task<DatabaseListMetrics> LoadAsync(IAnalyticsBackend backend, AccountContext context, string range, CancellationToken cancellationToken)
+    {
+        if (context.Project is not { Databases.Count: > 0 })
         {
-            return DatabaseService.ServingRegions(database);
+            return new(new Dictionary<string, DatabaseListMetric>(), "");
         }
 
-        public IReadOnlyList<string> Regions => [.. All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Common.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase)];
-        public IReadOnlyList<string>? Selection { get; init; }
-        public IReadOnlyList<string> Selected => Selection
-            ?? ((Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase)) ?? (Choices is [var first, ..] ? first : null))?.Code is { } code ? [code] : []);
-        public RegionMapModel RegionMap => new("create-database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))), Selected)
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(Budget);
+        try
         {
-            Bleed = true,
-            OrderField = "regionOrder",
+            var selection = AnalyticsSelection.For(context, "", "", "", range);
+            var batch = await backend.ReadAsync(selection, budget.Token);
+            if (batch.State == AnalyticsSourceState.Unavailable)
+            {
+                return new(new Dictionary<string, DatabaseListMetric>(), "Database metrics are unavailable.");
+            }
+
+            if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0)
+            {
+                return new(new Dictionary<string, DatabaseListMetric>(), "No database measurements in the last " + range + ".");
+            }
+            _ = AnalyticsService.Build(selection, batch.Points);
+            var bucket = range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, _ => 86400 };
+            var first = batch.Points.Min(point => point.Start.ToUniversalTime());
+            var starts = Enumerable.Range(0, checked((int)((batch.Points.Max(point => point.Start.ToUniversalTime()) - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket)).ToArray();
+            return new(batch.Points.GroupBy(point => point.DatabaseId).ToDictionary(group => group.Key, group =>
+            {
+                var name = selection.Context.Project!.Databases[group.Key].Name;
+                AnalyticsLinePlot? Trend(string label, Func<AnalyticsPoint, long?> measure, out long? total)
+                {
+                    var values = new decimal[starts.Length]; var missing = Enumerable.Repeat(true, starts.Length).ToArray();
+                    total = null;
+                    foreach (var point in group)
+                    {
+                        if (measure(point) is not { } value)
+                        {
+                            continue;
+                        }
+
+                        var index = (int)((point.Start.ToUniversalTime() - first).TotalSeconds / bucket);
+                        values[index] = checked(values[index] + value); missing[index] = false;
+                        total = checked((total ?? 0) + value);
+                    }
+                    return total is null ? null : AnalyticsLinePlot.For(name + " " + label + ", " + range, range, starts, [new AnalyticsSeries(label, values, missing)]);
+                }
+                var readTrend = Trend("reads", point => point.Operations.GetValueOrDefault("read"), out var reads);
+                var writeTrend = Trend("writes", point => Writes.Sum(op => point.Operations.GetValueOrDefault(op)), out var writes);
+                var current = group.Where(point => point.Start.ToUniversalTime() == starts[^1]).ToArray();
+                var storage = current.Length > 0 && current.All(point => point.StorageBytes is not null) &&
+                    group.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count() == current.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count()
+                    ? current.Aggregate(0L, (sum, point) => checked(sum + point.StorageBytes!.Value)) : (long?)null;
+                var p95 = current.Max(point => point.P95Ms);
+                return new DatabaseListMetric(reads, writes, storage, p95, readTrend, writeTrend);
+            }), "");
+        }
+        catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
+            error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        { return Failed(); }
+    }
+
+    public static DatabaseListMetrics Failed()
+    {
+        return new(new Dictionary<string, DatabaseListMetric>(), "Could not load database metrics. Reload the page to retry.");
+    }
+}
+
+public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
+    string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
+    string Range = "24h", DatabaseActivity? Activity = null, string FormError = "")
+{
+    public DatabaseConflictsPage? Conflicts { get; init; }
+    public DatabaseReplication? Replication { get; init; }
+    public string? BranchName { get; init; }
+    public string TtlHours { get; init; } = "";
+    public string PointInTime { get; init; } = "";
+    public DatabaseTables? Tables { get; init; }
+    public string Table { get; init; } = "";
+    public DatabaseSqlResult? Preview { get; init; }
+    public long? StorageBytes { get; init; }
+    public CreateTableDraft? TableDraft { get; init; }
+    public bool OpenCreateTable => Tab == "tables" && Context.CanWriteProjectData && (TableDraft is not null || ShowCreateTable);
+    public bool ShowCreateTable { get; init; }
+    public string CreatedTable { get; init; } = "";
+    public IReadOnlyList<string>? SqlHistory { get; init; }
+    public bool ShowFork { get; init; }
+    public bool OpenBranch => Tab == "branches" && (ShowFork || BranchName is not null && Error.Length > 0) && Context.CanManage && Database.Status == "ready";
+    public string RangePath(string range)
+    {
+        return DatabaseService.Path(Database.Id) + "?range=" + range + "#activity";
+    }
+
+    public string TablePath(string table)
+    {
+        return DatabaseService.Path(Database.Id, "tables") + "?table=" + Uri.EscapeDataString(table);
+    }
+
+    public AccountContext Context => Shell.Context;
+    public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
+    public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
+    public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
+    public DatabaseRegionsForm? RegionsForm { get; init; }
+    private IReadOnlyList<string> Asked => [.. (RegionsForm?.Asked ?? []).Where(code => Serving.Contains(code, StringComparer.OrdinalIgnoreCase) ||
+        Choices.Any(region => region.Code.Equals(code, StringComparison.OrdinalIgnoreCase)))];
+    private IReadOnlyList<string> Placed => Database.AllRegions ? [.. Serving.Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Serving;
+    public RegionMapModel OverviewMap => RegionMapModel.ReadOnly("database-overview-regions", Placed) with { LabelledBy = "overview-regions-title" };
+    public RegionMapModel RegionMap => CanPlace
+        ? new("database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))),
+            Asked.Count > 0 ? Asked : Placed)
+        {
+            LabelledBy = "regions-title",
             Minimum = DatabasePlacementEndpoints.Minimum
+        }
+        : RegionMapModel.ReadOnly("database-regions", Serving) with { LabelledBy = "regions-title" };
+    public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
+        : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
+    public (string Tone, string Title, HtmlString Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
+    {
+        "success" => ("success", Database.Name + " is ready", new HtmlString("<a class=\"ts-link\" href=\"" + DatabaseService.Path(Database.Id, "tables") + "\">Open the Tables tab</a> to create a table.")),
+        "danger" => ("danger", Database.Name + " could not be created", new HtmlString("The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing.")),
+        _ => ("info", Database.Name + " is being created", new HtmlString("The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests."))
+    };
+}
+
+public sealed record DatabaseActivityCard(string Key, string Title, AnalyticsLinePlot? Plot, string Message, bool Failed = false);
+
+public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards)
+{
+    private static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (ms)")];
+    private static readonly string[] WriteOperations = ["put", "patch", "delete"];
+    private const string FailedMessage = "Could not load activity measurements. Reload the page to retry.";
+
+    public static string RangeOf(IQueryCollection query)
+    {
+        var requested = query["range"].ToString() is { Length: > 0 } range ? range : Kinds.Select(kind => query[kind.Key].ToString()).FirstOrDefault(value => value.Length > 0);
+        return HomePage.NormalizeRange(requested);
+    }
+
+    public static async Task<DatabaseActivity> LoadAsync(IAnalyticsBackend backend, AccountContext context, string databaseId, string range, CancellationToken cancellationToken)
+    {
+        var selection = AnalyticsSelection.For(context, "", databaseId, "", range);
+        var batch = await backend.ReadAsync(selection, cancellationToken);
+        if (batch.State == AnalyticsSourceState.Unavailable)
+        {
+            return Empty("Activity measurements are unavailable.");
+        }
+
+        if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0)
+        {
+            return Empty("No activity measurements for this database in the last " + range + ".");
+        }
+
+        var regions = AnalyticsService.Build(selection, batch.Points).Totals.Regions;
+        var bucket = range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, _ => 86400 };
+        var first = batch.Points.Min(point => point.Start.ToUniversalTime());
+        var last = batch.Points.Max(point => point.Start.ToUniversalTime());
+        DateTimeOffset[] starts = [.. Enumerable.Range(0, checked((int)((last - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket))];
+        return new([.. Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title,
+            Plot(kind, range, starts, [.. regions.Select(region => Series(kind.Key, region.Code, batch.Points, first, bucket, starts.Length)).OfType<AnalyticsSeries>()]),
+            "No " + kind.Title.Split(' ')[0].ToLowerInvariant() + " samples in the last " + range + "."))]);
+    }
+
+    public static DatabaseActivity Failed()
+    {
+        return new([.. Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, null, FailedMessage, true))]);
+    }
+
+    private static DatabaseActivity Empty(string message)
+    {
+        return new([.. Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, null, message))]);
+    }
+
+    private static AnalyticsSeries? Series(string key, string region, IReadOnlyList<AnalyticsPoint> points, DateTimeOffset first, int bucket, int length)
+    {
+        var values = new decimal[length];
+        var missing = Enumerable.Repeat(true, length).ToArray();
+        foreach (var point in points.Where(sample => sample.Region.Equals(region, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (Measure(key, point) is not { } value)
+            {
+                continue;
+            }
+
+            var index = (int)((point.Start.ToUniversalTime() - first).TotalSeconds / bucket);
+            values[index] = missing[index] ? value : key is "reads" or "writes" ? checked(values[index] + value) : Math.Max(values[index], value);
+            missing[index] = false;
+        }
+        return missing.Contains(false) ? new AnalyticsSeries(region, values, missing) : null;
+    }
+
+    private static AnalyticsLinePlot Plot((string Key, string Title) kind, string range, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series)
+    {
+        return kind.Key == "latency"
+        ? AnalyticsLinePlot.ForLatency(kind.Title + ", " + range, range, starts, series)
+        : AnalyticsLinePlot.For(kind.Title + ", " + range, range, starts, series);
+    }
+
+    private static decimal? Measure(string key, AnalyticsPoint point)
+    {
+        return key switch
+        {
+            "reads" => point.Operations.GetValueOrDefault("read"),
+            "writes" => WriteOperations.Sum(name => point.Operations.GetValueOrDefault(name)),
+            "storage" => point.StorageBytes,
+            _ => point.P95Ms is { } ms ? (decimal)ms : null,
         };
-        public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
-        public static string Tone(string status)
-        {
-            return status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
-        }
-
-        public static string RegionDisplay(string code)
-        {
-            return code switch { "" => "Not configured", _ => TerraScale.Dashboard.Common.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
-        }
-
-        public DatabaseListMetrics? Metrics { get; init; }
-        public string Range { get; init; } = "24h";
-        public string RangePath(string range)
-        {
-            return "/databases?" + (Search.Length > 0 ? "q=" + Uri.EscapeDataString(Search) + "&" : "") + "range=" + range + "#project-databases";
-        }
-
-        public string ClearPath => "/databases?range=" + Range + "#project-databases";
-        public IEnumerable<(string Label, string? Value, string Title, AnalyticsLinePlot? Trend, string Hue)> Cells(string databaseId)
-        {
-            var metric = Metrics?.Databases.GetValueOrDefault(databaseId);
-            yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Common.Charts.ChartGeometry.Compact(reads) : null, metric?.Reads is { } r ? ValueFormat.Plural(r, "read") + " in " + Range : "", metric?.ReadTrend, "ts-cat-1");
-            yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Common.Charts.ChartGeometry.Compact(writes) : null, metric?.Writes is { } w ? ValueFormat.Plural(w, "write") + " (puts, patches and deletes) in " + Range : "", metric?.WriteTrend, "ts-cat-2");
-            yield return ("Storage", metric?.StorageBytes is { } bytes ? MetricFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? ValueFormat.Plural(b, "byte") + " in the latest bucket, summed across every reporting region" : "", null, "");
-            yield return ("p95 latency", metric?.P95Ms is { } ms ? MetricFormat.Latency(ms) : null, "Highest region p95 in the latest bucket", null, "");
-        }
-    }
-
-    public sealed record DatabaseListMetric(long? Reads, long? Writes, long? StorageBytes, double? P95Ms, AnalyticsLinePlot? ReadTrend, AnalyticsLinePlot? WriteTrend);
-
-    public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseListMetric> Databases, string Message)
-    {
-        private static readonly string[] Writes = ["put", "patch", "delete"];
-        private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
-
-        public static async Task<DatabaseListMetrics> LoadAsync(IAnalyticsBackend backend, AccountContext context, string range, CancellationToken cancellationToken)
-        {
-            if (context.Project is not { Databases.Count: > 0 })
-            {
-                return new(new Dictionary<string, DatabaseListMetric>(), "");
-            }
-
-            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            budget.CancelAfter(Budget);
-            try
-            {
-                var selection = AnalyticsSelection.For(context, "", "", "", range);
-                var batch = await backend.ReadAsync(selection, budget.Token);
-                if (batch.State == AnalyticsSourceState.Unavailable)
-                {
-                    return new(new Dictionary<string, DatabaseListMetric>(), "Database metrics are unavailable.");
-                }
-
-                if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0)
-                {
-                    return new(new Dictionary<string, DatabaseListMetric>(), "No database measurements in the last " + range + ".");
-                }
-                _ = AnalyticsService.Build(selection, batch.Points);
-                var bucket = range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, _ => 86400 };
-                var first = batch.Points.Min(point => point.Start.ToUniversalTime());
-                var starts = Enumerable.Range(0, checked((int)((batch.Points.Max(point => point.Start.ToUniversalTime()) - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket)).ToArray();
-                return new(batch.Points.GroupBy(point => point.DatabaseId).ToDictionary(group => group.Key, group =>
-                {
-                    var name = selection.Context.Project!.Databases[group.Key].Name;
-                    AnalyticsLinePlot? Trend(string label, Func<AnalyticsPoint, long?> measure, out long? total)
-                    {
-                        var values = new decimal[starts.Length]; var missing = Enumerable.Repeat(true, starts.Length).ToArray();
-                        total = null;
-                        foreach (var point in group)
-                        {
-                            if (measure(point) is not { } value)
-                            {
-                                continue;
-                            }
-
-                            var index = (int)((point.Start.ToUniversalTime() - first).TotalSeconds / bucket);
-                            values[index] = checked(values[index] + value); missing[index] = false;
-                            total = checked((total ?? 0) + value);
-                        }
-                        return total is null ? null : AnalyticsLinePlot.For(name + " " + label + ", " + range, range, starts, [new AnalyticsSeries(label, values, missing)]);
-                    }
-                    var readTrend = Trend("reads", point => point.Operations.GetValueOrDefault("read"), out var reads);
-                    var writeTrend = Trend("writes", point => Writes.Sum(op => point.Operations.GetValueOrDefault(op)), out var writes);
-                    var current = group.Where(point => point.Start.ToUniversalTime() == starts[^1]).ToArray();
-                    var storage = current.Length > 0 && current.All(point => point.StorageBytes is not null) &&
-                        group.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count() == current.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count()
-                        ? current.Aggregate(0L, (sum, point) => checked(sum + point.StorageBytes!.Value)) : (long?)null;
-                    var p95 = current.Max(point => point.P95Ms);
-                    return new DatabaseListMetric(reads, writes, storage, p95, readTrend, writeTrend);
-                }), "");
-            }
-            catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
-                error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            { return Failed(); }
-        }
-
-        public static DatabaseListMetrics Failed()
-        {
-            return new(new Dictionary<string, DatabaseListMetric>(), "Could not load database metrics. Reload the page to retry.");
-        }
-    }
-
-    public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
-        string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
-        string Range = "24h", DatabaseActivity? Activity = null, string FormError = "")
-    {
-        public DatabaseConflictsPage? Conflicts { get; init; }
-        public DatabaseReplication? Replication { get; init; }
-        public string? BranchName { get; init; }
-        public string TtlHours { get; init; } = "";
-        public string PointInTime { get; init; } = "";
-        public DatabaseTables? Tables { get; init; }
-        public string Table { get; init; } = "";
-        public DatabaseSqlResult? Preview { get; init; }
-        public long? StorageBytes { get; init; }
-        public CreateTableDraft? TableDraft { get; init; }
-        public bool OpenCreateTable => Tab == "tables" && Context.CanWriteProjectData && (TableDraft is not null || ShowCreateTable);
-        public bool ShowCreateTable { get; init; }
-        public string CreatedTable { get; init; } = "";
-        public IReadOnlyList<string>? SqlHistory { get; init; }
-        public bool ShowFork { get; init; }
-        public bool OpenBranch => Tab == "branches" && (ShowFork || BranchName is not null && Error.Length > 0) && Context.CanManage && Database.Status == "ready";
-        public string RangePath(string key, string range)
-        {
-            return DatabaseService.Path(Database.Id) + "?" +
-            string.Join('&', Activity!.Cards.Select(card => card.Key + "=" + (card.Key == key ? range : card.Range))) + "#activity";
-        }
-
-        public string TablePath(string table)
-        {
-            return DatabaseService.Path(Database.Id, "tables") + "?table=" + Uri.EscapeDataString(table);
-        }
-
-        public AccountContext Context => Shell.Context;
-        public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
-        public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
-        public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
-        public DatabaseRegionsForm? RegionsForm { get; init; }
-        private IReadOnlyList<string> Asked => [.. (RegionsForm?.Asked ?? []).Where(code => Serving.Contains(code, StringComparer.OrdinalIgnoreCase) ||
-            Choices.Any(region => region.Code.Equals(code, StringComparison.OrdinalIgnoreCase)))];
-        public RegionMapModel RegionMap => CanPlace
-            ? new("database-regions", RegionMapMode.Select, RegionMapModel.Rows(Choices.Select(region => new RegionMapRegion(region.Code, region.Name, region.Country))),
-                Asked.Count > 0 ? Asked : Database.AllRegions ? [.. Serving.Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)] : Serving)
-            {
-                LabelledBy = "regions-title",
-                Minimum = DatabasePlacementEndpoints.Minimum
-            }
-            : RegionMapModel.ReadOnly("database-regions", Serving) with { LabelledBy = "regions-title" };
-        public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
-            : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
-        public (string Tone, string Title, HtmlString Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
-        {
-            "success" => ("success", Database.Name + " is ready", new HtmlString("<a class=\"ts-link\" href=\"" + DatabaseService.Path(Database.Id, "tables") + "\">Open the Tables tab</a> to create a table.")),
-            "danger" => ("danger", Database.Name + " could not be created", new HtmlString("The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing.")),
-            _ => ("info", Database.Name + " is being created", new HtmlString("The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests."))
-        };
-    }
-
-    public sealed record DatabaseActivityCard(string Key, string Title, string Range, AnalyticsLinePlot? Plot, string Message, bool Failed = false);
-
-    public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards, IReadOnlyList<AnalyticsRegionRow> Regions)
-    {
-        public static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (ms)")];
-        private static readonly string[] WriteOperations = ["put", "patch", "delete"];
-        private const string FailedMessage = "Could not load activity measurements. Reload the page to retry.";
-
-        public static async Task<DatabaseActivity> LoadAsync(IAnalyticsBackend backend, AccountContext context, string databaseId, Func<string, string> rangeFor, CancellationToken cancellationToken)
-        {
-            var cards = Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, rangeFor(kind.Key), null, "")).ToArray();
-            IReadOnlyList<AnalyticsRegionRow> latencyRegions = [];
-            await Task.WhenAll(cards.Select(card => card.Range).Distinct().ToArray().Select(async range =>
-            {
-                void Set(Func<DatabaseActivityCard, DatabaseActivityCard> update) { for (var i = 0; i < cards.Length; i++) { if (cards[i].Range == range) { cards[i] = update(cards[i]); } } }
-                try
-                {
-                    var selection = AnalyticsSelection.For(context, "", databaseId, "", range);
-                    var batch = await backend.ReadAsync(selection, cancellationToken);
-                    if (batch.State == AnalyticsSourceState.Unavailable) { Set(card => card with { Message = "Activity measurements are unavailable." }); return; }
-                    if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0) { Set(card => card with { Message = "No activity measurements for this database in the last " + range + "." }); return; }
-                    var regions = AnalyticsService.Build(selection, batch.Points).Totals.Regions;
-                    if (cards.Any(card => card.Key == "latency" && card.Range == range))
-                    {
-                        latencyRegions = regions;
-                    }
-
-                    var bucket = range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, _ => 86400 };
-                    var first = batch.Points.Min(point => point.Start.ToUniversalTime());
-                    var last = batch.Points.Max(point => point.Start.ToUniversalTime());
-                    var starts = Enumerable.Range(0, checked((int)((last - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket)).ToArray();
-                    var plots = cards.Where(card => card.Range == range).ToDictionary(card => card.Key, card => Plot(card, starts, [.. regions.Select(region =>
-                    {
-                        var values = new decimal[starts.Length];
-                        var missing = Enumerable.Repeat(true, starts.Length).ToArray();
-                        foreach (var point in batch.Points.Where(sample => sample.Region.Equals(region.Code, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            if (Measure(card.Key, point) is not { } value) { continue; } var index = (int)((point.Start.ToUniversalTime() - first).TotalSeconds / bucket);
-                            values[index] = missing[index] ? value : card.Key is "reads" or "writes" ? checked(values[index] + value) : Math.Max(values[index], value);
-                            missing[index] = false;
-                        }
-                        return new AnalyticsSeries(region.Code, values, missing);
-                    }).Where(series => series.Missing!.Contains(false))]));
-                    Set(card => card with { Plot = plots[card.Key], Message = "No " + card.Title.Split(' ')[0].ToLowerInvariant() + " samples in the last " + range + "." });
-                }
-                catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
-                    error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                { Set(card => card with { Plot = null, Message = FailedMessage, Failed = true }); }
-            }));
-            return new(cards, latencyRegions);
-        }
-
-        public static DatabaseActivity Failed(Func<string, string> rangeFor)
-        {
-            return new([.. Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, rangeFor(kind.Key), null, FailedMessage, true))], []);
-        }
-
-        private static AnalyticsLinePlot Plot(DatabaseActivityCard card, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series)
-        {
-            return card.Key == "latency"
-            ? AnalyticsLinePlot.ForLatency(card.Title + ", " + card.Range, card.Range, starts, series)
-            : AnalyticsLinePlot.For(card.Title + ", " + card.Range, card.Range, starts, series);
-        }
-
-        private static decimal? Measure(string key, AnalyticsPoint point)
-        {
-            return key switch
-            {
-                "reads" => point.Operations.GetValueOrDefault("read"),
-                "writes" => WriteOperations.Sum(name => point.Operations.GetValueOrDefault(name)),
-                "storage" => point.StorageBytes,
-                _ => point.P95Ms is { } ms ? (decimal)ms : null,
-            };
-        }
     }
 }

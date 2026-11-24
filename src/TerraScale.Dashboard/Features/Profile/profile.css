@@ -1,5 +1,3 @@
-/* Profile page: identity header, wrapping tabs and capability badges. */
-
 .ts-profile-head {
   gap: var(--ts-s3);
   overflow-wrap: anywhere;
@@ -17,11 +15,6 @@
 
 .ts-profile-name {
   margin: 0;
-}
-
-.ts-profile-tabs {
-  flex-wrap: wrap;
-  overflow-x: visible;
 }
 
 .ts-profile-claims {
@@ -54,7 +47,6 @@
   border-top: 1px solid var(--ts-line);
 }
 
-/* Settings rows: title and help on the left third, controls on the right, hairline between rows. */
 .ts-profile-settings {
   display: grid;
   min-width: 0;
@@ -63,6 +55,7 @@
 .ts-profile-settings > .ts-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  align-items: start;
   gap: 0 var(--ts-s10);
   padding: var(--ts-s8) 0;
   border-bottom: 1px solid var(--ts-line);

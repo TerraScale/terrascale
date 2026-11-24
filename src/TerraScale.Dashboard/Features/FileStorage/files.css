@@ -1,9 +1,3 @@
-.ts-files {
-  display: grid;
-  gap: var(--ts-s6);
-  align-content: start;
-}
-
 .ts-files-title {
   display: flex;
   align-items: center;
@@ -335,11 +329,6 @@ dialog.ts-files-dialog {
   gap: var(--ts-s3);
 }
 
-.ts-files-form > .ts-card-foot {
-  margin: 0 calc(-1 * var(--ts-s5)) calc(-1 * var(--ts-s5));
-  padding: var(--ts-s3) var(--ts-s5);
-}
-
 .ts-files-search {
   flex: 0 1 220px;
 }
@@ -402,5 +391,19 @@ dialog.ts-files-dialog {
 
   .ts-files-drop {
     padding: var(--ts-s6) var(--ts-s4);
+  }
+}
+
+.ts-files .ts-rows > li {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+@container page (width < 640px) {
+  .ts-files .ts-rows > li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .ts-files .ts-rows > li > .ts-rows-meta {
+    display: none;
   }
 }

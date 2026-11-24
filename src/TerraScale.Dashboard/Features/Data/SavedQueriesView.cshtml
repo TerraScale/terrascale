@@ -2,12 +2,12 @@
 @using TerraScale.Dashboard.Features.Data
 <section class="ts-card ts-card-boxed ts-card-flush" id="saved-queries" aria-labelledby="saved-queries-title">
 <header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="saved-queries-title">Saved queries</h2></div>
-@if(Model.Context.CanWriteProjectData){<div class="ts-card-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">@Icons.Render("Save",16)<span>Save query</span></button></div>}
+@if(Model.Context.CanWriteProjectData && Model.SavedQueries is { Count: > 0 }){<div class="ts-card-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">@Icons.Render("Save",16)<span>Save query</span></button></div>}
 </header>
 <div class="ts-card-body">
 @if(Model.SavedQueries is not { Count: > 0 }){
 <div class="ts-empty" role="status"><p class="ts-empty-title">No saved queries yet.</p>
-@if(Model.Context.CanWriteProjectData){<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">Save query</button>}
+@if(Model.Context.CanWriteProjectData){<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">@Icons.Render("Save",16)<span>Save query</span></button>}
 </div>
 }else{
 <ul class="ts-rows">
