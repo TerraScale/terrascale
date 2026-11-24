@@ -375,11 +375,11 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         {
             if (aborted)
             {
-                _ = QuicIo.DisposeStreamAsync(lease.Stream);
+                _ = lease.ReleaseAsync();
             }
             else
             {
-                await QuicIo.DisposeStreamAsync(lease.Stream);
+                await lease.ReleaseAsync();
             }
 
             _metrics.StreamClosed(QuicSide.Client);
@@ -455,11 +455,11 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         {
             if (aborted)
             {
-                _ = QuicIo.DisposeStreamAsync(lease.Stream);
+                _ = lease.ReleaseAsync();
             }
             else
             {
-                await QuicIo.DisposeStreamAsync(lease.Stream);
+                await lease.ReleaseAsync();
             }
 
             _metrics.StreamClosed(QuicSide.Client);
