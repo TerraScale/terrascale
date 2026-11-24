@@ -137,7 +137,7 @@ public sealed class LookupInvitationEndpoint(Invitations invitations, PlatformAu
     public override void Configure()
     {
         Post("/v1/terrascale/invitations/lookup");
-        this.Describe("lookup_invitation", "Look up an invitation by token", "Any signed-in user holding the token. A token that is unknown, expired or no longer pending answers 404.", "Invitations", typeof(InvitationTokenRequest), StatusCodes.Status200OK, typeof(InvitationLookupBody), roleChecked: false);
+        this.Describe("lookup_invitation", "Look up an invitation by token", "Any signed-in user holding the token. A token that is unknown, expired or no longer pending answers 404.", "Invitations", typeof(InvitationTokenRequest), StatusCodes.Status200OK, typeof(InvitationLookupBody));
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)

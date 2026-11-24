@@ -1,6 +1,7 @@
 using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.AgentId;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
@@ -64,8 +65,9 @@ public static class Tenancy
         try
         {
             var platform = OidcIssuer.InstanceId;
-            return await data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
-                "SELECT EXISTS (SELECT 1 FROM projects WHERE id = @tenant AND instance_id = @platform)", new { tenant, platform }), cancellationToken) ? tenant : null;
+            return await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectRecord>(
+                "SELECT * FROM projects WHERE id = @tenant AND instance_id = @platform", new { tenant, platform }), cancellationToken) is { } project
+                && PlatformTenant.IsCustomerProject(project) ? tenant : null;
         }
         catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
         {

@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,7 +17,7 @@ public abstract record ProjectCaller
                 "This operation requires a person's sign-in access token; project API keys are not allowed.");
         }
 
-        return user;
+        return user.ActingAgentId is null ? user : throw PlatformEndpoint.AgentForbidden();
     }
 
     public abstract UserRecord Person { get; }

@@ -6,6 +6,7 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -80,7 +81,7 @@ public sealed class CreateOrganizationEndpoint(PlatformDirectory platform, Platf
     public override void Configure()
     {
         Post(Organizations);
-        this.Describe("create_organization", "Create an organization", "The caller becomes its first member, with the owner role.", "Organizations", typeof(CreateOrganizationRequest), StatusCodes.Status201Created, typeof(OrganizationBody), roleChecked: false, scoped: false, conflict: true);
+        this.Describe("create_organization", "Create an organization", "The caller becomes its first member, with the owner role.", "Organizations", typeof(CreateOrganizationRequest), StatusCodes.Status201Created, typeof(OrganizationBody), scoped: false, conflict: true);
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
@@ -132,6 +133,8 @@ public sealed class GetOrganizationEndpoint(PlatformDirectory platform, Platform
 
 public sealed class RenameOrganizationEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
+    protected override bool AgentMayWrite => true;
+
     public override void Configure()
     {
         Patch(Organization);
@@ -187,7 +190,7 @@ public sealed class SignOutEverywhereEndpoint(Sessions sessions, PlatformAuthent
         Post("/v1/terrascale/account/sign-out");
         this.Describe("sign_out_everywhere", "Sign out everywhere",
             "Advances the caller's authentication epoch: every hosted browser session, OAuth refresh token and sign-in access token of the account, including the one making this call, is refused from then on, and pending sign-in codes and challenges die. API keys are separate credentials and stay valid. Repeating the call is harmless.",
-            "Members", null, StatusCodes.Status204NoContent, null, roleChecked: false, scoped: false);
+            "Members", null, StatusCodes.Status204NoContent, null, scoped: false);
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
@@ -293,7 +296,7 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
     public override void Configure()
     {
         Delete("/v1/terrascale/account");
-        this.Describe("delete_account", "Delete your account", "Requires a fresh delete_account/ts-auth X-TerraScale-Step-Up-Proof, or the exact preauthorized receipt plus X-TerraScale-Deletion-Authorization for continuation. A timely initial proof consumption with a receipt returns its authorization secret in that response header; persist privately for retries. Once logical deletion completes (204), revokes auth access and frees the caller's email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects and databases, including replicas in every region. TerraBase permanently fences each project and purges its data before accepting active-copy erasure; the account waits for every catalog holder. Backup erasure remains durable background work under the database deletion deadlines. Shared organizations are left. 202 while a project closure is pending: the account stays until it finishes in the background, and new sign-ins are temporarily refused until completion or cancellation; cancellation restores sign-in without changing credentials. The background worker resumes without another submit. Optional X-TerraScale-Deletion-Receipt: a canonical 32-byte random base64url capability, retained for 15 days to read status after tokens stop working. Reuse it only for this closure generation; 409 deletion_refused otherwise. 409 platform_project_protected, before any closure starts, while the caller is the only member of TerraScale's own organization, whose projects hold its services' databases. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
+        this.Describe("delete_account", "Delete your account", "Requires a fresh delete_account/ts-auth X-TerraScale-Step-Up-Proof, or the exact preauthorized receipt plus X-TerraScale-Deletion-Authorization for continuation. A timely initial proof consumption with a receipt returns its authorization secret in that response header; persist privately for retries. Once logical deletion completes (204), revokes auth access and frees the caller's email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects and databases, including replicas in every region. TerraBase permanently fences each project and purges its data before accepting active-copy erasure; the account waits for every catalog holder. Backup erasure remains durable background work under the database deletion deadlines. Shared organizations are left. 202 while a project closure is pending: the account stays until it finishes in the background, and new sign-ins are temporarily refused until completion or cancellation; cancellation restores sign-in without changing credentials. The background worker resumes without another submit. Optional X-TerraScale-Deletion-Receipt: a canonical 32-byte random base64url capability, retained for 15 days to read status after tokens stop working. Reuse it only for this closure generation; 409 deletion_refused otherwise. 409 platform_project_protected, before any closure starts, while the caller is the only member of TerraScale's own organization, whose projects hold its services' databases. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, scoped: false);
         Produces(StatusCodes.Status202Accepted);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
@@ -331,6 +334,8 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
 
 public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
+    protected override bool AgentMayWrite => true;
+
     public override void Configure()
     {
         Post($"{Organization}/projects");
@@ -379,6 +384,8 @@ public sealed class GetProjectEndpoint(PlatformDirectory platform, PlatformAuthe
 
 public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
+    protected override bool AgentMayWrite => true;
+
     public override void Configure()
     {
         Patch(Project);
@@ -486,6 +493,8 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
 
     protected virtual int MaximumBodyBytes => 16 * 1024;
 
+    protected virtual bool AgentMayWrite => false;
+
     public sealed override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
@@ -507,12 +516,26 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
             return TypedResults.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present a sign-in access token of this tenant.")), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        if (caller.ActingAgentId is not null && !IsRead(this.HttpContext.Request.Method)
+            && !(this.AgentMayWrite && caller.ActingAgentScopes.Contains(AgentDirectory.McpWrite, StringComparer.Ordinal)))
+        {
+            return TypedResults.Json(new ErrorBody(new ErrorDetail(AgentForbiddenCode, AgentForbiddenMessage)), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status403Forbidden);
+        }
+
         return await this.HandleAsync(caller, cancellationToken);
     }
 
     protected abstract Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken);
 
     protected static ApiException Invalid(string message) => new(StatusCodes.Status400BadRequest, "invalid_request", message);
+
+    private const string AgentForbiddenCode = "agent_forbidden";
+
+    private const string AgentForbiddenMessage = "An AI agent acting for the account cannot do this. The account owner must do it with their own sign-in.";
+
+    public static ApiException AgentForbidden() => new(StatusCodes.Status403Forbidden, AgentForbiddenCode, AgentForbiddenMessage);
+
+    private static bool IsRead(string method) => HttpMethods.IsGet(method) || HttpMethods.IsHead(method);
 
     protected string RouteId(string name) =>
         this.HttpContext.GetRouteValue(name) is string value && PlatformDirectory.IsId(value) ? value : throw PlatformDirectory.NotFound();

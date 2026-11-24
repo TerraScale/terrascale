@@ -15,7 +15,7 @@ public sealed class RequestEmailChangeEndpoint(EmailChanges changes, StepUpProof
         Post("/v1/terrascale/account/email-change");
         this.Describe("request_email_change", "Start a sign-in email change",
             "Requires a fresh change_email/ts-auth proof in X-TerraScale-Step-Up-Proof. Emails a single-use code, valid ten minutes, to new_email and a cancel link to the current address; replaces any pending change. 409 email_taken when another account owns the address; 429 rate_limited after three requests per account or address per hour, or the platform-wide hourly budget.",
-            "Members", typeof(EmailChangeRequest), StatusCodes.Status202Accepted, typeof(EmailChangeBody), roleChecked: false, scoped: false, conflict: true);
+            "Members", typeof(EmailChangeRequest), StatusCodes.Status202Accepted, typeof(EmailChangeBody), scoped: false, conflict: true);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
@@ -41,7 +41,7 @@ public sealed class ConfirmEmailChangeEndpoint(EmailChanges changes, PlatformAut
         Post("/v1/terrascale/account/email-change/confirm");
         this.Describe("confirm_email_change", "Confirm a sign-in email change",
             "Commits the caller's pending change with the code the new address received, at the authentication state it was requested in: the new address becomes the sign-in email, the old one is released, and the epoch advances, ending every session and token of the account, including this one. The code works once; five wrong codes, expiry, a replaced request or any sign-out void it (403 email_change_denied). 409 email_taken when another account claimed the address meanwhile.",
-            "Members", typeof(ConfirmEmailChangeRequest), StatusCodes.Status204NoContent, null, roleChecked: false, scoped: false, conflict: true);
+            "Members", typeof(ConfirmEmailChangeRequest), StatusCodes.Status204NoContent, null, scoped: false, conflict: true);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
     }
 

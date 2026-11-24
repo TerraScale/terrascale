@@ -14,6 +14,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -144,8 +145,14 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             || !long.TryParse(subject.GetClaim(Claims.AuthenticationTime), NumberStyles.None, CultureInfo.InvariantCulture, out var authenticatedAt)
             || authenticatedAt > clock.GetUtcNow().Add(AuthenticationTimeClockSkew).ToUnixTimeSeconds()
             || await mfa.PrimaryUserAsync(PlatformDirectory.Instance, userId, subject.GetClaim(OidcIssuer.EpochClaim), subject.GetClaim(OidcIssuer.StateClaim),
-                subject.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user
-            || subject.GetClaim(LiveAgents.Claim) is { } agentId && await agents.ActiveAsync(agentId, userId, cancellationToken) is null)
+                subject.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user)
+        {
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
+        }
+
+        var agentId = subject.GetClaim(LiveAgents.Claim);
+        var acting = agentId is null ? null : await agents.ActiveAsync(agentId, userId, cancellationToken);
+        if (agentId is not null && acting is null)
         {
             return OidcResults.Forbid(OidcErrors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }
@@ -178,10 +185,22 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         }
 
         allowed = [.. allowed.Where(scope => !TerraBaseScopes.IsAuth(scope))];
+        if (acting is not null)
+        {
+            IReadOnlyList<string> delegated = subject.GetClaim(LiveAgents.ScopeClaim) is { } granted
+                ? [.. granted.Split(' ', StringSplitOptions.RemoveEmptyEntries).Intersect(acting.Agent.Value.AllowedScopes, StringComparer.Ordinal)]
+                : [];
+            allowed = [.. allowed.Intersect(TerraBaseScopes.Delegated(delegated), StringComparer.Ordinal)];
+            if (allowed.Count == 0)
+            {
+                return OidcResults.Forbid(OidcErrors.InvalidScope, "The agent's delegation grants no scope here.");
+            }
+        }
+
         var requested = request.GetScopes();
         if (requested.Except(allowed).Any())
         {
-            return OidcResults.Forbid(OidcErrors.InvalidScope, "A requested scope exceeds the user's role.");
+            return OidcResults.Forbid(OidcErrors.InvalidScope, acting is null ? "A requested scope exceeds the user's role." : "A requested scope exceeds the user's role or the agent's delegation.");
         }
 
         if (!user.MultiFactor && !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken) || expires <= clock.GetUtcNow())
@@ -195,6 +214,12 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             .SetClaim(Claims.Email, user.Email)
             .SetClaim(Claims.EmailVerified, true)
             .SetClaim(Claims.AuthenticationTime, authenticatedAt);
+        if (agentId is not null)
+        {
+            identity.SetClaim(LiveAgents.Claim, agentId)
+                .SetClaim("act", JsonSerializer.SerializeToElement(new ImpersonationActor(agentId), ImpersonationJson.Default.ImpersonationActor));
+        }
+
         return SignIn(identity);
     }
 
