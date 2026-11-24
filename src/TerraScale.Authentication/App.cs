@@ -87,7 +87,7 @@ public static class App
         {
             var origin = TerraBaseOrigin(options);
             var clientOrigin = TerraBaseTransport.ClientOrigin(origin);
-            var internalTarget = clientOrigin == origin ? null : new DnsEndPoint(origin.DnsSafeHost, origin.Port);
+            var internalTarget = ReferenceEquals(clientOrigin, origin) ? null : new DnsEndPoint(origin.DnsSafeHost, origin.Port);
             return new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
                 [],
                 services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
