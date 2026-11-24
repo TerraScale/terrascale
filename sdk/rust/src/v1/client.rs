@@ -607,6 +607,11 @@ impl Client {
         let headers = response.headers().clone();
         let (body, failed) = read_body(response, self.inner.max_response, true).await;
         if let Some(error) = failed {
+            let body = if status.is_success() {
+                Vec::new()
+            } else {
+                body
+            };
             return Err(wrap_response(error, status, &headers, body, true));
         }
         let response = Resp {

@@ -415,17 +415,18 @@ impl State {
 }
 
 fn reconnect_delay(error: &Error, attempt: u32) -> Duration {
+    const MAX_DELAY: Duration = Duration::from_secs(30);
     if let Error::Response {
         retry_after: Some(delay),
         ..
     } = error
     {
-        return *delay;
+        return (*delay).min(MAX_DELAY);
     }
     backoff(
         &super::RetryPolicy {
             base_delay: Duration::from_millis(250),
-            max_delay: Duration::from_secs(30),
+            max_delay: MAX_DELAY,
             ..Default::default()
         },
         attempt,
