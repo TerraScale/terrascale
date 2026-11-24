@@ -53,6 +53,19 @@ internal sealed class ControlSnapshotEndpoint(ControlSnapshots snapshots, Contro
         SignedSnapshot request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        await sync.Serialized.WaitAsync(cancellationToken);
+        try
+        {
+            return await ApplyAsync(request, cancellationToken);
+        }
+        finally
+        {
+            _ = sync.Serialized.Release();
+        }
+    }
+
+    private async ValueTask<ControlSnapshotResponse> ApplyAsync(SignedSnapshot request, CancellationToken cancellationToken)
+    {
         return snapshots.Accept(request.Snapshot, request.Body) switch
         {
             AcceptedSnapshot { Changed: false } accepted => Ack(accepted.Snapshot),

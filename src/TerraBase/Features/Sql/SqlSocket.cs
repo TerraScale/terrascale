@@ -152,12 +152,38 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return false;
         }
 
+        var remaining = AuthTimeout - time.GetElapsedTime(_accepted);
+        using var deadline = new CancellationTokenSource(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        SqlRefusal? resolved;
+        try
+        {
+            resolved = await ResolveAsync(frame.Id, token, causality, linked.Token);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, "authenticate within 5 seconds");
+            return false;
+        }
+
+        if (resolved is { } refusal)
+        {
+            await RefuseAsync(frame.Id, refusal, cancellationToken);
+            return false;
+        }
+
+        await ResultAsync(frame.Id, [], cancellationToken);
+        return true;
+    }
+
+    private async ValueTask<SqlRefusal?> ResolveAsync(long? id, string token, SqlCausality causality, CancellationToken cancellationToken)
+    {
         var resolvedOutcome = await services.Authentication.AuthenticateBearerAsync(token, cancellationToken);
-        var resolved = resolvedOutcome switch
+        return resolvedOutcome switch
         {
             Caller caller => await access.DataAsync(caller, project, database, cancellationToken) switch
             {
-                ResolvedDatabase target => await AdmitAsync(frame.Id, target, causality, cancellationToken),
+                ResolvedDatabase target => await AdmitAsync(id, target, causality, cancellationToken),
                 InvalidInput invalid => new SqlRefusal(invalid.Code, invalid.Message, "22023", 0, StatusCodes.Status400BadRequest),
                 CredentialRejected unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
                 CallerForbidden forbidden => new SqlRefusal("forbidden_scope", forbidden.Message, "42501", 0, StatusCodes.Status403Forbidden),
@@ -167,14 +193,6 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             CredentialRejected unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
             BackendUnavailable unavailable => SqlRefusal.From(unavailable),
         };
-        if (resolved is { } refusal)
-        {
-            await RefuseAsync(frame.Id, refusal, cancellationToken);
-            return false;
-        }
-
-        await ResultAsync(frame.Id, [], cancellationToken);
-        return true;
     }
 
     private async ValueTask<SqlRefusal?> AdmitAsync(long? id, ResolvedDatabase target, SqlCausality causality, CancellationToken cancellationToken)

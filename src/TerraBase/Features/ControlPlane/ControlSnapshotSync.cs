@@ -14,14 +14,18 @@ internal readonly union SnapshotApplyOutcome(Completed, SnapshotKeyRefused, Back
 internal readonly union SnapshotDatabaseCheck(Completed, SnapshotKeyRefused, BackendUnavailable);
 
 internal sealed class ControlSnapshotSync(
-    CatalogStore catalog, TenantDatabases databases, DatabaseKeyring keyring, TerraBaseOptions options, ILogger<ControlSnapshotSync> logger)
+    CatalogStore catalog, TenantDatabases databases, DatabaseKeyring keyring, TerraBaseOptions options, ILogger<ControlSnapshotSync> logger) : IDisposable
 {
+    public SemaphoreSlim Serialized { get; } = new(1, 1);
+
+    public void Dispose() => Serialized.Dispose();
+
     public async ValueTask<SnapshotApplyOutcome> ApplyAsync(ControlSnapshot snapshot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        foreach (var database in snapshot.Databases.Where(static database => database.State != ControlDatabaseState.Deleted))
+        foreach (var database in snapshot.Databases)
         {
-            var check = await CheckKeyAsync(database, cancellationToken);
+            var check = await CheckAsync(database, cancellationToken);
             SnapshotApplyOutcome? refusal = check switch
             {
                 Completed => null,
@@ -94,8 +98,18 @@ internal sealed class ControlSnapshotSync(
         };
     }
 
-    private async ValueTask<SnapshotDatabaseCheck> CheckKeyAsync(ControlDatabase database, CancellationToken cancellationToken)
+    private async ValueTask<SnapshotDatabaseCheck> CheckAsync(ControlDatabase database, CancellationToken cancellationToken)
     {
+        if (database.State == ControlDatabaseState.Deleted)
+        {
+            var stored = await catalog.GetDatabaseAsync(database.Id, cancellationToken);
+            return stored switch
+            {
+                DatabaseRecord or ResourceNotFound => new Completed(),
+                BackendUnavailable unavailable => unavailable,
+            };
+        }
+
         if (!keyring.KeyIds.Contains(database.DataKeyId, StringComparer.Ordinal))
         {
             logger.ZLogError($"Control snapshot refused: database {database.Id:@DatabaseId} names data key {database.DataKeyId:@DataKeyId} that this node does not hold");

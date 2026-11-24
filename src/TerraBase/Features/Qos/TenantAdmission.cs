@@ -132,14 +132,7 @@ internal static class TenantAdmissionExtensions
         {
             app.Use(async (context, next) =>
             {
-                var caller = context.Caller;
-                if (!Tracked(caller))
-                {
-                    await next(context);
-                    return;
-                }
-
-                var target = await TargetAsync(context, caller, context.RequestServices.GetRequiredService<TenantDirectory>());
+                var target = await TargetAsync(context, context.Caller, context.RequestServices.GetRequiredService<TenantDirectory>());
                 await (target switch
                 {
                     Tenant tenant => EnterAsync(context, next, tenant),
@@ -155,16 +148,23 @@ internal static class TenantAdmissionExtensions
 
     private static async ValueTask<CallerTenantResolution> TargetAsync(HttpContext context, Caller caller, TenantDirectory directory)
     {
+        var projectRoute = context.Request.RouteValues["project"] is string;
+        var callerScoped = context.GetEndpoint()?.Metadata.GetMetadata<CallerTenantMetadata>() is not null;
+        if (caller is PeerCaller or ServiceCaller || !(projectRoute || callerScoped))
+        {
+            return NoTenant.Instance;
+        }
+
+        if (caller is AnonymousCaller)
+        {
+            return Tenant.Anonymous;
+        }
+
         if (context.Request.RouteValues["project"] is string reference)
         {
             return reference.Length == 26 && Ulid.TryParse(reference, out var projectId)
                 ? await directory.ForCallerProjectAsync(caller, projectId, context.RequestAborted)
-                : NoTenant.Instance;
-        }
-
-        if (context.GetEndpoint()?.Metadata.GetMetadata<CallerTenantMetadata>() is null)
-        {
-            return NoTenant.Instance;
+                : Tenant.Unowned;
         }
 
         return caller switch
@@ -210,10 +210,4 @@ internal static class TenantAdmissionExtensions
         context.Response.Headers.CacheControl = "no-store";
         return ErrorResults.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_busy", "organization request budget exceeded");
     }
-
-    private static bool Tracked(Caller caller) => caller switch
-    {
-        ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => true,
-        AnonymousCaller or PeerCaller or ServiceCaller => false,
-    };
 }

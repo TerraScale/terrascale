@@ -39,6 +39,10 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
 
     private static readonly TimeSpan RefusalLifetime = TimeSpan.FromSeconds(10);
 
+    private static readonly TimeSpan TrustLifetime = TimeSpan.FromDays(1);
+
+    private const string UnknownKeys = "unknown";
+
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("0123456789abcdefghjkmnpqrstvwxyz");
 
     private static readonly CredentialRejected Refused = new("the API key was refused for this project", "invalid_key");
@@ -49,14 +53,26 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
 
     private readonly MemoryCache _refused = new(new MemoryCacheOptions { SizeLimit = MaxRefusedKeys });
 
-    private readonly TokenBucketRateLimiter _exchanges = new(new TokenBucketRateLimiterOptions
-    {
-        TokenLimit = 100,
-        TokensPerPeriod = 20,
-        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-        QueueLimit = 0,
-        AutoReplenishment = true,
-    });
+    private readonly MemoryCache _trusted = new(new MemoryCacheOptions { SizeLimit = MaxCachedTokens });
+
+    private readonly PartitionedRateLimiter<string> _exchanges = PartitionedRateLimiter.Create<string, string>(static partition =>
+        RateLimitPartition.GetTokenBucketLimiter(partition, static key => key == UnknownKeys
+            ? new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 200,
+                TokensPerPeriod = 50,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }
+            : new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 20,
+                TokensPerPeriod = 5,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
 
     public static bool IsKey(string secret)
     {
@@ -91,7 +107,8 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
             return Refused;
         }
 
-        using var permit = _exchanges.AttemptAcquire();
+        var keyId = KeyId(secret);
+        using var permit = _exchanges.AttemptAcquire(_trusted.TryGetValue(keyId, out _) ? keyId : UnknownKeys);
         if (!permit.IsAcquired)
         {
             return Busy;
@@ -100,7 +117,7 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
         var outcome = await RequestAsync(issuer, secret, project, cancellationToken);
         return outcome switch
         {
-            IssuedToken issued => Remember(cacheKey, issued),
+            IssuedToken issued => Remember(cacheKey, keyId, issued),
             CredentialRejected refused => Forget(cacheKey, refused),
             BackendUnavailable unavailable => unavailable,
         };
@@ -110,6 +127,7 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
     {
         _tokens.Dispose();
         _refused.Dispose();
+        _trusted.Dispose();
         _exchanges.Dispose();
     }
 
@@ -119,8 +137,11 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
         return refused;
     }
 
-    private string Remember(string cacheKey, IssuedToken issued)
+    private static string KeyId(string secret) => secret.StartsWith(KeyPrefix, StringComparison.Ordinal) ? secret[KeyPrefix.Length..(KeyPrefix.Length + 26)] : secret[..26];
+
+    private string Remember(string cacheKey, string keyId, IssuedToken issued)
     {
+        _trusted.Set(keyId, true, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = TrustLifetime });
         if (issued.Lifetime > RenewBefore)
         {
             _tokens.Set(cacheKey, issued.Token, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = time.GetUtcNow() + issued.Lifetime - RenewBefore });

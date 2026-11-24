@@ -24,12 +24,17 @@ internal sealed class TenantDirectory(CatalogStore catalog)
     public async ValueTask<CallerTenantResolution> ForCallerProjectAsync(Caller caller, Ulid projectId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
+        if (PinnedElsewhere(caller, projectId))
+        {
+            return ForeignProject.Instance;
+        }
+
         var project = await catalog.GetProjectAsync(projectId, cancellationToken);
         return project switch
         {
             ProjectRecord record when record.OrganizationId == PlatformCatalog.OrganizationId => NoTenant.Instance,
             ProjectRecord record => await OwnedAsync(caller, record, cancellationToken),
-            ResourceNotFound => NoTenant.Instance,
+            ResourceNotFound => ForeignProject.Instance,
             BackendUnavailable unavailable => unavailable,
         };
     }
@@ -78,6 +83,14 @@ internal sealed class TenantDirectory(CatalogStore catalog)
             BackendUnavailable unavailable => unavailable,
         };
     }
+
+    private static bool PinnedElsewhere(Caller caller, Ulid projectId) => caller switch
+    {
+        ApiKeyCaller { Key.ProjectId: { } scoped } => scoped != projectId,
+        ProjectCaller token => token.ProjectId != projectId,
+        EndUserCaller endUser => endUser.ProjectId != projectId,
+        AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller => false,
+    };
 
     private static bool Owns(Caller caller, ProjectRecord project, string? creator) => caller switch
     {

@@ -53,6 +53,8 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private readonly MemoryCache _projects = new(new MemoryCacheOptions { SizeLimit = MaxProjectIssuers });
 
+    private readonly Lock _issuers = new();
+
     public async ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
     {
         if (_platform is null || options.AuthIssuer is not { } rawPlatformIssuer)
@@ -86,6 +88,21 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, configuration.SigningKeys));
         if (!validated.IsValid && validated.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
+            if (trusted.Tenant is { } project)
+            {
+                var known = await catalog.GetProjectAsync(project, cancellationToken);
+                var refusal = known switch
+                {
+                    ProjectRecord => null,
+                    ResourceNotFound => Forget(trusted.Issuer),
+                    BackendUnavailable unavailable => (CallerAuthenticationOutcome?)unavailable,
+                };
+                if (refusal is { } refused)
+                {
+                    return refused;
+                }
+            }
+
             if (await RefreshFreshAsync(trusted.Entry, cancellationToken) is not { } refreshed)
             {
                 return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
@@ -140,9 +157,27 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private IssuerEntry ProjectIssuer(string issuer)
     {
-        var created = CreateIssuer(http, issuer);
-        _projects.Set(issuer, created, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = ProjectIssuerIdle });
-        return created;
+        lock (_issuers)
+        {
+            if (_projects.TryGetValue(issuer, out IssuerEntry? cached) && cached is { } existing)
+            {
+                return existing;
+            }
+
+            var created = CreateIssuer(http, issuer);
+            _projects.Set(issuer, created, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = ProjectIssuerIdle });
+            return created;
+        }
+    }
+
+    private CallerAuthenticationOutcome Forget(string issuer)
+    {
+        lock (_issuers)
+        {
+            _projects.Remove(issuer);
+        }
+
+        return new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token");
     }
 
     private static IssuerEntry CreateIssuer(IHttpClientFactory http, string issuer)
