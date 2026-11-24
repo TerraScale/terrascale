@@ -692,7 +692,7 @@ const transientCodes = new Map([
 
 /** @param {TerraBaseV1Error} error @returns {boolean} */
 function transientRefusal(error) {
-  return transientCodes.get(error.status)?.has(error.code) === true;
+  return error.status !== null && transientCodes.get(error.status)?.has(error.code) === true;
 }
 
 /** Exponential backoff with full jitter. @param {number} attempt @returns {number} */

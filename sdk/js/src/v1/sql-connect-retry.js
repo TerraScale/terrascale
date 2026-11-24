@@ -22,7 +22,8 @@ export async function retrySqlConnect(open, timeout, signal) {
         return await open(bounded);
       } catch (error) {
         bounded.throwIfAborted();
-        if (!(error instanceof TerraBaseV1Error) || ![429, 503].includes(error.status)
+        if (!(error instanceof TerraBaseV1Error) || (error.status !== 429 && error.status !== 503)
+          || error.outcomeUncertain
           || error.retryAfter === undefined || attempt >= maximumAttempts) throw error;
         const delay = Math.min(error.retryAfter, delayCapSeconds) * 1000;
         if (delay >= expiresAt - Date.now()) throw error;

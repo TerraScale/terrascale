@@ -2,7 +2,7 @@
 /**
  * @typedef {object} V1SqlRequestOptions
  * @property {AbortSignal | undefined} [signal]
- * @property {string | undefined} [bookmark] Sent instead of the bookmark the client tracks for this database.
+ * @property {string | undefined} [bookmark] Merged with the bookmark the client tracks for this database.
  * @property {V1Consistency | undefined} [consistency]
  */
 /** @typedef {{ readonly current: () => string; readonly observe: (bookmark: string | null | undefined) => void }} V1BookmarkTracker */
@@ -11,6 +11,8 @@ export const bookmarkHeader = "TerraScale-Bookmark";
 const consistencyHeader = "TerraScale-Consistency";
 const maximumBookmarkLength = 1024;
 const maximumRegionBytes = 64;
+const minimumEntryBytes = 3;
+const maximumRegions = Math.floor((maximumBookmarkLength * 3 / 4 - 2) / minimumEntryBytes);
 const maximumSequence = 0x7fff_ffff_ffff_ffffn;
 
 /** @param {unknown} value @returns {V1Consistency | undefined} */
@@ -20,7 +22,7 @@ export function requireConsistency(value) {
 }
 
 /** @param {unknown} value @returns {string | undefined} */
-export function requireBookmark(value) {
+function requireBookmark(value) {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new TypeError("bookmark is a string returned by TerraScale.");
   bookmarkEntries(value, () => { throw new TypeError("bookmark is a string returned by TerraScale."); });
@@ -52,7 +54,7 @@ function bookmarkEntries(encoded, refuse) {
   };
   if (bytes[0] !== 1) refuse();
   const count = varuint();
-  if (count > BigInt(bytes.length)) refuse();
+  if (count > BigInt(Math.floor((bytes.length - at) / minimumEntryBytes))) refuse();
   let previous = "";
   for (let index = 0n; index < count; index++) {
     const length = Number(varuint());
@@ -74,6 +76,7 @@ function bookmarkEntries(encoded, refuse) {
 /** @param {Map<string, bigint>} entries @returns {string} */
 function encodeBookmark(entries) {
   if (entries.size === 0) return "";
+  if (entries.size > maximumRegions) throw new RangeError("Merged TerraScale-Bookmark contains too many regions.");
   /** @type {number[]} */
   const bytes = [1];
   /** @param {bigint} value */
@@ -91,6 +94,8 @@ function encodeBookmark(entries) {
     bytes.push(...utf8);
     varuint(sequence);
   }
+  if (Math.ceil(bytes.length * 4 / 3) > maximumBookmarkLength)
+    throw new RangeError("Merged TerraScale-Bookmark exceeds the encoded size limit.");
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
@@ -101,14 +106,21 @@ function encodeBookmark(entries) {
  * @returns {string}
  */
 export function mergeBookmarks(left, right) {
-  if (right === "" || left === right) return left;
   const refuse = () => { throw new TypeError("TerraBase returned a malformed TerraScale-Bookmark."); };
+  const merged = bookmarkEntries(left, refuse);
+  if (right === "" || left === right) return left;
   const incoming = bookmarkEntries(right, refuse);
   if (left === "") return right;
-  const merged = bookmarkEntries(left, refuse);
   for (const [region, sequence] of incoming)
     if ((merged.get(region) ?? 0n) < sequence) merged.set(region, sequence);
   return encodeBookmark(merged);
+}
+
+/** @param {unknown} bookmark @param {V1BookmarkTracker} tracker */
+export function requestBookmark(bookmark, tracker) {
+  const supplied = requireBookmark(bookmark);
+  const tracked = tracker.current();
+  return supplied === undefined || supplied === "" ? tracked : mergeBookmarks(tracked, supplied);
 }
 
 /**
@@ -117,7 +129,7 @@ export function mergeBookmarks(left, right) {
  * @returns {Record<string, string>}
  */
 export function causalHeaders(options, tracker) {
-  const bookmark = requireBookmark(options.bookmark) ?? tracker.current();
+  const bookmark = requestBookmark(options.bookmark, tracker);
   const consistency = requireConsistency(options.consistency);
   return {
     ...(bookmark === "" ? {} : { [bookmarkHeader]: bookmark }),

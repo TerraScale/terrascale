@@ -84,7 +84,7 @@ async function rowResult(operation, call, decode) {
     const response = await call();
     return ok(operation, response.status, response.headers, decode(response.value));
   } catch (error) {
-    if (error instanceof TerraBaseV1Error) {
+    if (error instanceof TerraBaseV1Error && error.status !== null) {
       const kind = error.status === 401 ? "authentication" : error.status === 403 ? "authorization" :
         error.status === 404 ? "not-found" : error.status === 409 ? "conflict" :
         error.status === 421 ? "unavailable" : error.status === 429 ? "rate-limit" : error.status >= 500 ? "server" : "validation";
