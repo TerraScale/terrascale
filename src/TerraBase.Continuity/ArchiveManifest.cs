@@ -72,7 +72,9 @@ internal readonly union ArchiveManifestOutcome(ArchiveManifest, ContinuityUnavai
 
 internal sealed record PendingArchiveRetirement(string ManifestETag, IReadOnlyList<string> Keys);
 
-internal readonly union ArchiveRetirementDecodeOutcome(PendingArchiveRetirement, ContinuityUnavailable);
+internal sealed record ArchiveRetirementCorrupted(string Message);
+
+internal readonly union ArchiveRetirementDecodeOutcome(PendingArchiveRetirement, ArchiveRetirementCorrupted);
 
 internal static class ManifestCodec
 {
@@ -91,11 +93,11 @@ internal static class ManifestCodec
         {
             return JsonSerializer.Deserialize(json, ContinuityJsonContext.Default.PendingArchiveRetirement) is { ManifestETag.Length: > 0, Keys.Count: > 0 } retirement
                 ? retirement
-                : new ContinuityUnavailable("archive retirement record is missing its ETag or keys", "archive_retirement_corrupted");
+                : new ArchiveRetirementCorrupted("archive retirement record is missing its ETag or keys");
         }
         catch (JsonException exception)
         {
-            return new ContinuityUnavailable(string.Concat("archive retirement record is unreadable: ", exception.Message), "archive_retirement_corrupted");
+            return new ArchiveRetirementCorrupted(string.Concat("archive retirement record is unreadable: ", exception.Message));
         }
     }
 

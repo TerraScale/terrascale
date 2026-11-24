@@ -13,7 +13,7 @@ internal readonly union SegmentCommitTimeOutcome(DateTimeOffset, ContinuityUnava
 internal sealed class SessionArchiver(
     ISqlDatabaseSession session,
     ArchiveManifests manifests,
-    ISqlStorageEngine engine,
+    ContinuitySessions sessions,
     ContinuityOptions options,
     ContinuityMetrics metrics,
     TimeProvider timeProvider)
@@ -22,13 +22,12 @@ internal sealed class SessionArchiver(
 
     public async ValueTask<ArchiveManifestOutcome> RunAsync(
         ArchiveManifest manifest,
-        ArchiveRetentionPolicy retention,
         bool forceSnapshot,
         CancellationToken cancellationToken)
     {
-        var cutoff = timeProvider.GetUtcNow().AddDays(-retention.Days);
         SqliteStorageEngine.SealCommittedLogs(session);
-        var archivedThrough = manifest.ArchivedThrough(ArchiveRetention.SnapshotFloor(manifest));
+        var snapshotFloor = ArchiveRetention.SnapshotFloor(manifest);
+        var archivedThrough = manifest.ArchivedThrough(snapshotFloor);
         List<ArchivedSegment> segments = [];
         ContinuityUnavailable? failure = null;
         foreach (var (origin, _) in session.CurrentBookmark.Entries)
@@ -41,7 +40,7 @@ internal sealed class SessionArchiver(
         }
 
         StagedArchiveSnapshot? snapshot = null;
-        if (failure is null && SnapshotDue(manifest, forceSnapshot))
+        if (failure is null && session.CurrentBookmark.Dominates(snapshotFloor) && SnapshotDue(manifest, forceSnapshot))
         {
             var staged = await ArchiveSnapshotAsync(cancellationToken);
             (snapshot, failure) = staged switch
@@ -51,30 +50,38 @@ internal sealed class SessionArchiver(
             };
         }
 
+        var cutoff = await sessions.ReadRetentionCutoffAsync(session.DatabaseId, cancellationToken);
         var saved = await manifests.PublishAsync(session.DatabaseId, segments, snapshot?.Snapshot, cutoff, cancellationToken);
         return saved switch
         {
-            ArchiveManifest stored => Finish(stored, snapshot, cutoff, failure),
+            ArchiveManifest stored => await FinishAsync(stored, snapshot, cutoff, failure, cancellationToken),
             ContinuityUnavailable unavailable => failure ?? unavailable,
         };
     }
 
-    private ArchiveManifestOutcome Finish(
+    private async ValueTask<ArchiveManifestOutcome> FinishAsync(
         ArchiveManifest stored,
         StagedArchiveSnapshot? snapshot,
-        DateTimeOffset cutoff,
-        ContinuityUnavailable? failure)
+        DateTimeOffset? cutoff,
+        ContinuityUnavailable? failure,
+        CancellationToken cancellationToken)
     {
         if (failure is not null)
         {
             return failure;
         }
 
-        var floor = ArchiveRetention.SnapshotFloor(stored);
-        if (SqliteCommitLog.PruneArchivedSegments(session, segment => segment.SealedAtUtc < cutoff
-            && segment.LastSequence <= floor.Get(segment.OriginRegion)) is { } busy)
+        if (cutoff is { } before)
         {
-            return Busy(busy);
+            var floor = ArchiveRetention.SnapshotFloor(stored);
+            if (SqliteCommitLog.HasPrunableSegments(session, before, floor))
+            {
+                var confirmed = await sessions.Catalog.ConfirmReplicaWatermarksAsync(session.DatabaseId, session.CurrentBookmark, cancellationToken);
+                if (SqliteCommitLog.PruneArchivedSegments(session, before, floor, confirmed) is { } busy)
+                {
+                    return Busy(busy);
+                }
+            }
         }
 
         if (snapshot is not null
@@ -209,7 +216,7 @@ internal sealed class SessionArchiver(
 
     private async ValueTask<ArchiveSnapshotOutcome> ArchiveSnapshotAsync(CancellationToken cancellationToken)
     {
-        var snapped = await engine.SnapshotAsync(session.DatabaseId, cancellationToken);
+        var snapped = await sessions.Engine.SnapshotAsync(session.DatabaseId, cancellationToken);
         return snapped switch
         {
             DatabaseSnapshot snapshot => await UploadSnapshotAsync(snapshot, cancellationToken),

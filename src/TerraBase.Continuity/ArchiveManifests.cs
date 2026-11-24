@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 
 namespace TerraBase.Continuity;
 
@@ -23,7 +25,7 @@ internal sealed record StagedArchiveRetirement(string Key, PendingArchiveRetirem
 
 internal readonly union StageArchiveRetirementOutcome(StagedArchiveRetirement, ContinuityUnavailable);
 
-public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics metrics, TimeProvider timeProvider)
+public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics metrics, TimeProvider timeProvider, ILogger<ArchiveManifests> logger)
 {
     private const int MaxCompareAndSwapAttempts = 5;
     private static readonly TimeSpan RetirementSweepInterval = TimeSpan.FromHours(1);
@@ -102,14 +104,14 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
                 return loadError;
             }
 
-            current = fetched switch { CachedManifest loaded => loaded, ContinuityUnavailable => throw new InvalidOperationException() };
+            current = fetched switch { CachedManifest loaded => loaded, ContinuityUnavailable => throw new UnreachableException() };
             _cache[databaseId] = current;
         }
 
         for (var attempt = 0; attempt < MaxCompareAndSwapAttempts; attempt++)
         {
             var transformed = transform(current.Manifest);
-            if (ReferenceEquals(transformed.Manifest, current.Manifest))
+            if (ReferenceEquals(transformed.Manifest, current.Manifest) && transformed.RemovedKeys.Count == 0)
             {
                 return current.Manifest;
             }
@@ -128,16 +130,27 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
                     return stageError;
                 }
 
-                retirement = staged switch { StagedArchiveRetirement written => written, ContinuityUnavailable => throw new InvalidOperationException() };
+                retirement = staged switch { StagedArchiveRetirement written => written, ContinuityUnavailable => throw new UnreachableException() };
             }
 
-            var updated = transformed.Manifest with { UpdatedAtUtc = timeProvider.GetUtcNow() };
+            var updatedAt = timeProvider.GetUtcNow();
+            if (retirement is not null && updatedAt == current.Manifest.UpdatedAtUtc)
+            {
+                updatedAt = updatedAt.AddTicks(1);
+            }
+
+            var updated = transformed.Manifest with { UpdatedAtUtc = updatedAt };
             var json = ManifestCodec.Serialize(updated);
             var stored = await store.PutBytesIfMatchAsync(ArchiveKeys.Manifest(databaseId), json, ManifestCodec.JsonContentType, current.ETag, cancellationToken);
             if (stored switch { ArchiveConditionalWritten written => written, ArchivePreconditionFailed or ArchiveUnavailable or ArchiveTimedOut => null } is { } saved)
             {
                 var published = Stored(databaseId, updated, saved.ETag, json.Length);
-                return retirement is not null && await RetireAsync(databaseId, published, retirement, cancellationToken) is { } failure ? failure : published;
+                if (retirement is not null && await RetireAsync(databaseId, published, retirement, cancellationToken) is { } failure)
+                {
+                    ContinuityLog.RetirementDeferred(logger, databaseId, failure.Message);
+                }
+
+                return published;
             }
 
             var nonConflict = stored switch
@@ -157,7 +170,7 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
                 return reloadError;
             }
 
-            current = reloaded switch { CachedManifest fresh => fresh, ContinuityUnavailable => throw new InvalidOperationException() };
+            current = reloaded switch { CachedManifest fresh => fresh, ContinuityUnavailable => throw new UnreachableException() };
             _cache[databaseId] = current;
         }
 
@@ -168,22 +181,32 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         Ulid databaseId,
         IReadOnlyList<ArchivedSegment> segments,
         ArchivedSnapshot? snapshot,
-        DateTimeOffset cutoff,
+        DateTimeOffset? cutoff,
         CancellationToken cancellationToken)
     {
         var saved = await UpdateAsync(
             databaseId,
             current =>
             {
-                var retained = ArchiveRetention.Select(current, cutoff);
-                return retained with { Manifest = Append(retained.Manifest, segments, snapshot) };
+                var retained = cutoff is { } before ? ArchiveRetention.Select(current, before) : new RetainedArchive(current, []);
+                var appended = Append(retained.Manifest, segments, snapshot);
+                var removed = snapshot is not null && !appended.Snapshots.Any(item => item.Key == snapshot.Key)
+                    ? [.. retained.RemovedKeys, snapshot.Key]
+                    : retained.RemovedKeys;
+                return new RetainedArchive(appended, removed);
             },
             cancellationToken);
-        return saved switch
+        var published = saved switch
         {
-            ArchiveManifest stored => await SweepRetirementsIfDueAsync(databaseId, cancellationToken) is { } failure ? failure : stored,
-            ContinuityUnavailable unavailable => unavailable,
+            ArchiveManifest => true,
+            ContinuityUnavailable => false,
         };
+        if (published && await SweepRetirementsIfDueAsync(databaseId, cancellationToken) is { } failure)
+        {
+            ContinuityLog.RetirementDeferred(logger, databaseId, failure.Message);
+        }
+
+        return saved;
     }
 
     internal async ValueTask<ArchivePurgeOutcome> PurgeAsync(Ulid databaseId, CancellationToken cancellationToken)
@@ -352,7 +375,7 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
             return loadError;
         }
 
-        var current = fetched switch { CachedManifest manifest => manifest, ContinuityUnavailable => throw new InvalidOperationException() };
+        var current = fetched switch { CachedManifest manifest => manifest, ContinuityUnavailable => throw new UnreachableException() };
         foreach (var key in keys)
         {
             var marker = await store.GetBytesAsync(key, cancellationToken);
@@ -384,8 +407,14 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         {
             PendingArchiveRetirement pending when string.Equals(pending.ManifestETag, current.ETag, StringComparison.Ordinal) => null,
             PendingArchiveRetirement pending => await RetireAsync(databaseId, current.Manifest, new StagedArchiveRetirement(key, pending), cancellationToken),
-            ContinuityUnavailable unavailable => unavailable,
+            ArchiveRetirementCorrupted corrupted => IgnoreCorruptRetirement(key, corrupted),
         };
+    }
+
+    private ContinuityUnavailable? IgnoreCorruptRetirement(string key, ArchiveRetirementCorrupted corrupted)
+    {
+        ContinuityLog.RetirementCorrupted(logger, key, corrupted.Message);
+        return null;
     }
 
     private async ValueTask<ArchivePurgeOutcome> DeleteAllAsync(IReadOnlyList<string> keys, CancellationToken cancellationToken)

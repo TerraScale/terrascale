@@ -18,8 +18,12 @@ public static class SqliteCommitLog
 {
     public const int MaxSegmentBytes = 128 * 1024 * 1024;
 
-    public static StorageBusy? PruneArchivedSegments(ISqlDatabaseSession session, Func<CommitLogSegment, bool> canPrune) =>
-        session is DatabaseSession sqlite ? sqlite.PruneArchivedSegments(canPrune) : null;
+    public static bool HasPrunableSegments(ISqlDatabaseSession session, DateTimeOffset cutoff, CausalBookmark archiveFloor) =>
+        session is DatabaseSession sqlite && sqlite.HasPrunableSegments(cutoff, archiveFloor);
+
+    public static StorageBusy? PruneArchivedSegments(
+        ISqlDatabaseSession session, DateTimeOffset cutoff, CausalBookmark archiveFloor, CausalBookmark confirmed) =>
+        session is DatabaseSession sqlite ? sqlite.PruneArchivedSegments(cutoff, archiveFloor, confirmed) : null;
 }
 
 internal sealed class CommitLogCipher : IDisposable
@@ -585,7 +589,16 @@ internal sealed class OriginLog : IDisposable
         }
     }
 
-    public StorageBusy? PruneSealed(long committedThrough, Func<CommitLogSegment, bool> canPrune)
+    public bool HasSealedBefore(DateTimeOffset cutoff, long through)
+    {
+        lock (_gate)
+        {
+            return !_disposed && _sealedReaders == 0 && _sealed.Count > 0
+                && CanPrune(_sealed[0].Segment, cutoff, through);
+        }
+    }
+
+    public StorageBusy? PruneSealed(DateTimeOffset cutoff, long through)
     {
         lock (_gate)
         {
@@ -598,7 +611,7 @@ internal sealed class OriginLog : IDisposable
             string? failure = null;
             foreach (var (segment, path) in _sealed)
             {
-                if (segment.LastSequence > committedThrough || !canPrune(segment) || (failure = DeleteSealedFile(path)) is not null)
+                if (!CanPrune(segment, cutoff, through) || (failure = DeleteSealedFile(path)) is not null)
                 {
                     break;
                 }
@@ -618,6 +631,9 @@ internal sealed class OriginLog : IDisposable
             return failure is null ? null : new StorageBusy(failure, TimeSpan.FromMilliseconds(50));
         }
     }
+
+    private static bool CanPrune(CommitLogSegment segment, DateTimeOffset cutoff, long through) =>
+        segment.SealedAtUtc < cutoff && segment.LastSequence <= through;
 
     private static string? DeleteSealedFile(string path)
     {

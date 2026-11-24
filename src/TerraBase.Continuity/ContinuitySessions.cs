@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using Microsoft.Extensions.Logging;
 
 namespace TerraBase.Continuity;
 
@@ -30,12 +31,18 @@ public interface IContinuityDatabaseCatalog
 
     ValueTask<ContinuityRawKeyOutcome> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken);
 
+    ValueTask<CausalBookmark> ConfirmReplicaWatermarksAsync(Ulid databaseId, CausalBookmark local, CancellationToken cancellationToken);
+
     ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken);
 
     ValueTask<DiscardCopyTargetOutcome> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken);
 }
 
-public sealed class ContinuitySessions(ISqlStorageEngine engine, IContinuityDatabaseCatalog catalog)
+public sealed class ContinuitySessions(
+    ISqlStorageEngine engine,
+    IContinuityDatabaseCatalog catalog,
+    TimeProvider timeProvider,
+    ILogger<ContinuitySessions> logger)
 {
     private const int DefaultRetentionDays = 7;
 
@@ -77,15 +84,26 @@ public sealed class ContinuitySessions(ISqlStorageEngine engine, IContinuityData
         };
     }
 
-    internal async ValueTask<ArchiveRetentionPolicyOutcome> ReadArchiveRetentionAsync(Ulid databaseId, CancellationToken cancellationToken)
+    internal async ValueTask<DateTimeOffset?> ReadRetentionCutoffAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         var opened = await OpenAsync(Ulid.Empty, cancellationToken);
-        return opened switch
+        ArchiveRetentionPolicyOutcome policy = opened switch
         {
             ISqlDatabaseSession system => await ReadArchiveRetentionAsync(system, databaseId, cancellationToken),
             ContinuitySessionMissing missing => new ContinuityUnavailable(missing.Message, missing.Code),
             ContinuitySessionUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
         };
+        return policy switch
+        {
+            ArchiveRetentionPolicy retention => timeProvider.GetUtcNow().AddDays(-retention.Days),
+            ContinuityUnavailable unavailable => SkipRetention(databaseId, unavailable),
+        };
+    }
+
+    private DateTimeOffset? SkipRetention(Ulid databaseId, ContinuityUnavailable unavailable)
+    {
+        ContinuityLog.RetentionPolicyUnavailable(logger, databaseId, unavailable.Message);
+        return null;
     }
 
     private static async ValueTask<ArchiveRetentionPolicyOutcome> ReadArchiveRetentionAsync(

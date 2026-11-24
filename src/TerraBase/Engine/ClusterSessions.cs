@@ -103,6 +103,28 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
         };
     }
 
+    public async ValueTask<CausalBookmark> ConfirmReplicaWatermarksAsync(Ulid databaseId, CausalBookmark local, CancellationToken cancellationToken)
+    {
+        var cluster = Cluster;
+        if (cluster.Peers.Count == 0)
+        {
+            return local;
+        }
+
+        if (databaseId == SystemDatabase.Id)
+        {
+            return await ReplicaWatermarks.ConfirmAsync(Quic, cluster, cluster.Peers, databaseId, local, cancellationToken);
+        }
+
+        var found = await Catalog.GetDatabaseAsync(databaseId, cancellationToken);
+        return found switch
+        {
+            DatabaseRecord record => await ReplicaWatermarks.ConfirmAsync(
+                Quic, cluster, [.. cluster.Peers.Where(peer => record.PlacedIn(peer.Region))], databaseId, local, cancellationToken),
+            ResourceNotFound or BackendUnavailable => CausalBookmark.Empty,
+        };
+    }
+
     public async ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken)
     {
         await Databases.EvictAsync(databaseId);

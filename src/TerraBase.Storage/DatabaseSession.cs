@@ -454,11 +454,15 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
     }
 
-    internal StorageBusy? PruneArchivedSegments(Func<CommitLogSegment, bool> canPrune)
+    internal bool HasPrunableSegments(DateTimeOffset cutoff, CausalBookmark archiveFloor) =>
+        Logs().Any(log => log.HasSealedBefore(cutoff, Math.Min(_versions.Get(log.Origin), archiveFloor.Get(log.Origin))));
+
+    internal StorageBusy? PruneArchivedSegments(DateTimeOffset cutoff, CausalBookmark archiveFloor, CausalBookmark confirmed)
     {
         foreach (var log in Logs())
         {
-            if (log.PruneSealed(_versions.Get(log.Origin), canPrune) is { } busy)
+            var through = Math.Min(_versions.Get(log.Origin), Math.Min(archiveFloor.Get(log.Origin), confirmed.Get(log.Origin)));
+            if (log.PruneSealed(cutoff, through) is { } busy)
             {
                 return busy;
             }
