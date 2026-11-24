@@ -110,10 +110,10 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
                 return new LockGranted(candidate);
             }
 
-            var strongest = conflicts.MaxBy(static holder => holder.Priority);
-            if (strongest is not null && strongest.Priority > candidate.Priority)
+            var oldest = conflicts.MinBy(static holder => holder.Priority);
+            if (oldest is not null && oldest.Priority <= candidate.Priority)
             {
-                return new LockDenied(strongest);
+                return new LockDenied(oldest);
             }
 
             return new LockWoundRequired(conflicts);

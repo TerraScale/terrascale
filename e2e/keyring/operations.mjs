@@ -28,6 +28,7 @@ export function internal(peer, address, method, path, body, actAs = true) {
 
 export async function project(peer, address, name) {
   const organization = await internal(peer, address, 'POST', '/v1/management/organizations', { name });
+  await internal(peer, address, 'PUT', '/v1/management/organizations/' + organization.id + '/plan', { plan: 'enterprise' }, false);
   const created = await internal(peer, address, 'POST', '/v1/management/organizations/' + organization.id + '/projects', { name });
   assert.ok(organization.id && created.id, 'organization and project created');
   await internal(peer, address, 'PUT', '/admin/projects/' + created.id + '/enrollment', { organization: organization.id }, false);

@@ -19,7 +19,8 @@ public sealed record PostgresGrant(
     string DatabaseName,
     SqlAccess MaxAccess,
     IAsyncDisposable Lease,
-    CancellationToken Revocation);
+    CancellationToken Revocation,
+    CancellationToken Shutdown = default);
 
 public sealed record PostgresPasswordRejected(string Message);
 

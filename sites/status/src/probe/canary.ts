@@ -207,6 +207,7 @@ const ERROR_CODES = new Set([
   "assert_requires_index",
   "idempotency_key_required",
   "invalid_schema",
+  "unauthorized",
   "invalid_key",
   "invalid_token",
   "key_revoked",
@@ -370,6 +371,7 @@ export async function readToken(
 
 const CREDENTIAL_ERRORS: ReadonlySet<string> = new Set([
   "invalid_client",
+  "unauthorized",
   "invalid_key",
   "invalid_token",
   "key_revoked",

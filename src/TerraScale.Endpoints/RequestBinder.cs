@@ -217,14 +217,14 @@ internal sealed class RequestBinder<TRequest>
                 Validation invalid => invalid,
                 UnsupportedMediaType unsupported => unsupported,
                 null => throw new UnreachableException(),
-                JsonDocument parsed => MergeDocument(parsed, overrides, options),
+                JsonDocument parsed => MergeJson(parsed, overrides, options),
             };
         }
 
-        return MergeDocument(null, overrides, options);
+        return MergeJson(null, overrides, options);
     }
 
-    private Bound<TRequest> MergeDocument(JsonDocument? document, Dictionary<JsonPropertyInfo, JsonNode?> overrides, JsonSerializerOptions options)
+    private Bound<TRequest> MergeJson(JsonDocument? document, Dictionary<JsonPropertyInfo, JsonNode?> overrides, JsonSerializerOptions options)
     {
 
         var buffer = new ArrayBufferWriter<byte>();

@@ -716,15 +716,30 @@ def missing_catalog_case():
 @case("idle-cost")
 def idle_cost_case():
     start()
+    idle_org = request("POST", "/v1/management/organizations", {"name": "Crash idle"})["id"]
+    request("PUT", f"/v1/management/organizations/{idle_org}/plan", {"plan": "enterprise"}, actor=False)
+    idle_project = request("POST", f"/v1/management/organizations/{idle_org}/projects", {"name": "Crash idle"})["id"]
+
+    def create_idle(name):
+        return request("POST", f"/v1/projects/{idle_project}/databases", {"name": name})["id"]
+
+    def read_idle(identity):
+        return request(
+            "POST",
+            f"/v1/projects/{idle_project}/databases/{identity}/sql/execute",
+            {"statements": [{"sql": "SELECT 1;"}]},
+            actor=False,
+        )["results"][0]["rows"]
+
     with concurrent.futures.ThreadPoolExecutor(8) as executor:
-        idle = list(executor.map(lambda index: create(f"idle-{index}"), range(1000)))
+        idle = list(executor.map(lambda index: create_idle(f"idle-{index}"), range(1000)))
     end()
     start()
     resident, _ = memory()
     for label in ("first pass after restart", "steady pass"):
         began = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(8) as executor:
-            assert all(result == [[1]] for result in executor.map(lambda identity: rows(identity, "SELECT 1;"), idle))
+            assert all(result == [[1]] for result in executor.map(read_idle, idle))
         elapsed = time.perf_counter() - began
         current, peak = memory()
         print(
@@ -839,61 +854,60 @@ def recovery_case():
     assert rollback_count - rollbacks == 6, rollback_count - rollbacks
 
 
-references = {}
-for pack in ("Microsoft.NETCore.App.Ref", "Microsoft.AspNetCore.App.Ref"):
-    for file in (pathlib.Path(env["DOTNET_ROOT"]) / "packs" / pack / "11.0.0/ref/net11.0").glob("*.dll"):
-        references[file.name] = file
-for file in build.glob("*.dll"):
-    references.setdefault(file.name, file)
-usings = state / "usings.cs"
-usings.write_text("".join("global using " + name + ";\n" for name in (
-    "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing",
-    "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Hosting",
-    "Microsoft.Extensions.Logging", "System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http",
-    "System.Net.Http.Json", "System.Threading", "System.Threading.Tasks", "TerraScale.Contracts.Consistency",
-    "TerraScale.Contracts.Storage", "TerraScale.Results",
-)))
-response = state / "compile.rsp"
-response.write_text(
-    "\n".join(
-        ["-nologo", "-target:library", "-nullable:enable", "-langversion:preview", "-warnaserror", "-nowarn:1701,1702",
-         "-out:" + str(state / "hook.dll")]
-        + ["-r:" + str(file) for file in references.values()]
-        + [str(usings), str(root / "e2e/env/engine-crash-hook.cs")]
-    )
-)
-subprocess.run(
-    [
-        "nice",
-        "-n",
-        "19",
-        env["DOTNET_ROOT"] + "/dotnet",
-        env["DOTNET_ROOT"] + "/sdk/11.0.100/Roslyn/bincore/csc.dll",
-        "@" + str(response),
-    ],
-    env={key: value for key, value in env.items() if key != "DOTNET_STARTUP_HOOKS"},
-    check=True,
-)
-
-
-subprocess.run(
-    ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash.c"), "-o", str(state / "crash.so"), "-ldl"], check=True
-)
-
-subprocess.run(
-    ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash-integrity.c"),
-     "-o", str(state / "integrity.so"), "-Wl,--no-as-needed", str(native / "libsqlite3mc.so"),
-     "-Wl,-rpath," + str(native), "-ldl", "-pthread"], check=True
-)
-
-selected = sys.argv[2].split(",") if len(sys.argv) > 2 else [
-    "recovery", *[name for name in cases if name not in ("recovery", "idle-cost")], "idle-cost",
-]
-assert len(selected) == len(set(selected)), "duplicate crash cases"
-assert "recovery" not in selected[1:], "the dependent recovery sequence must run first"
-assert set(selected) <= cases.keys(), "unknown crash cases: " + str(set(selected) - cases.keys())
-
 try:
+    references = {}
+    for pack in ("Microsoft.NETCore.App.Ref", "Microsoft.AspNetCore.App.Ref"):
+        for file in (pathlib.Path(env["DOTNET_ROOT"]) / "packs" / pack / "11.0.0/ref/net11.0").glob("*.dll"):
+            references[file.name] = file
+    for file in build.glob("*.dll"):
+        references.setdefault(file.name, file)
+    usings = state / "usings.cs"
+    usings.write_text("".join("global using " + name + ";\n" for name in (
+        "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing",
+        "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Hosting",
+        "Microsoft.Extensions.Logging", "System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http",
+        "System.Net.Http.Json", "System.Threading", "System.Threading.Tasks", "TerraScale.Contracts.Consistency",
+        "TerraScale.Contracts.Storage",
+    )))
+    response = state / "compile.rsp"
+    response.write_text(
+        "\n".join(
+            ["-nologo", "-target:library", "-nullable:enable", "-langversion:preview", "-warnaserror", "-nowarn:1701,1702",
+             "-out:" + str(state / "hook.dll")]
+            + ["-r:" + str(file) for file in references.values()]
+            + [str(usings), str(root / "e2e/env/engine-crash-hook.cs")]
+        )
+    )
+    subprocess.run(
+        [
+            "nice",
+            "-n",
+            "19",
+            env["DOTNET_ROOT"] + "/dotnet",
+            env["DOTNET_ROOT"] + "/sdk/11.0.100/Roslyn/bincore/csc.dll",
+            "@" + str(response),
+        ],
+        env={key: value for key, value in env.items() if key != "DOTNET_STARTUP_HOOKS"},
+        check=True,
+    )
+
+    subprocess.run(
+        ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash.c"), "-o", str(state / "crash.so"), "-ldl"], check=True
+    )
+
+    subprocess.run(
+        ["cc", "-shared", "-fPIC", str(root / "e2e/env/engine-crash-integrity.c"),
+         "-o", str(state / "integrity.so"), "-Wl,--no-as-needed", str(native / "libsqlite3mc.so"),
+         "-Wl,-rpath," + str(native), "-ldl", "-pthread"], check=True
+    )
+
+    selected = sys.argv[2].split(",") if len(sys.argv) > 2 else [
+        "recovery", *[name for name in cases if name not in ("recovery", "idle-cost")], "idle-cost",
+    ]
+    assert len(selected) == len(set(selected)), "duplicate crash cases"
+    assert "recovery" not in selected[1:], "the dependent recovery sequence must run first"
+    assert set(selected) <= cases.keys(), "unknown crash cases: " + str(set(selected) - cases.keys())
+
     start()
     organization = request("POST", "/v1/management/organizations", {"name": "Crash proof"})["id"]
     request("PUT", f"/v1/management/organizations/{organization}/plan", {"plan": "enterprise"}, actor=False)

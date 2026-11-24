@@ -12,6 +12,7 @@ public sealed class ProjectFileSweepWorker(
 {
     private const int PageSize = 100;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan GracePeriod = FileStorageService.UploadLifetime + TimeSpan.FromMinutes(1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -53,12 +54,15 @@ public sealed class ProjectFileSweepWorker(
             return;
         }
 
+        var now = timeProvider.GetUtcNow();
+        var cutoff = (now - GracePeriod).UnixMs();
+        var sweptAt = now.UnixMs();
         var after = string.Empty;
         while (true)
         {
             var page = await store.ReadAsync(SqlValues.Statement(
-                "SELECT project_id, organization_id FROM platform_closed_file_projects WHERE project_id > ? ORDER BY project_id LIMIT ?",
-                SqlValues.Text(after), SqlValues.Number(PageSize)), cancellationToken);
+                "SELECT project_id, organization_id FROM platform_closed_file_projects WHERE swept_at IS NULL AND closed_at <= ? AND project_id > ? ORDER BY project_id LIMIT ?",
+                SqlValues.Number(cutoff), SqlValues.Text(after), SqlValues.Number(PageSize)), cancellationToken);
             IReadOnlyList<SqlRow> projects = page switch
             {
                 SqlExecuteResponse { Results: var results } => results[0].RowsOf().ToArray(),
@@ -73,6 +77,24 @@ public sealed class ProjectFileSweepWorker(
                 if (failure is not null)
                 {
                     logger.ZLogWarning($"Closed project {after} file sweep deferred: {failure.Message}");
+                    continue;
+                }
+
+                var marked = await store.ExecuteAsync(
+                    [SqlValues.Statement(
+                        "UPDATE platform_closed_file_projects SET swept_at = ? WHERE project_id = ? AND swept_at IS NULL",
+                        SqlValues.Number(sweptAt), SqlValues.Text(after))],
+                    SqlContext.Fast,
+                    cancellationToken);
+                var markFailure = marked switch
+                {
+                    SqlExecuteResponse => null,
+                    PlatformConflict conflict => conflict.Message,
+                    PlatformUnavailable unavailable => unavailable.Message,
+                };
+                if (markFailure is not null)
+                {
+                    logger.ZLogWarning($"Closed project {after} file sweep marker deferred: {markFailure}");
                 }
             }
 

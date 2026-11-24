@@ -292,7 +292,8 @@ internal sealed partial class DatabaseSession
         var hlc = _context.Clock.Tick();
         var scope = new WriteScope(_writer);
         Dictionary<string, HlcTimestamp> tables = new(StringComparer.OrdinalIgnoreCase);
-        var mutations = LocalStamper.Stamp(scope, changes, hlc, persist: true, [], tables);
+        var mutations = LocalStamper.Stamp(scope, changes, ref hlc, persist: true, [], tables);
+        _context.Clock.Restore(hlc);
         var sequence = nextSequence;
         var nextEpoch = context.IsSchemaChange ? epoch + 1 : epoch;
         MetaStore.TouchTables(scope, tables);
@@ -320,9 +321,10 @@ internal sealed partial class DatabaseSession
         }
 
         var snapshot = _context.Clock.Tick();
+        var stamp = snapshot;
         var scope = new WriteScope(_writer);
         List<ObservedRow> observed = [];
-        var mutations = LocalStamper.Stamp(scope, changes, snapshot, persist: false, observed, new Dictionary<string, HlcTimestamp>(StringComparer.OrdinalIgnoreCase));
+        var mutations = LocalStamper.Stamp(scope, changes, ref stamp, persist: false, observed, new Dictionary<string, HlcTimestamp>(StringComparer.OrdinalIgnoreCase));
         if (scope.Failed)
         {
             return scope.Failure;

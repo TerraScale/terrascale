@@ -1,10 +1,42 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
 namespace TerraBase.Storage;
 
-internal static class FileIo
+internal static partial class FileIo
 {
+    public static void SyncDirectory(string? directory)
+    {
+        if (!OperatingSystem.IsLinux() || string.IsNullOrEmpty(directory))
+        {
+            return;
+        }
+
+        var fd = OpenDirectory(directory, 0);
+        if (fd < 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = Fsync(fd);
+        }
+        finally
+        {
+            _ = CloseFd(fd);
+        }
+    }
+
+    [LibraryImport("libc", EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int OpenDirectory(string path, int flags);
+
+    [LibraryImport("libc", EntryPoint = "fsync")]
+    private static partial int Fsync(int fd);
+
+    [LibraryImport("libc", EntryPoint = "close")]
+    private static partial int CloseFd(int fd);
     public static string? Write(SafeFileHandle handle, ReadOnlySpan<byte> bytes, long offset, bool fsync)
     {
         try
@@ -51,7 +83,14 @@ internal static class FileIo
     {
         try
         {
-            return File.OpenHandle(path, mode, FileAccess.ReadWrite, FileShare.Read);
+            var existed = mode == FileMode.OpenOrCreate && File.Exists(path);
+            var handle = File.OpenHandle(path, mode, FileAccess.ReadWrite, FileShare.Read);
+            if (mode is FileMode.CreateNew or FileMode.Create || (mode == FileMode.OpenOrCreate && !existed))
+            {
+                SyncDirectory(Path.GetDirectoryName(path));
+            }
+
+            return handle;
         }
         catch (IOException)
         {
@@ -107,6 +146,14 @@ internal static class FileIo
         try
         {
             File.Move(source, destination);
+            var destinationDirectory = Path.GetDirectoryName(destination);
+            var sourceDirectory = Path.GetDirectoryName(source);
+            SyncDirectory(destinationDirectory);
+            if (!string.Equals(sourceDirectory, destinationDirectory, StringComparison.Ordinal))
+            {
+                SyncDirectory(sourceDirectory);
+            }
+
             return null;
         }
         catch (IOException exception)
@@ -179,6 +226,7 @@ internal static class FileIo
         try
         {
             _ = Directory.CreateDirectory(path);
+            SyncDirectory(Path.GetDirectoryName(path));
             return null;
         }
         catch (IOException exception)

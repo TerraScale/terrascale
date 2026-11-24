@@ -20,6 +20,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     private readonly Dictionary<string, nint> _statements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TableSchema> _schemas = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Lock _handleGate = new();
     private readonly SqliteOpenOptions _options;
     private GCHandle<SqliteConnection> _self;
     private GCHandle<SnowflakeGenerator> _snowflake;
@@ -97,6 +98,17 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         SqliteConnection connection => connection,
         SqliteStatus => null,
     };
+
+    public void Interrupt()
+    {
+        lock (_handleGate)
+        {
+            if (_db != 0)
+            {
+                SqliteNative.InterruptQuery(_db);
+            }
+        }
+    }
 
     public PreupdateCapture AttachCapture()
     {
@@ -450,8 +462,17 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             && Stopwatch.GetElapsedTime(_workStarted) >= _options.StatementTimeout);
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    private static int OnProgress(nint context) =>
-        GCHandle<SqliteConnection>.FromIntPtr(context).Target.IsWorkCanceled() ? 1 : 0;
+    private static int OnProgress(nint context)
+    {
+        try
+        {
+            return GCHandle<SqliteConnection>.FromIntPtr(context).Target.IsWorkCanceled() ? 1 : 0;
+        }
+        catch
+        {
+            return 1;
+        }
+    }
 
     private bool ViolatesPrimaryKey(string message)
     {
@@ -551,23 +572,28 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public void Dispose()
     {
-        if (_db == 0)
+        lock (_handleGate)
         {
-            return;
+            var db = _db;
+            if (db == 0)
+            {
+                return;
+            }
+
+            Capture?.Dispose();
+            Capture = null;
+            foreach (var statement in _statements.Values)
+            {
+                _ = SqliteNative.Finalize(statement);
+            }
+
+            _statements.Clear();
+            _schemas.Clear();
+            _ = SqliteNative.SetAuthorizer(db, null, 0);
+            _db = 0;
+            _ = SqliteNative.CloseV2(db);
         }
 
-        Capture?.Dispose();
-        Capture = null;
-        foreach (var statement in _statements.Values)
-        {
-            _ = SqliteNative.Finalize(statement);
-        }
-
-        _statements.Clear();
-        _schemas.Clear();
-        _ = SqliteNative.SetAuthorizer(_db, null, 0);
-        _ = SqliteNative.CloseV2(_db);
-        _db = 0;
         _self.Dispose();
         if (_snowflake.IsAllocated)
         {
@@ -810,7 +836,18 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void OnSnowflake(nint context, int argumentCount, nint* arguments)
     {
-        var generator = GCHandle<SnowflakeGenerator>.FromIntPtr(SqliteNative.UserData(context)).Target;
-        SqliteNative.ResultInt64(context, generator.Next());
+        try
+        {
+            var generator = GCHandle<SnowflakeGenerator>.FromIntPtr(SqliteNative.UserData(context)).Target;
+            SqliteNative.ResultInt64(context, generator.Next());
+        }
+        catch
+        {
+            var message = "snowflake generation failed"u8;
+            fixed (byte* pointer = message)
+            {
+                SqliteNative.ResultError(context, pointer, message.Length);
+            }
+        }
     }
 }

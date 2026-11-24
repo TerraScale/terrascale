@@ -200,9 +200,26 @@ internal sealed unsafe class PreupdateCapture : IDisposable
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void OnPreupdate(nint context, nint db, int op, byte* database, byte* table, long oldKey, long newKey)
     {
-        var capture = GCHandle<PreupdateCapture>.FromIntPtr(context).Target;
-        capture.Handle(db, op, database, table, oldKey, newKey);
+        try
+        {
+            var capture = GCHandle<PreupdateCapture>.FromIntPtr(context).Target;
+            capture.Handle(db, op, database, table, oldKey, newKey);
+        }
+        catch (Exception error)
+        {
+            try
+            {
+                GCHandle<PreupdateCapture>.FromIntPtr(context).Target.RecordFault(error);
+            }
+            catch
+            {
+            }
+
+            SqliteNative.InterruptQuery(db);
+        }
     }
+
+    private void RecordFault(Exception error) => Fault = SqliteStatus.Fail(error.Message);
 
     private void Handle(nint db, int op, byte* database, byte* table, long oldKey, long newKey)
     {

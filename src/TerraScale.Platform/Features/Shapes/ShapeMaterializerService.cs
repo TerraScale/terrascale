@@ -22,7 +22,7 @@ public sealed class ShapeMaterializerService(
     private static readonly TimeSpan Reconnect = TimeSpan.FromSeconds(1);
     private readonly Channel<Ulid> _dirty = Channel.CreateBounded<Ulid>(new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.Wait });
     private readonly ConcurrentDictionary<Ulid, string> _pending = new();
-    private readonly Dictionary<Ulid, Feed> _feeds = [];
+    private readonly Dictionary<Ulid, ChangeSubscription> _subscriptions = [];
     private readonly string _owner = options.Region + "/" + options.Node + "/" + Ulid.NewUlid();
     private IReadOnlyList<ShapeRecord> _owned = [];
 
@@ -40,9 +40,9 @@ public sealed class ShapeMaterializerService(
         }
         finally
         {
-            foreach (var feed in _feeds.Values)
+            foreach (var subscription in _subscriptions.Values)
             {
-                await feed.StopAsync();
+                await subscription.StopAsync();
             }
         }
     }
@@ -84,16 +84,16 @@ public sealed class ShapeMaterializerService(
             PlatformUnavailable unavailable => Deferred<Ulid>(unavailable.Message),
         };
         var wanted = active.ToHashSet();
-        foreach (var database in _feeds.Keys.Where(database => !wanted.Contains(database)).ToArray())
+        foreach (var database in _subscriptions.Keys.Where(database => !wanted.Contains(database)).ToArray())
         {
-            await _feeds[database].StopAsync();
-            _ = _feeds.Remove(database);
+            await _subscriptions[database].StopAsync();
+            _ = _subscriptions.Remove(database);
         }
 
-        foreach (var database in wanted.Where(database => !_feeds.ContainsKey(database)))
+        foreach (var database in wanted.Where(database => !_subscriptions.ContainsKey(database)))
         {
             var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _feeds[database] = new Feed(stop, FollowAsync(database, stop.Token));
+            _subscriptions[database] = new ChangeSubscription(stop, FollowAsync(database, stop.Token));
         }
 
         foreach (var shape in owned)
@@ -291,7 +291,7 @@ public sealed class ShapeMaterializerService(
         return [];
     }
 
-    private sealed record Feed(CancellationTokenSource Stop, Task Running)
+    private sealed record ChangeSubscription(CancellationTokenSource Stop, Task Running)
     {
         public async Task StopAsync()
         {

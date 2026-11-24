@@ -55,6 +55,15 @@ public sealed partial record AuthOptions
 
     public IReadOnlyList<IPAddress> TrustedProxies { get; init; } = [];
 
+    public IReadOnlyList<IPNetwork> TrustedProxyNetworks { get; init; } = [];
+
+    public bool IsTrustedProxy(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        var normalized = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+        return TrustedProxies.Contains(normalized) || TrustedProxyNetworks.Any(network => network.Contains(normalized));
+    }
+
     public CloudflareEmailOptions? CloudflareEmail { get; init; }
 
     public SmtpEmailOptions? Smtp { get; init; }
@@ -202,6 +211,7 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_RATE_LIMIT must be positive");
         }
 
+        var (trustedProxies, trustedProxyNetworks) = ParseTrustedProxies(Optional("trusted-proxies"));
         var options = new AuthOptions
         {
             Listen = ParseListen("listen", Optional("listen") ?? "http://0.0.0.0:8090"),
@@ -211,7 +221,8 @@ public sealed partial record AuthOptions
             AuditSigningKey = Optional("audit-signing-key") is { } signing ? DecodeKey("audit-signing-key", signing) : null,
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
             RateLimitPerWindow = rateLimit,
-            TrustedProxies = ParseTrustedProxies(Optional("trusted-proxies")),
+            TrustedProxies = trustedProxies,
+            TrustedProxyNetworks = trustedProxyNetworks,
             CloudflareEmail = cloudflareAccountId is null || cloudflareEmailToken is null ? null : new CloudflareEmailOptions(cloudflareAccountId, cloudflareEmailToken),
             Smtp = smtpHost is null ? null : new SmtpEmailOptions(smtpHost, smtpPort, smtpUsername!, smtpPassword!),
             SentryDsn = Optional("sentry-dsn") is { } dsn ? ValidateDsn(dsn) : null,
@@ -251,42 +262,63 @@ public sealed partial record AuthOptions
         return clients;
     }
 
-    private static IReadOnlyList<IPAddress> ParseTrustedProxies(string? value)
+    private static (IReadOnlyList<IPAddress> Addresses, IReadOnlyList<IPNetwork> Networks) ParseTrustedProxies(string? value)
     {
         if (value is null)
         {
-            return [];
+            return ([], []);
         }
 
         var addresses = new HashSet<IPAddress>();
-        foreach (var text in value.Split(';', StringSplitOptions.TrimEntries))
+        var networks = new HashSet<IPNetwork>();
+        foreach (var text in value.Split([';', ','], StringSplitOptions.TrimEntries))
         {
-            if (!IPAddress.TryParse(text, out var address) || text.Contains('%')
-                || text.StartsWith('[')
-                || (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && text != address.ToString())
-                || (text.Contains('.') && text[(text.LastIndexOf(':') + 1)..] != address.MapToIPv4().ToString()))
+            if (text.Contains('/'))
             {
-                throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain unadorned numeric IP addresses");
+                if (text.Contains('%') || text.StartsWith('[') || !IPNetwork.TryParse(text, out var network))
+                {
+                    throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain unadorned numeric IP addresses or CIDR ranges");
+                }
+
+                if (network.PrefixLength == 0)
+                {
+                    throw Invalid("TS_AUTH_TRUSTED_PROXIES must not contain unspecified ranges");
+                }
+
+                if (!networks.Add(network))
+                {
+                    throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain distinct normalized addresses or ranges");
+                }
+            }
+            else
+            {
+                if (!IPAddress.TryParse(text, out var address) || text.Contains('%')
+                    || text.StartsWith('[')
+                    || (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && text != address.ToString())
+                    || (text.Contains('.') && text[(text.LastIndexOf(':') + 1)..] != address.MapToIPv4().ToString()))
+                {
+                    throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain unadorned numeric IP addresses or CIDR ranges");
+                }
+
+                address = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+                if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
+                {
+                    throw Invalid("TS_AUTH_TRUSTED_PROXIES must not contain unspecified addresses");
+                }
+
+                if (!addresses.Add(address))
+                {
+                    throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain distinct normalized addresses or ranges");
+                }
             }
 
-            address = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
-            if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
+            if (addresses.Count + networks.Count > 8)
             {
-                throw Invalid("TS_AUTH_TRUSTED_PROXIES must not contain unspecified addresses");
-            }
-
-            if (!addresses.Add(address))
-            {
-                throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain distinct normalized addresses");
-            }
-
-            if (addresses.Count > 8)
-            {
-                throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain at most 8 addresses");
+                throw Invalid("TS_AUTH_TRUSTED_PROXIES must contain at most 8 addresses or ranges");
             }
         }
 
-        return [.. addresses];
+        return ([.. addresses], [.. networks]);
     }
 
     private void EnforceProductionGuards()

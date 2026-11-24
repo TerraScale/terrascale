@@ -11,7 +11,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
     private readonly Lock _gate = new();
     private readonly Dictionary<Ulid, Channel<ChangefeedEntry>[]> _subscribers = [];
 
-    public async ValueTask PublishAsync(ChangefeedEntry entry, CancellationToken cancellationToken)
+    public ValueTask PublishAsync(ChangefeedEntry entry, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(entry);
         Channel<ChangefeedEntry>[] targets;
@@ -20,17 +20,16 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
             targets = _subscribers.GetValueOrDefault(entry.DatabaseId, []);
         }
 
-        switch (targets.Length)
+        foreach (var target in targets)
         {
-            case 0:
-                return;
-            case 1:
-                await DeliverAsync(targets[0].Writer, entry, cancellationToken);
-                return;
-            default:
-                await Task.WhenAll(targets.Select(target => DeliverAsync(target.Writer, entry, cancellationToken).AsTask()));
-                return;
+            if (!target.Writer.TryWrite(entry))
+            {
+                Detach(entry.DatabaseId, target);
+                target.Writer.TryComplete();
+            }
         }
+
+        return ValueTask.CompletedTask;
     }
 
     public async IAsyncEnumerable<ChangefeedEntry> SubscribeAsync(ChangefeedSubscription subscription, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -77,17 +76,6 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
             await registration.DisposeAsync();
             Detach(subscription.DatabaseId, channel);
             channel.Writer.TryComplete();
-        }
-    }
-
-    private static async ValueTask DeliverAsync(ChannelWriter<ChangefeedEntry> writer, ChangefeedEntry entry, CancellationToken cancellationToken)
-    {
-        while (await writer.WaitToWriteAsync(cancellationToken))
-        {
-            if (writer.TryWrite(entry))
-            {
-                return;
-            }
         }
     }
 
@@ -175,20 +163,28 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
 
     private void Detach(Ulid databaseId, Channel<ChangefeedEntry> channel)
     {
+        var removed = false;
         lock (_gate)
         {
-            var remaining = _subscribers.GetValueOrDefault(databaseId, []).Where(existing => !ReferenceEquals(existing, channel)).ToArray();
-            if (remaining.Length == 0)
+            if (_subscribers.TryGetValue(databaseId, out var existing))
             {
-                _ = _subscribers.Remove(databaseId);
-            }
-            else
-            {
-                _subscribers[databaseId] = remaining;
+                var remaining = existing.Where(candidate => !ReferenceEquals(candidate, channel)).ToArray();
+                removed = remaining.Length != existing.Length;
+                if (remaining.Length == 0)
+                {
+                    _ = _subscribers.Remove(databaseId);
+                }
+                else
+                {
+                    _subscribers[databaseId] = remaining;
+                }
             }
         }
 
-        metrics.SubscriberClosed();
+        if (removed)
+        {
+            metrics.SubscriberClosed();
+        }
     }
 }
 

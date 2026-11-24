@@ -73,12 +73,15 @@ internal sealed class CatalogStore(SystemDatabase system)
             BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<CatalogUpdateOutcome> UpsertOrganizationAsync(OrganizationRecord organization, CancellationToken cancellationToken) =>
+    public async ValueTask<CatalogUpdateOutcome> UpsertOrganizationAsync(
+        OrganizationRecord organization,
+        CancellationToken cancellationToken,
+        ConsistencyMode mode = ConsistencyMode.Strong) =>
         await system.WriteAsync(SqlBuild.Statement(
             "INSERT INTO organizations (id, name, created_by, created_at, plan, suspended) VALUES (?, ?, ?, ?, ?, ?) "
             + "ON CONFLICT (id) DO UPDATE SET name = excluded.name, plan = excluded.plan, suspended = excluded.suspended",
             SqlBuild.Id(organization.Id), SqlBuild.Text(organization.Name), SqlBuild.Text(organization.CreatedBy), SqlBuild.Time(organization.CreatedAt),
-            SqlBuild.Text(organization.Plan), SqlBuild.Bool(organization.Suspended)), ConsistencyMode.Strong, cancellationToken) switch
+            SqlBuild.Text(organization.Plan), SqlBuild.Bool(organization.Suspended)), mode, cancellationToken) switch
         {
             SqlWriteResult => new Completed(),
             StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
@@ -137,12 +140,15 @@ internal sealed class CatalogStore(SystemDatabase system)
             BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<CatalogWriteOutcome> UpsertProjectAsync(ProjectRecord project, CancellationToken cancellationToken) =>
+    public async ValueTask<CatalogWriteOutcome> UpsertProjectAsync(
+        ProjectRecord project,
+        CancellationToken cancellationToken,
+        ConsistencyMode mode = ConsistencyMode.Strong) =>
         await system.WriteAsync(SqlBuild.Statement(
             "INSERT INTO projects (id, organization_id, name, created_at, plan) VALUES (?, ?, ?, ?, ?) "
             + "ON CONFLICT (id) DO UPDATE SET organization_id = excluded.organization_id, name = excluded.name, plan = coalesce(excluded.plan, projects.plan)",
             SqlBuild.Id(project.Id), SqlBuild.Id(project.OrganizationId), SqlBuild.Text(project.Name), SqlBuild.Time(project.CreatedAt), SqlBuild.OptionalText(project.Plan)),
-            ConsistencyMode.Strong, cancellationToken) switch
+            mode, cancellationToken) switch
         {
             SqlWriteResult => new Completed(),
             StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
@@ -289,7 +295,10 @@ internal sealed class CatalogStore(SystemDatabase system)
             BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<CatalogWriteOutcome> UpsertDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken) =>
+    public async ValueTask<CatalogWriteOutcome> UpsertDatabaseAsync(
+        DatabaseRecord database,
+        CancellationToken cancellationToken,
+        ConsistencyMode mode = ConsistencyMode.Strong) =>
         await system.WriteAsync(
         [
             SqlBuild.Statement("DELETE FROM database_names WHERE database_id = ?", SqlBuild.Id(database.Id)),
@@ -297,7 +306,7 @@ internal sealed class CatalogStore(SystemDatabase system)
                 SqlBuild.Id(database.ProjectId), SqlBuild.Text(database.Name), SqlBuild.Id(database.Id)),
             SqlBuild.Statement("DELETE FROM databases WHERE id = ?", SqlBuild.Id(database.Id)),
             Insert(database),
-        ], ConsistencyMode.Strong, cancellationToken) switch
+        ], mode, cancellationToken) switch
         {
             SqlWriteResult => new Completed(),
             StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),

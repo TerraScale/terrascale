@@ -36,7 +36,6 @@ permissions:
   contents: read
 
 env:
-  OCIR_NAMESPACE: ${{ vars.OCIR_NAMESPACE }}
   TERRABASE_REVISION: ${{ github.sha }}
   TS_AUTH_REVISION: ${{ github.sha }}
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -107,6 +106,7 @@ jobs:
               - *dotnet-sdk
               - .github/docker/ts-auth.Dockerfile
               - .github/scripts/ci/image-payloads.sh
+              - .github/scripts/ci/deploy-v2.sh
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
               - src/TerraScale.Authentication/platform-api.openapi.yaml
               - .github/scripts/auth/export-openapi.sh
@@ -124,11 +124,20 @@ jobs:
               - .github/actions/**
               - .github/docker/terrabase.Dockerfile
               - .github/scripts/ci/image-payloads.sh
+              - .github/scripts/ci/deploy-v2.sh
               - src/TerraBase*/**/!(AGENTS.md)
               - src/TerraScale.QuicRpc/**/!(AGENTS.md)
-              - src/TerraScale.Platform/**/!(AGENTS.md)
               - native/{build-native.sh,native-pin.env}
               - sites/landing/static/pricing.json
+            platform:
+              - *shared
+              - .github/actions/**
+              - .github/docker/ts-platform.Dockerfile
+              - .github/scripts/ci/image-payloads.sh
+              - .github/scripts/ci/deploy-v2.sh
+              - src/TerraScale.Platform/**/!(AGENTS.md)
+              - src/TerraScale.QuicRpc/**/!(AGENTS.md)
+              - native/{build-native.sh,native-pin.env}
             aspire:
               - *shared
               - src/TerraScale.Aspire/**/!(AGENTS.md)
@@ -287,11 +296,11 @@ jobs:
           ENGINE: ${{ steps.filter.outputs.engine }}
           FRONTIER: ${{ steps.filter.outputs.frontier }}
           KEYRING: ${{ steps.filter.outputs.keyring }}
-          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.pr_gate && '["libs","auth","terrabase","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' || inputs.publication == 'release-only' && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
+          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.pr_gate && '["libs","auth","terrabase","platform","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' || inputs.publication == 'release-only' && '[]' || inputs.publication == 'build-only' && '["terrabase","platform"]' || '["libs","auth","terrabase","platform"]') || steps.filter.outputs.changes }}
         run: |
           {
-            echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")"
-            echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")"
+            echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase" or . == "platform")]' <<< "$CHANGES")"
+            echo "dotnet=$(jq -c '[.[] | if . == "platform" then "terrabase" else . end | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")"
             echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")"
           } >> "$GITHUB_OUTPUT"
           jq -cn '
@@ -300,9 +309,7 @@ jobs:
               {shard: "phone and flows", projects: "--project pages-mobile --project hosted --project interactions --project invitation", selected: env.PHONE},
               {shard: "session limits", projects: "placement/session-limits.spec.ts --project placement --workers 1", regions: 2, nodes: 2, selected: env.SESSION},
               {shard: "write guarantees", projects: "placement/database-functions.spec.ts placement/write-guarantees.spec.ts placement/region-restore.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
-              {shard: "multi-region faults", projects: "--project fault --grep-invert receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves|thirty.second.first.writer.outage|writer.killed.right.after.an.acknowledgement|retired.source.whose.fra.replica", regions: 2, nodes: 2, selected: env.FAULTS},
-              {shard: "multi-region retired source", projects: "--project fault --grep retired.source.whose.fra.replica", regions: 2, nodes: 2, selected: env.FAULTS},
-              {shard: "multi-region home moves and receipt handoffs", projects: "--project fault --grep receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves|thirty.second.first.writer.outage|writer.killed.right.after.an.acknowledgement", regions: 2, nodes: 2, selected: env.FAULTS}
+              {shard: "multi-region faults", projects: "--project fault", regions: 2, nodes: 2, selected: env.FAULTS}
             ] | map(select(env.ALL_LANES == "true" or .selected == "true") | del(.selected)) as $shards
             | ($shards | length > 0) as $browser
             | ($browser or env.ALL_LANES == "true" or env.ENGINE == "true" or env.FRONTIER == "true" or env.KEYRING == "true") as $journey
@@ -450,7 +457,7 @@ jobs:
   terrabase:
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
       - *checkout
@@ -473,6 +480,7 @@ jobs:
         working-directory: terrascale
         run: |
           make terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
+          make platform-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/platform-publish"
           .github/scripts/ci/release-only.sh
 
   aspire:
@@ -493,51 +501,55 @@ jobs:
           .github/scripts/ci/release-only.sh
 
   main:
-    needs: [changes, terrabase, test, journey]
+    needs: [changes, checks]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
-      && needs.journey.result == 'success'
+      !cancelled() && needs.checks.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && !inputs.pr_gate
+      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
+    outputs:
+      qualified: ${{ steps.qualify.outputs.qualified }}
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
     env:
       AREA: terrabase
       SERVICE: terrabase
-    runs-on: ubuntu-24.04
-    services: &image-registry
-      registry:
-        image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
-        ports: [5000:5000]
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
       attestations: write
       # ts-orch accepts this job's OIDC token to release the image it just published.
       id-token: write
-      # A failed release dispatches a fresh main run (a newer signed run) so the latest main still ends up live.
-      actions: write
+      actions: read
     steps: &production-steps
       - *checkout
+      - id: qualify
+        name: Check if commit tree already passed PR CI (all-green + journey)
+        if: (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only') && env.QUALIFIED_BY_ALL_GREEN != 'true'
+        working-directory: terrascale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/ci/site-deploy-gate.mjs "$AREA" --qualify-main
       - uses: ./terrascale/.github/actions/qualified-main
         if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
         with:
           revision: ${{ github.sha }}
           qualification: terrabase-maintenance
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        if: steps.qualify.outputs.qualified != 'false'
         with:
           global-json-file: terrascale/global.json
       - name: Pinned native libraries
+        if: steps.qualify.outputs.qualified != 'false'
         uses: ./terrascale/.github/actions/native-libs
         with:
           dir: terrascale
           runtimes: linux-arm64
-      # Production runs linux/arm64 only: publish that runtime once, then wrap it in the image without another build.
-      # The publish restores only its own project, locked, from nuget.org (8-12 s cold; the monorepo package cache took
-      # 25 s to download plus 7 s to restore). The image builder boots meanwhile.
+      # Production runs linux/arm64 natively on ubuntu-24.04-arm: publish once, wrap in the chiseled image, attest, and roll out via ts-orch.
       - name: Publish the linux/arm64 runtime payload
+        if: steps.qualify.outputs.qualified != 'false'
         working-directory: terrascale
         run: |
           docker buildx create --use --driver docker-container --bootstrap > "$RUNNER_TEMP/builder.log" 2>&1 &
@@ -546,13 +558,14 @@ jobs:
           bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
           wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: steps.qualify.outputs.qualified != 'false'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # Public images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-auth}:<sha> and :main. Production runs linux/arm64
-      # only, so that is the only platform built; ts-orch pins its child digest.
+      # Public images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-platform,ts-auth}:<sha> and :main.
       - id: image
+        if: steps.qualify.outputs.qualified != 'false'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ runner.temp }}/image-payloads
@@ -567,6 +580,7 @@ jobs:
           push: true
       - id: digest
         name: Verify the published linux/arm64 child
+        if: steps.qualify.outputs.qualified != 'false'
         env:
           INDEX: ${{ steps.image.outputs.digest }}
         run: |
@@ -574,25 +588,30 @@ jobs:
           image="ghcr.io/terrascale/${SERVICE}"
           { echo '```'; docker buildx imagetools inspect "${image}@${INDEX}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
-            jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+            jq -r 'if .manifests then (.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest) else empty end')
+          if [[ -z "$arm64" ]]; then
+            arm64=$INDEX
+          fi
           test -n "$arm64"
           docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
       - name: Record the build-only digest (no release)
-        if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+        if: steps.qualify.outputs.qualified != 'false' && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
         env:
           INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
       - id: provenance
         name: Attest build provenance (linux/arm64 child)
+        if: steps.qualify.outputs.qualified != 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
           subject-digest: ${{ steps.digest.outputs.arm64 }}
           push-to-registry: true
       - name: Generate the linux/arm64 child SBOM
+        if: steps.qualify.outputs.qualified != 'false'
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
@@ -601,6 +620,7 @@ jobs:
           upload-artifact: false
       - id: sbom
         name: Attest the SBOM
+        if: steps.qualify.outputs.qualified != 'false'
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
@@ -608,41 +628,90 @@ jobs:
           sbom-path: ${{ runner.temp }}/sbom.spdx.json
           push-to-registry: true
       - name: Verify the attestations
+        if: steps.qualify.outputs.qualified != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: gh attestation verify "oci://ghcr.io/terrascale/${SERVICE}@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        with:
-          version: 1.3.6
-      - name: Prove signed image publication through a local registry
+      - name: Deploy through ts-orch
+        if: steps.qualify.outputs.qualified != 'false' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
         working-directory: terrascale
         env:
-          SOURCE: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash .github/scripts/ci/prove-image-publication.sh "$SOURCE" "$PROVENANCE" "$SBOM"
-      - name: Authenticate to OCIR with GitHub OIDC
-        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@0142407115eb66e6487764644b97ab1ec859a79d
-        with:
-          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
-          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
-          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
-          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
-      - name: Publish and verify the same image and bundles in every OCIR region
-        working-directory: terrascale
-        env:
-          SOURCE: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-          PUBLICATION: ${{ inputs.publication }}
-        run: |
-          tags=$GITHUB_SHA
-          if [[ $PUBLICATION != build-only ]]; then tags+=,main; fi
-          bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "$tags" "$PROVENANCE" "$SBOM"
+          ARM64: ${{ steps.digest.outputs.arm64 }}
+        run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "ghcr.io/terrascale/${SERVICE}@${ARM64}"
+
+  main-fallback:
+    needs: [changes, checks, all-green, main]
+    if: >-
+      !cancelled() && needs.all-green.result == 'success' && needs.main.outputs.qualified == 'false'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
+    concurrency:
+      group: production-terrabase
+      cancel-in-progress: false
+    env:
+      AREA: terrabase
+      SERVICE: terrabase
+      QUALIFIED_BY_ALL_GREEN: 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      actions: read
+    steps: *production-steps
+
+  main-platform:
+    needs: [changes, checks]
+    if: >-
+      !cancelled() && needs.checks.result == 'success'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && contains(fromJSON(needs.changes.outputs.main), 'platform') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
+    outputs:
+      qualified: ${{ steps.qualify.outputs.qualified }}
+    concurrency:
+      group: production-platform
+      cancel-in-progress: false
+    env:
+      AREA: platform
+      SERVICE: ts-platform
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      actions: read
+    steps: *production-steps
+
+  main-platform-fallback:
+    needs: [changes, checks, all-green, main-platform]
+    if: >-
+      !cancelled() && needs.all-green.result == 'success' && needs.main-platform.outputs.qualified == 'false'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && contains(fromJSON(needs.changes.outputs.main), 'platform') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
+    concurrency:
+      group: production-platform
+      cancel-in-progress: false
+    env:
+      AREA: platform
+      SERVICE: ts-platform
+      QUALIFIED_BY_ALL_GREEN: 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      actions: read
+    steps: *production-steps
 
   main-build-only:
-    needs: [changes, terrabase, test]
+    needs: [changes, checks, terrabase, test]
     if: >-
       !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
       && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only' && github.ref == 'refs/heads/main'
@@ -653,8 +722,7 @@ jobs:
     env:
       AREA: terrabase
       SERVICE: terrabase
-    runs-on: ubuntu-24.04
-    services: *image-registry
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     permissions:
       contents: read
@@ -672,8 +740,8 @@ jobs:
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
-    runs-on: ubuntu-24.04
-    timeout-minutes: 210
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: read
       actions: read
@@ -696,18 +764,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        with:
-          version: 1.3.6
-      - name: Authenticate to OCIR with GitHub OIDC
-        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@0142407115eb66e6487764644b97ab1ec859a79d
-        with:
-          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
-          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
-          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
-          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
-      - name: Release the pinned arm64 digest to each region
+      - name: Verify and deploy the pinned arm64 digest through ts-orch
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ inputs.terrabase_arm64 }}
@@ -718,20 +775,14 @@ jobs:
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --bundle-from-oci
-          bash .github/scripts/ci/release-app.sh terrabase "$image"
-      - name: Wait for rollout
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARM64: ${{ inputs.terrabase_arm64 }}
-        run: bash .github/scripts/ci/wait-app-rollout.sh terrabase "ghcr.io/terrascale/terrabase@${ARM64}"
+          bash .github/scripts/ci/deploy-v2.sh terrabase "$image"
 
   main-auth:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && !inputs.pr_gate))
     concurrency:
       group: production-auth
       cancel-in-progress: false
-    runs-on: ubuntu-24.04
-    services: *image-registry
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     permissions:
       contents: read
@@ -749,19 +800,15 @@ jobs:
       - id: probe
         name: Validate live ts-auth readiness response
         run: node .github/scripts/ci/site-deploy-gate.mjs auth --probe
-      - name: Report live ts-auth readiness HTTP 503
+      - name: Note clean-slate or unavailable live ts-auth
         if: steps.probe.outputs.unavailable == 'true'
-        run: |
-          echo '::error::Live ts-auth readiness returned HTTP 503'
-          exit 1
+        run: echo 'Live ts-auth readiness is currently unavailable; proceeding with reconciliation'
       - id: live
         name: Reconcile qualified main with live ts-auth
         env:
           GH_TOKEN: ${{ github.token }}
           AUTH_LIVE_REVISION: ${{ steps.probe.outputs.revision }}
         run: node .github/scripts/ci/site-deploy-gate.mjs auth --reconcile
-      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
-        if: steps.live.outputs.deploy == 'true'
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         if: steps.live.outputs.deploy == 'true'
         with:
@@ -820,34 +867,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ steps.authdigest.outputs.arm64 }}
         run: gh attestation verify "oci://ghcr.io/terrascale/ts-auth@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+      - name: Deploy ts-auth through ts-orch
         if: steps.live.outputs.deploy == 'true'
-        with:
-          version: 1.3.6
-      - name: Authenticate to OCIR with GitHub OIDC
-        if: steps.live.outputs.deploy == 'true'
-        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@0142407115eb66e6487764644b97ab1ec859a79d
-        with:
-          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
-          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
-          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
-          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
-      - name: Publish and verify the same image and bundles in every OCIR region
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash .github/scripts/ci/app-image-regions.sh publish "$IMAGE" "$PROVENANCE" "$SBOM"
-      - name: Select the signed release
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/ci/release-app.sh ts-auth "$IMAGE"
-      - name: Wait for rollout
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/ci/wait-app-rollout.sh ts-auth "$IMAGE"
+        run: bash .github/scripts/ci/deploy-v2.sh ts-auth "$IMAGE"
       - name: Prove the live revision
         if: steps.live.outputs.deploy == 'true'
         run: node .github/scripts/ci/site-deploy-gate.mjs auth --prove

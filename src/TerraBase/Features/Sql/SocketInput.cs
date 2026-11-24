@@ -7,6 +7,7 @@ internal sealed class SocketInput(TimeProvider time)
     private const int MaxQueuedMessages = 256;
 
     private static readonly byte[] ProtocolErrorClose = [0x88, 0x02, 0x03, 0xEA];
+    private static readonly TimeSpan ProtocolErrorDrainTimeout = TimeSpan.FromMilliseconds(250);
 
     private readonly Lock _gate = new();
     private readonly Queue<Message> _messages = new();
@@ -233,9 +234,26 @@ internal sealed class SocketInput(TimeProvider time)
             {
                 await WriteAsync(ProtocolErrorClose, CancellationToken.None);
                 await inner.FlushAsync(CancellationToken.None);
+                await DrainPeerCloseAsync(cancellationToken);
             }
 
             return read;
+        }
+
+        private async ValueTask DrainPeerCloseAsync(CancellationToken cancellationToken)
+        {
+            var scratch = new byte[64];
+            using var linger = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linger.CancelAfter(ProtocolErrorDrainTimeout);
+            try
+            {
+                while (await inner.ReadAsync(scratch, linger.Token) > 0)
+                {
+                }
+            }
+            catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+            }
         }
 
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>

@@ -24,7 +24,7 @@ internal sealed class ServerStreamCall<TRes>(
     CancellationToken cancellationToken) : IAsyncDisposable
     where TRes : IBinaryMessage<TRes>
 {
-    private readonly CallScope _scope = new(QuicMeshLimits.CallTimeout, timeProvider, client.Pool.ShutdownToken, cancellationToken);
+    private readonly CallScope _scope = new(QuicMeshLimits.CallTimeout, timeProvider, client.ServerStreamToken, cancellationToken);
     private readonly long _started = timeProvider.GetTimestamp();
     private StreamLease? _lease;
     private bool _entered;

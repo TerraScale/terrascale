@@ -41,11 +41,45 @@ internal sealed class SessionArchiver(
             return Finish(step);
         }
 
-        var saved = await manifests.SaveAsync(step.Manifest, cancellationToken);
+        var saved = await manifests.UpdateAsync(
+            session.DatabaseId,
+            current => MergeInto(current, step.Manifest),
+            cancellationToken);
         return saved switch
         {
             ArchiveManifest stored => Finish(step with { Manifest = stored }),
             ContinuityUnavailable unavailable => step.Failure ?? unavailable,
+        };
+    }
+
+    private static ArchiveManifest MergeInto(ArchiveManifest remote, ArchiveManifest staged)
+    {
+        Dictionary<string, ArchivedSnapshot> snapshots = new(StringComparer.Ordinal);
+        foreach (var snapshot in remote.Snapshots)
+        {
+            snapshots[snapshot.Key] = snapshot;
+        }
+
+        foreach (var snapshot in staged.Snapshots)
+        {
+            snapshots[snapshot.Key] = snapshot;
+        }
+
+        Dictionary<string, ArchivedSegment> segments = new(StringComparer.Ordinal);
+        foreach (var segment in remote.Segments)
+        {
+            segments[segment.Key] = segment;
+        }
+
+        foreach (var segment in staged.Segments)
+        {
+            segments[segment.Key] = segment;
+        }
+
+        return remote with
+        {
+            Snapshots = [.. snapshots.Values.OrderBy(static item => item.TakenAtUtc)],
+            Segments = [.. segments.Values.OrderBy(static item => item.Origin, StringComparer.Ordinal).ThenBy(static item => item.FirstSequence)],
         };
     }
 
@@ -175,7 +209,7 @@ internal sealed class SessionArchiver(
 
     private async ValueTask<ArchiveStep> UploadSnapshotAsync(ArchiveManifest manifest, DatabaseSnapshot snapshot, CancellationToken cancellationToken)
     {
-        var key = ArchiveKeys.Snapshot(session.DatabaseId, snapshot.Bookmark);
+        var key = ArchiveKeys.Snapshot(session.DatabaseId, snapshot.TakenAtUtc, snapshot.Bookmark);
         var uploaded = await manifests.Store.UploadFileAsync(key, snapshot.Path, cancellationToken);
         var failure = uploaded switch
         {

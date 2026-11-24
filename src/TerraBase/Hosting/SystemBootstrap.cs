@@ -14,7 +14,9 @@ internal sealed class SystemBootstrap(
     SystemDatabase system,
     PlatformCatalog platform,
     ManagementService management,
+    TerraBaseOptions options,
     ClusterOptions cluster,
+    PeerHealthMonitor health,
     StorageEngineOptions storage,
     AntiEntropyService antiEntropy,
     IContinuityDatabaseCatalog catalog,
@@ -30,10 +32,19 @@ internal sealed class SystemBootstrap(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         Func<CancellationToken, ValueTask>? sync = cluster.Peers.Count > 0 ? SyncSystemAsync : null;
-        var openedOutcome = await system.OpenAsync(cluster.IsBootstrapNode, sync, cancellationToken);
+        bool AnyRemotePeerReachable() => cluster.RemotePeers.Any(peer => health.IsReachable(peer.NodeId));
+        var openedOutcome = await system.OpenAsync(
+            cluster.IsBootstrapNode,
+            cluster.IsRegionBootstrapNode,
+            options.BootstrapImmediate,
+            AnyRemotePeerReachable,
+            sync,
+            cancellationToken);
+        var singleRegionRollout = cluster.RemotePeers.Count > 0 && (options.BootstrapImmediate || !AnyRemotePeerReachable());
+        var shouldSeedPlatform = cluster.IsBootstrapNode || (cluster.IsRegionBootstrapNode && singleRegionRollout);
         var opened = openedOutcome switch
         {
-            Completed when cluster.IsBootstrapNode => await platform.EnsureAsync(cancellationToken),
+            Completed when shouldSeedPlatform => await platform.EnsureAsync(cancellationToken, allowFastFallback: singleRegionRollout),
             Completed done => done,
             ConfigurationError error => error,
         };

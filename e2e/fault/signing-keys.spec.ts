@@ -118,7 +118,7 @@ test('a rotated signing key is accepted on the refresh that publishes it, includ
     const before = isolated.fetches();
     isolated.keys([key]);
     await expect.poll(async () => (await request.get(url, { headers: { authorization: `Bearer ${rotated}` } })).status(), {
-      message: 'an unknown key id refreshes the issuer document once and then verifies', timeout: 25_000, intervals: [500],
+      message: 'an unknown key id refreshes the issuer discovery document once and then verifies', timeout: 25_000, intervals: [500],
     }).toBe(200);
     expect(isolated.fetches()).toBeGreaterThan(before);
     await isolated.stop();

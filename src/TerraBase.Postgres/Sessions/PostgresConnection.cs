@@ -10,6 +10,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
     private static readonly IReadOnlyDictionary<string, SqlValue> NoNamed = FrozenDictionary<string, SqlValue>.Empty;
 
     private volatile bool _revoked;
+    private volatile bool _shuttingDown;
 
     private PgFrameReader Reader => wire.Reader;
 
@@ -34,8 +35,19 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
             _revoked = true;
             Reader.Interrupt();
         });
+        using var shutdown = session.Grant.Shutdown.Register(() =>
+        {
+            _shuttingDown = true;
+            Reader.Interrupt();
+        });
         while (true)
         {
+            if (_shuttingDown)
+            {
+                await FatalAsync(new PgError("57P01", "terminating connection due to administrator command", Fatal: true));
+                return;
+            }
+
             if (_revoked)
             {
                 await FatalAsync(new PgError("28000", "the credential for this session was revoked", Fatal: true));

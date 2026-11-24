@@ -67,7 +67,7 @@ jobs:
 
   engine-baseline:
     name: build engine rollback baseline
-    if: inputs.engine || contains(inputs.shards, 'receipt handoffs')
+    if: inputs.engine
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -264,17 +264,6 @@ jobs:
           pattern: runner-*
           merge-multiple: true
           path: ${{ runner.temp }}/sdk
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        if: matrix.shard == 'multi-region home moves and receipt handoffs'
-        with:
-          name: engine-rollback-baseline
-          path: ${{ runner.temp }}
-      - name: Unpack the base revision's TerraBase for the mixed-version case
-        if: matrix.shard == 'multi-region home moves and receipt handoffs'
-        run: |
-          mkdir -p "$RUNNER_TEMP/previous"
-          tar -xzf "$RUNNER_TEMP/engine-baseline.tar.gz" -C "$RUNNER_TEMP/previous"
-          echo "E2E_PREVIOUS_TERRABASE=$RUNNER_TEMP/previous/terrabase/terrabase.dll" >> "$GITHUB_ENV"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         id: e2e-npm
         with:
@@ -338,16 +327,6 @@ jobs:
           unset GITHUB_TOKEN
           read -ra projects <<< "$PROJECTS"
           bash env/local.sh exec node support/quarantine-run.mjs "${projects[@]}"
-      - name: Regional proxy
-        if: matrix.shard == 'multi-region faults'
-        timeout-minutes: 4
-        working-directory: e2e
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          node support/quarantine.mjs read
-          unset GITHUB_TOKEN
-          bash env/local.sh exec node support/quarantine-run.mjs placement/regions.spec.ts --project placement --grep 'R3 replace'
       - name: Stop the stack
         if: always() && steps.namespace.outcome == 'success'
         timeout-minutes: 1

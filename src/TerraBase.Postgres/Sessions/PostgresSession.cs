@@ -123,7 +123,7 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
     public PostgresStatementScope BeginStatement(CancellationToken connection)
     {
         var timeout = new CancellationTokenSource(Settings.StatementTimeout, timeProvider);
-        var linked = CancellationTokenSource.CreateLinkedTokenSource(connection, timeout.Token, grant.Revocation);
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(connection, timeout.Token, grant.Revocation, grant.Shutdown);
         lock (_gate)
         {
             _statement = linked;

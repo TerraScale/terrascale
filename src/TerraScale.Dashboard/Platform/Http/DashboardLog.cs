@@ -60,6 +60,12 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 18, Level = LogLevel.Warning, Message = "Readiness: TerraBase state unavailable ({ErrorType})")]
         internal static partial void ReadinessTerraBaseStateUnavailable(this ILogger logger, object? errorType);
 
+        [LoggerMessage(EventId = 102, Level = LogLevel.Warning, Message = "Readiness: ts-platform answered {StatusCode}")]
+        internal static partial void ReadinessTsPlatformAnswered(this ILogger logger, object? statusCode);
+
+        [LoggerMessage(EventId = 103, Level = LogLevel.Warning, Message = "Readiness: ts-platform unreachable ({ErrorType})")]
+        internal static partial void ReadinessTsPlatformUnreachable(this ILogger logger, object? errorType);
+
         [LoggerMessage(EventId = 19, Level = LogLevel.Warning, Message = "TerraBase refused plan {Plan} for organization {Organization}: {Status}")]
         internal static partial void TerraBaseRefusedPlanForOrganization(this ILogger logger, object? plan, object? organization, object? status);
 

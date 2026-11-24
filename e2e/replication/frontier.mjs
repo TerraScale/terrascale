@@ -15,7 +15,7 @@ assert(process.env.DOTNET_ROOT, 'DOTNET_ROOT holds the .NET runtime');
 assert.equal(process.env.E2E_REGIONS, '2');
 
 const P = holdSync({
-  internal: 8081, quic: 8443, gru: 8080, fra: 8180, extra: 8280,
+  internal: 8081, quic: 8443, quicFra: 8444, quicExtra: 8445, gru: 8080, fra: 8180, extra: 8280,
   metrics: 9091, metricsFra: 9191, metricsExtra: 9291, pg: 6432, pgFra: 6532, pgExtra: 6632,
 }, 'block').ports;
 const state = resolve(journeyState, 'replication-' + randomBytes(6).toString('hex'));
@@ -26,12 +26,12 @@ const master = randomBytes(32);
 appendFileSync(journeyState + '/secrets', [peer, master.toString('base64')].join('\n') + '\n', { mode: 0o600 });
 
 const nodes = {
-  gru: { name: 'journey-1', region: 'gru', host: '127.0.0.1', port: P.gru, metrics: P.metrics, pg: P.pg },
-  fra: { name: 'journey-2', region: 'fra', host: '127.0.0.2', port: P.fra, metrics: P.metricsFra, pg: P.pgFra },
-  gru2: { name: 'journey-3', region: 'gru', host: '127.0.0.3', port: P.extra, metrics: P.metricsExtra, pg: P.pgExtra },
+  gru: { name: 'journey-1', region: 'gru', host: '127.0.0.1', port: P.gru, quic: P.quic, metrics: P.metrics, pg: P.pg },
+  fra: { name: 'journey-2', region: 'fra', host: '127.0.0.2', port: P.fra, quic: P.quicFra, metrics: P.metricsFra, pg: P.pgFra },
+  gru2: { name: 'journey-3', region: 'gru', host: '127.0.0.3', port: P.extra, quic: P.quicExtra, metrics: P.metricsExtra, pg: P.pgExtra },
 };
 const all = Object.values(nodes);
-writeFileSync(state + '/peers', all.map(node => [node.name, node.region, node.host, P.quic, P.internal].join(' ') + '\n').join(''));
+writeFileSync(state + '/peers', all.map(node => [node.name, node.region, node.host, node.quic, P.internal].join(' ') + '\n').join(''));
 
 const processes = new Map();
 const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -53,7 +53,7 @@ function start(node) {
       DOTNET_ENVIRONMENT: 'Production', DOTNET_PROCESSOR_COUNT: '4',
       TS_REGION: node.region, TS_NODE: node.name, TS_PEERS_FILE: state + '/peers',
       TERRABASE_DATA_DIRECTORY: state + '/' + node.name, TERRABASE_PORT: String(node.port), TERRABASE_INTERNAL_PORT: String(P.internal),
-      TERRABASE_QUIC_PORT: String(P.quic), TERRABASE_METRICS_PORT: String(node.metrics), TERRABASE_POSTGRES_PORT: String(node.pg),
+      TERRABASE_QUIC_PORT: String(node.quic), TERRABASE_METRICS_PORT: String(node.metrics), TERRABASE_POSTGRES_PORT: String(node.pg),
       TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
       TERRABASE_PEER_SECRET: peer, TERRABASE_MASTER_KEY: master.toString('base64'),
     },
@@ -170,8 +170,8 @@ try {
   assert.deepEqual(peers.map(row => row.region), ['fra', 'gru']);
   console.log('regions: fra and gru are healthy active-active peers of the database');
 
-  await committed(nodes.gru, ['CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT NOT NULL)', "INSERT INTO items VALUES (100, 'seed')"]);
-  await committed(nodes.gru, ['CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)', 'INSERT INTO counter VALUES (1, 0)']);
+  await committed(nodes.gru, ['CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT NOT NULL)', "INSERT INTO items VALUES (100, 'seed')"], { 'terrascale-consistency': 'strong' });
+  await committed(nodes.gru, ['CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)', 'INSERT INTO counter VALUES (1, 0)'], { 'terrascale-consistency': 'strong' });
   await converged('the schema reaches every node', 'SELECT id, value FROM items ORDER BY id', value => value.length === 1);
   await converged('the counter reaches every node', 'SELECT value FROM counter', value => value.length === 1);
 

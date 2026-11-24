@@ -4,7 +4,8 @@ COPY ${TARGETARCH}/ /app
 USER 0
 RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","mkdir","-p","/data"]
 RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","chown","1654:1654","/data"]
-ENV ASPNETCORE_HTTP_PORTS=
+ENV ASPNETCORE_HTTP_PORTS= \
+    DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp
 WORKDIR /data
 USER 1654
 ENTRYPOINT ["/app/terrabase"]

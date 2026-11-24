@@ -20,6 +20,7 @@ internal sealed class QuicRpcServerCore(
     ILogger logger) : IAsyncDisposable
 {
     private readonly QuicCertificateValidator _validator = new(options.TrustedAuthorities, timeProvider);
+    private readonly QuicCertificateSource _certificates = new(options, timeProvider);
     private readonly CancellationTokenSource _drain = new();
     private readonly CancellationTokenSource _serverStreams = new();
     private readonly CancellationTokenSource _handlers = new();
@@ -36,13 +37,12 @@ internal sealed class QuicRpcServerCore(
 
     public async ValueTask<QuicHostStartOutcome> StartAsync(CancellationToken cancellationToken)
     {
-        var connectionOptions = ConnectionOptions();
         var listened = await QuicIo.ListenAsync(
             new QuicListenerOptions
             {
                 ListenEndPoint = options.ListenEndPoint,
                 ApplicationProtocols = [new SslApplicationProtocol(QuicProtocol.ApplicationProtocol)],
-                ConnectionOptionsCallback = (_, _, _) => ValueTask.FromResult(connectionOptions),
+                ConnectionOptionsCallback = (_, _, _) => ValueTask.FromResult(ConnectionOptions()),
             },
             cancellationToken);
         return listened switch
@@ -82,18 +82,26 @@ internal sealed class QuicRpcServerCore(
         }
 
         await _handlers.CancelAsync();
-        foreach (var connection in _live.Keys)
-        {
-            var closed = await QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode);
-            Observe(closed);
-        }
-
+        await Task.WhenAll(_live.Keys.Select(CloseConnectionBoundedAsync));
         await _closing.CancelAsync();
-        await _connectionLoops.DrainAsync();
+        _ = await InFlightTracker.WaitAsync(_connectionLoops.DrainAsync(), QuicMeshLimits.CloseTimeout, timeProvider);
         _drain.Dispose();
         _serverStreams.Dispose();
         _handlers.Dispose();
         _closing.Dispose();
+    }
+
+    private async Task CloseConnectionBoundedAsync(QuicConnection connection)
+    {
+        var closeTask = QuicIo.CloseAsync(connection, QuicProtocol.CloseErrorCode).AsTask();
+        using var timeout = new CancellationTokenSource();
+        var delay = Task.Delay(QuicMeshLimits.CloseTimeout, timeProvider, timeout.Token);
+        var winner = await Task.WhenAny(closeTask, delay);
+        await timeout.CancelAsync();
+        if (winner == closeTask)
+        {
+            Observe(await closeTask);
+        }
     }
 
     private QuicServerConnectionOptions ConnectionOptions() => new()
@@ -108,7 +116,7 @@ internal sealed class QuicRpcServerCore(
         ServerAuthenticationOptions = new SslServerAuthenticationOptions
         {
             ApplicationProtocols = [new SslApplicationProtocol(QuicProtocol.ApplicationProtocol)],
-            ServerCertificateContext = SslStreamCertificateContext.Create(options.Certificate, [.. options.IntermediateCertificates], offline: true),
+            ServerCertificateContext = _certificates.Current(),
             ClientCertificateRequired = true,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
             RemoteCertificateValidationCallback = (_, certificate, chain, _) =>

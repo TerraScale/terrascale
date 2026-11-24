@@ -315,7 +315,18 @@ namespace TerraScale.Dashboard
                 return slo.ObserveAsync(context, next);
             });
 
-            app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
+            var forwardedHeaders = new ForwardedHeadersOptions
+            {
+                ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+                ForwardLimit = 1,
+            };
+            forwardedHeaders.KnownProxies.Clear();
+            forwardedHeaders.KnownIPNetworks.Clear();
+            forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("127.0.0.0/8"));
+            forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("::1/128"));
+            forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("172.16.0.0/12"));
+            forwardedHeaders.KnownIPNetworks.Add(System.Net.IPNetwork.Parse("10.0.0.0/8"));
+            app.UseForwardedHeaders(forwardedHeaders);
             var timingLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ServerTiming");
             app.Use((context, next) => RequestIdentity.MiddlewareAsync(context, next, timingLogger));
             app.Use((context, next) => ServerTiming.MiddlewareAsync(context, next, timingLogger));

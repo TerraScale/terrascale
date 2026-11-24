@@ -21,6 +21,7 @@ sqlite_flags=(
 sqlite_link_flags=(-Wl,-soname,libsqlite3mc.so -Wl,--build-id=sha1 -Wl,-z,noexecstack -lm -lpthread)
 sqlite_symbols=(sqlite3_open_v2 sqlite3_key_v2 sqlite3_rekey_v2 sqlite3_preupdate_hook sqlite3_preupdate_old sqlite3_preupdate_new sqlite3session_create)
 msquic_symbols=(MsQuicOpenVersion MsQuicClose)
+numa_symbols=(numa_available numa_max_node)
 
 fail() {
   echo "build-native: $*" >&2
@@ -134,7 +135,9 @@ extract_msquic() {
   suffix="${suffix^^}"
   local url_variable="MSQUIC_${suffix}_URL" sha_variable="MSQUIC_${suffix}_SHA256"
   local package="$cache_dir/libmsquic_${MSQUIC_VERSION}_$rid.deb"
-  local member="./usr/lib/$(rid_triplet "$rid")/libmsquic.so.$MSQUIC_VERSION"
+  local triplet member
+  triplet=$(rid_triplet "$rid")
+  member="./usr/lib/$triplet/libmsquic.so.$MSQUIC_VERSION"
   fetch "${!url_variable}" "${!sha_variable}" "$package"
   ar p "$package" data.tar.xz | tar -xJO "$member" >"$cache_dir/libmsquic.so.2.$rid"
   install -m 0755 "$cache_dir/libmsquic.so.2.$rid" "$out/libmsquic.so.2"
@@ -145,7 +148,25 @@ extract_msquic() {
   echo "verified libmsquic.so.2 is MsQuic $MSQUIC_VERSION"
 }
 
-require_tools curl sha256sum tar ar nm readelf install
+extract_numa() {
+  local rid=$1 out=$2
+  local suffix="${rid//-/_}"
+  suffix="${suffix^^}"
+  local url_variable="NUMA_${suffix}_URL" sha_variable="NUMA_${suffix}_SHA256"
+  local package="$cache_dir/libnuma1_${NUMA_VERSION}_$rid.deb"
+  local triplet member
+  triplet=$(rid_triplet "$rid")
+  member="./usr/lib/$triplet/libnuma.so.$NUMA_SO_VERSION"
+  fetch "${!url_variable}" "${!sha_variable}" "$package"
+  ar p "$package" data.tar.zst | zstd -dc | tar -xO "$member" >"$cache_dir/libnuma.so.1.$rid"
+  install -m 0755 "$cache_dir/libnuma.so.1.$rid" "$out/libnuma.so.1"
+  rm -f "$cache_dir/libnuma.so.1.$rid"
+  verify_elf "$rid" "$out/libnuma.so.1"
+  verify_symbols "$out/libnuma.so.1" "${numa_symbols[@]}"
+  echo "verified libnuma.so.1 is numactl $NUMA_VERSION"
+}
+
+require_tools curl sha256sum tar ar zstd nm readelf install
 
 rids=("$@")
 if [[ ${#rids[@]} -eq 0 ]]; then
@@ -163,5 +184,6 @@ for rid in "${rids[@]}"; do
   echo "== $rid"
   build_sqlite "$rid" "$out"
   extract_msquic "$rid" "$out"
-  (cd "$out" && sha256sum libsqlite3mc.so libmsquic.so.2)
+  extract_numa "$rid" "$out"
+  (cd "$out" && sha256sum libsqlite3mc.so libmsquic.so.2 libnuma.so.1)
 done

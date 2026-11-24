@@ -10,5 +10,7 @@
   <ItemGroup>
     <Content Include="../../native/runtimes/linux-x64/native/libmsquic.so.2" Condition="Exists('../../native/runtimes/linux-x64/native/libmsquic.so.2') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-x64/native/libmsquic.so.2" Visible="false" />
     <Content Include="../../native/runtimes/linux-arm64/native/libmsquic.so.2" Condition="Exists('../../native/runtimes/linux-arm64/native/libmsquic.so.2') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-arm64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-arm64/native/libmsquic.so.2" Visible="false" />
+    <Content Include="../../native/runtimes/linux-x64/native/libnuma.so.1" Condition="Exists('../../native/runtimes/linux-x64/native/libnuma.so.1') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-x64/native/libnuma.so.1" Visible="false" />
+    <Content Include="../../native/runtimes/linux-arm64/native/libnuma.so.1" Condition="Exists('../../native/runtimes/linux-arm64/native/libnuma.so.1') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-arm64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-arm64/native/libnuma.so.1" Visible="false" />
   </ItemGroup>
 </Project>

@@ -353,18 +353,20 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             _sessions.Clear();
         }
 
-        foreach (var session in sessions)
+        await Task.WhenAll(sessions.Select(CloseSessionAsync));
+    }
+
+    private async Task CloseSessionAsync(DatabaseSession session)
+    {
+        var gate = Gate(session.DatabaseId);
+        await gate.WaitAsync(CancellationToken.None);
+        try
         {
-            var gate = Gate(session.DatabaseId);
-            await gate.WaitAsync(CancellationToken.None);
-            try
-            {
-                await session.CloseAsync();
-            }
-            finally
-            {
-                gate.Release();
-            }
+            await session.CloseAsync();
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 

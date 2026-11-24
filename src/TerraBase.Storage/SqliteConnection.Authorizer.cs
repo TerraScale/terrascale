@@ -221,7 +221,23 @@ internal sealed unsafe partial class SqliteConnection
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static int OnAuthorize(nint context, int action, byte* first, byte* second, byte* database, byte* trigger)
     {
-        var connection = GCHandle<SqliteConnection>.FromIntPtr(context).Target;
-        return connection.Authorize(action, SqliteNative.ReadOptionalUtf8(first), SqliteNative.ReadOptionalUtf8(second), SqliteNative.ReadOptionalUtf8(database));
+        try
+        {
+            var connection = GCHandle<SqliteConnection>.FromIntPtr(context).Target;
+            return connection.Authorize(action, SqliteNative.ReadOptionalUtf8(first), SqliteNative.ReadOptionalUtf8(second), SqliteNative.ReadOptionalUtf8(database));
+        }
+        catch (Exception error)
+        {
+            try
+            {
+                var connection = GCHandle<SqliteConnection>.FromIntPtr(context).Target;
+                _ = Deny(connection._collecting, error.Message);
+            }
+            catch
+            {
+            }
+
+            return SqliteNative.AuthDeny;
+        }
     }
 }

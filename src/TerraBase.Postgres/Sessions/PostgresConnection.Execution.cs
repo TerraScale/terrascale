@@ -33,6 +33,11 @@ internal sealed partial class PostgresConnection
         }
         catch (OperationCanceledException) when (!closed.IsCancellationRequested)
         {
+            if (_shuttingDown)
+            {
+                return new PgError("57P01", "terminating connection due to administrator command", Fatal: true);
+            }
+
             return scope.TimedOut ? PgErrors.StatementTimeout : PgErrors.QueryCanceled;
         }
     }

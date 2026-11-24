@@ -8,7 +8,9 @@ namespace TerraScale.QuicRpc;
 
 internal sealed record PushEnqueued;
 
-internal readonly union PushEnqueueOutcome(PushEnqueued, QuicFault);
+internal sealed record ChannelEvicted;
+
+internal readonly union PushEnqueueOutcome(PushEnqueued, ChannelEvicted, QuicFault);
 
 internal readonly union PushDeliveryOutcome(QuicSent, QuicFault);
 
@@ -61,15 +63,20 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 {
     private readonly QuicConnectionPool _pool;
     private readonly PeerSlot _slot;
+    private readonly string _key;
     private readonly Channel<PendingPush> _queue;
+    private readonly Lock _stopGate = new();
     private readonly CancellationTokenSource _stop;
     private StreamLease? _lease;
+    private bool _stopDisposed;
+    private int _evicted;
     private int _disposed;
 
-    public OrderedPushChannel(QuicConnectionPool pool, PeerSlot slot)
+    public OrderedPushChannel(QuicConnectionPool pool, PeerSlot slot, string key)
     {
         _pool = pool;
         _slot = slot;
+        _key = key;
         _queue = Channel.CreateBounded<PendingPush>(new BoundedChannelOptions(QuicMeshLimits.OrderedPushQueueCapacity)
         {
             SingleReader = true,
@@ -99,7 +106,9 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 }
             }
 
-            return new TransportShutdown("The ordered push channel is closed.");
+            return Volatile.Read(ref _evicted) != 0
+                ? new ChannelEvicted()
+                : new TransportShutdown("The ordered push channel is closed.");
         }
         catch (OperationCanceledException) when (!scope.Caller.IsCancellationRequested)
         {
@@ -109,6 +118,12 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
     public void Complete() => _queue.Writer.TryComplete();
 
+    public void CompleteIdle()
+    {
+        Volatile.Write(ref _evicted, 1);
+        _queue.Writer.TryComplete();
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -117,34 +132,98 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         }
 
         _queue.Writer.TryComplete();
-        await _stop.CancelAsync();
+        CancelStop();
         await Completion;
-        _stop.Dispose();
+        DisposeStop();
+    }
+
+    private void CancelStop()
+    {
+        lock (_stopGate)
+        {
+            if (!_stopDisposed)
+            {
+                _stop.Cancel();
+            }
+        }
+    }
+
+    private void DisposeStop()
+    {
+        lock (_stopGate)
+        {
+            if (_stopDisposed)
+            {
+                return;
+            }
+
+            _stopDisposed = true;
+            _stop.Dispose();
+        }
     }
 
     private async Task PumpAsync()
     {
-        while (await _queue.Reader.WaitToReadAsync(CancellationToken.None))
+        try
         {
-            while (_queue.Reader.TryRead(out var push))
+            while (true)
             {
-                if (!push.TryClaim())
+                if (!_queue.Reader.TryPeek(out _) && !await WaitForItemAsync())
                 {
-                    push.Release();
-                    continue;
+                    break;
                 }
 
-                var result = await DeliverAsync(push);
-                push.Complete(result);
-                push.Release();
-                if (result switch { QuicSent => null, QuicFault fault => fault } is { } failure)
+                while (_queue.Reader.TryRead(out var push))
                 {
-                    FailQueued(failure);
+                    if (!push.TryClaim())
+                    {
+                        push.Release();
+                        continue;
+                    }
+
+                    var result = await DeliverAsync(push);
+                    push.Complete(result);
+                    push.Release();
+                    if (result switch { QuicSent => null, QuicFault fault => fault } is { } failure)
+                    {
+                        FailQueued(failure);
+                    }
                 }
+            }
+
+            await CloseStreamAsync();
+        }
+        finally
+        {
+            if (Volatile.Read(ref _evicted) != 0)
+            {
+                DisposeStop();
+            }
+        }
+    }
+
+    private async ValueTask<bool> WaitForItemAsync()
+    {
+        using var idleCancel = new CancellationTokenSource();
+        var waitTask = _queue.Reader.WaitToReadAsync(idleCancel.Token).AsTask();
+        var idleTask = Task.Delay(QuicMeshLimits.OrderedChannelIdleTimeout, _pool.TimeProvider, idleCancel.Token);
+        var winner = await Task.WhenAny(waitTask, idleTask);
+        await idleCancel.CancelAsync();
+        if (winner == waitTask)
+        {
+            try
+            {
+                return await waitTask;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
             }
         }
 
-        await CloseStreamAsync();
+        _ = waitTask.ContinueWith(static task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        _slot.EvictIdleChannel(_key, this);
+        return _queue.Reader.TryPeek(out _);
     }
 
     private void FailQueued(QuicFault failure)

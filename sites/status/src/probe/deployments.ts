@@ -3,7 +3,7 @@ import type { TargetResult } from "./protocol";
 import { VANTAGES, vantageStub } from "./vantages";
 
 const SERVICES = [
-  ["ts-terrabase", "https://api.terrascale.tech/healthz"],
+  ["ts-terrabase", "https://gru.api.terrascale.tech/healthz"],
   ["ts-auth", "https://auth.terrascale.tech/healthz"],
   ["ts-status", "https://status.terrascale.tech/health/version"],
   ["ts-dashboard", "https://dash.terrascale.tech/health/ready"],
@@ -62,7 +62,6 @@ export async function deployments(env: Env, now: number): Promise<DeploymentObse
     url,
     headers: JSON.stringify({
       "Cache-Control": "no-cache",
-      ...(key === "ts-terrabase" ? { "X-TerraScale-Region-Pin": "gru" } : {}),
     }),
     body: true,
   }));

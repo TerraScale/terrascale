@@ -40,9 +40,15 @@ internal static class Listeners
         return context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var tag) == true ? tag as TerraBaseListener? : null;
     }
 
-    public static IPAddress InternalAddress(ClusterOptions cluster)
+    public static IPAddress InternalAddress(ClusterOptions cluster, TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(cluster);
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.InternalBindAddress is { } explicitAddress)
+        {
+            return explicitAddress;
+        }
+
         return cluster.ListenEndPoint.Address.Equals(IPAddress.Any) ? IPAddress.Loopback : cluster.ListenEndPoint.Address;
     }
 
@@ -76,7 +82,7 @@ internal static class Listeners
                 if (listener == TerraBaseListener.Metrics)
                 {
                     kestrel.Listen(internalAddress, port, Configure);
-                    if (!internalAddress.Equals(IPAddress.Loopback))
+                    if (!internalAddress.Equals(IPAddress.Loopback) && !internalAddress.Equals(IPAddress.Any) && !internalAddress.Equals(IPAddress.IPv6Any))
                     {
                         kestrel.Listen(IPAddress.Loopback, port, Configure);
                     }

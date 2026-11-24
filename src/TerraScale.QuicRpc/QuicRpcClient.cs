@@ -118,6 +118,7 @@ public sealed class QuicRpcClient : IAsyncDisposable
 internal sealed class QuicRpcClientCore : IAsyncDisposable
 {
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly CancellationTokenSource _serverStreams = new();
     private readonly QuicConnectionPool _pool;
     private readonly InFlightTracker _inFlight = new();
     private readonly QuicMeshOptions _options;
@@ -139,6 +140,8 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
     public QuicConnectionPool Pool => _pool;
 
     public InFlightTracker InFlight => _inFlight;
+
+    public CancellationToken ServerStreamToken => _serverStreams.Token;
 
     public void UpsertPeer(QuicPeer peer) => _pool.Upsert(peer);
 
@@ -274,6 +277,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             return;
         }
 
+        await _serverStreams.CancelAsync();
         var drained = Task.WhenAll(_inFlight.DrainAsync(), _pool.CompleteChannelsAsync());
         if (!await InFlightTracker.WaitAsync(drained, QuicMeshLimits.DrainTimeout, _timeProvider))
         {
@@ -282,6 +286,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
 
         await _shutdown.CancelAsync();
         await _pool.ShutdownAsync();
+        _serverStreams.Dispose();
         _shutdown.Dispose();
     }
 
@@ -475,30 +480,47 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         return fault;
     }
 
-    private async ValueTask<PushDeliveryOutcome> PushOrderedAsync(string peerId, string channelKey, FrameBuilder builder, CallScope scope) =>
-        Resolve(peerId) switch
-        {
-            PeerSlot slot => await EnqueueOrderedAsync(_pool.GetOrderedChannel(slot, channelKey), builder, scope),
-            QuicFault fault => fault,
-        };
-
-    private static async ValueTask<PushDeliveryOutcome> EnqueueOrderedAsync(OrderedPushChannel? channel, FrameBuilder builder, CallScope scope)
+    private async ValueTask<PushDeliveryOutcome> PushOrderedAsync(string peerId, string channelKey, FrameBuilder builder, CallScope scope)
     {
-        if (channel is null)
-        {
-            return new TransportShutdown("The peer was removed from the QUIC client.");
-        }
-
         var push = new PendingPush(builder.Detach(out var length), length);
         QuicFault? rejected = new TransportShutdown("The ordered push was not enqueued.");
         try
         {
-            var outcome = await channel.EnqueueAsync(push, scope);
-            rejected = outcome switch
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                PushEnqueued => null,
-                QuicFault fault => fault,
-            };
+                var lookup = Resolve(peerId);
+                if (lookup switch { PeerSlot => null, QuicFault fault => fault } is { } lookupFault)
+                {
+                    rejected = lookupFault;
+                    break;
+                }
+
+                var slot = lookup switch { PeerSlot resolved => resolved, QuicFault => null };
+                if (slot is null || _pool.GetOrderedChannel(slot, channelKey) is not { } channel)
+                {
+                    rejected = new TransportShutdown("The peer was removed from the QUIC client.");
+                    break;
+                }
+
+                var outcome = await channel.EnqueueAsync(push, scope);
+                var status = outcome switch
+                {
+                    PushEnqueued => 0,
+                    ChannelEvicted => 1,
+                    QuicFault => 2,
+                };
+                if (status == 0)
+                {
+                    rejected = null;
+                    break;
+                }
+
+                if (status == 2)
+                {
+                    rejected = outcome switch { QuicFault fault => fault, _ => rejected };
+                    break;
+                }
+            }
         }
         finally
         {

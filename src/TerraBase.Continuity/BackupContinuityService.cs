@@ -373,7 +373,23 @@ public sealed class BackupContinuityService(
             return new ArchiveTruncated();
         }
 
-        var saved = await manifests.SaveAsync(manifest with { Snapshots = keptSnapshots, Segments = keptSegments }, cancellationToken);
+        if (!Ulid.TryParse(manifest.DatabaseId, out var databaseId))
+        {
+            return new ContinuityUnavailable("manifest database id is invalid", "archive_manifest_corrupted");
+        }
+
+        var saved = await manifests.UpdateAsync(
+            databaseId,
+            current =>
+            {
+                var currentSnapshots = ManifestCodec.Snapshots(current)
+                    .Where(snapshot => rewoundTo.Dominates(snapshot.Bookmark))
+                    .Select(static snapshot => snapshot.Archived)
+                    .ToArray();
+                var currentSegments = current.Segments.Where(segment => segment.LastSequence <= rewoundTo.Get(segment.Origin)).ToArray();
+                return current with { Snapshots = currentSnapshots, Segments = currentSegments };
+            },
+            cancellationToken);
         return saved switch
         {
             ArchiveManifest => await DeletedAsync(dropped, cancellationToken),
@@ -555,14 +571,13 @@ public sealed class BackupContinuityService(
             operation.StartedAtUtc,
             operation.UpdatedAtUtc,
             operation.FailureMessage);
-        var loaded = await manifests.LoadAsync(work.TargetDatabaseId, cancellationToken);
-        var saved = loaded switch
-        {
-            ArchiveManifest manifest => await manifests.SaveAsync(
-                manifest with { Operations = [.. manifest.Operations.TakeLast(options.RetainedOperations - 1), archived] },
-                cancellationToken),
-            ContinuityUnavailable unavailable => unavailable,
-        };
+        var saved = await manifests.UpdateAsync(
+            work.TargetDatabaseId,
+            current => current with
+            {
+                Operations = [.. current.Operations.Where(existing => existing.OperationId != archived.OperationId).TakeLast(options.RetainedOperations - 1), archived],
+            },
+            cancellationToken);
         return saved switch
         {
             ArchiveManifest => null,

@@ -21,6 +21,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 {
     private const int ApplicationIdBase = 0x54420000;
     private const int HistoryPageSize = 512;
+    private static readonly TimeSpan ReaderDrainTimeout = TimeSpan.FromSeconds(5);
 
     private readonly SessionContext _context;
     private readonly SqliteConnection _writer;
@@ -29,6 +30,10 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private readonly CommitLogOptions _logOptions;
     private readonly Channel<SqliteConnection> _readers;
     private readonly Channel<LaneRequest> _requests;
+    private readonly Lock _readersGate = new();
+    private readonly HashSet<SqliteConnection> _rentedReaders = [];
+    private readonly HashSet<ReadTransaction> _readTransactions = [];
+    private readonly TaskCompletionSource _readersDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lock _logsGate = new();
     private readonly Dictionary<string, OriginLog> _logs = new(StringComparer.Ordinal);
     private readonly Lock _stagedGate = new();
@@ -171,12 +176,50 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
 
         _requests.Writer.TryComplete();
+        _readers.Writer.TryComplete();
         Volatile.Read(ref _activeTransaction)?.Abandon();
-        await _lane;
-        for (var index = 0; index < _readerCount; index++)
+        ReadTransaction[] activeTransactions;
+        lock (_readersGate)
         {
-            var reader = await _readers.Reader.ReadAsync(CancellationToken.None);
-            reader.Dispose();
+            activeTransactions = [.. _readTransactions];
+            foreach (var rented in _rentedReaders)
+            {
+                rented.Interrupt();
+            }
+
+            if (_rentedReaders.Count == 0)
+            {
+                _readersDrained.TrySetResult();
+            }
+        }
+
+        foreach (var transaction in activeTransactions)
+        {
+            transaction.Abandon();
+        }
+
+        await _lane;
+        while (_readers.Reader.TryRead(out var idleReader))
+        {
+            idleReader.Dispose();
+        }
+
+        if (!_readersDrained.Task.IsCompleted)
+        {
+            using var drainTimeout = new CancellationTokenSource();
+            var delay = Task.Delay(ReaderDrainTimeout, _context.Time, drainTimeout.Token);
+            _ = await Task.WhenAny(_readersDrained.Task, delay);
+            await drainTimeout.CancelAsync();
+            if (!_readersDrained.Task.IsCompleted)
+            {
+                lock (_readersGate)
+                {
+                    foreach (var rented in _rentedReaders)
+                    {
+                        rented.Interrupt();
+                    }
+                }
+            }
         }
 
         _readerCount = 0;
@@ -522,20 +565,66 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     {
         while (await _readers.Reader.WaitToReadAsync(cancellationToken))
         {
-            if (_readers.Reader.TryRead(out var reader))
+            if (!_readers.Reader.TryRead(out var reader))
             {
-                return reader;
+                continue;
             }
+
+            lock (_readersGate)
+            {
+                if (IsClosed)
+                {
+                    reader.Dispose();
+                    return null;
+                }
+
+                _ = _rentedReaders.Add(reader);
+            }
+
+            return reader;
         }
 
         return null;
+    }
+
+    internal bool RegisterReadTransaction(ReadTransaction transaction)
+    {
+        lock (_readersGate)
+        {
+            if (IsClosed)
+            {
+                return false;
+            }
+
+            _ = _readTransactions.Add(transaction);
+            return true;
+        }
+    }
+
+    internal void UnregisterReadTransaction(ReadTransaction transaction)
+    {
+        lock (_readersGate)
+        {
+            _ = _readTransactions.Remove(transaction);
+        }
     }
 
     internal void ReleaseReader(SqliteConnection reader) => ReturnReader(reader);
 
     private void ReturnReader(SqliteConnection reader)
     {
-        if (!_readers.Writer.TryWrite(reader))
+        bool closed;
+        lock (_readersGate)
+        {
+            _ = _rentedReaders.Remove(reader);
+            closed = IsClosed;
+            if (closed && _rentedReaders.Count == 0)
+            {
+                _readersDrained.TrySetResult();
+            }
+        }
+
+        if (closed || !_readers.Writer.TryWrite(reader))
         {
             reader.Dispose();
         }

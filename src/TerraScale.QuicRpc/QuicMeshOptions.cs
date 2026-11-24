@@ -27,6 +27,9 @@ internal static class QuicMeshLimits
     public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan OrderedChannelIdleTimeout = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan ConnectFailureBackoff = TimeSpan.FromMilliseconds(250);
 }
 
 public sealed record QuicMeshOptions
@@ -42,6 +45,8 @@ public sealed record QuicMeshOptions
     public required IReadOnlyList<X509Certificate2> TrustedAuthorities { get; init; }
 
     public IReadOnlyList<X509Certificate2> IntermediateCertificates { get; init; } = [];
+
+    public Func<TimeProvider, QuicMeshCertificates>? CertificateRotator { get; init; }
 
     public QuicMeshOptions Validate(TimeProvider timeProvider)
     {

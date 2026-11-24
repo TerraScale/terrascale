@@ -10,6 +10,7 @@ using TerraScale.QuicRpc;
 
 try
 {
+    QuicPlatform.EnsureInitialized();
     var options = PlatformOptions.FromEnvironment(Environment.GetEnvironmentVariables());
     var builder = WebApplication.CreateSlimBuilder(args);
     builder.Logging.ClearProviders().AddTerraScaleLogging("ts-platform");
@@ -20,6 +21,7 @@ try
     });
 
     var services = builder.Services;
+    services.Configure<HostOptions>(static host => host.ShutdownTimeout = TimeSpan.FromSeconds(25));
     services.AddSingleton(options);
     services.AddSingleton(TimeProvider.System);
     if (ConfigureQuic(services, options, TimeProvider.System) is { } invalid)
@@ -37,6 +39,7 @@ try
         json.SerializerOptions.TypeInfoResolverChain.Insert(4, TerraScaleContractsJsonContext.Default);
     });
     var (version, policy) = TerraBaseProtocol.For(options.TerraBaseUrl);
+    services.AddHttpClient(OidcTokens.HttpClientName, static client => client.Timeout = TimeSpan.FromSeconds(10));
     services.AddHttpClient(TerraBaseClient.HttpClientName, client =>
     {
         client.BaseAddress = options.TerraBaseUrl;

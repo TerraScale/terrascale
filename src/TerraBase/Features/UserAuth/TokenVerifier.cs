@@ -47,10 +47,12 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     public async ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
     {
-        if (_platform is null || options.AuthIssuer is not { } platformIssuer)
+        if (_platform is null || options.AuthIssuer is not { } rawPlatformIssuer)
         {
             return new CredentialRejected("bearer tokens need TERRABASE_AUTH_ISSUER", "invalid_token");
         }
+
+        var platformIssuer = rawPlatformIssuer.TrimEnd('/');
 
         if (!Tokens.CanReadToken(token) || Read(token) is not { } unverified)
         {
@@ -62,7 +64,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token");
         }
 
-        if (await ConfigurationAsync(trusted.Entry.Manager, cancellationToken) is not { } configuration)
+        if (await CurrentConfigurationAsync(trusted.Entry, cancellationToken) is not { } configuration)
         {
             return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
         }
@@ -70,8 +72,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, configuration.SigningKeys));
         if (!validated.IsValid && validated.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            trusted.Entry.Manager.RequestRefresh();
-            if (await FetchFreshAsync(trusted.Entry, cancellationToken) is not { } refreshed)
+            if (await RefreshFreshAsync(trusted.Entry, cancellationToken) is not { } refreshed)
             {
                 return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
             }
@@ -266,6 +267,53 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
+    private static readonly TimeSpan UnknownKeyRefreshCooldown = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan FreshConfigurationLifetime = TimeSpan.FromSeconds(35);
+
+    private async Task<OpenIdConnectConfiguration?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        var fresh = entry.Fresh;
+        if (fresh is not null && time.GetElapsedTime(fresh.FetchedTimestamp) < FreshConfigurationLifetime)
+        {
+            return fresh.Configuration;
+        }
+
+        return await ConfigurationAsync(entry.Manager, cancellationToken);
+    }
+
+    private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    {
+        await entry.RefreshGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (entry.LastRefreshAttemptTimestamp != 0 && time.GetElapsedTime(entry.LastRefreshAttemptTimestamp) < UnknownKeyRefreshCooldown)
+            {
+                if (entry.LastRefreshFailed)
+                {
+                    return null;
+                }
+
+                return entry.Fresh?.Configuration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
+            }
+
+            entry.Manager.RequestRefresh();
+            var fetched = await FetchFreshAsync(entry, cancellationToken);
+            var now = time.GetTimestamp();
+            entry.LastRefreshAttemptTimestamp = now;
+            entry.LastRefreshFailed = fetched is null;
+            if (fetched is not null)
+            {
+                entry.Fresh = new FreshConfigurationState(fetched, now);
+            }
+
+            return fetched;
+        }
+        finally
+        {
+            _ = entry.RefreshGate.Release();
+        }
+    }
+
     private static async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
         try
@@ -280,6 +328,17 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     }
 }
 
-internal sealed record IssuerEntry(string MetadataAddress, HttpDocumentRetriever Retriever, ConfigurationManager<OpenIdConnectConfiguration> Manager);
+internal sealed record FreshConfigurationState(OpenIdConnectConfiguration Configuration, long FetchedTimestamp);
+
+internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
+{
+    public string MetadataAddress { get; } = metadataAddress;
+    public HttpDocumentRetriever Retriever { get; } = retriever;
+    public ConfigurationManager<OpenIdConnectConfiguration> Manager { get; } = manager;
+    public SemaphoreSlim RefreshGate { get; } = new(1, 1);
+    public volatile FreshConfigurationState? Fresh;
+    public long LastRefreshAttemptTimestamp;
+    public bool LastRefreshFailed;
+}
 
 internal sealed record TrustedIssuer(string Issuer, IssuerEntry Entry, IReadOnlyList<string> Audiences, Ulid? Tenant);

@@ -4,6 +4,8 @@ namespace TerraBase.Storage;
 
 public sealed class HlcClock(ushort nodeId, TimeProvider time)
 {
+    public const long MaxFutureSkewMs = 30_000;
+
     private readonly Lock _gate = new();
     private long _wall;
     private ushort _logical;
@@ -17,6 +19,22 @@ public sealed class HlcClock(ushort nodeId, TimeProvider time)
             lock (_gate)
             {
                 return new HlcTimestamp(_wall, _logical, NodeId);
+            }
+        }
+    }
+
+    public void Restore(HlcTimestamp persisted)
+    {
+        lock (_gate)
+        {
+            if (persisted.WallMs > _wall)
+            {
+                _wall = persisted.WallMs;
+                _logical = persisted.Logical;
+            }
+            else if (persisted.WallMs == _wall && persisted.Logical > _logical)
+            {
+                _logical = persisted.Logical;
             }
         }
     }
@@ -43,22 +61,25 @@ public sealed class HlcClock(ushort nodeId, TimeProvider time)
     public HlcTimestamp Observe(HlcTimestamp remote)
     {
         var wall = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var maxWall = wall + MaxFutureSkewMs;
+        var remoteWall = remote.WallMs > maxWall ? maxWall : remote.WallMs;
+        var remoteLogical = remote.WallMs > maxWall ? (ushort)0 : remote.Logical;
         lock (_gate)
         {
-            var next = Math.Max(Math.Max(_wall, remote.WallMs), wall);
-            if (next == _wall && next == remote.WallMs)
+            var next = Math.Max(Math.Max(_wall, remoteWall), wall);
+            if (next == _wall && next == remoteWall)
             {
-                _logical = Math.Max(_logical, remote.Logical);
+                _logical = Math.Max(_logical, remoteLogical);
                 Increment();
             }
             else if (next == _wall)
             {
                 Increment();
             }
-            else if (next == remote.WallMs)
+            else if (next == remoteWall)
             {
                 _wall = next;
-                _logical = remote.Logical;
+                _logical = remoteLogical;
                 Increment();
             }
             else

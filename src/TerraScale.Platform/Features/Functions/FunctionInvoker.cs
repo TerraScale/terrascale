@@ -147,7 +147,7 @@ public static class FunctionAnswers
 {
     public static FunctionAnswer FromResult(string json, string bookmark)
     {
-        if (Document(json) is not { } parsed)
+        if (ParseJson(json) is not { } parsed)
         {
             return new FunctionAnswer(StatusCodes.Status200OK, "application/json", Encoding.UTF8.GetBytes(json), bookmark);
         }
@@ -176,7 +176,7 @@ public static class FunctionAnswers
             JsonSerializer.SerializeToUtf8Bytes(new FunctionErrorBody(new FunctionErrorDetail("function_error", error, requestId)), FunctionsJsonContext.Default.FunctionErrorBody),
             bookmark);
 
-    public static JsonDocument? Document(string json)
+    public static JsonDocument? ParseJson(string json)
     {
         try
         {
@@ -188,7 +188,7 @@ public static class FunctionAnswers
         }
     }
 
-    public static JsonDocument? Document(ReadOnlyMemory<byte> json)
+    public static JsonDocument? ParseJson(ReadOnlyMemory<byte> json)
     {
         try
         {

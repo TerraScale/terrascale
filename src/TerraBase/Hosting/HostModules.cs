@@ -22,11 +22,12 @@ internal static class HostModules
             var deltaColumns = new DeltaColumnRegistry();
             SystemDatabase.RegisterDeltaColumns(deltaColumns);
             var identity = SHA256.HashData(Encoding.UTF8.GetBytes(string.Concat(options.Region, "/", options.MachineId)));
+            var workerId = DeriveSnowflakeWorkerId(prepared.Cluster, identity);
             var storage = new StorageEngineOptions(
                 options.StorageDirectory,
                 prepared.Cluster.StorageOrigin,
                 BinaryPrimitives.ReadUInt16LittleEndian(identity),
-                (byte)(identity[2] % (SnowflakeGenerator.MaxWorkerId + 1)),
+                workerId,
                 deltaColumns)
             {
                 ReaderCount = Math.Clamp(options.StorageThreads, 1, 64),
@@ -55,5 +56,22 @@ internal static class HostModules
             services.AddHostedService(static provider => provider.GetRequiredService<SystemBootstrap>());
             return services.AddTerraBaseContinuity(continuity);
         }
+    }
+
+    private static byte DeriveSnowflakeWorkerId(ClusterOptions cluster, byte[] identity)
+    {
+        if (cluster.Peers.Count == 0)
+        {
+            return (byte)(identity[2] % (SnowflakeGenerator.MaxWorkerId + 1));
+        }
+
+        var nodes = cluster.Peers
+            .Select(static peer => peer.NodeId)
+            .Append(cluster.NodeId)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        var rank = nodes.IndexOf(cluster.NodeId);
+        return (byte)(rank >= 0 ? rank % (SnowflakeGenerator.MaxWorkerId + 1) : identity[2] % (SnowflakeGenerator.MaxWorkerId + 1));
     }
 }

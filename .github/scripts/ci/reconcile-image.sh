@@ -3,15 +3,16 @@ set -euo pipefail
 thing=${1:?thing}
 case "$thing" in
   auth) package=ts-auth ;;
+  platform) package=ts-platform ;;
   dashboard) package=terrascale-dashboard ;;
   *) exit 2 ;;
 esac
 image=ghcr.io/terrascale/$package
 export TS_AUTH_REVISION="$REVISION"
 if [[ ${IMAGE_CACHED:?} == false ]]; then
-  if [ "$thing" = auth ]; then
-    bash .github/scripts/ci/image-payloads.sh publish auth
-    bash .github/scripts/ci/image-payloads.sh runtime-dockerfile auth > "$RUNNER_TEMP/image-payloads/Dockerfile"
+  if [[ "$thing" == auth || "$thing" == platform ]]; then
+    bash .github/scripts/ci/image-payloads.sh publish "$thing"
+    bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$thing" > "$RUNNER_TEMP/image-payloads/Dockerfile"
     context=$RUNNER_TEMP/image-payloads
     dockerfile=$context/Dockerfile
   else
@@ -30,7 +31,10 @@ if [[ ${IMAGE_CACHED:?} == false ]]; then
     --label "org.opencontainers.image.revision=$REVISION" --tag "$image:$REVISION" --push
   docker buildx imagetools inspect "$image:$REVISION" --raw > "$RUNNER_TEMP/manifest.json"
 fi
-arm64=$(jq -er '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest' "$RUNNER_TEMP/manifest.json")
+arm64=$(jq -r 'if .manifests then (.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest) else empty end' "$RUNNER_TEMP/manifest.json")
+if [[ -z "$arm64" ]]; then
+  arm64=$(docker buildx imagetools inspect "$image:$REVISION" --format '{{json .Manifest.Digest}}' | jq -er '.')
+fi
 [[ "$arm64" =~ ^sha256:[0-9a-f]{64}$ ]]
 docker buildx imagetools inspect "$image@$arm64" --format '{{json .Image}}' | \
   jq -e --arg revision "$REVISION" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'

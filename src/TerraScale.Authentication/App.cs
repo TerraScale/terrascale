@@ -269,7 +269,7 @@ public static class App
             builder.Services.AddSingleton(options);
         }
 
-        if (options.TrustedProxies.Count > 0)
+        if (options.TrustedProxies.Count > 0 || options.TrustedProxyNetworks.Count > 0)
         {
             builder.Services.Configure<ForwardedHeadersOptions>(forwarding =>
             {
@@ -280,6 +280,11 @@ public static class App
                 foreach (var proxy in options.TrustedProxies)
                 {
                     forwarding.KnownProxies.Add(proxy);
+                }
+
+                foreach (var network in options.TrustedProxyNetworks)
+                {
+                    forwarding.KnownIPNetworks.Add(network);
                 }
             });
         }
@@ -329,7 +334,7 @@ public static class App
         app.UseStatusCodePages(NotFoundPage.HandleAsync);
         app.UseMiddleware<TokenEndpointDeadline>();
         TokenRateLimitMiddleware.UsePeerGuard(app);
-        if (options.TrustedProxies.Count > 0)
+        if (options.TrustedProxies.Count > 0 || options.TrustedProxyNetworks.Count > 0)
         {
             app.Use((HttpContext context, RequestDelegate next) =>
             {

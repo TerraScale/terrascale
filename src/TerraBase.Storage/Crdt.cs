@@ -13,6 +13,8 @@ internal static class MetaStore
 
     public const string SelectMetaSql = "SELECT meta FROM _tb_meta WHERE tbl = ?1 AND pk = ?2";
 
+    public const string SelectAllMetaSql = "SELECT pk, meta FROM _tb_meta";
+
     public const string SelectTableHlcSql = "SELECT meta FROM _tb_meta WHERE tbl = ?1 AND pk = X''";
 
     public const string SelectVersionsSql = "SELECT origin, seq, schema_epoch FROM _tb_vv";
@@ -80,16 +82,36 @@ internal static class LocalStamper
     public static List<RowMutation> Stamp(
         WriteScope scope,
         IReadOnlyList<NetChange> changes,
-        HlcTimestamp hlc,
+        ref HlcTimestamp hlc,
         bool persist,
         List<ObservedRow> observed,
         Dictionary<string, HlcTimestamp> tables)
     {
-        List<RowMutation> mutations = new(changes.Count);
-        foreach (var change in changes)
+        var metas = new RowMeta[changes.Count];
+        var maxExisting = HlcTimestamp.Zero;
+        for (var index = 0; index < changes.Count; index++)
         {
+            var change = changes[index];
+            var meta = MetaStore.Load(scope, change.Schema.Table, change.EncodedKey);
+            metas[index] = meta;
+            maxExisting = HlcCodec.Max(maxExisting, meta.RowHlc);
+            foreach (var column in meta.Columns.Values)
+            {
+                maxExisting = HlcCodec.Max(maxExisting, column.Hlc);
+            }
+        }
+
+        if (maxExisting >= hlc)
+        {
+            hlc = AdvancePast(hlc, maxExisting);
+        }
+
+        List<RowMutation> mutations = new(changes.Count);
+        for (var changeIndex = 0; changeIndex < changes.Count; changeIndex++)
+        {
+            var change = changes[changeIndex];
             var schema = change.Schema;
-            var meta = MetaStore.Load(scope, schema.Table, change.EncodedKey);
+            var meta = metas[changeIndex];
             observed.Add(new ObservedRow(new RowKey(schema.Table, PrimaryKeyCodec.ToKeyString(change.EncodedKey)), meta.CausalLength, meta.RowHlc));
             var next = new RowMeta { CausalLength = meta.CausalLength, RowHlc = hlc };
             List<ColumnChange> columnChanges = [];
@@ -161,6 +183,23 @@ internal static class LocalStamper
 
     private static SqlValue Value(SqlValue[]? values, int index) =>
         values is not null && index < values.Length ? values[index] : SqlValue.Null;
+
+    private static HlcTimestamp AdvancePast(HlcTimestamp current, HlcTimestamp existing)
+    {
+        if (current > existing)
+        {
+            return current;
+        }
+
+        if (current.NodeId > existing.NodeId)
+        {
+            return new HlcTimestamp(existing.WallMs, existing.Logical, current.NodeId);
+        }
+
+        return existing.Logical == ushort.MaxValue
+            ? new HlcTimestamp(existing.WallMs + 1, 0, current.NodeId)
+            : new HlcTimestamp(existing.WallMs, (ushort)(existing.Logical + 1), current.NodeId);
+    }
 }
 
 internal static class CrdtApplier
