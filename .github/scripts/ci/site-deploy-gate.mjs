@@ -7,6 +7,7 @@ const { GITHUB_REPOSITORY: repo, CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_
 const services = { dashboard: 'https://dash.terrascale.tech/readyz', auth: 'https://auth.terrascale.tech/readyz' };
 const label = 'deployment-alert';
 const bot = 'github-actions[bot]';
+const workerProbeNotePrefix = 'Last failed Worker probe: ';
 const runLink = `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 const activeLimit = 2 * 60 * 60 * 1000;
 assert.ok(['all', 'docs', 'landing', 'status', 'terrabase', 'platform', ...Object.keys(services)].includes(thing));
@@ -31,54 +32,59 @@ async function github(path, method = 'GET', body) {
   return response.status === 204 || existingLabel ? null : response.json();
 }
 
-async function cloudflare(path) {
+async function cloudflare(path, signal) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${path}`, {
     headers: { authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(30000),
+    signal,
   });
-  const body = await response.json();
-  if (response.status === 404 && body.errors?.some((error) => error.code === 10007) && path.endsWith('/deployments')) return null;
-  assert.ok(response.ok && body.success, `Cloudflare ${path}: HTTP ${response.status} ${JSON.stringify(body.errors)}`);
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    assert.fail(`Cloudflare ${path}: HTTP ${response.status}, response was not JSON`);
+  }
+  if (response.status === 404 && body?.errors?.some((error) => error.code === 10007) && path.endsWith('/deployments')) return null;
+  assert.ok(response.ok && body?.success, `Cloudflare ${path}: HTTP ${response.status}`);
+  assert.ok(body.result && typeof body.result === 'object', `Cloudflare ${path}: missing result`);
   return body.result;
 }
 
-async function serviceLive(kind = thing, { probe = false, allowUnavailable = false } = {}) {
-  const lenient = probe || allowUnavailable;
-  let response;
-  try {
-    response = await fetch(services[kind], { signal: AbortSignal.timeout(lenient ? 10000 : 30000) });
-  } catch {
-    if (lenient) return null;
-    throw new Error(`${kind}: readiness endpoint unreachable`);
-  }
-  if (!response.ok) {
-    if (lenient) return null;
-    assert.ok(response.ok, `${kind}: readiness HTTP ${response.status}`);
-  }
+async function serviceLive(kind, signal) {
+  const response = await fetch(services[kind], { signal });
+  assert.ok(response.ok, `readiness HTTP ${response.status}`);
   const live = response.headers.get('x-terrascale-revision');
-  if (lenient && !/^[0-9a-f]{40}$/.test(live ?? '')) return null;
   sha(live);
   let body;
   try {
     body = await response.json();
   } catch {
-    if (lenient) return null;
-    assert.fail(`${kind}: readiness response was not JSON`);
+    assert.fail('readiness response was not JSON');
   }
-  if (lenient && !['ok', 'ready'].includes(body?.status)) return null;
-  assert.ok(['ok', 'ready'].includes(body.status), `${kind}: not ready`);
+  assert.ok(['ok', 'ready'].includes(body?.status), 'readiness status is unhealthy');
   return live;
 }
 
-async function workerLive(worker) {
-  const result = await cloudflare(`${worker}/deployments`);
+async function workerLive(worker, signal) {
+  const result = await cloudflare(`${worker}/deployments`, signal);
   if (result === null) return null;
   const active = result.deployments[0];
   assert.ok(active && active.versions.length === 1 && active.versions[0].percentage === 100, `${worker}: missing or split live deployment`);
-  const version = await cloudflare(`${worker}/versions/${active.versions[0].version_id}`);
+  const version = await cloudflare(`${worker}/versions/${active.versions[0].version_id}`, signal);
   const live = version.annotations?.['workers/message'];
   sha(live);
   return live;
+}
+
+async function probeLive(read, timeout) {
+  const signal = AbortSignal.timeout(timeout);
+  try {
+    return { revision: await read(signal), failure: null };
+  } catch (error) {
+    if (signal.aborted) return { revision: null, failure: `probe timed out after ${timeout / 1000}s` };
+    const code = error.cause?.code;
+    const failure = code ? `${error.message} (${code})` : error.message;
+    return { revision: null, failure };
+  }
 }
 
 function ancestor(base, head) {
@@ -207,7 +213,7 @@ function due(alert, deployed, revision, decision) {
   return decision === 'deploy' || alert === null;
 }
 
-async function writeState(alert, name, revision, attempts, notified, started = false) {
+async function writeState(alert, name, revision, attempts, notified, { started = false, probeNote = null } = {}) {
   const kept = alert !== null && alert.target === revision && attempts > 0
     ? alert.body.split('\n').filter((line) => line.startsWith('Attempt ')) : [];
   const body = [
@@ -219,6 +225,7 @@ async function writeState(alert, name, revision, attempts, notified, started = f
     '',
     ...kept,
     ...(started ? [`Attempt ${attempts} at ${revision}: ${runLink}`] : []),
+    ...(probeNote === null ? [] : [probeNote]),
     '',
   ].join('\n');
   if (alert !== null) {
@@ -227,6 +234,21 @@ async function writeState(alert, name, revision, attempts, notified, started = f
     await github('labels', 'POST', { name: label, color: 'b60205' });
     await github('issues', 'POST', { title: `Deployment state: ${name}`, labels: [label], body });
   }
+}
+
+const workerProbeNote = (failure) => `${workerProbeNotePrefix}${failure}`;
+
+async function recordWorkerProbeFailure(alert, name, failure) {
+  const note = workerProbeNote(failure);
+  if (alert === null) {
+    const revision = await target();
+    if (revision !== null) await writeState(null, name, revision, 0, false, { probeNote: note });
+    return;
+  }
+  const lines = alert.body.trimEnd().split('\n');
+  if (lines.includes(note)) return;
+  const body = [...lines.filter((line) => !line.startsWith(workerProbeNotePrefix)), note, ''].join('\n');
+  await github(`issues/${alert.issue.number}`, 'PATCH', { body });
 }
 
 async function notify(alert, name, revision) {
@@ -245,12 +267,13 @@ if (args[0] === '--qualify-main') {
   appendFileSync(process.env.GITHUB_OUTPUT, `qualified=${ok}\n`);
   console.log(`GitHub API reads: ${reads}`);
 } else if (thing === 'auth' && args[0] === '--probe') {
-  const revision = await serviceLive(thing, { probe: true });
+  const { revision, failure } = await probeLive((signal) => serviceLive(thing, signal), 10000);
+  if (failure !== null) report(`${thing}: live unhealthy: ${failure}`);
   const result = revision === null ? 'unavailable=true' : `revision=${revision}`;
   appendFileSync(process.env.GITHUB_OUTPUT, `${result}\n`);
 } else if (args[0] === '--prove') {
   sha(process.env.REVISION);
-  assert.equal(await serviceLive(), process.env.REVISION, `${thing}: deployed revision mismatch`);
+  assert.equal(await serviceLive(thing, AbortSignal.timeout(30000)), process.env.REVISION, `${thing}: deployed revision mismatch`);
   writeFileSync(`${process.env.RUNNER_TEMP}/deploy-revision`, `${process.env.REVISION}\n`);
   report(`${thing}: deployed ${process.env.REVISION}`);
 } else if (args[0] === '--reset') {
@@ -265,30 +288,28 @@ if (args[0] === '--qualify-main') {
   git('fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main');
   const authReconcile = thing === 'auth' && args[0] === '--reconcile';
   if (thing === 'auth') assert.ok(authReconcile, 'Auth reconciliation requires a live probe result');
-  const groups = thing === 'all'
-    ? [['docs', ['ts-docs']], ['landing', ['ts-landing']], ['status', ['ts-status-vantage-sfo', 'ts-status-vantage-gru', 'ts-status']], ['auth', []], ['dashboard', []]]
-    : [[thing, args]];
-  const live = [];
-  for (const [kind, workers] of groups) {
-    if (services[kind]) {
-      const revision = authReconcile
-        ? (process.env.AUTH_LIVE_REVISION || null)
-        : await serviceLive(kind, { allowUnavailable: true });
+  const targets = thing === 'all'
+    ? [['docs', 'ts-docs'], ['landing', 'ts-landing'], ['status', 'ts-status-vantage-sfo'], ['status', 'ts-status-vantage-gru'], ['status', 'ts-status'], ['auth', 'auth'], ['dashboard', 'dashboard']]
+    : services[thing] ? [[thing, thing]] : args.map((worker) => [thing, worker]);
+  const live = await Promise.all(targets.map(async ([kind, name]) => {
+    if (authReconcile) {
+      const revision = process.env.AUTH_LIVE_REVISION || null;
       if (revision !== null) sha(revision);
-      live.push([kind, kind, revision]);
-    } else {
-      for (const worker of workers) live.push([kind, worker, await workerLive(worker)]);
+      return { kind, name, revision, failure: null };
     }
-  }
+    const result = services[kind]
+      ? await probeLive((signal) => serviceLive(kind, signal), 10000)
+      : await probeLive((signal) => workerLive(name, signal), 30000);
+    return { kind, name, ...result };
+  }));
   assert.ok(live.length > 0, 'No deployment selected');
-  for (const [, name, revision] of live) {
-    assert.ok(revision === null || ancestor(revision, 'origin/main'), `${name}: live ${revision} is not on main`);
-  }
   const issues = await alerts();
   const states = new Map();
   const failures = [];
-  for (const [, name] of live) {
+  for (const { name, revision, failure } of live) {
+    if (failure !== null) report(`${name}: live unhealthy: ${failure}`);
     try {
+      assert.ok(revision === null || ancestor(revision, 'origin/main'), `${name}: live ${revision} is not on main`);
       states.set(name, alertFor(issues, name));
     } catch (error) {
       failures.push(error.message);
@@ -300,15 +321,20 @@ if (args[0] === '--qualify-main') {
     const revision = await target();
     const head = git('rev-parse', 'origin/main');
     const selected = [];
-    for (const [kind, name, deployed] of live) {
+    for (const { kind, name, revision: deployed, failure } of live) {
       if (!states.has(name)) continue;
       const alert = states.get(name);
+      if (failure !== null && !services[kind]) {
+        if (alert !== null ? !alert.body.split('\n').includes(workerProbeNote(failure)) : revision !== null) selected.push([kind, name]);
+        continue;
+      }
+      const liveStatus = failure === null ? deployed ?? 'absent' : 'unhealthy';
       if (revision === null) {
-        report(`${name}: live ${deployed ?? 'absent'}, no qualified target`);
+        report(`${name}: live ${liveStatus}, no qualified target`);
         continue;
       }
       if (services[kind] && revision !== head) {
-        report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: waiting for main ${head} to qualify; a dispatched release signs main's head`);
+        report(`${name}: live ${liveStatus}, target ${revision}: waiting for main ${head} to qualify; a dispatched release signs main's head`);
         continue;
       }
       try {
@@ -317,12 +343,13 @@ if (args[0] === '--qualify-main') {
         if (selectedJob) selected.push([kind, name]);
         const attempt = deployed === revision ? null : next(alert, revision);
         const note = selectedJob ? `${decision}; locked job starts to reconcile state` : typeof attempt === 'string' ? attempt : decision;
-        report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: ${note}`);
+        report(`${name}: live ${liveStatus}, target ${revision}: ${note}`);
       } catch (error) {
         failures.push(error.message);
         report(`${name}: not started: ${error.message}`);
       }
     }
+    appendFileSync(process.env.GITHUB_OUTPUT, `docs=${selected.some(([kind]) => kind === 'docs')}\nlanding=${selected.some(([kind]) => kind === 'landing')}\nstatus=${JSON.stringify(selected.filter(([kind]) => kind === 'status').map(([, name]) => name))}\n`);
     if (revision !== null) {
       for (const service of ['auth', 'dashboard']) {
         if (!selected.some(([kind]) => kind === service)) continue;
@@ -342,19 +369,22 @@ if (args[0] === '--qualify-main') {
         if (Date.now() - Date.parse(oldest.created_at) > activeLimit) failures.push(`${service}: ${oldest.html_url} has been active for more than two hours`);
       }
     }
-    appendFileSync(process.env.GITHUB_OUTPUT, `docs=${selected.some(([kind]) => kind === 'docs')}\nlanding=${selected.some(([kind]) => kind === 'landing')}\nstatus=${JSON.stringify(selected.filter(([kind]) => kind === 'status').map(([, name]) => name))}\n`);
     console.log(`GitHub API reads: ${reads}`);
     assert.ok(failures.length === 0, failures.join('; '));
   } else {
     assert.ok(live.length === 1, 'A locked deploy job reconciles exactly one thing');
-    const [[kind, name, deployed]] = live;
+    const [{ kind, name, revision: deployed, failure }] = live;
     const alert = states.get(name);
     const own = process.env.GITHUB_SHA;
     assert.match(own ?? '', /^[0-9a-f]{40}$/, 'Missing or invalid run commit');
-    const revision = await (services[kind] ? appQualified(own) : qualified(own)) ? own : null;
+    const workerUnavailable = failure !== null && !services[kind];
+    const revision = !workerUnavailable && await (services[kind] ? appQualified(own) : qualified(own)) ? own : null;
     let deploy = false;
-    if (revision === null) {
-      report(`${name}: live ${deployed ?? 'absent'}, this run's commit ${own} is not qualified; a release signs only that commit`);
+    const liveStatus = failure === null ? deployed ?? 'absent' : 'unhealthy';
+    if (workerUnavailable) {
+      await recordWorkerProbeFailure(alert, name, failure);
+    } else if (revision === null) {
+      report(`${name}: live ${liveStatus}, this run's commit ${own} is not qualified; a release signs only that commit`);
     } else {
       const decision = work(kind, name, deployed, revision);
       if (deployed === revision) {
@@ -364,14 +394,14 @@ if (args[0] === '--qualify-main') {
         const attempt = next(alert, revision);
         if (typeof attempt !== 'number') {
           if (attempt === 'suppressed after two attempts' && !alert.notified) await notify(alert, name, revision);
-          report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: ${attempt}`);
+          report(`${name}: live ${liveStatus}, target ${revision}: ${attempt}`);
         } else if (decision !== 'deploy') {
           if (alert === null) await writeState(null, name, revision, 0, false);
           report(`${name}: live ${deployed}, target ${revision}: ${decision}`);
         } else {
-          await writeState(alert, name, revision, attempt, false, true);
+          await writeState(alert, name, revision, attempt, false, { started: true });
           deploy = true;
-          report(`${name}: live ${deployed ?? 'absent'}, target ${revision}: deploying, attempt ${attempt} of 2 recorded`);
+          report(`${name}: live ${liveStatus}, target ${revision}: deploying, attempt ${attempt} of 2 recorded`);
         }
       }
     }
