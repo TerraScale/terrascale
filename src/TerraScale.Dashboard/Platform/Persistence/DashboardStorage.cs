@@ -38,7 +38,11 @@ public static class DashboardStorage
             services.AddSingleton(provider => new PlatformHttpClient(Transport(provider, PlatformHttpClient.HttpClientName)));
             services.AddSingleton(provider => new ControlPlaneClient(Transport(provider, ControlPlaneClient.HttpClientName)));
             services.AddSingleton(provider => new DashboardDb(new TerraBaseSqlClient(provider.GetRequiredService<IHttpClientFactory>().CreateClient(StateHttpClientName),
-                new TerraBaseSqlClientOptions { BaseAddress = InternalTerraBaseOrigin.ClientOrigin(provider.GetRequiredService<ServiceUrls>().TerraBase) }).Database(ProjectId, Database)));
+                new TerraBaseSqlClientOptions
+                {
+                    BaseAddress = InternalTerraBaseOrigin.ClientOrigin(provider.GetRequiredService<ServiceUrls>().TerraBase),
+                    Consistency = TerraBaseConsistencyMode.Strong,
+                }).Database(ProjectId, Database)));
             services.AddSingleton<BackgroundJobs>();
             services.AddHostedService<StorageSweeper>();
             return services;

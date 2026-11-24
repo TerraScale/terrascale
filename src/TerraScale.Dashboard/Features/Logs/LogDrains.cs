@@ -135,8 +135,9 @@ namespace TerraScale.Dashboard.Features.Logs
                     await transaction.CommitAsync(cancellationToken);
                     return new Done();
                 }
-                catch (Exception error) when (attempt < 2 && (error is DBConcurrencyException || DashboardDb.IsDuplicate(error)))
+                catch (Exception error) when (attempt < 2 && (DashboardDb.IsConflict(error) || DashboardDb.IsDuplicate(error)))
                 {
+                    await DashboardDb.ConflictBackoffAsync(attempt, clock, cancellationToken);
                 }
             }
         }

@@ -12,6 +12,9 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 
 public sealed class DashboardDb(TerraBaseSqlDatabase database)
 {
+    private static readonly TimeSpan FirstConflictBackoff = TimeSpan.FromMilliseconds(20);
+    private static readonly TimeSpan LongestConflictBackoff = TimeSpan.FromMilliseconds(400);
+
     public async Task<TerraBaseDbConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var connection = new TerraBaseDbConnection(database);
@@ -24,12 +27,28 @@ public sealed class DashboardDb(TerraBaseSqlDatabase database)
         ArgumentNullException.ThrowIfNull(work);
         await ServerTiming.StateWriteAsync(async () =>
         {
-            await using var connection = await OpenAsync(cancellationToken);
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            await work(connection, transaction);
-            await transaction.CommitAsync(cancellationToken);
+            try
+            {
+                await using var connection = await OpenAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+                await work(connection, transaction);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (TerraBaseSqlException error) when (DashboardStorageOutcomes.IsConflict(error))
+            {
+                throw new DBConcurrencyException("Dashboard storage changed concurrently.", error);
+            }
         });
     }
+
+    public static Task ConflictBackoffAsync(int attempt, TimeProvider time, CancellationToken cancellationToken) =>
+        Task.Delay(ConflictBackoff(attempt, Random.Shared.NextDouble()), time, cancellationToken);
+
+    public static bool IsConflict(Exception error) =>
+        error is DBConcurrencyException || error is TerraBaseSqlException sql && DashboardStorageOutcomes.IsConflict(sql);
+
+    private static TimeSpan ConflictBackoff(int attempt, double jitter) =>
+        TimeSpan.FromTicks((long)(Math.Min(LongestConflictBackoff.Ticks, FirstConflictBackoff.Ticks << Math.Clamp(attempt, 0, 8)) * (0.5 + 0.5 * Math.Clamp(jitter, 0, 1))));
 
     public async Task<T> ReadAsync<T>(Func<TerraBaseDbConnection, Task<T>> read, CancellationToken cancellationToken)
     {

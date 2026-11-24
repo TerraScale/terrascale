@@ -225,7 +225,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     await organizations.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (DBConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken); }
             }
         }
     }

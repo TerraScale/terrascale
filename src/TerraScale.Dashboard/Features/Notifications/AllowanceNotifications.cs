@@ -175,8 +175,9 @@ namespace TerraScale.Dashboard.Features.Notifications
                     }, cancellationToken);
                     break;
                 }
-                catch (Exception error) when (attempt < 2 && (error is DBConcurrencyException || DashboardDb.IsDuplicate(error)))
+                catch (Exception error) when (attempt < 2 && (DashboardDb.IsConflict(error) || DashboardDb.IsDuplicate(error)))
                 {
+                    await DashboardDb.ConflictBackoffAsync(attempt, clock, cancellationToken);
                 }
             }
 
@@ -278,7 +279,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     context.Account.Notifications = account.Notifications;
                     return;
                 }
-                catch (DBConcurrencyException) when (attempt < 7) { }
+                catch (DBConcurrencyException) when (attempt < 7) { await DashboardDb.ConflictBackoffAsync(attempt, clock, cancellationToken); }
             }
         }
     }

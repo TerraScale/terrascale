@@ -74,8 +74,9 @@ namespace TerraScale.Dashboard.Features.Data
                     DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.SqlWorkspaces.Update, row));
                     return receipt;
                 }
-                catch (Exception failure) when (attempt < 3 && (failure is DBConcurrencyException || DashboardDb.IsDuplicate(failure)))
+                catch (Exception failure) when (attempt < 3 && (DashboardDb.IsConflict(failure) || DashboardDb.IsDuplicate(failure)))
                 {
+                    await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
                 }
             }
         }

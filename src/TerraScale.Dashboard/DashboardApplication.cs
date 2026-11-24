@@ -1,4 +1,6 @@
 using System.Data;
+using System.Globalization;
+using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 using TerraScale.Endpoints;
 using RequestIdentity = TerraScale.Dashboard.Platform.Http.RequestIdentity;
 using ExceptionFrames = TerraScale.Dashboard.Platform.Http.ExceptionFrames;
@@ -48,8 +50,6 @@ namespace TerraScale.Dashboard
 {
     public static class DashboardApplication
     {
-        private const string ConflictRetry = "This changed in another tab or request at the same time. Try again.";
-
         public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configureTestHost = null)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -414,6 +414,18 @@ namespace TerraScale.Dashboard
 
                     await RequestError.Response(context, error.StatusCode, error.Message).ExecuteAsync(context);
                 }
+                catch (TerraBaseSqlException error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+                {
+                    var refusal = DashboardStorageOutcomes.Classify(error);
+                    app.Logger.DashboardStorageRefused((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", error.Code, refusal.Status);
+                    context.Response.Clear();
+                    if (refusal.RetryAfter is { } retryAfter)
+                    {
+                        context.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    await RequestError.Response(context, refusal.Status, refusal.Message).ExecuteAsync(context);
+                }
                 catch (Exception error) when (error is HttpRequestException or IOException or JsonException or TimeoutException or Stripe.StripeException ||
                                               error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
                 {
@@ -438,7 +450,7 @@ namespace TerraScale.Dashboard
                     app.Logger.DashboardRequestConflicted((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]");
                     context.Response.Clear();
                     context.Response.Headers.RetryAfter = "1";
-                    await RequestError.Response(context, StatusCodes.Status409Conflict, ConflictRetry).ExecuteAsync(context);
+                    await RequestError.Response(context, StatusCodes.Status409Conflict, DashboardStorageOutcomes.ConflictMessage).ExecuteAsync(context);
                 }
                 catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
                 {

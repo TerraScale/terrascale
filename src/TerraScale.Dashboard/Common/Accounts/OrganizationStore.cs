@@ -16,7 +16,7 @@ public sealed record StoredOrganization(OrganizationRecord Organization, string 
 public sealed record OrganizationRows(OrganizationRow Root, IReadOnlyList<OrganizationProjectRow> Projects, IReadOnlyList<ProjectDatabaseRow> Databases,
     IReadOnlyList<AuditEventRow> AuditEvents, IReadOnlyList<InvitationReservationRow> Reservations);
 
-public sealed class OrganizationStore(DashboardDb storage)
+public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
 {
     private const string ById = DashboardSql.Organizations.Select + " WHERE id = @Id";
     private const string ByIds = DashboardSql.Organizations.Select + " WHERE id IN (SELECT value FROM json_each(@Ids))";
@@ -252,6 +252,8 @@ public sealed class OrganizationStore(DashboardDb storage)
                 {
                     throw new IOException("Organization completion changed concurrently. Retry organization setup.");
                 }
+
+                await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
             }
         }
 
@@ -347,6 +349,8 @@ public sealed class OrganizationStore(DashboardDb storage)
                 {
                     throw new IOException("Organization deletion changed concurrently. Retry deletion.");
                 }
+
+                await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
             }
         }
     }

@@ -416,7 +416,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            while (true)
+            for (var attempt = 0; ; attempt++)
             {
                 var stored = await organizations.FindAsync(binding.OrganizationId, cancellationToken) ?? throw new IOException("Billing organization is unavailable.");
                 var org = stored.Erased ? throw new IOException("Dashboard record was erased.") : stored.Organization;
@@ -436,7 +436,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
                 catch (DBConcurrencyException)
                 {
-                    continue;
+                    await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
                 }
             }
         }

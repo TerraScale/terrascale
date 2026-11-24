@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(session.UserId);
             var waited = Stopwatch.StartNew();
-            while (true)
+            for (var conflicts = 0; ; )
             {
                 var stored = await accountStore.FindAsync(session.UserId, cancellationToken);
                 var now = time.GetUtcNow();
@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 {
                     var created = new AccountRecord { Id = NewId(), UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = now, PersonalClaimUntil = now.AddMinutes(1) };
                     try { await accountStore.CreateAsync(created, cancellationToken); }
-                    catch (DBConcurrencyException) { continue; }
+                    catch (DBConcurrencyException) { await DashboardDb.ConflictBackoffAsync(conflicts++, time, cancellationToken); continue; }
                 }
                 else
                 {
@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     }
                     account.PersonalClaimUntil = now.AddMinutes(1);
                     try { await accountStore.ReplaceAsync(stored, cancellationToken); }
-                    catch (DBConcurrencyException) { continue; }
+                    catch (DBConcurrencyException) { await DashboardDb.ConflictBackoffAsync(conflicts++, time, cancellationToken); continue; }
                 }
                 OrganizationRecord personal;
                 try { personal = await CreatePersonalAsync(session, cancellationToken); }
@@ -511,7 +511,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await accountStore.ReplaceAsync(stored, cancellationToken);
                     return account;
                 }
-                catch (DBConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken); }
             }
         }
 
@@ -572,7 +572,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await organizationStore.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (DBConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken); }
             }
         }
 

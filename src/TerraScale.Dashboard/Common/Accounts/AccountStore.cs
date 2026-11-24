@@ -131,6 +131,7 @@ public sealed class AccountStore(DashboardDb storage, TimeProvider time)
             }
             catch (Exception error) when (attempt < 3 && (error is DBConcurrencyException || DashboardDb.IsDuplicate(error)))
             {
+                await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
             }
         }
     }

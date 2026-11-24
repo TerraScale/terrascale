@@ -21,6 +21,9 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Dashboard request on {Route} lost a concurrent write race; answered 409")]
         internal static partial void DashboardRequestConflicted(this ILogger logger, object? route);
 
+        [LoggerMessage(EventId = 104, Level = LogLevel.Warning, Message = "Dashboard request on {Route} was refused by TerraBase storage ({Code}); answered {Status}")]
+        internal static partial void DashboardStorageRefused(this ILogger logger, string route, string code, int status);
+
         [LoggerMessage(EventId = 7, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
         internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, LogLevel level, object? table, object? errorType, object? status, object? errorCode);
 
