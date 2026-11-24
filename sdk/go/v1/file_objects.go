@@ -71,8 +71,11 @@ func (c *Client) PutObject(ctx context.Context, project, bucketID, key string, b
 	if closeErr != nil {
 		return nil, fmt.Errorf("terrabase: spill upload: %w", closeErr)
 	}
-	if size < 1 || size > maxFileObjectBytes {
-		return nil, fmt.Errorf("terrabase: file size must be 1-%d bytes, got %d", maxFileObjectBytes, size)
+	if size > maxFileObjectBytes {
+		return nil, fmt.Errorf("terrabase: file exceeds maximum size of %d bytes", maxFileObjectBytes)
+	}
+	if size == 0 {
+		return nil, errors.New("terrabase: file must contain at least one byte")
 	}
 	payload, err := os.Open(name)
 	if err != nil {

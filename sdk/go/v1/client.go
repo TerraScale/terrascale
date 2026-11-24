@@ -45,6 +45,9 @@ type Config struct {
 	TSAuthBaseURL string
 }
 
+func (Config) String() string     { return "terrabase configuration (credentials redacted)" }
+func (c Config) GoString() string { return c.String() }
+
 type Client struct {
 	apiKey      string
 	authOrigin  string

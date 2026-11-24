@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"iter"
 	"strings"
 	"unicode"
 )
@@ -17,86 +16,66 @@ type schemaToken struct {
 
 func schemaTokens(source string) ([]schemaToken, error) {
 	var out []schemaToken
-	for token, err := range scanSchemaTokens(source) {
-		if err != nil {
-			return nil, err
+	for i := 0; i < len(source); {
+		start := i
+		switch {
+		case unicode.IsSpace(rune(source[i])):
+			i++
+			continue
+		case strings.HasPrefix(source[i:], "--"):
+			if n := strings.IndexByte(source[i:], '\n'); n >= 0 {
+				i += n + 1
+			} else {
+				i = len(source)
+			}
+			continue
+		case strings.HasPrefix(source[i:], "/*"):
+			n := strings.Index(source[i+2:], "*/")
+			if n < 0 {
+				return nil, fmt.Errorf("unterminated SQL comment")
+			}
+			i += n + 4
+			continue
+		case sqlQuoteEnd(source[i]) != 0:
+			quote := source[i]
+			close := sqlQuoteEnd(quote)
+			i++
+			var value strings.Builder
+			closed := false
+			for i < len(source) {
+				if source[i] == close {
+					i++
+					if close != ']' && i < len(source) && source[i] == close {
+						value.WriteByte(close)
+						i++
+						continue
+					}
+					closed = true
+					break
+				}
+				value.WriteByte(source[i])
+				i++
+			}
+			if !closed {
+				return nil, fmt.Errorf("unterminated SQL quote")
+			}
+			key := "w:" + value.String()
+			if quote == '\'' {
+				key = "s:" + value.String()
+			}
+			out = append(out, schemaToken{source[start:i], key, start, i})
+			continue
+		case sqlWordStart(source[i]):
+			i++
+			for i < len(source) && sqlWordPart(source[i]) {
+				i++
+			}
+		default:
+			i++
 		}
-		out = append(out, token)
+		out = append(out, schemaToken{source[start:i], "w:" + foldSchemaWord(source[start:i]), start, i})
 	}
 	return out, nil
-}
-
-func scanSchemaTokens(source string) iter.Seq2[schemaToken, error] {
-	return func(yield func(schemaToken, error) bool) {
-		for i := 0; i < len(source); {
-			start := i
-			switch {
-			case unicode.IsSpace(rune(source[i])):
-				i++
-				continue
-			case strings.HasPrefix(source[i:], "--"):
-				if n := strings.IndexByte(source[i:], '\n'); n >= 0 {
-					i += n + 1
-				} else {
-					i = len(source)
-				}
-				continue
-			case strings.HasPrefix(source[i:], "/*"):
-				n := strings.Index(source[i+2:], "*/")
-				if n < 0 {
-					yield(schemaToken{}, fmt.Errorf("unterminated SQL comment"))
-					return
-				}
-				i += n + 4
-				continue
-			case strings.ContainsRune("'\"`[", rune(source[i])):
-				quote := source[i]
-				close := quote
-				if close == '[' {
-					close = ']'
-				}
-				i++
-				var value strings.Builder
-				closed := false
-				for i < len(source) {
-					if source[i] == close {
-						i++
-						if close != ']' && i < len(source) && source[i] == close {
-							value.WriteByte(close)
-							i++
-							continue
-						}
-						closed = true
-						break
-					}
-					value.WriteByte(source[i])
-					i++
-				}
-				if !closed {
-					yield(schemaToken{}, fmt.Errorf("unterminated SQL quote"))
-					return
-				}
-				key := "w:" + value.String()
-				if quote == '\'' {
-					key = "s:" + value.String()
-				}
-				if !yield(schemaToken{source[start:i], key, start, i}, nil) {
-					return
-				}
-				continue
-			case source[i] == '_' || source[i] >= 128 || source[i] >= 'a' && source[i] <= 'z' || source[i] >= 'A' && source[i] <= 'Z' || source[i] >= '0' && source[i] <= '9':
-				i++
-				for i < len(source) && (source[i] == '_' || source[i] == '$' || source[i] >= 128 || source[i] >= 'a' && source[i] <= 'z' || source[i] >= 'A' && source[i] <= 'Z' || source[i] >= '0' && source[i] <= '9') {
-					i++
-				}
-			default:
-				i++
-			}
-			if !yield(schemaToken{source[start:i], "w:" + foldSchemaWord(source[start:i]), start, i}, nil) {
-				return
-			}
-		}
-	}
 }
 
 // SQLite folds ASCII identifier letters only. Preserve non-ASCII names.

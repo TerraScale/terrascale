@@ -211,7 +211,7 @@ func helpOptions(name string) map[string]string {
 	case name == "agent revoke" || name == "agent policy set":
 		options["-yes"] = "confirm the operation without a terminal"
 	case name == "db import":
-		options["<file|->"] = fmt.Sprintf("read up to %d MiB of SQL from a file or stdin", maxImportDumpBytes>>20)
+		options["<file|->"] = "stream a SQL dump from a file or stdin"
 	case name == "db branch create":
 		options["-from <database>"] = "source database; snapshot and later writes are independent"
 		options["-ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"

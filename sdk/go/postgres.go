@@ -83,24 +83,24 @@ func postgresFailure(err error) *PostgresError {
 	}
 	var database *pgconn.PgError
 	if errors.As(err, &database) {
-		return &PostgresError{Kind: "database", SQLState: database.Code}
+		failure := &PostgresError{Kind: "database", SQLState: database.Code}
+		switch database.Detail {
+		case string(v1.ErrCommitUncertain), string(v1.ErrWriteOutcomeUnknown), string(v1.ErrInRegionQuorumUnconfirmed):
+			failure.Kind = "commit_uncertain"
+		}
+		switch database.Code {
+		case "08007", "40003":
+			failure.Kind = "commit_uncertain"
+		}
+		return failure
 	}
 	return &PostgresError{Kind: "connection"}
 }
 
 func postgresCommitFailure(err error) error {
 	failure := postgresFailure(err)
-	var database *pgconn.PgError
-	if !errors.As(err, &database) {
-		failure.Kind = "commit_uncertain"
-		return failure
-	}
-	switch database.Detail {
-	case string(v1.ErrCommitUncertain), string(v1.ErrWriteOutcomeUnknown), string(v1.ErrInRegionQuorumUnconfirmed):
-		failure.Kind = "commit_uncertain"
-	}
-	switch database.Code {
-	case "08006", "08007", "40003", "57P01", "57P02":
+	switch failure.SQLState {
+	case "", "08006", "57P01", "57P02":
 		failure.Kind = "commit_uncertain"
 	}
 	return failure

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -8,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"maps"
 	"os"
 	"path/filepath"
@@ -150,7 +150,7 @@ func migrateUp(ctx context.Context, db *v1.Database, out io.Writer) error {
 			}
 			continue
 		}
-		statements, err := splitSQL(m.sql)
+		statements, err := splitSQL(ctx, m.sql)
 		if err != nil {
 			return fmt.Errorf("%s: %w", m.name, err)
 		}
@@ -380,57 +380,17 @@ func schemaDiff(base, branch string, from, to map[string]string) string {
 	return fmt.Sprintf("--- %s\n+++ %s\n", base, branch) + b.String()
 }
 
-func splitSQL(script string) ([]string, error) {
+func splitSQL(ctx context.Context, script string) ([]string, error) {
+	reader := sqlStatementReader{input: bufio.NewReader(strings.NewReader(script))}
 	var statements []string
-	for statement, err := range scanSQLStatements(script) {
+	for {
+		statement, err := reader.next(ctx)
+		if errors.Is(err, io.EOF) {
+			return statements, nil
+		}
 		if err != nil {
 			return nil, err
 		}
 		statements = append(statements, statement)
-	}
-	return statements, nil
-}
-
-func scanSQLStatements(script string) iter.Seq2[string, error] {
-	return func(yield func(string, error) bool) {
-		var start, end, count, depth int
-		var create, temporary, trigger bool
-		for token, err := range scanSchemaTokens(script) {
-			if err != nil {
-				yield("", err)
-				return
-			}
-			switch count {
-			case 0:
-				if token.raw == ";" {
-					continue
-				}
-				start = token.start
-				create, temporary, trigger = strings.EqualFold(token.raw, "CREATE"), false, false
-			case 1:
-				trigger = create && strings.EqualFold(token.raw, "TRIGGER")
-				temporary = create && (strings.EqualFold(token.raw, "TEMP") || strings.EqualFold(token.raw, "TEMPORARY"))
-			case 2:
-				trigger = trigger || temporary && strings.EqualFold(token.raw, "TRIGGER")
-			}
-			if trigger {
-				switch strings.ToUpper(token.raw) {
-				case "BEGIN", "CASE":
-					depth++
-				case "END":
-					depth--
-				}
-			}
-			end, count = token.end, count+1
-			if token.raw == ";" && depth == 0 {
-				if !yield(strings.TrimSuffix(strings.TrimSpace(script[start:end]), ";"), nil) {
-					return
-				}
-				count = 0
-			}
-		}
-		if count != 0 {
-			yield(strings.TrimSuffix(strings.TrimSpace(script[start:end]), ";"), nil)
-		}
 	}
 }

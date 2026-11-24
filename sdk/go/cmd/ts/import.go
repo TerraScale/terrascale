@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"strconv"
 	"strings"
@@ -13,10 +16,8 @@ import (
 )
 
 const (
-	maxImportDumpBytes          = 32 << 20
-	maxImportStatementsPerBatch = 256
-	maxImportBatchBytes         = 900 * 1024
-	maxImportStatementBytes     = 16 * 1024
+	maxImportStatementBytes = 16 * 1024
+	importBatchEnvelopeSize = len(`{"statements":[]}`)
 )
 
 func dbImport(ctx context.Context, db *v1.Database, path string, from int, input io.Reader, out, errOut io.Writer) error {
@@ -28,28 +29,9 @@ func dbImport(ctx context.Context, db *v1.Database, path string, from int, input
 		defer file.Close()
 		input = file
 	}
-	data, err := io.ReadAll(io.LimitReader(input, maxImportDumpBytes+1))
-	if err != nil {
-		return err
-	}
-	if len(data) > maxImportDumpBytes {
-		return fmt.Errorf("SQL dump exceeds the %d MiB import limit", maxImportDumpBytes>>20)
-	}
-	script := string(data)
-	total, wrapped, err := validateImport(script)
-	if err != nil {
-		return err
-	}
 	from = max(from, 1)
-	if from > total {
-		if total == 0 {
-			return nil
-		}
-		return fmt.Errorf("-from %d skips past the %d statements in %s: %w", from, total, path, errUsage)
-	}
-	done := from - 1
-	sent, err := runImportBatches(ctx, db, script, wrapped, from, total, func(n int) {
-		fmt.Fprintf(errOut, "imported %d/%d statements\n", done+n, total)
+	sent, total, err := runImportBatches(ctx, db, input, from, func(n int) {
+		fmt.Fprintf(errOut, "imported %d statements\n", from-1+n)
 	})
 	if err != nil {
 		if sent > 0 && !errors.Is(err, v1.ErrCommitUncertain) {
@@ -57,80 +39,112 @@ func dbImport(ctx context.Context, db *v1.Database, path string, from int, input
 		}
 		return err
 	}
+	if total == 0 {
+		return nil
+	}
+	if from > total {
+		return fmt.Errorf("-from %d skips past the %d statements in %s: %w", from, total, path, errUsage)
+	}
 	fmt.Fprintf(out, "imported %d/%d statements into %s\n", total, total, db.Name())
 	return nil
 }
 
-func validateImport(script string) (total int, wrapped bool, err error) {
-	var last string
-	var tooLarge error
-	for statement, err := range scanSQLStatements(script) {
-		if err != nil {
-			return 0, false, err
+func importStatements(ctx context.Context, input io.Reader) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		reader := sqlStatementReader{input: bufio.NewReader(input), maxBytes: maxImportStatementBytes}
+		statement, err := reader.next(ctx)
+		if err == nil && strings.EqualFold(strings.TrimSpace(statement), "PRAGMA foreign_keys=OFF") {
+			pragma := statement
+			statement, err = reader.next(ctx)
+			if (err != nil || !importTransaction(statement, "BEGIN")) && !yield(pragma, nil) {
+				return
+			}
 		}
-		if total == 0 && !wrapped && strings.EqualFold(statement, "BEGIN") {
-			wrapped = true
-			continue
+		wrapped := err == nil && importTransaction(statement, "BEGIN")
+		if wrapped {
+			statement, err = reader.next(ctx)
 		}
-		total++
-		last = statement
-		if tooLarge == nil && len(statement) > maxImportStatementBytes {
-			tooLarge = fmt.Errorf("statement %d is %d bytes, over the %d-byte limit", total, len(statement), maxImportStatementBytes)
+		for err == nil {
+			if wrapped && importTransaction(statement, "COMMIT") {
+				_, err = reader.next(ctx)
+				if err == nil {
+					yield("", errors.New("dump COMMIT must be the final statement"))
+				} else if !errors.Is(err, io.EOF) {
+					yield("", err)
+				}
+				return
+			}
+			if !yield(statement, nil) {
+				return
+			}
+			statement, err = reader.next(ctx)
+		}
+		if !errors.Is(err, io.EOF) {
+			yield("", err)
+		} else if wrapped {
+			yield("", errors.New("dump starts with BEGIN but does not end with COMMIT"))
 		}
 	}
-	if wrapped {
-		if !strings.EqualFold(last, "COMMIT") {
-			return 0, false, errors.New("dump starts with BEGIN but does not end with COMMIT")
-		}
-		total--
-	}
-	return total, wrapped, tooLarge
 }
 
-func runImportBatches(ctx context.Context, db *v1.Database, script string, wrapped bool, from, total int, progress func(int)) (int, error) {
-	sent, ordinal, size := 0, 0, 0
-	if wrapped {
-		ordinal = -1
+func importTransaction(statement, verb string) bool {
+	statement = strings.TrimSpace(statement)
+	if strings.EqualFold(statement, verb) {
+		return true
 	}
-	batch := make([]string, 0, maxImportStatementsPerBatch)
+	return len(statement) > len(verb) && strings.EqualFold(statement[:len(verb)], verb) &&
+		strings.ContainsRune(" \t\r\n\v\f", rune(statement[len(verb)])) &&
+		strings.EqualFold(strings.TrimSpace(statement[len(verb):]), "TRANSACTION")
+}
+
+func runImportBatches(ctx context.Context, db *v1.Database, input io.Reader, from int, progress func(int)) (int, int, error) {
+	sent, total, size := 0, 0, importBatchEnvelopeSize
+	batch := make([]v1.Statement, 0, v1.MaxSQLStatements)
 	done := func(n int) {
 		sent += n
 		progress(sent)
 	}
-	for statement, err := range scanSQLStatements(script) {
+	flush := func() error {
+		_, err := sendImportBatch(ctx, db, batch, from+sent, done)
+		clear(batch)
+		batch, size = batch[:0], importBatchEnvelopeSize
+		return err
+	}
+	for statement, err := range importStatements(ctx, input) {
 		if err != nil {
-			return sent, err
+			return sent, total, fmt.Errorf("statement %d: %w", total+1, err)
 		}
-		ordinal++
-		if ordinal < from {
+		total++
+		if total < from {
 			continue
 		}
-		if ordinal > total {
-			break
+		item := v1.Statement{SQL: statement}
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			return sent, total, fmt.Errorf("statement %d: %w", total, err)
 		}
-		if len(batch) == maxImportStatementsPerBatch || size+len(statement) > maxImportBatchBytes {
-			if _, err := sendImportBatch(ctx, db, batch, from+sent, done); err != nil {
-				return sent, err
+		if size+len(encoded)+1 > v1.MaxSQLRequestBytes {
+			if err := flush(); err != nil {
+				return sent, total, err
 			}
-			batch, size = batch[:0], 0
 		}
-		batch = append(batch, statement)
-		size += len(statement)
+		batch = append(batch, item)
+		size += len(encoded) + 1
+		if len(batch) == v1.MaxSQLStatements {
+			if err := flush(); err != nil {
+				return sent, total, err
+			}
+		}
 	}
 	if len(batch) > 0 {
-		if _, err := sendImportBatch(ctx, db, batch, from+sent, done); err != nil {
-			return sent, err
-		}
+		err := flush()
+		return sent, total, err
 	}
-	return sent, nil
+	return sent, total, nil
 }
 
-func sendImportBatch(ctx context.Context, db *v1.Database, batch []string, first int, done func(int)) (int, error) {
-	items := make([]v1.Statement, len(batch))
-	for i, st := range batch {
-		items[i] = v1.Statement{SQL: st}
-	}
-	_, err := db.Batch(ctx, items)
+func sendImportBatch(ctx context.Context, db *v1.Database, batch []v1.Statement, first int, done func(int)) (int, error) {
+	_, err := db.Batch(ctx, batch)
 	var sqlErr *v1.SQLError
 	if errors.As(err, &sqlErr) && sqlErr.Code == v1.ErrTooLarge && len(batch) > 1 {
 		half := len(batch) / 2

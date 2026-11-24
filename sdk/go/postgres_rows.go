@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -65,6 +66,7 @@ func (r *PostgresRows) CommandTag() string {
 
 func (r *PostgresRows) Close() error {
 	if !r.released && r.err == nil {
+		r.rows.Close()
 		if err := r.rows.Err(); err != nil {
 			r.fail(postgresFailure(err))
 			return r.err
@@ -85,7 +87,7 @@ func (r *PostgresRows) complete() {
 }
 
 func (r *PostgresRows) fail(err error) {
-	if ctxErr := r.ctx.Err(); ctxErr != nil {
+	if ctxErr := r.ctx.Err(); ctxErr != nil && !errors.Is(err, ErrCommitUncertain) {
 		err = postgresFailure(ctxErr)
 	}
 	r.abort(err)
