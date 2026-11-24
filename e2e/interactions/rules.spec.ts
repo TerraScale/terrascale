@@ -558,7 +558,8 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     console.log('end-user UPDATE firing a trigger named like a ruled view -> 403 sql_sandbox');
     await execute(`DROP TRIGGER ${view}`);
     await execute(`CREATE TRIGGER ${cteTrigger} AFTER UPDATE ON ${tasks} BEGIN INSERT INTO ${vault} (pin) VALUES (OLD.assignee); END`);
-    await refused(`WITH ${cteTrigger} AS (SELECT 1) UPDATE ${tasks} SET title = 'via cte trigger' WHERE id = 1`, 'rule_denied');
+    await answer(await run(aliceToken, `WITH ${cteTrigger} AS (SELECT 1) UPDATE ${tasks} SET title = 'via cte trigger' WHERE id = 1`), 403, 'sql_sandbox');
+    console.log('end-user UPDATE declaring a CTE named like a trigger -> 403 sql_sandbox');
     await execute(`DROP TRIGGER ${cteTrigger}`);
     expect(await allowed(`SELECT body FROM ${view} ORDER BY body`)).toEqual([['a1-edited'], ['a2']]);
     expect(await execute(`SELECT pin FROM ${vault} ORDER BY id`)).toEqual([['vault-9999']]);
