@@ -268,6 +268,9 @@ type tokenBody struct {
 	Token string `json:"token"`
 }
 
+func (tokenBody) String() string     { return "tokenBody{token:[REDACTED]}" }
+func (r tokenBody) GoString() string { return r.String() }
+
 func orgPath(org string, extra ...string) []string {
 	return append([]string{"organizations", org}, extra...)
 }

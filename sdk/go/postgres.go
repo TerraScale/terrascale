@@ -19,7 +19,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"terrascale.tech/sdk/internal/causal"
+	"terrascale.tech/sdk/v1"
 )
+
+const ErrCommitUncertain = v1.ErrCommitUncertain
 
 const (
 	postgresMaxBytes       = 1024*1024 - 64
@@ -63,14 +66,15 @@ func (err *PostgresError) Error() string {
 func (err *PostgresError) Unwrap() error { return err.cause }
 
 func (err *PostgresError) Is(target error) bool {
-	return target == ErrSerializationConflict && err.SQLState == postgresSerialization
+	return target == ErrSerializationConflict && err.IsSerializationConflict() ||
+		target == ErrCommitUncertain && err.Kind == "commit_uncertain"
 }
 
 func (err *PostgresError) IsSerializationConflict() bool {
-	return err.SQLState == postgresSerialization
+	return err.Kind != "commit_uncertain" && err.SQLState == postgresSerialization
 }
 
-func postgresFailure(err error) error {
+func postgresFailure(err error) *PostgresError {
 	if errors.Is(err, context.Canceled) {
 		return &PostgresError{Kind: "canceled", cause: context.Canceled}
 	}
@@ -82,6 +86,24 @@ func postgresFailure(err error) error {
 		return &PostgresError{Kind: "database", SQLState: database.Code}
 	}
 	return &PostgresError{Kind: "connection"}
+}
+
+func postgresCommitFailure(err error) error {
+	failure := postgresFailure(err)
+	var database *pgconn.PgError
+	if !errors.As(err, &database) {
+		failure.Kind = "commit_uncertain"
+		return failure
+	}
+	switch database.Detail {
+	case string(v1.ErrCommitUncertain), string(v1.ErrWriteOutcomeUnknown), string(v1.ErrInRegionQuorumUnconfirmed):
+		failure.Kind = "commit_uncertain"
+	}
+	switch database.Code {
+	case "08006", "08007", "40003", "57P01", "57P02":
+		failure.Kind = "commit_uncertain"
+	}
+	return failure
 }
 
 type PostgresValue struct {

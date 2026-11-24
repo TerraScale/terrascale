@@ -299,12 +299,12 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			return resp, nil
 		}
 		apiErr := parseAPIError(resp.status, resp.header, resp.body)
+		if errors.Is(apiErr, ErrCommitUncertain) {
+			return resp, apiErr
+		}
 		if resp.status == http.StatusUnauthorized && req.token == "" && c.invalidateToken(outbound.token, apiErr, refreshed) {
 			refreshed = true
 			continue
-		}
-		if !readOnly && errors.Is(apiErr, ErrCommitUncertain) {
-			return resp, apiErr
 		}
 		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe, readOnly); ok && attempt < DefaultMaxRetries {
 			if err := waitRetry(ctx, delay, apiErr); err != nil {
@@ -317,7 +317,7 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 }
 
 func retryDelay(e *APIError, attempt int, replaySafe, readOnly bool) (time.Duration, bool) {
-	if !replaySafe || (!(e.Status == http.StatusTooManyRequests && (e.Code == ErrRateLimited || e.Code == ErrTenantBusy)) && !isTransient503(e) && !(readOnly && (isGatewayFailure(e) || e.Status == http.StatusServiceUnavailable && e.Code == ErrCommitUncertain))) {
+	if !replaySafe || (!(e.Status == http.StatusTooManyRequests && (e.Code == ErrRateLimited || e.Code == ErrTenantBusy)) && !isTransient503(e) && !(readOnly && isGatewayFailure(e))) {
 		return 0, false
 	}
 	if e.retryAfterSet {

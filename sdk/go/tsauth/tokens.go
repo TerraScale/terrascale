@@ -59,6 +59,9 @@ type APIKeyConfig struct {
 	HTTPClient *http.Client
 }
 
+func (APIKeyConfig) String() string     { return "APIKeyConfig{key:[REDACTED]}" }
+func (c APIKeyConfig) GoString() string { return c.String() }
+
 // ExchangeConfig configures a token exchange source (contract section 6.2):
 // a signed-in user's token becomes an organization or project token.
 type ExchangeConfig struct {
@@ -81,6 +84,9 @@ type ExchangeConfig struct {
 	// never follows redirects.
 	HTTPClient *http.Client
 }
+
+func (ExchangeConfig) String() string     { return "ExchangeConfig{client_secret:[REDACTED]}" }
+func (c ExchangeConfig) GoString() string { return c.String() }
 
 var keyPattern = regexp.MustCompile(`^(?:sk_)?[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$`)
 
@@ -214,10 +220,11 @@ type flight struct {
 
 // Token refresh limits. fetchTimeout bounds one refresh with retries.
 const (
-	fetchTimeout      = 30 * time.Second
-	maxFetchRetries   = 3
-	fetchBackoffBase  = 200 * time.Millisecond
-	fetchBackoffLimit = 2 * time.Second
+	fetchTimeout         = 30 * time.Second
+	maxFetchRetries      = 3
+	fetchBackoffBase     = 200 * time.Millisecond
+	fetchBackoffLimit    = 2 * time.Second
+	fetchBackoffMaxShift = 4
 )
 
 func newSource(hc *http.Client, fetch func(context.Context, *http.Client) (*tokenResponse, error)) *TokenSource {
@@ -372,7 +379,8 @@ func fetchRetryDelay(err error, attempt int) (time.Duration, bool) {
 	case !errors.As(err, &transport):
 		return 0, false
 	}
-	return mrand.N(min(fetchBackoffBase<<attempt, fetchBackoffLimit)) + 1, true
+	shift := min(max(attempt, 0), fetchBackoffMaxShift)
+	return mrand.N(min(fetchBackoffBase<<shift, fetchBackoffLimit)) + 1, true
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

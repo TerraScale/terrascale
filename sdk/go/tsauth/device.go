@@ -147,7 +147,7 @@ func (d *Device) Wait(ctx context.Context, a *DeviceAuthorization) (*Tokens, err
 			if !ok {
 				return t, err
 			}
-			transient++
+			transient = min(transient+1, fetchBackoffMaxShift)
 			wait = max(interval, delay)
 			continue
 		}

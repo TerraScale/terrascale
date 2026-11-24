@@ -10,10 +10,8 @@ import (
 // Probes reads anonymous TerraBase health routes without sending credentials.
 type Probes struct{ c *Client }
 
-// NewProbes uses the configured endpoint and transport, discarding any token
-// or token source. Constructing it performs no network requests.
 func NewProbes(cfg Config) (*Probes, error) {
-	cfg.Token, cfg.TokenSource = "", nil
+	cfg.APIKey, cfg.Token, cfg.TokenSource, cfg.TSAuthBaseURL = "", "", nil, ""
 	c, err := newClient(cfg)
 	if err != nil {
 		return nil, err

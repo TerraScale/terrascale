@@ -301,7 +301,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if handled, err := requestedHelp(args, out); handled {
 		return err
 	}
-	if handled, err := dispatchAgentCommand(ctx, args, out, prompt); handled {
+	if handled, err := dispatchAgentCommand(ctx, args, out, commandInput{in: in, prompt: prompt, tty: tty}); handled {
 		return err
 	}
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)

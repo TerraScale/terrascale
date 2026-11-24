@@ -63,7 +63,7 @@ func (c *Client) PutObject(ctx context.Context, project, bucketID, key string, b
 	name := spill.Name()
 	defer os.Remove(name)
 	hash := sha256.New()
-	size, err := io.Copy(io.MultiWriter(spill, hash), body)
+	size, err := io.Copy(io.MultiWriter(spill, hash), io.LimitReader(body, maxFileObjectBytes+1))
 	closeErr := spill.Close()
 	if err != nil {
 		return nil, fmt.Errorf("terrabase: read upload body: %w", err)

@@ -7,15 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/coder/websocket"
 	"terrascale.tech/sdk/internal/causal"
 )
 
 const SQLSubprotocol = "terrascale.sql.v2"
+
+const (
+	sqlPingInterval    = 10 * time.Second
+	sqlPongTimeout     = 30 * time.Second
+	sqlResponseTimeout = 2 * time.Minute
+)
 
 var ErrSQLSessionClosed = errors.New("terrabase: SQL session is closed")
 
@@ -33,13 +41,16 @@ type SQLSession struct {
 
 type sqlConn struct {
 	ws      *websocket.Conn
+	cancel  context.CancelFunc
 	sending chan struct{}
 	mu      sync.Mutex
-	pending map[int64]sqlPending
+	pending []sqlPending
+	timer   *time.Timer
 	err     error
 }
 
 type sqlPending struct {
+	id         int64
 	answer     chan sqlAnswer
 	committing bool
 	control    bool
@@ -160,8 +171,7 @@ func (s *SQLSession) Close() error {
 	s.closed = true
 	s.mu.Unlock()
 	if conn != nil {
-		s.fail(conn, ErrSQLSessionClosed)
-		_ = conn.ws.Close(websocket.StatusNormalClosure, "")
+		s.fail(conn, 0, ErrSQLSessionClosed)
 	}
 	return nil
 }
@@ -267,6 +277,9 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 			}
 			body, _ := io.ReadAll(resp.Body)
 			apiErr := parseAPIError(resp.StatusCode, resp.Header, body)
+			if errors.Is(apiErr, ErrCommitUncertain) {
+				return nil, apiErr
+			}
 			if resp.StatusCode == http.StatusUnauthorized && c.invalidateToken(token, apiErr, refreshed) {
 				refreshed = true
 				continue
@@ -284,15 +297,17 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 			return nil, fmt.Errorf("terrabase: server did not select the %s subprotocol", SQLSubprotocol)
 		}
 		ws.SetReadLimit(DefaultMaxResponseBytes)
-		conn := &sqlConn{ws: ws, sending: make(chan struct{}, 1), pending: map[int64]sqlPending{}}
-		go s.receive(conn)
+		lifetime, stop := context.WithCancel(context.Background())
+		conn := &sqlConn{ws: ws, cancel: stop, sending: make(chan struct{}, 1)}
+		go s.receive(lifetime, conn)
+		go s.keepAlive(lifetime, conn)
 		return conn, nil
 	}
 }
 
-func (s *SQLSession) receive(conn *sqlConn) {
+func (s *SQLSession) receive(ctx context.Context, conn *sqlConn) {
 	for {
-		typ, data, err := conn.ws.Read(context.Background())
+		typ, data, err := conn.ws.Read(ctx)
 		if err == nil && typ != websocket.MessageText {
 			err = errors.New("terrabase: SQL session received a binary frame")
 		}
@@ -306,45 +321,93 @@ func (s *SQLSession) receive(conn *sqlConn) {
 			err = answer.Error.refusal()
 		}
 		if err != nil {
-			s.fail(conn, fmt.Errorf("terrabase: SQL session socket closed: %w", err))
-			_ = conn.ws.CloseNow()
+			s.fail(conn, 0, fmt.Errorf("terrabase: SQL session socket closed: %w", err))
 			return
 		}
-		s.mu.Lock()
-		conn.mu.Lock()
-		if s.conn == conn {
-			s.inTx = *answer.Transaction
-		}
-		if answer.ID != 0 {
-			if pending, ok := conn.pending[answer.ID]; ok {
-				if e := answer.Error; e != nil && (e.Code == ErrWriteOutcomeUnknown || e.Code == ErrCommitUncertain) {
-					s.uncertain = e.refusal()
-				}
-				pending.answer <- answer
-				delete(conn.pending, answer.ID)
-			}
-		}
-		uncertain := s.uncertain
-		conn.mu.Unlock()
-		s.mu.Unlock()
-		if uncertain != nil {
-			s.fail(conn, uncertain)
+		if !s.deliver(conn, answer) {
 			_ = conn.ws.CloseNow()
 			return
 		}
 	}
 }
 
-func (c *sqlConn) call(ctx context.Context, s *SQLSession, id int64, typ string, frame []byte) (sqlAnswer, error) {
-	if err := ctx.Err(); err != nil {
-		return sqlAnswer{}, err
+func (s *SQLSession) deliver(conn *sqlConn, answer sqlAnswer) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if conn.err != nil {
+		return false
 	}
-	ch := make(chan sqlAnswer, 1)
+	if len(conn.pending) == 0 || answer.ID != conn.pending[0].id {
+		s.failLocked(conn, &SQLProtocolError{})
+		return false
+	}
+	s.inTx = *answer.Transaction
+	conn.timer.Stop()
+	conn.timer = nil
+	conn.pending[0].answer <- answer
+	conn.pending[0] = sqlPending{}
+	conn.pending = conn.pending[1:]
+	if e := answer.Error; e != nil && e.Code.commitUncertain() {
+		s.uncertain = e.refusal()
+		s.failLocked(conn, s.uncertain)
+		return false
+	}
+	s.watchHead(conn)
+	return true
+}
+
+func (s *SQLSession) keepAlive(ctx context.Context, conn *sqlConn) {
+	ticks := time.NewTicker(sqlPingInterval)
+	defer ticks.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks.C:
+		}
+		select {
+		case conn.sending <- struct{}{}:
+		default:
+			continue
+		}
+		conn.mu.Lock()
+		idle := conn.err == nil && len(conn.pending) == 0
+		conn.mu.Unlock()
+		if idle {
+			pingCtx, cancel := context.WithTimeout(ctx, sqlPongTimeout)
+			err := conn.ws.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				s.fail(conn, 0, fmt.Errorf("terrabase: SQL session heartbeat: %w", err))
+			}
+		}
+		<-conn.sending
+	}
+}
+
+func (s *SQLSession) watchHead(conn *sqlConn) {
+	if len(conn.pending) == 0 || conn.timer != nil {
+		return
+	}
+	head := conn.pending[0].id
+	conn.timer = time.AfterFunc(sqlResponseTimeout, func() {
+		s.fail(conn, head, fmt.Errorf("terrabase: SQL session response: %w", context.DeadlineExceeded))
+	})
+}
+
+func (c *sqlConn) call(ctx context.Context, s *SQLSession, id int64, typ string, frame []byte) (sqlAnswer, error) {
 	select {
 	case <-ctx.Done():
 		return sqlAnswer{}, ctx.Err()
 	case c.sending <- struct{}{}:
 	}
+	if err := ctx.Err(); err != nil {
+		<-c.sending
+		return sqlAnswer{}, err
+	}
+	ch := make(chan sqlAnswer, 1)
 	s.mu.Lock()
 	c.mu.Lock()
 	if c.err != nil || s.uncertain != nil {
@@ -363,33 +426,51 @@ func (c *sqlConn) call(ctx context.Context, s *SQLSession, id int64, typ string,
 			committing = committing || pending.control
 		}
 	}
-	c.pending[id] = sqlPending{answer: ch, committing: committing, control: typ == "begin" || typ == "commit" || typ == "rollback"}
+	c.pending = append(c.pending, sqlPending{id: id, answer: ch, committing: committing, control: typ == "begin" || typ == "commit" || typ == "rollback"})
+	s.watchHead(c)
 	c.mu.Unlock()
 	s.mu.Unlock()
-	writeErr := c.ws.Write(ctx, websocket.MessageText, frame)
-	<-c.sending
-	if err := writeErr; err != nil {
-		s.fail(c, fmt.Errorf("terrabase: SQL session socket closed: %w", err))
-		_ = c.ws.CloseNow()
+	writeCtx, cancel := context.WithTimeout(ctx, OperationTimeout)
+	err := c.ws.Write(writeCtx, websocket.MessageText, frame)
+	cancel()
+	if err != nil {
+		s.fail(c, 0, fmt.Errorf("terrabase: SQL session write: %w", err))
 	}
+	<-c.sending
 	select {
 	case answer := <-ch:
 		return answer, answer.err
 	case <-ctx.Done():
-		s.fail(c, ctx.Err())
-		_ = c.ws.CloseNow()
+		s.fail(c, id, ctx.Err())
 		answer := <-ch
 		return answer, answer.err
 	}
 }
 
-func (s *SQLSession) fail(c *sqlConn, err error) {
+func (s *SQLSession) fail(c *sqlConn, requestID int64, err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.err == nil {
-		c.err = err
+	failed := c.err == nil && (requestID == 0 || slices.ContainsFunc(c.pending, func(p sqlPending) bool { return p.id == requestID }))
+	if failed {
+		s.failLocked(c, err)
+	}
+	c.mu.Unlock()
+	s.mu.Unlock()
+	if failed {
+		_ = c.ws.CloseNow()
+	}
+}
+
+func (s *SQLSession) failLocked(c *sqlConn, err error) {
+	c.err = err
+	c.cancel()
+	if c.timer != nil {
+		c.timer.Stop()
+		c.timer = nil
+	}
+	var refusal *SQLError
+	if len(c.pending) != 0 && s.uncertain == nil && errors.As(err, &refusal) && refusal.Code.commitUncertain() {
+		s.uncertain = err
 	}
 	for _, pending := range c.pending {
 		if pending.committing && s.uncertain == nil {
@@ -407,5 +488,5 @@ func (s *SQLSession) fail(c *sqlConn, err error) {
 	for _, pending := range c.pending {
 		pending.answer <- sqlAnswer{err: failure}
 	}
-	clear(c.pending)
+	c.pending = nil
 }

@@ -24,6 +24,11 @@ type CreateProjectUserRequest struct {
 	Password *string `json:"password,omitempty"`
 }
 
+func (CreateProjectUserRequest) String() string {
+	return "CreateProjectUserRequest{password:[REDACTED]}"
+}
+func (r CreateProjectUserRequest) GoString() string { return r.String() }
+
 type UpdateProjectUserRequest struct {
 	FirstName       json.RawMessage `json:"first_name,omitempty"`
 	LastName        json.RawMessage `json:"last_name,omitempty"`
@@ -41,9 +46,17 @@ type ImportProjectUser struct {
 	PasswordHash  *string `json:"password_hash,omitempty"`
 }
 
+func (ImportProjectUser) String() string     { return "ImportProjectUser{password_hash:[REDACTED]}" }
+func (r ImportProjectUser) GoString() string { return r.String() }
+
 type ImportProjectUsersRequest struct {
 	Users []ImportProjectUser `json:"users"`
 }
+
+func (ImportProjectUsersRequest) String() string {
+	return "ImportProjectUsersRequest{users:[REDACTED]}"
+}
+func (r ImportProjectUsersRequest) GoString() string { return r.String() }
 
 type ImportedProjectUser struct {
 	Index int         `json:"index"`

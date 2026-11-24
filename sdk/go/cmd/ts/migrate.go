@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"maps"
 	"os"
 	"path/filepath"
@@ -380,21 +381,38 @@ func schemaDiff(base, branch string, from, to map[string]string) string {
 }
 
 func splitSQL(script string) ([]string, error) {
-	tokens, err := schemaTokens(script)
-	if err != nil {
-		return nil, err
-	}
 	var statements []string
-	for len(tokens) > 0 {
-		if tokens[0].raw == ";" {
-			tokens = tokens[1:]
-			continue
+	for statement, err := range scanSQLStatements(script) {
+		if err != nil {
+			return nil, err
 		}
-		trigger := len(tokens) > 1 && strings.EqualFold(tokens[0].raw, "CREATE") &&
-			(strings.EqualFold(tokens[1].raw, "TRIGGER") || len(tokens) > 2 &&
-				(strings.EqualFold(tokens[1].raw, "TEMP") || strings.EqualFold(tokens[1].raw, "TEMPORARY")) && strings.EqualFold(tokens[2].raw, "TRIGGER"))
-		depth, end := 0, len(tokens)
-		for i, token := range tokens {
+		statements = append(statements, statement)
+	}
+	return statements, nil
+}
+
+func scanSQLStatements(script string) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		var start, end, count, depth int
+		var create, temporary, trigger bool
+		for token, err := range scanSchemaTokens(script) {
+			if err != nil {
+				yield("", err)
+				return
+			}
+			switch count {
+			case 0:
+				if token.raw == ";" {
+					continue
+				}
+				start = token.start
+				create, temporary, trigger = strings.EqualFold(token.raw, "CREATE"), false, false
+			case 1:
+				trigger = create && strings.EqualFold(token.raw, "TRIGGER")
+				temporary = create && (strings.EqualFold(token.raw, "TEMP") || strings.EqualFold(token.raw, "TEMPORARY"))
+			case 2:
+				trigger = trigger || temporary && strings.EqualFold(token.raw, "TRIGGER")
+			}
 			if trigger {
 				switch strings.ToUpper(token.raw) {
 				case "BEGIN", "CASE":
@@ -403,13 +421,16 @@ func splitSQL(script string) ([]string, error) {
 					depth--
 				}
 			}
+			end, count = token.end, count+1
 			if token.raw == ";" && depth == 0 {
-				end = i + 1
-				break
+				if !yield(strings.TrimSuffix(strings.TrimSpace(script[start:end]), ";"), nil) {
+					return
+				}
+				count = 0
 			}
 		}
-		statements = append(statements, strings.TrimSuffix(strings.TrimSpace(script[tokens[0].start:tokens[end-1].end]), ";"))
-		tokens = tokens[end:]
+		if count != 0 {
+			yield(strings.TrimSuffix(strings.TrimSpace(script[start:end]), ";"), nil)
+		}
 	}
-	return statements, nil
 }

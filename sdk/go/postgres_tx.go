@@ -144,18 +144,23 @@ func (tx *PostgresTx) Commit(ctx context.Context) error {
 	if err := tx.enter(false); err != nil {
 		return err
 	}
+	defer tx.finish()
 	if tx.failed != nil {
 		tx.discard(ctx)
-		tx.finish()
 		return tx.failed
 	}
-	if _, err := tx.client.run(ctx, PostgresQuery{Statement: "COMMIT"}); err != nil {
+	if tx.client.driver.IsClosed() {
+		return &PostgresError{Kind: "connection"}
+	}
+	if err := ctx.Err(); err != nil {
 		tx.client.abort(ctx)
-		tx.finish()
 		return postgresFailure(err)
 	}
-	tx.finish()
-	return nil
+	if _, err := tx.client.driver.Exec(ctx, "COMMIT"); err != nil {
+		tx.client.abort(ctx)
+		return postgresCommitFailure(err)
+	}
+	return tx.client.observe()
 }
 
 func (tx *PostgresTx) Rollback(ctx context.Context) error {

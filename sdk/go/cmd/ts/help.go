@@ -11,8 +11,8 @@ import (
 var commandSyntax = map[string]string{
 	"agent enroll": "agent enroll --project <id> --name <name> --scope <scope>... [--allow-self-subject]",
 	"agent token":  "agent token --project <id> --agent <id> [--scope <scope>] [--subject owner|agent]",
-	"agent list":   "agent list --project <id> [--after <cursor>] [--limit <1..100>]", "agent revoke": "agent revoke --project <id> --agent <id>",
-	"agent policy get": "agent policy get --project <id>", "agent policy set": "agent policy set --project <id> [--scope <scope>...]",
+	"agent list":   "agent list --project <id> [--after <cursor>] [--limit <1..100>]", "agent revoke": "agent revoke --project <id> --agent <id> [--yes]",
+	"agent policy get": "agent policy get --project <id>", "agent policy set": "agent policy set --project <id> [--scope <scope>...] [--yes]",
 	"billing":    "billing",
 	"auth login": "auth login", "auth logout": "auth logout", "whoami": "whoami",
 	"orgs": "orgs", "projects": "projects", "projects create": "projects create <name>",
@@ -208,6 +208,10 @@ func helpOptions(name string) map[string]string {
 		options[flag] = text
 	}
 	switch {
+	case name == "agent revoke" || name == "agent policy set":
+		options["-yes"] = "confirm the operation without a terminal"
+	case name == "db import":
+		options["<file|->"] = fmt.Sprintf("read up to %d MiB of SQL from a file or stdin", maxImportDumpBytes>>20)
 	case name == "db branch create":
 		options["-from <database>"] = "source database; snapshot and later writes are independent"
 		options["-ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"

@@ -54,6 +54,8 @@ const (
 	ErrMoveUnresolved       ErrorCode = "move_unresolved"
 )
 
+const ErrInRegionQuorumUnconfirmed ErrorCode = "in_region_quorum_unconfirmed"
+
 const (
 	ErrForbidden ErrorCode = "forbidden"
 	ErrConflict  ErrorCode = "conflict"
@@ -92,7 +94,15 @@ func (e *APIError) Error() string {
 
 func (e *APIError) Is(target error) bool {
 	code, ok := target.(ErrorCode)
-	return ok && (code == e.Code || code == ErrCommitUncertain && e.Code == ErrWriteOutcomeUnknown)
+	return ok && (code == e.Code || code == ErrCommitUncertain && e.Code.commitUncertain())
+}
+
+func (c ErrorCode) commitUncertain() bool {
+	switch c {
+	case ErrCommitUncertain, ErrWriteOutcomeUnknown, ErrInRegionQuorumUnconfirmed:
+		return true
+	}
+	return false
 }
 
 func parseAPIError(status int, h http.Header, body []byte) *APIError {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -57,6 +58,8 @@ var shapeName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var shapeHandle = regexp.MustCompile(`^h1-[a-f0-9]{16}$`)
 var shapeBoundary = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 var shapeSnapshot = regexp.MustCompile(`^snap\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+
+const maxShapeReconnectDelay = 60 * time.Second
 
 func (d *Database) Shape(ctx context.Context, table string, options ShapeOptions) (*Shape, error) {
 	if !shapeName.MatchString(table) || len(table) > 63 {
@@ -135,6 +138,7 @@ func applyShape(rows map[string]Row, ops []shapeOp) error {
 			}
 			row := Row{}
 			decoder := json.NewDecoder(bytes.NewReader(op.Row))
+			decoder.UseNumber()
 			if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 				return errors.New("terrabase: invalid shape row")
 			}
@@ -143,7 +147,7 @@ func applyShape(rows map[string]Row, ops []shapeOp) error {
 				if err != nil {
 					return err
 				}
-				var raw json.RawMessage
+				var raw any
 				if err := decoder.Decode(&raw); err != nil {
 					return err
 				}
@@ -229,11 +233,7 @@ func (s *Shape) run(ctx context.Context, c *Client, path []string, filter url.Va
 				}
 				var api *APIError
 				if !errors.As(err, &api) || api.Code != "must_refetch" && shapeRetryable(err) {
-					pause := backoff(attempt)
-					if api != nil && api.retryAfterSet {
-						pause = api.RetryAfter
-					}
-					hintRetry = time.Now().Add(pause)
+					hintRetry = time.Now().Add(shapeReconnectDelay(api, attempt))
 					if err := s.publish(ctx, rows, pending, Reconnecting, offset); err != nil {
 						return err
 					}
@@ -282,14 +282,10 @@ func (s *Shape) run(ctx context.Context, c *Client, path []string, filter url.Va
 			if err := s.publish(ctx, rows, pending, Reconnecting, offset); err != nil {
 				return err
 			}
-			pause := backoff(attempt)
-			if api != nil && api.retryAfterSet {
-				pause = api.RetryAfter
-			}
-			if err := httpx.Wait(ctx, pause); err != nil {
+			if err := httpx.Wait(ctx, shapeReconnectDelay(api, attempt)); err != nil {
 				return err
 			}
-			attempt++
+			attempt = min(attempt+1, 5)
 			continue
 		}
 		var page shapePage
@@ -318,6 +314,9 @@ func (s *Shape) run(ctx context.Context, c *Client, path []string, filter url.Va
 }
 
 func shapeRetryable(err error) bool {
+	if errors.Is(err, ErrCommitUncertain) {
+		return false
+	}
 	var api *APIError
 	if !errors.As(err, &api) {
 		var transport *url.Error
@@ -333,6 +332,13 @@ func shapeRetryable(err error) bool {
 		return true
 	}
 	return false
+}
+
+func shapeReconnectDelay(api *APIError, attempt int) time.Duration {
+	if api != nil && api.retryAfterSet && api.RetryAfter > 0 {
+		return max(50*time.Millisecond, min(api.RetryAfter, maxShapeReconnectDelay))
+	}
+	return backoff(attempt)
 }
 
 func (c *Client) waitShapeHint(ctx context.Context, path []string, filter url.Values, handle, offset string, conn **websocket.Conn) error {
@@ -397,8 +403,12 @@ func (c *Client) waitShapeHint(ctx context.Context, path []string, filter url.Va
 				status = 401
 			}
 			api := &APIError{Status: status, Code: ErrorCode(frame.Code)}
-			if frame.RetryAfter != nil && *frame.RetryAfter >= 0 {
-				api.RetryAfter, api.retryAfterSet = time.Duration(*frame.RetryAfter*float64(time.Second)), true
+			if frame.RetryAfter != nil {
+				seconds := *frame.RetryAfter
+				if seconds > 0 && !math.IsInf(seconds, 0) {
+					seconds = min(seconds, maxShapeReconnectDelay.Seconds())
+					api.RetryAfter, api.retryAfterSet = time.Duration(seconds*float64(time.Second)), true
+				}
 			}
 			return api
 		case "new_data", "provisional":

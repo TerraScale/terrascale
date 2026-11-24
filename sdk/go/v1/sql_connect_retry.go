@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -15,7 +16,7 @@ func waitSQLConnect(ctx context.Context, refusal *APIError, attempt int) (bool, 
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if attempt >= sqlConnectAttempts || (refusal.Status != http.StatusTooManyRequests && refusal.Status != http.StatusServiceUnavailable) || !refusal.retryAfterSet {
+	if errors.Is(refusal, ErrCommitUncertain) || attempt >= sqlConnectAttempts || (refusal.Status != http.StatusTooManyRequests && refusal.Status != http.StatusServiceUnavailable) || !refusal.retryAfterSet {
 		return false, nil
 	}
 	delay := min(refusal.RetryAfter, sqlConnectDelayCap)

@@ -68,6 +68,9 @@ type ssoOidcRequestBody struct {
 	ClientSecret *string `json:"client_secret,omitempty"`
 }
 
+func (ssoOidcRequestBody) String() string     { return "ssoOidcRequestBody{client_secret:[REDACTED]}" }
+func (r ssoOidcRequestBody) GoString() string { return r.String() }
+
 // SsoConnectionRequest creates or changes the organization's SSO connection.
 type SsoConnectionRequest struct {
 	Domain      string
