@@ -29,6 +29,7 @@ export interface Env {
   ADMIN_SESSION_SECRET?: string;
   /** Limits admin sign-in attempts per client. */
   ADMIN_LOGIN_LIMITER: RateLimit;
+  HISTORY_SEARCH_LIMITER: RateLimit;
   /** The public origin, for links in notifications. */
   PUBLIC_ORIGIN?: string;
   /** Signs subscription links and generic webhooks (a Worker secret). */

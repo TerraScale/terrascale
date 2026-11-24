@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""Provision the regional status canaries in the internal organization.
-
-After a production reset the organization, project, databases and keys are
-gone. This command recreates all of them: it discovers serving regions,
-creates (or reuses) the internal organization's ts-status project, one
-home-region canary database per region, the canary table and its fixture row
-(TerraBase is SQL-only), and one database-narrowed key per region. It installs
-only the two ts-status Worker secrets. It does not deploy or restart a
-service, change orchestration, or touch status history in D1.
-
-Sign-in uses the owner's password (set once below). An
-approving admin still signs in once in a browser when the account has no
-password yet.
-"""
 import fcntl
 import http.client
 import http.cookiejar
@@ -32,18 +18,14 @@ from pathlib import Path
 AUTH = 'https://auth.terrascale.tech'
 API = 'https://api.terrascale.tech'
 STATUS = 'https://status.terrascale.tech'
-# TerraScale's own organization: its internal plan keeps the monitor's writes off the Free allowance.
 ORGANIZATION = 'terrascale'
 SERVICE_PROJECTS = ('ts-dashboard', 'ts-auth', 'ts-router', 'ts-status', 'ts-orchestrator', 'ku')
 PROJECT = 'ts-status'
-CLI_CLIENT = '00000000000000000000000007'  # ts-auth's registered public ts-cli client.
+CLI_CLIENT = '00000000000000000000000007'
 STATE = Path.home() / '.local/state/ts-status/canaries.json'
-# The Data API fixture row; src/probe/canary.ts reads the same CANARY_ROW.
 ROW = '00000000000000000000000007'
 SCOPES = ['sql:read', 'sql:write']
-# The canary table: the Data API canary reads its fixture row, the write probe inserts and deletes rows.
 TABLE = 'CREATE TABLE IF NOT EXISTS "canary" (id TEXT PRIMARY KEY, canary TEXT NOT NULL)'
-CLOUDFLARE_ACCOUNT = '6cd3f3639e928077593d9b470765efeb'
 WORKER = 'ts-status'
 ULID = '[0-7][0-9A-HJKMNP-TV-Z]{25}'
 MAIL_COOLDOWN = 60
@@ -139,7 +121,6 @@ class Setup:
         raise RuntimeError('Redirect limit exceeded')
 
     def form(self, path, data=None):
-        """A same-origin hosted-UI form post through the persisted session."""
         body = urllib.parse.urlencode(data).encode() if data else None
         h = {'Origin': AUTH, 'User-Agent': 'ts-status-canary-recovery/2.0'}
         if body:
@@ -172,7 +153,6 @@ class Setup:
         return regions
 
     def set_password(self, address):
-        """One emailed reset code sets the password every later step reuses."""
         self.stage = 'one-time password bootstrap'
         if self.state.get('password'):
             return
@@ -202,7 +182,6 @@ class Setup:
         print(json.dumps({'password_set': True, 'email': address}), flush=True)
 
     def sign_in(self, address):
-        """Password sign-in; the session cookie stays in the private jar."""
         self.stage = 'password sign-in'
         status, _ = self.form('/ui/terrascale/account')
         if status == 200:
@@ -214,7 +193,6 @@ class Setup:
         self.save()
 
     def owner_grant(self):
-        """A ts-cli device grant the signed-in session approves (no email)."""
         self.stage = 'session-approved device grant'
         device = self.call(AUTH + '/terrascale/oauth/device', 'POST', {'client_id': CLI_CLIENT, 'scope': 'openid email'}, form=True)
         code = urllib.parse.quote(device['user_code'])
@@ -243,7 +221,6 @@ class Setup:
         raise RuntimeError('Device approval expired')
 
     def internal_project(self, grant):
-        """The internal organization's ts-status project, recreated after a wipe."""
         self.stage = 'internal organization discovery'
         def listing(url):
             items, after = [], None
@@ -307,7 +284,6 @@ class Setup:
             page = self.call(base, token=token, region=regions[0], statuses=(200, 404))
             found = next((d for d in (page.get('items', []) if isinstance(page, dict) else []) if d['name'] == name), None)
             if found is None:
-                # The first database enrolls a recreated organization into TerraBase.
                 found = self.call(base, 'POST', {'name': name, 'homeRegion': region}, token=token,
                                   region=region, statuses=(201,))
             databases[region] = found
@@ -351,7 +327,6 @@ class Setup:
         sql('INSERT OR REPLACE INTO "canary" (id, canary) VALUES (?, ?)', [ROW, 'Persistent status read canary'])
         if sql('SELECT id FROM "canary" WHERE id = ?', [ROW])['rows'] != [[ROW]]:
             raise RuntimeError('Fixture missing')
-        # A canonical ULID using random bits; independent rows for concurrent executions.
         alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
         number = secrets.randbits(128)
         row = ''.join(alphabet[(number >> (5 * i)) & 31] for i in reversed(range(26)))
@@ -396,18 +371,17 @@ def secret_payload(configurations, catalog):
 
 
 def cloudflare_token():
-    """The dev Cloudflare token: environment first, else ts-dev-secret stdin."""
     token = os.environ.get('CLOUDFLARE_API_TOKEN')
     if token:
         return token
     return private(['ts-dev-secret', 'get', 'dev-cloudflare-api-token']).decode().strip()
 
 
-def install(maps, token):
+def install(maps, token, account):
     for name, values in maps.items():
         body = json.dumps({'name': name, 'type': 'secret_text', 'text': json.dumps(values)}).encode()
         request = urllib.request.Request(
-            'https://api.cloudflare.com/client/v4/accounts/' + CLOUDFLARE_ACCOUNT + '/workers/scripts/' + WORKER + '/secrets',
+            'https://api.cloudflare.com/client/v4/accounts/' + account + '/workers/scripts/' + WORKER + '/secrets',
             body, {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, method='PUT')
         response = urllib.request.urlopen(request, timeout=60)
         if not json.load(response).get('success'):
@@ -415,16 +389,30 @@ def install(maps, token):
 
 
 def main():
+    settings = {key: os.environ.get(key, '').strip() for key in (
+        'TS_STATUS_OWNER', 'TS_STATUS_MAILBOX', 'CLOUDFLARE_ACCOUNT_ID',
+    )}
+    missing = [key for key, value in settings.items() if not value]
+    if missing:
+        print('Set the required environment variables: ' + ', '.join(missing), file=sys.stderr)
+        return 2
+    account = settings['CLOUDFLARE_ACCOUNT_ID']
+    if not re.fullmatch('[0-9a-fA-F]{32}', account):
+        print('CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID.', file=sys.stderr)
+        return 2
+    owner = settings['TS_STATUS_OWNER']
     setup = None
     try:
         setup = Setup()
-        setup.state.setdefault('email', os.environ.get('TS_STATUS_OWNER') or 'mariogk@terrascale.tech')
+        if setup.state.setdefault('email', owner) != owner:
+            print('TS_STATUS_OWNER differs from the owner in the private recovery state.', file=sys.stderr)
+            return 2
         regions = setup.discover()
         print('PLAN: password sign-in; session-approved device grant; one home-region canary database per region in the internal ts-status project; database-narrowed keys; verify pinned CRUD; update only the two ts-status secrets.', flush=True)
         configurations = setup.provision(regions)
         setup.stage = 'Worker secret installation'
         catalog = json.loads(private(['curl', '-sS', STATUS + '/api/v1/regions']))
-        install(secret_payload(configurations, catalog), cloudflare_token())
+        install(secret_payload(configurations, catalog), cloudflare_token(), account)
         print(json.dumps({'installed': ['DATA_API_CANARY', 'TERRABASE_PROBES'], 'regions': regions,
                           'organization': setup.state['organization'], 'project': setup.state['project'],
                           'databases': setup.state['databases']}))
@@ -437,7 +425,6 @@ def main():
         LookupError,
         RuntimeError,
     ) as error:
-        # Exception repr, HTTP bodies and subprocess stderr may contain secrets.
         print(json.dumps({'failed_stage': setup.stage if setup else 'private state', 'error_type': type(error).__name__,
                           'last_http_status': getattr(setup, 'last_status', None),
                           'operation': getattr(setup, 'last_operation', None),

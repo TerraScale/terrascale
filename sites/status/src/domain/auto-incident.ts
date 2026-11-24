@@ -91,10 +91,22 @@ export function step(
   trackers: Readonly<Record<string, Tracker>>,
   observations: readonly Observation[],
   now: number,
-  options: { newId: () => string; touched: ReadonlySet<string> },
+  options: { newId: () => string; touched: ReadonlySet<string>; retired: ReadonlySet<string> },
 ): { trackers: Record<string, Tracker>; actions: Action[] } {
   const next: Record<string, Tracker> = { ...trackers };
   const actions: Action[] = [];
+
+  for (const id of options.retired) {
+    const incidentId = next[id]?.incidentId;
+    delete next[id];
+    if (incidentId && !options.touched.has(incidentId)) {
+      actions.push({
+        type: "resolve",
+        incidentId,
+        body: "Monitoring ended because all regions for this component were retired.",
+      });
+    }
+  }
 
   for (const observation of observations) {
     const id = observation.componentId;

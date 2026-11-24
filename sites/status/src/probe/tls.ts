@@ -103,7 +103,7 @@ export async function checkCertificates(env: Env, now: number, fetcher: typeof f
   const [endpoints, checked] = await env.STATUS_DB.batch([
     // Indirect sources, such as a vendor's status page, are not our hosts.
     env.STATUS_DB.prepare(
-      "SELECT DISTINCT e.url FROM endpoints e JOIN components c ON c.id = e.component_id WHERE c.lifecycle = 'active' AND e.indirect = 0",
+      "SELECT DISTINCT e.url FROM active_endpoints e JOIN components c ON c.id = e.component_id WHERE c.lifecycle = 'active' AND e.indirect = 0",
     ),
     env.STATUS_DB.prepare("SELECT host FROM tls_certs WHERE checked_at >= ?1").bind(
       sqlTime(now - RECHECK_MS + RECHECK_SLACK_MS),

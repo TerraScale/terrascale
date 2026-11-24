@@ -61,9 +61,7 @@ TerraScale's public status page at <https://status.terrascale.tech>: a TypeScrip
 
 Every entity ID is a plain, canonical uppercase 26-character Crockford ULID. `src/ids.ts` uses the maintained `ulid` library's monotonic generator. Requests reject UUIDs, prefixes, lowercase aliases, invalid alphabet characters and overflow. D1 enforces the same contract for primary IDs. Region/vantage codes, hostnames, database/table names and composite measurement keys are natural keys, not entity IDs.
 
-`schema.sql` is the idempotent clean bootstrap (one SQL statement per line for D1 `exec`); historical data migrations are removed. Fresh stores recreate the schema and catalog before serving requests or running scheduled probes. Repeated startup preserves incidents, subscriptions and catalog edits made in the admin page. Seeded catalog IDs are fixed ULIDs; the admin page shows every component and endpoint ID. Probe secrets are keyed by endpoint ULID.
-
-Existing stores normalize retired providers to `other` (the existing self-hosted value), remove obsolete affinity headers and update the replication URL during bootstrap. Endpoint IDs, history, other headers, assertions and custom URLs, labels and descriptions are preserved; no table is rebuilt.
+The Worker applies `schema.sql` in a single D1 batch when a migration marker is missing. A fresh store gets the schema and seed catalog. An existing store keeps its catalog, including deletions and admin edits. Seeded catalog IDs are fixed ULIDs, and probe secrets use endpoint ULIDs as keys.
 
 Production uses the D1 store `ts-status` (`c2eca5bc-6045-4983-941a-4e01e4e0c749`).
 
@@ -121,6 +119,8 @@ Pages:
 | `/history`        | Incidents filtered by component, kind, impact, text and month, with MTTR                        |
 | `/incidents/:id`  | An incident's timeline and what the health checks saw around it                                 |
 | `/maintenance`    | Maintenance windows in progress, upcoming and completed                                         |
+
+Title search checks the 500 newest entries in the selected window. Search requests bypass the edge cache and are limited to 20 per minute per client at each Cloudflare location.
 
 `GET /api/ping` answers with the visitor's Cloudflare data center; the ping page times it as a baseline. Regions carry a `ping_url` the browser test times (`no-cors`, so any HTTPS URL on `*.terrascale.tech` works).
 
@@ -186,5 +186,7 @@ The `status` job of `.github/workflows/ci.yml` in the terrascale monorepo runs `
 Worker secrets: `SUBSCRIPTION_SECRET`, `ADMIN_SESSION_SECRET`, and the probe secrets `TERRABASE_PROBES` and `DATA_API_CANARY`. Set them through the `cf` CLI using protected stdin; never print them.
 
 Probe keys belong to the internal `terrascale` organization's `ts-status` project and are narrowed to its `status-canary` database by ULID, never customer data, with only `sql:read` and `sql:write`. `scripts/recover-canaries.py` creates the databases, the `canary` table, the Data API fixture row and the keys, and installs both probe secrets; the Data API canary never mutates the fixture, and the SQL API probe deletes every row it writes.
+
+Set `TS_STATUS_OWNER` to the approving account's email address, `TS_STATUS_MAILBOX` to the IMAP login that receives reset codes, and `CLOUDFLARE_ACCOUNT_ID` to the Worker account before running canary recovery. The mailbox password comes from `~/.config/terrascale/mailbox-password`.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

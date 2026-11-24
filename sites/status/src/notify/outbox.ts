@@ -14,6 +14,7 @@ import { newId } from "../ids";
 import { iso, sqlTime } from "../db/reads";
 import type { IncidentImpact, IncidentKind, IncidentStatus } from "../domain/status";
 import type { Env } from "../env";
+import { DAY } from "../format";
 import { email, webhook, type Notice } from "./messages";
 import { sign, webhookKey } from "./tokens";
 import { post } from "./webhooks";
@@ -23,6 +24,7 @@ export const AUTO_HOLD_MS = 5 * 60_000;
 
 /** Updates older than this are never enqueued. */
 const LOOKBACK_MS = 2 * 86_400_000;
+const OUTBOX_RETENTION_MS = 30 * DAY;
 
 /** Attempts before a message is given up. */
 export const MAX_ATTEMPTS = 8;
@@ -176,6 +178,17 @@ export async function deliverDue(
 /** Enqueues eligible updates, delivers up to a batch of due messages, and
     prunes old ones. Returns how many were sent and how many failed. */
 export async function runOutbox(env: Env, now: number, delivery: Delivery): Promise<{ sent: number; failed: number }> {
+  const cutoff = sqlTime(now - OUTBOX_RETENTION_MS);
+  await env.STATUS_DB.batch([
+    env.STATUS_DB.prepare("DELETE FROM outbox WHERE sent_at < ?1").bind(cutoff),
+    env.STATUS_DB.prepare("DELETE FROM outbox WHERE sent_at IS NULL AND attempts >= ?1 AND next_attempt_at < ?2").bind(
+      MAX_ATTEMPTS,
+      cutoff,
+    ),
+    env.STATUS_DB.prepare("DELETE FROM subscribers WHERE confirmed_at IS NULL AND created_at < ?1").bind(
+      sqlTime(now - 7 * DAY),
+    ),
+  ]);
   if (!env.SUBSCRIPTION_SECRET) return { sent: 0, failed: 0 };
   const { results } = await env.STATUS_DB.prepare(ELIGIBLE)
     .bind(sqlTime(now - LOOKBACK_MS), sqlTime(now - AUTO_HOLD_MS), ENQUEUE_BATCH)
@@ -191,15 +204,5 @@ export async function runOutbox(env: Env, now: number, delivery: Delivery): Prom
       .bind(JSON.stringify(results.map((pair) => ({ id: newId(), ...pair }))), sqlTime(now))
       .run();
   }
-  const result = await deliverDue(env, now, delivery);
-  // Retention: delivered messages for 30 days, unconfirmed subscribers for 7.
-  await env.STATUS_DB.batch([
-    env.STATUS_DB.prepare("DELETE FROM outbox WHERE sent_at IS NOT NULL AND sent_at < ?1").bind(
-      sqlTime(now - 30 * 86_400_000),
-    ),
-    env.STATUS_DB.prepare("DELETE FROM subscribers WHERE confirmed_at IS NULL AND created_at < ?1").bind(
-      sqlTime(now - 7 * 86_400_000),
-    ),
-  ]);
-  return result;
+  return deliverDue(env, now, delivery);
 }

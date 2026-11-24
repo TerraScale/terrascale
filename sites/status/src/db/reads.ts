@@ -93,37 +93,41 @@ const CURRENT_INCIDENTS = `SELECT ${INCIDENT_COLUMNS} FROM incidents
   ORDER BY status NOT IN ('resolved', 'completed') DESC, created_at DESC LIMIT 50`;
 
 const REGIONS = `SELECT code, name, country, map_x AS mapX, map_y AS mapY, ping_url AS pingUrl, ping_label AS pingLabel
-  FROM regions ORDER BY position, code`;
+  FROM active_regions ORDER BY position, code`;
 
-const ENDPOINTS = `SELECT id, component_id AS componentId, region_code AS regionCode, cluster, provider, url,
-    ${iso("live_since")} AS liveSince
-  FROM endpoints ORDER BY position, id`;
+const endpointCatalog = (source: "endpoints" | "active_endpoints") => `SELECT id, component_id AS componentId,
+    region_code AS regionCode, cluster, provider, url, ${iso("live_since")} AS liveSince
+  FROM ${source} ORDER BY position, id`;
 
 const CERTIFICATES = `SELECT host, ${iso("not_after")} AS notAfter, issuer, ${iso("checked_at")} AS checkedAt, error FROM tls_certs`;
 
 // Joined from the endpoints so every lookup is a primary key seek.
 const LATEST = `SELECT s.endpoint_id AS endpointId, ${iso("s.at")} AS at, s.state, s.ok, s.total,
     s.latency_ms AS latencyMs, s.results, s."values" AS sampleValues
-  FROM endpoints e JOIN probe_samples s ON s.endpoint_id = e.id
+  FROM active_endpoints e JOIN probe_samples s ON s.endpoint_id = e.id
     AND s.at = (SELECT max(at) FROM probe_samples WHERE endpoint_id = e.id)`;
 
 const periods = (table: "probe_hours" | "probe_days", column: "hour" | "day") =>
   `SELECT p.endpoint_id AS endpointId, ${iso(`p.${column}`)} AS start, p.checks, p.failures, p.degraded,
     p.latency_sum AS latencySum, p.hist
-  FROM endpoints e JOIN ${table} p ON p.endpoint_id = e.id AND p.${column} >= ?1 AND p.vantage = 'all'`;
+  FROM active_endpoints e JOIN ${table} p ON p.endpoint_id = e.id AND p.${column} >= ?1 AND p.vantage = 'all'`;
 
 const VANTAGES = `SELECT code, colo, ${iso("seen_at")} AS seenAt FROM vantages`;
 
-// Incidents and warnings matching the filters (null matches anything),
-// created in [?5, ?6), newest first.
-const HISTORY = `SELECT ${INCIDENT_COLUMNS} FROM incidents
+const HISTORY_LIMIT = 500;
+const HISTORY_WINDOW = "created_at >= ?4 AND created_at < ?5";
+const SEARCH_WINDOW = `WITH incidents AS MATERIALIZED (
+  SELECT * FROM main.incidents INDEXED BY incidents_created_at_idx
+  WHERE ${HISTORY_WINDOW} ORDER BY created_at DESC LIMIT ${HISTORY_LIMIT}
+)`;
+const historyQuery = (search: boolean) => `${search ? SEARCH_WINDOW : ""}
+  SELECT ${INCIDENT_COLUMNS} FROM incidents
   WHERE kind != 'maintenance'
     AND (?1 IS NULL OR kind = ?1)
     AND (?2 IS NULL OR impact = ?2)
     AND (?3 IS NULL OR EXISTS (SELECT 1 FROM incident_components c WHERE c.incident_id = incidents.id AND c.component_id = ?3))
-    AND (?4 IS NULL OR title LIKE '%' || ?4 || '%' ESCAPE '\\')
-    AND created_at >= ?5 AND created_at < ?6
-  ORDER BY created_at DESC LIMIT 500`;
+    AND ${search ? "title LIKE '%' || ?6 || '%' ESCAPE '\\'" : HISTORY_WINDOW}
+  ORDER BY created_at DESC LIMIT ${HISTORY_LIMIT}`;
 
 const INCIDENT = `SELECT ${INCIDENT_COLUMNS} FROM incidents WHERE id = ?1`;
 
@@ -192,7 +196,7 @@ export async function loadSnapshot(env: Env, window: SnapshotWindow): Promise<Sn
       db.prepare(COMPONENTS),
       db.prepare(CURRENT_INCIDENTS).bind(sqlTime(window.incidentsFrom)),
       db.prepare(REGIONS),
-      db.prepare(ENDPOINTS),
+      db.prepare(endpointCatalog("active_endpoints")),
       db.prepare(LATEST),
       db.prepare(periods("probe_hours", "hour")).bind(sqlTime(window.hoursFrom)),
       db.prepare(periods("probe_days", "day")).bind(sqlTime(window.daysFrom)),
@@ -243,14 +247,14 @@ export async function loadHistory(env: Env, filters: HistoryFilters): Promise<Hi
   const like = filters.q?.replace(/[\\%_]/g, (char) => `\\${char}`) ?? null;
   const [found, components] = await db.batch([
     db
-      .prepare(HISTORY)
+      .prepare(historyQuery(like !== null))
       .bind(
         filters.kind ?? null,
         filters.impact ?? null,
         filters.component ?? null,
-        like,
         sqlTime(filters.from),
         sqlTime(filters.to),
+        ...(like === null ? [] : [like]),
       ),
     db.prepare(COMPONENTS),
   ]);
@@ -289,7 +293,7 @@ export async function loadIncident(env: Env, id: string, now: number): Promise<I
     db.prepare(INCIDENT).bind(id),
     db.prepare(UPDATES).bind(id),
     db.prepare(COMPONENTS),
-    db.prepare(ENDPOINTS),
+    db.prepare(endpointCatalog("endpoints")),
   ]);
   const incident = incidents(found)[0];
   if (!incident) return null;

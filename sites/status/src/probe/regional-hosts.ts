@@ -31,15 +31,14 @@ function origins(body: string): RegionOrigin[] {
   return value.regions as RegionOrigin[];
 }
 
-/** Cheap anonymous host checks discovered from Atlas. Retain known probes
- * during discovery outages so an unavailable catalog cannot hide an outage. */
 export async function discoverRegionalHosts(db: D1Database, fetcher: typeof fetch = fetch): Promise<void> {
   try {
     const result = await check({ key: REGIONAL_ORIGINS, url: REGIONAL_ORIGINS, headers: "{}", body: true }, fetcher);
     if (result.status !== 200 || !result.body) throw new Error("Regional origin discovery unavailable");
     const regions = origins(result.body);
-    await db.batch(
-      regions.flatMap((region) => {
+    const codes = JSON.stringify(regions.map(({ id }) => id.toUpperCase()));
+    await db.batch([
+      ...regions.flatMap((region) => {
         const code = region.id.toUpperCase();
         const url = region.api + "/healthz";
         const assertions = JSON.stringify([
@@ -52,12 +51,22 @@ export async function discoverRegionalHosts(db: D1Database, fetcher: typeof fetc
             .bind(code, region.id),
           db
             .prepare(`INSERT INTO endpoints (id, component_id, region_code, cluster, provider, url, expect_status, assertions)
-              SELECT ?, ?, ?, ?, 'other', ?, '200', ? WHERE NOT EXISTS
-              (SELECT 1 FROM endpoints WHERE component_id = ? AND region_code = ? AND url = ?)`)
-            .bind(newId(), API_COMPONENT, code, region.id, url, assertions, API_COMPONENT, code, url),
+              SELECT ?1, ?2, ?3, ?4, 'other', ?5, '200', ?6
+              WHERE EXISTS (SELECT 1 FROM components WHERE id = ?2)
+                AND NOT EXISTS (SELECT 1 FROM endpoints WHERE component_id = ?2 AND region_code = ?3 AND url = ?5)`)
+            .bind(newId(), API_COMPONENT, code, region.id, url, assertions),
         ];
       }),
-    );
+      db
+        .prepare(`INSERT INTO region_discovery (region_code)
+        SELECT value FROM json_each(?1) WHERE true
+        ON CONFLICT (region_code) DO UPDATE SET retired = 0 WHERE region_discovery.retired = 1`)
+        .bind(codes),
+      db
+        .prepare(`UPDATE region_discovery SET retired = 1 WHERE retired = 0
+        AND region_code NOT IN (SELECT value FROM json_each(?1))`)
+        .bind(codes),
+    ]);
   } catch (error) {
     logEvent("error", "regional host discovery failed", { component: "regional-hosts", error });
   }
