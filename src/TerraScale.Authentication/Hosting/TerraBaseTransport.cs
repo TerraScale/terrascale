@@ -20,7 +20,20 @@ public static class TerraBaseTransport
 
     public delegate Task<IPAddress[]> HostResolver(string host, CancellationToken cancellationToken);
 
-    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger, HostResolver? resolve = null, string? peerSecret = null, CallerCredential? caller = null)
+    public static Uri ClientOrigin(Uri origin)
+    {
+        ArgumentNullException.ThrowIfNull(origin);
+        return origin.Scheme == Uri.UriSchemeHttp
+            && origin.UserInfo.Length == 0
+            && origin.AbsolutePath == "/"
+            && origin.Query.Length == 0
+            && origin.Fragment.Length == 0
+            && IsInternalNonLoopbackHost(origin.DnsSafeHost)
+            ? new UriBuilder(Uri.UriSchemeHttp, "127.0.0.1", origin.Port).Uri
+            : origin;
+    }
+
+    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger, HostResolver? resolve = null, string? peerSecret = null, CallerCredential? caller = null, DnsEndPoint? internalTarget = null)
     {
         resolve ??= Dns.GetHostAddressesAsync;
         ArgumentNullException.ThrowIfNull(otherRegions);
@@ -36,16 +49,21 @@ public static class TerraBaseTransport
         handler.EnableMultipleHttp2Connections = true;
         handler.ConnectCallback = async (context, cancellationToken) =>
         {
+            var primary = internalTarget is not null
+                && context.DnsEndPoint.Port == internalTarget.Port
+                && string.Equals(context.DnsEndPoint.Host, "127.0.0.1", StringComparison.Ordinal)
+                ? internalTarget
+                : context.DnsEndPoint;
             var tried = new HashSet<IPEndPoint>();
-            foreach (var host in otherRegions.Prepend(context.DnsEndPoint))
+            foreach (var host in otherRegions.Prepend(primary))
             {
                 foreach (var endpoint in await EndPointsAsync(resolve, host, cancellationToken))
                 {
                     if (tried.Add(endpoint) && await ConnectAsync(endpoint, cancellationToken) is { } stream)
                     {
-                        if (host != context.DnsEndPoint)
+                        if (host != primary)
                         {
-                            logger.ZLogWarning($"TerraBase in this region ({context.DnsEndPoint.Host:@Region}) did not answer; storage uses {endpoint:@Machine} ({host.Host:@Via}) until the connection is replaced");
+                            logger.ZLogWarning($"TerraBase in this region ({primary.Host:@Region}) did not answer; storage uses {endpoint:@Machine} ({host.Host:@Via}) until the connection is replaced");
                         }
 
                         return stream;
@@ -53,8 +71,8 @@ public static class TerraBaseTransport
                 }
             }
 
-            logger.ZLogWarning($"No TerraBase machine answered at {context.DnsEndPoint.Host:@Region} or at any of {otherRegions.Count:@Fallbacks} fallbacks; storage fails closed");
-            throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host}");
+            logger.ZLogWarning($"No TerraBase machine answered at {primary.Host:@Region} or at any of {otherRegions.Count:@Fallbacks} fallbacks; storage fails closed");
+            throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {primary.Host}");
         };
         HttpMessageHandler pipeline = new StrongConsistency { InnerHandler = new FailClosed(handler) };
         if (peerSecret is not null)
@@ -62,6 +80,59 @@ public static class TerraBaseTransport
             pipeline = new PeerCredentialHandler(peerSecret) { InnerHandler = pipeline };
         }
         return caller is null ? pipeline : new CallerHandler(caller) { InnerHandler = pipeline };
+    }
+
+    private static bool IsInternalNonLoopbackHost(string host)
+    {
+        if (string.IsNullOrEmpty(host))
+        {
+            return false;
+        }
+
+        if (string.Equals(host, "host.docker.internal", StringComparison.OrdinalIgnoreCase)
+            || (host.Length > ".internal".Length
+                && host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)
+                && Uri.CheckHostName(host) == UriHostNameType.Dns))
+        {
+            return true;
+        }
+
+        if (!IPAddress.TryParse(host, out var ip))
+        {
+            return false;
+        }
+
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+
+        if (IPAddress.IsLoopback(ip))
+        {
+            return false;
+        }
+
+        if (ip.AddressFamily == AddressFamily.InterNetwork)
+        {
+            Span<byte> bytes = stackalloc byte[4];
+            if (!ip.TryWriteBytes(bytes, out _))
+            {
+                return false;
+            }
+
+            return bytes[0] == 10
+                || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
+                || (bytes[0] == 192 && bytes[1] == 168)
+                || (bytes[0] == 100 && bytes[1] is >= 64 and <= 127);
+        }
+
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            Span<byte> bytes = stackalloc byte[16];
+            return ip.TryWriteBytes(bytes, out _) && (bytes[0] & 0xfe) == 0xfc;
+        }
+
+        return false;
     }
 
     internal static string Validated(string peerSecret) =>
