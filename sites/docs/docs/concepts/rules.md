@@ -140,7 +140,7 @@ Authorization: Bearer <project credential with databases:write>
 
 This example denies all end-user operations. On the first deployment, use `If-None-Match: *` instead of `If-Match`. Missing preconditions return `428 precondition_required`; a stale version returns `412 version_mismatch`. Read the current rules, review the changes and submit against that version.
 
-Each successful deployment creates a version. The last 100 are retained. List them with `GET …/rules/versions`, read one with `GET …/rules/versions/{version}`, or restore one with `POST …/rules/versions/{version}/restore`. Restore needs the same precondition and validates against today's schema; it creates a new version. The dashboard provides history, diffs and restore.
+Each successful deployment creates a version. List them newest first with `GET …/rules/versions`. The endpoint returns 20 by default and accepts a `limit` of 1 to 100. Pass the returned `next` cursor as `after` to read the next page. Read one version with `GET …/rules/versions/{version}` or restore one with `POST …/rules/versions/{version}/restore`. Restore needs the same precondition and validates against today's schema; it creates a new version. The dashboard provides history, diffs and restore.
 
 Writes use new rules on their next request. Reads use them when replication reaches the serving region. Live shapes refetch when their rules change. Disabling a user or changing claims does not invalidate an already issued access token immediately: allow up to five minutes plus 30 seconds of clock skew. Data already delivered to a client remains with that client.
 

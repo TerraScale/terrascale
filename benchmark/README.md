@@ -16,7 +16,7 @@ Or directly inside `benchmark/`:
 make -C benchmark run
 ```
 
-This builds `bin/ts-bench`, the C# runner (`benchmark/csharp`), and the Rust runner (`benchmark/rust`), boots ephemeral loopback instances of `TerraBase`, `ts-auth`, and `TerraScale.Dashboard` in a temporary directory, provisions a real project and API key in `ts-auth`, executes every scenario sequentially across C#, Go, and Rust, tears down all processes cleanly, and prints a Markdown comparison table.
+The root target builds TerraBase with the pinned SQLite3MultipleCiphers native library and builds ts-auth and Dashboard. The benchmark builds the Go orchestrator (`benchmark/bin/ts-bench`) and the C# and Rust SDK runners. In self-hosted mode, the orchestrator starts those three services on loopback with throwaway data, provisions the project and API key, runs the scenarios, and prints a Markdown comparison table. This harness covers SQL and service endpoint round trips. The full local platform stack, including ts-platform, is available through `make dev`.
 
 Save a report to disk or tune iterations:
 
@@ -50,7 +50,7 @@ benchmark/bin/ts-bench \
 | `sql_rest_write` | C#, Go, Rust | Parameterized single-row `INSERT` over SQL REST (`POST .../sql/execute`). |
 | `sql_rest_read` | C#, Go, Rust | Parameterized point `SELECT` over SQL REST. |
 | `sql_rest_batch` | C#, Go, Rust | Multi-statement transactional `INSERT` batch (`--batch-size` statements per request). |
-| `sql_ws_transaction` | C#, Go, Rust | Persistent WebSocket SQL session (`terrascale.sql.v1`), `INSERT` + `SELECT` inside `Transaction`. |
+| `sql_ws_transaction` | C#, Go, Rust | Persistent WebSocket SQL session (`terrascale.sql.v2`), `INSERT` + `SELECT` inside `Transaction`. |
 | `dashboard_roundtrip` | C#, Go, Rust | HTTP `GET /health/live` + `GET /.well-known/oauth-authorization-server` against `TerraScale.Dashboard`. |
 
 ## Library microbenchmarks

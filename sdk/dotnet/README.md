@@ -47,7 +47,7 @@ or inside an open transaction and return one result set per statement that retur
 `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid` and `decimal` arguments are sent as text and
 `GetFieldValue<T>` reads them back.
 
-For EF Core, see [EF Core over the Postgres wire](https://docs.terrascale.tech/guides/orm-dotnet#ef-core-over-the-postgres-wire).
+For Npgsql and other .NET Postgres clients, see the [.NET ORM guide](https://docs.terrascale.tech/guides/orm-dotnet).
 
 - `ApiKey` is a project or organization API key from the dashboard. The client exchanges it at ts-auth
   (`client_credentials`) for an access token to the project named in `Database(projectId, …)`, caches the token and
@@ -66,8 +66,6 @@ For EF Core, see [EF Core over the Postgres wire](https://docs.terrascale.tech/g
   `write_outcome_unknown` and `commit_uncertain` require reconciliation because the write may have committed.
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
-
-The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
 
 [`samples/sql-quickstart.cs`](samples/sql-quickstart.cs) runs this flow against a live region with a ts CLI sign-in:
 `dotnet run samples/sql-quickstart.cs -- <refresh-token-file> <organization> <project> <database> <region>`.
@@ -182,8 +180,7 @@ await client.SetDatabasePlacementAsync(project, db.Id, placement: TerraBaseDatab
 
 Every region that holds a database is equal. `TerraBaseManagedDatabase` carries `Regions` (every region that holds it,
 sorted by region id; the order has no meaning) and `AllRegions`. `CreateDatabaseAsync` and `SetDatabasePlacementAsync`
-take a `TerraBaseDatabasePlacement` value made with `In` (one to nine distinct regions) or `EveryRegion`. TerraBase picks which region writes and
-moves that on its own when the set changes. `Database(projectId, name).GetRegionsAsync` reads each region's
+take a `TerraBaseDatabasePlacement` value made with `In` (one to nine distinct regions) or `EveryRegion`. Each region commits writes locally. `Database(projectId, name).GetRegionsAsync` reads each region's
 `AppliedBookmark`, `LagMs` (-1 when unknown) and `Healthy` as the answering region observes them, sampled at
 `ObservedAtUtc`. `CreateDatabaseAsync(project, name, defaultConsistency)` and
 `SetDatabaseConsistencyAsync` set the database's `DefaultConsistency`, which `TerraBaseManagedDatabase` reports.
@@ -285,10 +282,9 @@ TerraBaseManagedDatabase copy = await client.Database(projectId, "app").BranchAs
 `Regions` names every region that holds the database. `CreateDatabaseAsync` without regions uses the called region.
 
 Every region that holds a database is equal.
-A region can accept a local SQL REST write; TerraBase applies it once. The default
-`TerraScale-Durability` is `local`. REST reads can use a ready local region. Copies are eventually
-consistent. REST, psql and SQL WebSocket can read a ready local copy. Postgres and WebSocket sessions
-preserve read-your-writes; use the writer for REST reads that must see a previous write. All-regions
+REST, PostgreSQL and SQL WebSocket can read and write in any region that holds the database. Copies converge
+as commits replicate. The SQL SDK sends its latest `TerraScale-Bookmark` so reads can observe previous writes in
+whichever placed region answers. All-regions
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
 
@@ -336,7 +332,6 @@ remains `OperationCanceledException`. The SDK resends safe GET/HEAD reads up to 
 `503 auth_unavailable`, `storage_busy` or `capacity`, gateway 502 and 504 answers, or a lost connection. Each resend asks the
 `AccessTokenProvider` again and waits for `Retry-After` plus up to 250 ms, or full jitter over 250/500 ms; when that
 wait would pass the request deadline, the failure is thrown at once. Authentication errors never retry.
-A TerraBase push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 The SDK does not exchange or cache tokens; caller-owned token providers must drop revoked/expired tokens
 and stop exchanging the refused key. `503 write_outcome_unknown` and all other errors are sent once. TerraBase
 rejects `Idempotency-Key`; do not replay a write whose outcome is unknown.
@@ -360,17 +355,10 @@ Both clients resolve their endpoint per request through `ITerraBaseEndpointResol
 and cancellation token, and every returned origin is validated before credentials
 are sent.
 
-Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Use the global API
-origin, `https://api.terrascale.tech`, or configure `BaseAddress`/`EndpointResolver` for another deployment.
-`Region` selects the entry region with `X-TerraScale-Region-Pin`. In the source-only, unreleased server proxy
-contract, a database call reaching a region without a copy is served through one proxy hop by a region that holds
-the database. `Region` has no effect on the serving region of these calls: the proxy removes the pin.
-An unreachable destination or stale forwarded placement returns `503 unavailable`; an uncertain write returns
-`503 write_outcome_unknown`. Every `TerraBaseException` carries the answering region (`X-TerraBase-Region`)
-when TerraBase named it. See [release scope and proxy behavior](../region-proxy.md).
+Use the global API origin, `https://api.terrascale.tech`, or configure `BaseAddress`/`EndpointResolver` for
+another deployment. `Region` sends `X-TerraScale-Region-Pin`. Every `TerraBaseException` carries the
+answering region (`X-TerraBase-Region`) when TerraBase named it. See the [regions guide](https://docs.terrascale.tech/concepts/regions).
 
-No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
-than the monorepo depends on TerraBase).
 `contracts/terrabase/routes.json` records the existing TerraBase routes the clients call. The monorepo's journey
 drives these clients through ts-auth, the dashboard and its .NET runner against the TerraBase built from the same
 commit.
@@ -435,8 +423,7 @@ Create and update with one to nine distinct serving region ids in `regions`, sep
 and from a rename. The response sorts `regions` by region ID. `placementVersion` changes with membership
 and stays unchanged for an identical set. Region status reports each region's applied bookmark, lag in
 milliseconds and health.
-A removed regional endpoint proxies to a region that holds the database in the unreleased server contract;
-see [source-only proxy behavior](../region-proxy.md). Use the global API origin.
+Use the global API origin for clients that do not need to select a particular region.
 
 
 ## Project Authentication management

@@ -5,6 +5,8 @@ description: Measured snapshot restore component timings, integrity results, and
 
 # Restore drill evidence — 2026-10-23
 
+This is a historical record of the October 2026 snapshot drill. For the current TerraBase backup and recovery steps, see [Backups and restore](/guides/backups-and-restore).
+
 At **2026-10-23T11:55:40.6790912Z**, a live restore drill selected the newest observed production database snapshot, dated **2026-10-23T11:33:29.764Z**, from a real Tigris object-storage bucket. The drill independently downloaded and decrypted a reference, then used the restore engine to reconstruct a separate disposable copy.
 
 This demonstrates a **snapshot-only restore component** with matching captured logical state and successful integrity checks. It does not establish full application or cell service recovery time, measured write-loss recovery point, or a full disaster-recovery SLA.
