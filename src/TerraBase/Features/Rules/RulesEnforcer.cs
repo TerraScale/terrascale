@@ -15,6 +15,10 @@ internal readonly union ReadConditionOutcome(RewrittenSql, SqlRefusal);
 
 internal readonly union EndUserStatementOutcome(EndUserStatement, SqlRefusal);
 
+internal readonly union SchemaObjectsOutcome(SchemaObjects, SqlRefusal);
+
+internal sealed record SchemaObjects(FrozenSet<string> Views, FrozenSet<string> Triggers);
+
 internal sealed record EnforcedSql(IReadOnlyList<SqlStatement> Statements, string? RulesVersion);
 
 internal sealed record RewrittenSql(
@@ -405,28 +409,49 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             }
         }
 
-        var views = await ViewsAsync(session, [.. scoped.Keys], cancellationToken);
-        return new RewrittenSql(pieces, guards.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase), scoped.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase), views);
+        var objects = await SchemaObjectsAsync(session, [.. scoped.Keys], [.. statement.Ctes, .. guards.Keys, .. scoped.Keys], skipTarget >= 0 && statement.Ctes.Count > 0,
+            index, cancellationToken);
+        return objects switch
+        {
+            SchemaObjects found when found.Triggers.Overlaps(statement.Ctes) || found.Triggers.Overlaps(guards.Keys) =>
+                SqlRefusal.RuleDenied("a common table expression name matches a trigger; rename it", index),
+            SchemaObjects found => new RewrittenSql(pieces, guards.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase), scoped.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase),
+                found.Views.Except(found.Triggers, StringComparer.OrdinalIgnoreCase).ToFrozenSet(StringComparer.OrdinalIgnoreCase)),
+            SqlRefusal refusal => refusal,
+        };
     }
 
-    private static async ValueTask<FrozenSet<string>> ViewsAsync(ISqlDatabaseSession? session, string[] tables, CancellationToken cancellationToken)
+    private static async ValueTask<SchemaObjectsOutcome> SchemaObjectsAsync(
+        ISqlDatabaseSession? session, string[] tables, string[] names, bool triggersRequired, int index, CancellationToken cancellationToken)
     {
-        if (session is null || tables.Length == 0)
+        var none = new SchemaObjects(FrozenSet<string>.Empty, FrozenSet<string>.Empty);
+        if (session is null)
         {
-            return FrozenSet<string>.Empty;
+            return triggersRequired ? SqlRefusal.RuleDenied("end-user writes in a transaction cannot declare common table expressions", index) : none;
         }
 
-        var names = string.Join(", ", tables.Select(static table => RulesCompiler.Literal(table)));
-        var request = new SqlStatementRequest(session.DatabaseId,
-            [new SqlStatement(string.Concat("SELECT name FROM sqlite_schema WHERE type = 'view' AND name COLLATE NOCASE IN (", names, ")"), [], SqlBuild.NoNamed)],
-            SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
+        if (names.Length == 0)
+        {
+            return none;
+        }
+
+        var sql = string.Concat("SELECT type, name FROM sqlite_schema WHERE (type = 'view' AND name COLLATE NOCASE IN (", Literals(tables),
+            ")) OR (type = 'trigger' AND name COLLATE NOCASE IN (", Literals(names), "))");
+        var request = new SqlStatementRequest(session.DatabaseId, [new SqlStatement(sql, [], SqlBuild.NoNamed)], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
         var outcome = await session.ExecuteReadAsync(request, cancellationToken);
         return outcome switch
         {
-            SqlReadResult { ResultSets: [.., var last] } => last.Rows.Select(static row => SqlBuild.Format(row[0])).ToFrozenSet(StringComparer.OrdinalIgnoreCase),
-            SqlReadResult or SqlError or StorageBusy or StorageTimeout => FrozenSet<string>.Empty,
+            SqlReadResult { ResultSets: [.., var last] } => new SchemaObjects(
+                last.Rows.Where(static row => SqlBuild.Format(row[0]) == "view").Select(static row => SqlBuild.Format(row[1])).ToFrozenSet(StringComparer.OrdinalIgnoreCase),
+                last.Rows.Where(static row => SqlBuild.Format(row[0]) == "trigger").Select(static row => SqlBuild.Format(row[1])).ToFrozenSet(StringComparer.OrdinalIgnoreCase)),
+            SqlReadResult => SqlRefusal.RuleDenied("the schema could not be checked", index),
+            SqlError error => SqlRefusal.From(error),
+            StorageBusy busy => SqlRefusal.From(busy),
+            StorageTimeout timeout => SqlRefusal.From(timeout),
         };
     }
+
+    private static string Literals(string[] values) => string.Join(", ", values.Select(static value => RulesCompiler.Literal(value)));
 
     private static EndUserStatementOutcome Parse(string sql, int index)
     {
