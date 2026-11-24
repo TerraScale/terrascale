@@ -15,6 +15,7 @@ if [[ $destination == http://* ]]; then
 fi
 repository=${destination%:*}
 source_repo=${source%@*}
+source_repo=${source_repo#http://}
 IFS=, read -ra tags <<< "${destination##*:}"
 if [[ $source_repo != "$repository" ]]; then
   oras copy "${copy_transport[@]}" "$source" "$repository:${tags[0]}"

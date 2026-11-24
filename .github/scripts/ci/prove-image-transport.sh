@@ -18,6 +18,8 @@ fi
 [[ $(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:5000/v2/transport/terrascale/oras/manifests/release") == 404 ]]
 bash "$(dirname "$0")/publish-image.sh" "$source" "http://$repository:proof,release" "$work/bundle.json"
 [[ $(oras resolve --plain-http "$repository:release") == "$digest" ]]
+bash "$(dirname "$0")/publish-image.sh" "$repository@$digest" "http://$repository:self-proof,self-release" "$work/bundle.json"
+[[ $(oras resolve --plain-http "$repository:self-release") == "$digest" ]]
 [[ $(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:5000/v2/transport/terrascale/oras/referrers/$digest") == 404 ]]
 oras manifest fetch --plain-http "$repository:sha256-${digest#sha256:}" |
   jq -e --arg type "$type" '.mediaType == "application/vnd.oci.image.index.v1+json" and (.manifests | any(.artifactType == $type))' > /dev/null

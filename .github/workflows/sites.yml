@@ -2,7 +2,7 @@ name: Sites
 
 on:
   workflow_run:
-    workflows: [CI, 'Images (GHCR)']
+    workflows: [CI, 'Images (OCIR)']
     types: [completed]
     branches: [main]
   schedule:

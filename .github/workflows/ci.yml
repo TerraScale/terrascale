@@ -531,7 +531,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
       attestations: write
       # ts-orch accepts this job's OIDC token to release the image it just published.
       id-token: write
@@ -586,9 +585,7 @@ jobs:
           context: ${{ runner.temp }}/image-payloads
           file: ${{ runner.temp }}/image-payloads/Dockerfile
           platforms: linux/arm64
-          tags: |
-            sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}:${{ github.sha }}
-            ${{ github.ref == 'refs/heads/main' && inputs.publication != 'build-only' && format('sa-saopaulo-1.ocir.io/{0}/terrascale/{1}:main', vars.OCIR_NAMESPACE, env.SERVICE) || '' }}
+          tags: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -600,7 +597,7 @@ jobs:
           INDEX: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}"
+          image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}"
           { echo '```'; docker buildx imagetools inspect "${image}@${INDEX}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
             jq -r 'if .manifests then (.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest) else empty end')
@@ -666,14 +663,14 @@ jobs:
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
-          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
-          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
+          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
+          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
       - name: Deploy through ts-orch
         if: steps.qualify.outputs.qualified != 'false' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
         working-directory: terrascale
         env:
           ARM64: ${{ steps.digest.outputs.arm64 }}
-        run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}@${ARM64}"
+        run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}"
 
   main-fallback:
     needs: [changes, checks, all-green, main]
@@ -692,7 +689,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
       attestations: write
       id-token: write
       actions: read
@@ -716,7 +712,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
       attestations: write
       id-token: write
       actions: read
@@ -739,7 +734,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
       attestations: write
       id-token: write
       actions: read
@@ -761,7 +755,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      packages: write
       attestations: write
       id-token: write
       actions: read
@@ -780,7 +773,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-      packages: write
+      attestations: read
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -808,7 +801,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$ARM64" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'terrabase_arm64 must be sha256:<64 hex>' >&2; exit 1; }
-          image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/terrabase@${ARM64}"
+          image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA"
@@ -825,7 +818,6 @@ jobs:
       contents: read
       actions: read
       issues: write
-      packages: write
       attestations: write
       id-token: write
     steps:
@@ -866,7 +858,7 @@ jobs:
           cache-dependency-path: "**/packages.lock.json"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - name: Build or reuse the target image and publish its main tag
+      - name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/reconcile-image.sh auth
       - id: authdigest
@@ -923,7 +915,7 @@ jobs:
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
           gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
       - name: Deploy ts-auth through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-auth "$IMAGE"

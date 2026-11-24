@@ -12,7 +12,7 @@ if docker buildx imagetools inspect "$image:${REVISION:?}" --raw > "$RUNNER_TEMP
   cached=true
   echo "Reusing $image:$REVISION"
 else
-  if ! grep -Eqi 'manifest unknown|not found|name_unknown' "$RUNNER_TEMP/manifest-error"; then
+  if ! grep -Eqi 'manifest[_ ]unknown|not found|name[_ ]unknown' "$RUNNER_TEMP/manifest-error"; then
     cat "$RUNNER_TEMP/manifest-error" >&2
     exit 1
   fi

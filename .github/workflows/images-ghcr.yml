@@ -62,7 +62,7 @@ jobs:
           node-version: '24.21.0'
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - name: Build or reuse the target image and publish its main tag
+      - name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/reconcile-image.sh dashboard
       - id: dashboarddigest
@@ -119,7 +119,7 @@ jobs:
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
           gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main
       - name: Deploy ts-dashboard through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-dashboard "$IMAGE"
