@@ -30,7 +30,7 @@ internal static class QuicMeshLimits
     public static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan OrderedChannelIdleTimeout = TimeSpan.FromSeconds(30);
-    public static readonly TimeSpan StreamReadTimeout = TimeSpan.FromSeconds(60);
+    public static readonly TimeSpan PushReadTimeout = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan PooledConnectionIdleTimeout = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan IdleSweepInterval = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan ConnectFailureBackoff = TimeSpan.FromMilliseconds(250);

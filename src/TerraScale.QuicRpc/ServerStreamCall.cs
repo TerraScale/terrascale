@@ -24,6 +24,7 @@ internal sealed class ServerStreamCall<TRes>(
     CancellationToken cancellationToken) : IAsyncDisposable
     where TRes : IBinaryMessage<TRes>
 {
+    private readonly CallScope _scope = new(QuicMeshLimits.CallTimeout, timeProvider, client.ServerStreamToken, cancellationToken);
     private readonly long _started = timeProvider.GetTimestamp();
     private StreamLease? _lease;
     private bool _entered;
@@ -35,12 +36,11 @@ internal sealed class ServerStreamCall<TRes>(
     {
         client.InFlight.Enter();
         _entered = true;
-        using var scope = new CallScope(QuicMeshLimits.CallTimeout, timeProvider, client.ServerStreamToken, cancellationToken);
         var encoded = builder.Seal(messageTypeId, QuicProtocol.ControlEndOfStream, requestId);
-        var outcome = await client.OpenAsync(peerId, QuicStreamType.Bidirectional, scope);
+        var outcome = await client.OpenAsync(peerId, QuicStreamType.Bidirectional, _scope);
         return outcome switch
         {
-            StreamLease lease => await SendAsync(lease, encoded, scope),
+            StreamLease lease => await SendAsync(lease, encoded),
             QuicFault fault => FailOpen(fault),
         };
     }
@@ -52,8 +52,7 @@ internal sealed class ServerStreamCall<TRes>(
             return new StreamEnded();
         }
 
-        using var scope = new CallScope(QuicMeshLimits.StreamReadTimeout, timeProvider, client.ServerStreamToken, cancellationToken);
-        var outcome = await QuicIo.ReadFrameAsync(lease.Stream, scope);
+        var outcome = await QuicIo.ReadFrameAsync(lease.Stream, _scope);
         return outcome switch
         {
             PooledFrame frame => Interpret(frame),
@@ -80,6 +79,7 @@ internal sealed class ServerStreamCall<TRes>(
             metrics.StreamClosed(QuicSide.Client);
         }
 
+        _scope.Dispose();
         if (_entered)
         {
             _entered = false;
@@ -89,11 +89,11 @@ internal sealed class ServerStreamCall<TRes>(
         }
     }
 
-    private async ValueTask<ServerStreamOpenOutcome> SendAsync(StreamLease lease, ReadOnlyMemory<byte> encoded, CallScope scope)
+    private async ValueTask<ServerStreamOpenOutcome> SendAsync(StreamLease lease, ReadOnlyMemory<byte> encoded)
     {
         _lease = lease;
         metrics.StreamOpened(QuicSide.Client);
-        var outcome = await QuicIo.WriteAsync(lease.Stream, encoded, true, scope);
+        var outcome = await QuicIo.WriteAsync(lease.Stream, encoded, true, _scope);
         return outcome switch
         {
             QuicSent => Sent(encoded.Length),
@@ -104,6 +104,7 @@ internal sealed class ServerStreamCall<TRes>(
     private StreamOpened Sent(int length)
     {
         metrics.Sent(QuicSide.Client, length);
+        _scope.DisarmDeadline();
         return new StreamOpened();
     }
 

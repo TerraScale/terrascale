@@ -465,7 +465,7 @@ internal sealed class QuicRpcServerCore(
             while (true)
             {
                 FrameRead read;
-                using (var scope = new CallScope(QuicMeshLimits.StreamReadTimeout, timeProvider, cancellationToken, CancellationToken.None))
+                using (var scope = new CallScope(QuicMeshLimits.PushReadTimeout, timeProvider, cancellationToken, CancellationToken.None))
                 {
                     read = await QuicIo.ReadFrameAsync(stream, scope);
                 }

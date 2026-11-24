@@ -184,6 +184,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             }
 
             _active = null;
+            _everConnected = false;
             return active;
         }
     }

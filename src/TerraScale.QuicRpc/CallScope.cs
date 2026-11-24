@@ -18,6 +18,8 @@ internal sealed class CallScope : IDisposable
 
     public CancellationToken Token => _linked.Token;
 
+    public void DisarmDeadline() => _deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+
     public QuicFault Interrupted() =>
         _shutdown.IsCancellationRequested ? new TransportShutdown("The QUIC transport is shutting down.")
         : _deadline.IsCancellationRequested ? new DeadlineExceeded("The QUIC operation exceeded its deadline.")
