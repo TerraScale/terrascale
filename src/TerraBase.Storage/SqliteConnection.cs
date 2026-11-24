@@ -196,22 +196,28 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        status = Bind(statement, parameters);
-        while (status.IsOk)
+        try
         {
-            var rc = SqliteNative.Step(statement);
-            if (rc == SqliteNative.Done)
+            status = Bind(statement, parameters);
+            while (status.IsOk)
             {
-                break;
-            }
+                var rc = SqliteNative.Step(statement);
+                if (rc == SqliteNative.Done)
+                {
+                    break;
+                }
 
-            if (rc != SqliteNative.Row)
-            {
-                status = Status(rc);
+                if (rc != SqliteNative.Row)
+                {
+                    status = Status(rc);
+                }
             }
         }
+        finally
+        {
+            Return(statement, cached);
+        }
 
-        Return(statement, cached);
         return status;
     }
 
@@ -223,25 +229,31 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        status = Bind(statement, parameters);
-        while (status.IsOk)
+        try
         {
-            var rc = SqliteNative.Step(statement);
-            if (rc == SqliteNative.Done)
+            status = Bind(statement, parameters);
+            while (status.IsOk)
             {
-                break;
-            }
+                var rc = SqliteNative.Step(statement);
+                if (rc == SqliteNative.Done)
+                {
+                    break;
+                }
 
-            if (rc != SqliteNative.Row)
-            {
-                status = Status(rc);
-                break;
-            }
+                if (rc != SqliteNative.Row)
+                {
+                    status = Status(rc);
+                    break;
+                }
 
-            rows.Add(ReadRow(statement));
+                rows.Add(ReadRow(statement));
+            }
+        }
+        finally
+        {
+            Return(statement, cached);
         }
 
-        Return(statement, cached);
         return status;
     }
 
@@ -254,21 +266,27 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        status = Bind(statement, parameters);
-        if (status.IsOk)
+        try
         {
-            var rc = SqliteNative.Step(statement);
-            if (rc == SqliteNative.Row)
+            status = Bind(statement, parameters);
+            if (status.IsOk)
             {
-                row = ReadRow(statement);
-            }
-            else if (rc != SqliteNative.Done)
-            {
-                status = Status(rc);
+                var rc = SqliteNative.Step(statement);
+                if (rc == SqliteNative.Row)
+                {
+                    row = ReadRow(statement);
+                }
+                else if (rc != SqliteNative.Done)
+                {
+                    status = Status(rc);
+                }
             }
         }
+        finally
+        {
+            Return(statement, cached);
+        }
 
-        Return(statement, cached);
         return status;
     }
 
