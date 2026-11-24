@@ -15,7 +15,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
-use tokio::time::{interval_at, timeout, timeout_at, Instant, MissedTickBehavior};
+use tokio::time::{interval_at, timeout, Instant, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::Message;
 
 use super::client::WebSocket;
@@ -451,13 +451,16 @@ impl SqlSession {
                 link: link.clone(),
                 id,
             };
-            let deadline = Instant::now() + FRAME_DEADLINE;
-            let failure =
-                match timeout_at(deadline, sink.send(Message::Text(frame.as_str().into()))).await {
-                    Ok(Ok(())) => None,
-                    Ok(Err(error)) => Some(error.to_string()),
-                    Err(_) => Some("sending the SQL frame timed out".into()),
-                };
+            let failure = match timeout(
+                FRAME_DEADLINE,
+                sink.send(Message::Text(frame.as_str().into())),
+            )
+            .await
+            {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(error.to_string()),
+                Err(_) => Some("sending the SQL frame timed out".into()),
+            };
             if let Some(reason) = failure {
                 fail(&link.wire, &self.shared, &reason);
                 return if lock(&self.shared.state).uncertain {
@@ -467,18 +470,9 @@ impl SqlSession {
                 };
             }
             drop(sink);
-            let answer = match timeout_at(deadline, &mut answer).await {
-                Ok(result) => result,
-                Err(_) => {
-                    fail(
-                        &link.wire,
-                        &self.shared,
-                        "waiting for the SQL answer timed out",
-                    );
-                    answer.await
-                }
-            }
-            .unwrap_or_else(|_| Err(Error::Transport("SQL session closed".into())))?;
+            let answer = answer
+                .await
+                .unwrap_or_else(|_| Err(Error::Transport("SQL session closed".into())))?;
             drop(flight);
             return match answer.error {
                 Some(error) => Err(Error::Sql {

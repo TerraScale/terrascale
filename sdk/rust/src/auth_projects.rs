@@ -435,7 +435,10 @@ impl fmt::Debug for ProjectProviderUpdate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ProjectProviderUpdate")
             .field("client_id", &self.client_id)
-            .field("client_secret", &"<redacted>")
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
             .field("issuer", &self.issuer)
             .field("team_id", &self.team_id)
             .field("key_id", &self.key_id)
@@ -503,7 +506,10 @@ impl fmt::Debug for ProjectClient {
             .field("type", &self.r#type)
             .field("redirect_uris", &self.redirect_uris)
             .field("created_at", &self.created_at)
-            .field("client_secret", &"<redacted>")
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
             .field("allowed_scopes", &self.allowed_scopes)
             .field("allowed_audiences", &self.allowed_audiences)
             .field("token_lifetime_minutes", &self.token_lifetime_minutes)
