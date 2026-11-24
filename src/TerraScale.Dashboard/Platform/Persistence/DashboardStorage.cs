@@ -181,27 +181,30 @@ public static class DashboardStorage
         {
             var address = addresses[i];
             var hasMore = i + 1 < addresses.Length;
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            Socket? socket = null;
             using var attempt = hasMore ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken) : null;
             attempt?.CancelAfter(DialTimeout);
             try
             {
+                socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                socket.NoDelay = true;
                 await socket.ConnectAsync(new IPEndPoint(address, endpoint.Port), attempt?.Token ?? cancellationToken);
                 return new NetworkStream(socket, ownsSocket: true);
             }
             catch (SocketException error) when (!cancellationToken.IsCancellationRequested)
             {
-                socket.Dispose();
+                socket?.Dispose();
                 last = error;
             }
             catch (OperationCanceledException error) when (attempt is not null && !cancellationToken.IsCancellationRequested)
             {
-                socket.Dispose();
+                socket?.Dispose();
                 last = error;
             }
             catch
             {
-                socket.Dispose();
+                socket?.Dispose();
+                cancellationToken.ThrowIfCancellationRequested();
                 throw;
             }
         }
