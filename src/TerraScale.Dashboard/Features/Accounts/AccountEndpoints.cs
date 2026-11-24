@@ -34,15 +34,15 @@ namespace TerraScale.Dashboard.Features.Accounts
         private static string SwitchReturnPath(string? returnUrl, AccountContext selected)
         {
             var path = Csrf.LocalRedirect(returnUrl);
-            var route = path.Split('?', '#')[0];
-            const string prefix = "/databases/";
-            if (!route.StartsWith(prefix, StringComparison.Ordinal))
+            var target = path.Split('?', '#')[0].Split('/') switch
             {
-                return WorkspaceUrl.For(selected, path, replace: true);
-            }
-
-            var databaseId = Uri.UnescapeDataString(route[prefix.Length..].Split('/')[0]);
-            return WorkspaceUrl.For(selected, selected.Project?.Databases.ContainsKey(databaseId) == true ? path : "/databases", replace: true);
+                [_, "databases", var databaseId, ..] => selected.Project?.Databases.ContainsKey(Uri.UnescapeDataString(databaseId)) == true ? path : "/databases",
+                [_, "api-keys", _, ..] => "/api-keys",
+                [_, "storage"] => "/storage",
+                [_, "project", ..] => selected.Project is null ? "/" : path,
+                _ => path,
+            };
+            return WorkspaceUrl.For(selected, target, replace: true);
         }
 
         public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)

@@ -467,6 +467,12 @@ const mount = root => {
   }
   if (form) {
     addEventListener('submit', event => { if (event.target === form && !event.defaultPrevented) work(true); }, { signal });
+    document.addEventListener('datastar-fetch', event => {
+      const { type, el } = event.detail;
+      if (!(el instanceof Element) || !form.contains(el)) return;
+      if (type === 'started' && (form.noValidate || form.checkValidity())) work(true);
+      else if (type === 'finished') work(false);
+    }, { signal });
     addEventListener('pageshow', () => work(false), { signal });
     addEventListener('keydown', event => { if (event.key === 'Escape') work(false); }, { signal });
     form.addEventListener('reset', () => setTimeout(() => sync(null)), { signal });

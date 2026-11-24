@@ -149,7 +149,6 @@
   }
 }
 
-/* Divided rows: members, keys, steps. */
 .ts-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -170,6 +169,11 @@
   gap: var(--ts-s3);
   padding: var(--ts-s3) var(--ts-s4);
   border-top: 1px solid var(--ts-line);
+  transition: background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-rows > li:hover {
+  background: var(--ts-hover);
 }
 
 .ts-rows > li:first-child {
@@ -177,8 +181,8 @@
 }
 
 .ts-rows-title {
-  font-weight: 500;
   min-width: 0;
+  font-weight: 500;
 }
 
 .ts-rows-meta {
@@ -246,7 +250,6 @@
   justify-self: stretch;
 }
 
-/* Key-value definitions. Accepts dt/dd pairs directly or wrapped in divs. */
 .ts-kv {
   display: grid;
   grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
@@ -267,7 +270,6 @@
   overflow-wrap: anywhere;
 }
 
-/* Pagination. */
 .ts-pager {
   display: flex;
   flex-wrap: wrap;
@@ -278,7 +280,6 @@
   font-size: var(--ts-fs-sm);
 }
 
-/* Code. */
 .ts-code,
 .ts-snippet {
   min-width: 0;
@@ -299,8 +300,6 @@
   text-transform: var(--ts-label-case);
 }
 
-/* Long lines wrap instead of scrolling, so code stays readable without a
-   keyboard-inaccessible scroll area and reflows on narrow screens. */
 .ts-code,
 .ts-snippet-body {
   margin: 0;
@@ -309,8 +308,8 @@
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-sm);
   line-height: 1.7;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .ts-snippet > .ts-snippet-body {
@@ -325,7 +324,6 @@ code:not(pre code) {
   font-size: 0.88em;
 }
 
-/* Charts rendered by Features/Analytics (AnalyticsLinePlot.cs). */
 .ts-chart-shell {
   position: relative;
   display: grid;
@@ -372,19 +370,24 @@ code:not(pre code) {
 
 .ts-chart .ts-chart-line {
   fill: none;
-  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
-.ts-chart .ts-chart-series-1 { stroke: var(--ts-chart-1); }
-.ts-chart .ts-chart-series-2 { stroke: var(--ts-chart-2); }
+.ts-chart .ts-chart-series-1 {
+  stroke: var(--ts-chart-1);
+}
 
-.ts-chart-area { fill: var(--ts-chart-1); fill-opacity: 0.18; }
+.ts-chart .ts-chart-series-2 {
+  stroke: var(--ts-chart-2);
+}
 
-/* Hover columns: a guide line, dots per value, and a tooltip, revealed on
-   hover and keyboard focus. Keep a solid ring as well as the band tint so
-   keyboard focus does not depend on a subtle background change. */
+.ts-chart-area {
+  fill: var(--ts-chart-1);
+  fill-opacity: 0.18;
+}
+
 .ts-chart-column:focus-visible {
   outline: var(--ts-ring);
   outline-offset: -2px;
@@ -413,16 +416,23 @@ code:not(pre code) {
   pointer-events: none;
 }
 
-.ts-chart-dot.ts-cat-2 { stroke: var(--ts-chart-2); }
-.ts-chart-dot.ts-cat-3 { stroke: var(--ts-chart-3); }
-.ts-chart-dot.ts-chart-marker { opacity: 1; }
+.ts-chart-dot.ts-cat-2 {
+  stroke: var(--ts-chart-2);
+}
+
+.ts-chart-dot.ts-cat-3 {
+  stroke: var(--ts-chart-3);
+}
+
+.ts-chart-dot.ts-chart-marker {
+  opacity: 1;
+}
 
 .ts-chart-column:is(:hover, :focus-visible) :is(.ts-chart-guide, .ts-chart-dot, .ts-chart-tip),
 .ts-chart-column:last-of-type .ts-chart-dot {
   opacity: 1;
 }
 
-/* Line tooltip, drawn in SVG by charts.lineTip. */
 .ts-chart-tip {
   opacity: 0;
   pointer-events: none;
@@ -452,8 +462,8 @@ code:not(pre code) {
 
 .ts-chart-tip-swatch {
   stroke: var(--series, var(--ts-chart-1));
-  stroke-width: 2;
   stroke-linecap: round;
+  stroke-width: 2;
 }
 
 .ts-chart-legend {
@@ -477,27 +487,36 @@ code:not(pre code) {
   background: var(--ts-chart-1);
 }
 
-.ts-chart-swatch-2 {
-  background: var(--ts-chart-2);
+.ts-cat-1 {
+  --series: var(--ts-chart-1);
 }
 
-.ts-cat-1 { --series: var(--ts-chart-1); }
-.ts-cat-2 { --series: var(--ts-chart-2); }
-.ts-cat-3 { --series: var(--ts-chart-3); }
-.ts-chart .ts-chart-line[class*="ts-cat-"] { stroke: var(--series); }
-span.ts-chart-swatch[class*="ts-cat-"] { background: var(--series); }
+.ts-cat-2 {
+  --series: var(--ts-chart-2);
+}
+
+.ts-cat-3 {
+  --series: var(--ts-chart-3);
+}
+
+.ts-chart .ts-chart-line[class*="ts-cat-"] {
+  stroke: var(--series);
+}
+
+span.ts-chart-swatch[class*="ts-cat-"] {
+  background: var(--series);
+}
+
 svg.ts-chart-swatch {
-  width: 32px;
-  height: 8px;
   flex: none;
+  width: var(--ts-s8);
+  height: var(--ts-s2);
   background: none;
   stroke: var(--series, var(--ts-chart-1));
-  stroke-width: 1.5;
   stroke-linecap: round;
+  stroke-width: 1.5;
 }
 
-/* Share bar and utilization ring (SVG, sized by viewBox attributes). Each
-   sits in a focusable meter that shows its name and value above it. */
 .ts-chart-meter {
   position: relative;
   display: block;
@@ -508,8 +527,6 @@ svg.ts-chart-swatch {
   display: block;
 }
 
-/* Tooltips start at the meter's left edge, so meters flush with the page
-   edge never push them out of view. */
 .ts-chart-tooltip {
   position: absolute;
   bottom: calc(100% + var(--ts-s2));
@@ -519,10 +536,11 @@ svg.ts-chart-swatch {
   align-items: baseline;
   gap: var(--ts-s3);
   padding: var(--ts-s2) var(--ts-s3);
-  border: 1px solid var(--ts-line-strong);
+  border: 1px solid transparent;
   border-radius: var(--ts-radius);
   background: var(--ts-surface-2);
   color: var(--ts-ink);
+  box-shadow: var(--ts-shadow-overlay);
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-xs);
   white-space: nowrap;
@@ -552,26 +570,10 @@ svg.ts-chart-swatch {
   height: 6px;
 }
 
-.ts-svg-sharebar-track { fill: var(--ts-surface-3); }
-.ts-svg-sharebar-fill { fill: var(--ts-accent); }
-
-.ts-ring {
-  width: 96px;
-  height: 96px;
-  transform: rotate(-90deg);
+.ts-svg-sharebar-track {
+  fill: var(--ts-surface-3);
 }
 
-.ts-ring circle {
-  fill: none;
-  stroke-width: 10;
+.ts-svg-sharebar-fill {
+  fill: var(--ts-accent);
 }
-
-.ts-ring-track { stroke: var(--ts-surface-3); }
-
-.ts-ring-fill {
-  stroke: var(--ts-accent);
-  stroke-linecap: round;
-}
-
-.ts-ring-warning .ts-ring-fill { stroke: var(--ts-warning); }
-.ts-ring-danger .ts-ring-fill { stroke: var(--ts-danger); }

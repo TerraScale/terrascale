@@ -457,7 +457,8 @@ test('native dropdowns preserve filters and context while browser popovers dismi
   await expect(contextPanel).toBeVisible();
   await expect(accountPanel).not.toBeVisible();
   await audit.check('native context popover');
-  await page.locator('main h1').click();
+  const mainBox = await page.locator('main').boundingBox();
+  await page.mouse.click(mainBox!.x + mainBox!.width - 24, mainBox!.y + 24);
   await expect(contextPanel).not.toBeVisible();
   await context.click();
   await page.locator('[data-organization-option="' + current.organizationId + '"]').click();
@@ -480,12 +481,12 @@ test('native dropdowns preserve filters and context while browser popovers dismi
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await page.locator('#ts-nav-toggle').click();
   await context.click();
   await expect(contextPanel).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(contextPanel).not.toBeVisible();
   await expect(context).toBeFocused();
+  await page.locator('#ts-nav-toggle').click();
   await expect(page.locator('.ts-shell')).toHaveClass(/nav-open/);
   await account.click();
   await page.locator('#ts-notifications-menu').click();

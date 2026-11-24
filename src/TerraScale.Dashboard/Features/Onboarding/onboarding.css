@@ -1,5 +1,3 @@
-/* Account activation: progress stepper, step card, and plan picker. */
-
 .ts-onboarding {
   display: grid;
   align-content: start;
@@ -20,13 +18,12 @@
 }
 
 .ts-onboarding-header .ts-brand-logo {
-  height: 40px;
+  height: var(--ts-s10);
 }
 
 .ts-onboarding-progress {
   display: grid;
   gap: var(--ts-s2);
-  /* Match the card's padding and border so progress aligns with the fields. */
   margin-inline: calc(var(--ts-s6) + 1px);
 }
 
@@ -58,8 +55,8 @@
   display: grid;
   flex: none;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: var(--ts-s6);
+  height: var(--ts-s6);
   border: 1px solid var(--ts-line-strong);
   border-radius: 50%;
   font-size: var(--ts-fs-xs);
@@ -108,8 +105,7 @@
   border-top: 1px solid var(--ts-line);
 }
 
-/* Segmented radio control (billing interval). */
-.ts-segmented {
+.ts-onboarding .ts-segmented {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
@@ -118,7 +114,7 @@
   background: var(--ts-canvas);
 }
 
-.ts-segmented label {
+.ts-onboarding .ts-segmented label {
   display: inline-flex;
   align-items: center;
   gap: var(--ts-s2);
@@ -130,23 +126,22 @@
   cursor: pointer;
 }
 
-.ts-segmented input {
+.ts-onboarding .ts-segmented input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.ts-segmented label:has(input:checked) {
+.ts-onboarding .ts-segmented label:has(input:checked) {
   background: var(--ts-surface-3);
   color: var(--ts-ink);
 }
 
-.ts-segmented label:has(input:focus-visible) {
-  outline: 2px solid var(--ts-focus);
+.ts-onboarding .ts-segmented label:has(input:focus-visible) {
+  outline: var(--ts-ring);
   outline-offset: 2px;
 }
 
-/* Plan cards: the radio is visually hidden, the whole card is the target. */
 .ts-onboarding-plans {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
@@ -187,7 +182,7 @@
 }
 
 .ts-onboarding-plan:has(:focus-visible) {
-  outline: 2px solid var(--ts-focus);
+  outline: var(--ts-ring);
   outline-offset: 2px;
 }
 
@@ -199,12 +194,12 @@
 .ts-onboarding-plan-check {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: var(--ts-s5);
+  height: var(--ts-s5);
   border: 1px solid var(--ts-control-line);
   border-radius: 50%;
   color: transparent;
-  font-size: 12px;
+  font-size: var(--ts-fs-xs);
 }
 
 .ts-onboarding-plan:has(:checked) .ts-onboarding-plan-check {
@@ -214,44 +209,43 @@
 }
 
 .ts-onboarding-plan-price {
-  font-family: var(--ts-font-mono);
   display: flex;
   align-items: baseline;
   gap: var(--ts-s1);
+  font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-xl);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.ts-onboarding-plans:has(#interval-annual:checked) .ts-price-monthly {
+.ts-onboarding form:has(#interval-annual:checked) .ts-onboarding-plans .ts-price-monthly {
   display: none;
 }
 
-.ts-onboarding-plans:has(#interval-monthly:checked) .ts-price-annual {
+.ts-onboarding form:has(#interval-monthly:checked) .ts-onboarding-plans .ts-price-annual {
   display: none;
 }
 
-/* One primary action: it follows the selected card without a script. */
-.ts-onboarding-submit[data-plan=paid] {
+.ts-onboarding-submit[data-plan="paid"] {
   display: none;
 }
 
-.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan=free] {
+.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan="free"] {
   display: none;
 }
 
-.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan=paid] {
+.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan="paid"] {
   display: inline-flex;
 }
 
-.ts-onboarding-plans:has(#plan-free:checked) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan=free],
-.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan=paid] {
+.ts-onboarding-plans:has(#plan-free:checked) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan="free"],
+.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan="paid"] {
   background: var(--ts-primary);
   color: var(--ts-on-primary);
 }
 
-.ts-onboarding-plans:has(#plan-free:checked) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan=free]:hover,
-.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan=paid]:hover {
+.ts-onboarding-plans:has(#plan-free:checked) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan="free"]:hover,
+.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-actions .ts-onboarding-submit[data-plan="paid"]:hover {
   background: var(--ts-primary-hover);
 }
 
@@ -277,9 +271,25 @@
   }
 }
 
-/* The auth column supplies outer spacing; keep the onboarding form flat. */
-.ts-login-column > .ts-onboarding { width: min(400px, 100%); padding: 0; }
-.ts-login-column > .ts-onboarding-wide { width: min(520px, 100%); }
-.ts-login-column .ts-onboarding-header .ts-brand-logo { height: 28px; }
-.ts-login-column .ts-onboarding-progress { margin-inline: 0; }
-.ts-login-column .ts-onboarding-card { padding: 0; border: 0; background: transparent; }
+.ts-login-column > .ts-onboarding {
+  width: min(400px, 100%);
+  padding: 0;
+}
+
+.ts-login-column > .ts-onboarding-wide {
+  width: min(520px, 100%);
+}
+
+.ts-login-column .ts-onboarding-header .ts-brand-logo {
+  height: 28px;
+}
+
+.ts-login-column .ts-onboarding-progress {
+  margin-inline: 0;
+}
+
+.ts-login-column .ts-onboarding-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}

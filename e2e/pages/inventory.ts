@@ -93,6 +93,7 @@ async function mcpConsent(page: Page): Promise<string> {
 }
 
 const databaseTabs: [string, string, Identity][] = [
+  ['connect', 'Connect', title('Connect', 2)],
   ['tables', 'Tables', currentTab('Database sections', 'Tables')],
   ['rules', 'Rules', currentTab('Database sections', 'Rules')],
   ['sql', 'SQL editor', currentTab('Database sections', 'SQL editor')],
@@ -253,18 +254,17 @@ export const dashboardStates: readonly PageState[] = [
     name: 'database overview',
     url: database,
     covers: { path: databasePath(''), query: { created: /^1?$/ } },
-    heading: title('Connect', 2),
+    heading: title('Activity', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
       await expect(page.locator('#grants, #backup-schedule, #danger-zone-title')).toHaveCount(0);
-      await connectCard(page, journey);
     },
   },
   {
     name: 'database overview over 7 days',
-    url: (journey) => `${database(journey)}?reads=7d&writes=7d&storage=7d&latency=7d`,
+    url: (journey) => `${database(journey)}?range=7d`,
     covers: { path: databasePath('') },
-    heading: title('Connect', 2),
+    heading: title('Activity', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
       await expect(page.locator('#grants, #backup-schedule, #danger-zone-title')).toHaveCount(0);
@@ -298,6 +298,7 @@ export const dashboardStates: readonly PageState[] = [
       data: async (page, journey) => {
         await expect(page).toHaveTitle(`${journey.databaseName} · ${label} · TerraScale`);
         await databaseHeader(page, journey);
+        if (tab === 'connect') await connectCard(page, journey);
         if (tab === 'backups') await expect(page.locator('#grants, #danger-zone-title')).toHaveCount(0);
         if (tab === 'rules') {
           expect(Object.keys(JSON.parse(await page.locator('#rules-source').inputValue()))).toEqual(['tables']);

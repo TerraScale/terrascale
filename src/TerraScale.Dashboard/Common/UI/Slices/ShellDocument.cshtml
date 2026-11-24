@@ -4,7 +4,7 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark" data-nonce="@Model.Nonce" data-workspace-organization="@Model.Context.Organization?.Id" data-workspace-project="@Model.Context.Project?.Id">
 <head>
-    <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="color-scheme" content="dark" /><meta name="theme-color" content="#151515" />
+    <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="color-scheme" content="dark" /><meta name="theme-color" content="#0a0a0a" />
     <title>@Model.Title · TerraScale</title>
     <link rel="icon" type="image/svg+xml" href="@Assets.Url("brand/logo-icon-blue.svg")" />
     <link rel="preload" href="@Assets.Url("fonts/Geist-Variable.woff2")" as="font" type="font/woff2" crossorigin />
@@ -23,7 +23,6 @@
     <div class="ts-shell" data-class:nav-open="$navOpen"
          data-on:keydown__window="evt.key === 'Escape' &amp;&amp; $navOpen &amp;&amp; !document.querySelector('dialog[open], :popover-open') &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-nav-toggle').focus()))"
          data-on:resize__window__debounce.150ms="innerWidth >= 768 &amp;&amp; $navOpen &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-navigation').focus()))">
-        <button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">@ShellIcons.Svg("panel-left", 18)</button>
         <div class="ts-nav-backdrop" aria-hidden="true" data-on:click="$navOpen = false; setTimeout(() => document.getElementById('ts-nav-toggle').focus())"></div>
         @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ShellSidebar, ShellModel>(Model))
         <div class="ts-inset" data-attr:inert="$navOpen">
@@ -38,11 +37,11 @@
             <p role="status" aria-live="polite" aria-atomic="true" data-text="$_notificationsPending ? 'Loading notifications…' : ($_notificationsFailed ? 'Unable to load notifications. Please try again.' : '')"></p>
             <div class="ts-row" hidden data-attr:hidden="$_notificationsPending || !$_notificationsFailed">
                 <button class="ts-btn ts-btn-ghost" type="button" data-on:click="@@get('/notifications/dialog', {retryMaxCount: 0})">Retry</button>
-                <a class="ts-btn ts-btn-ghost" href="/notifications">Open inbox</a>
             </div>
             <div class="ts-skeleton ts-skeleton-table" aria-hidden="true" hidden data-attr:hidden="!$_notificationsPending"></div>
             <div id="ts-notifications-body" aria-busy="false" data-attr:aria-busy="$_notificationsPending ? 'true' : 'false'" data-show="!$_notificationsPending &amp;&amp; $_notificationsLoaded"></div>
         </div>
+        <footer class="ts-dialog-footer ts-notifications-footer">@if (Model.Context.Project is not null) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="/notifications/alerts">@ShellIcons.Svg("sliders-horizontal")<span>Alert rules</span></a> }<a class="ts-btn ts-btn-secondary ts-btn-sm" href="/notifications">Open inbox</a></footer>
     </dialog>
     @if (HostEnvironment.IsDevelopment())
     {

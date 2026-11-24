@@ -7,7 +7,7 @@
     var selected = Model.Page.Listing.Buckets.Items.FirstOrDefault(bucket => bucket.Id == bucketId)!;
     var draft = Model.Page.Draft;
 }
-<div class="ts-columns-side" id="bucket-side">
+<div class="ts-stack" id="bucket-side">
     @if (canWrite)
     {
         var rulesDraft = draft?.Dialog == "";
@@ -25,8 +25,8 @@
     else
     {
         <section class="ts-card ts-card-boxed" aria-labelledby="bucket-rules-title">
-            <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="bucket-rules-title">Access</h2></div></header>
-            <div class="ts-card-body">@(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", selected.Rules, true)))</div>
+            <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="bucket-rules-title">Access</h2></div><div class="ts-card-actions"><span class="ts-meta">Read-only</span></div></header>
+            <div class="ts-card-body"><fieldset class="ts-stack" disabled>@(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", selected.Rules, true)))</fieldset></div>
         </section>
     }
     <section class="ts-card ts-card-boxed" aria-labelledby="bucket-settings-title">

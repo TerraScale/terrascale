@@ -1,5 +1,3 @@
-/* Sign-in page: a full-bleed region map beside the credential column. */
-
 .ts-login {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(420px, 1fr);
@@ -11,37 +9,11 @@
   display: grid;
   place-items: center;
   padding: var(--ts-s10);
+  overflow: hidden;
   border-right: 1px solid var(--ts-line);
   background: var(--ts-surface);
-  overflow: hidden;
 }
 
-.ts-login-regions {
-  position: absolute;
-  bottom: var(--ts-s8);
-  left: var(--ts-s10);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ts-s5);
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-sm);
-  list-style: none;
-}
-
-.ts-login-regions li {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ts-s2);
-}
-
-.ts-login-regions .ts-dot {
-  width: 6px;
-  height: 6px;
-  background: var(--ts-link);
-  box-shadow: none;
-}
-
-/* Decorative auth aside; operational maps retain their shared component. */
 .ts-auth-hero {
   display: flex;
   flex-direction: column;
@@ -57,7 +29,6 @@
   align-content: center;
 }
 
-/* Centered form column: card, then the locale footer below it. */
 .ts-login-column {
   display: flex;
   flex-direction: column;
@@ -84,8 +55,13 @@
 }
 
 @keyframes ts-delayed-continue {
-  from { visibility: hidden; }
-  to { visibility: visible; }
+  from {
+    visibility: hidden;
+  }
+
+  to {
+    visibility: visible;
+  }
 }
 
 .ts-login-heading {
@@ -100,19 +76,13 @@
 }
 
 .ts-login-heading .ts-auth-title {
-  font-size: 24px;
-}
-
-.ts-login-logo {
-  justify-self: center;
-  width: auto;
-  height: 28px;
+  font-size: var(--ts-fs-2xl);
 }
 
 .ts-login-brand {
-  justify-content: center;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
 }
 
@@ -124,7 +94,7 @@
 .ts-login-brand-word {
   color: var(--ts-ink);
   font: 600 17px / 1 var(--ts-font-sans);
-  letter-spacing: -0.02em;
+  letter-spacing: var(--ts-heading-tracking);
 }
 
 .ts-login-footer {
@@ -140,7 +110,6 @@
   font-size: var(--ts-fs-xs);
 }
 
-/* Below 900px the map hides and the form stacks from the top, as in the prototype. */
 @media (max-width: 900px) {
   .ts-login {
     grid-template-columns: minmax(0, 1fr);
@@ -156,43 +125,180 @@
   }
 }
 
-/* Organization selection belongs to the authenticated dashboard boundary. */
 .ts-org-picker {
-  color-scheme: dark;
-  background: var(--ts-canvas);
-  color: var(--ts-ink);
-  --ts-canvas: light-dark(#ffffff, #151515);
-  --ts-surface: light-dark(#fafafa, #1b1b1b);
-  --ts-surface-2: light-dark(#f4f4f5, #222222);
-  --ts-surface-3: light-dark(#e9e9ec, #2c2c2c);
-  --ts-ink: light-dark(#0a0a0a, #f2f2f2);
-  --ts-ink-2: light-dark(#4d4d4d, #a8a8a8);
-  --ts-ink-3: light-dark(#626262, #9a9a9a);
+  --ts-canvas: light-dark(#ffffff, #0a0a0a);
+  --ts-surface: light-dark(#fafafa, #141414);
+  --ts-surface-2: light-dark(#f4f4f5, #1a1a1a);
+  --ts-surface-3: light-dark(#e9e9ec, #262626);
+  --ts-ink: light-dark(#0a0a0a, #fafafa);
+  --ts-ink-2: light-dark(#4d4d4d, #a3a3a3);
+  --ts-ink-3: light-dark(#626262, #8f8f8f);
   --ts-line: light-dark(rgb(0 0 0 / 0.12), rgb(255 255 255 / 0.08));
   --ts-line-strong: light-dark(rgb(0 0 0 / 0.2), rgb(255 255 255 / 0.14));
-  --ts-hover: light-dark(rgb(0 0 0 / 0.04), rgb(255 255 255 / 0.05));
-  --ts-accent-soft: light-dark(rgb(33 88 232 / 0.08), rgb(33 88 232 / 0.18));
-  --ts-link: light-dark(#2158e8, #6b93ff);
+  --ts-control-line: light-dark(rgb(0 0 0 / 0.46), rgb(255 255 255 / 0.34));
+  --ts-control-line-hover: light-dark(rgb(0 0 0 / 0.6), rgb(255 255 255 / 0.46));
+  --ts-hover: light-dark(rgb(0 0 0 / 0.04), rgb(255 255 255 / 0.045));
+  --ts-selected: light-dark(rgb(0 0 0 / 0.08), rgb(255 255 255 / 0.08));
+  --ts-shadow: light-dark(rgb(0 0 0 / 0.16), rgb(0 0 0 / 0.60));
+  --ts-shadow-overlay: 0 0 0 1px var(--ts-line-strong), 0 16px 40px -12px var(--ts-shadow);
+  --ts-accent-soft: light-dark(rgb(33 88 232 / 0.08), rgb(74 125 255 / 0.14));
+  --ts-link: light-dark(#2158e8, #7ea6ff);
   --ts-focus: var(--ts-link);
+  --ts-ring: 2px solid var(--ts-focus);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--ts-s6);
+  min-height: 100dvh;
+  padding: var(--ts-s6) var(--ts-s4);
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  color-scheme: dark;
 }
-html[data-theme="light"] .ts-org-picker { color-scheme: light; }
-html[data-theme="system"] .ts-org-picker { color-scheme: light dark; }
-.ts-org-picker { display: grid; justify-items: center; align-content: center; gap: var(--ts-s6); min-height: 100dvh; padding: var(--ts-s6) var(--ts-s4); }
-.ts-org-picker-card { display: grid; gap: var(--ts-s5); width: min(100%, 560px); padding: var(--ts-s8); border: 1px solid var(--ts-line); border-radius: 14px; background: var(--ts-surface); }
-.ts-org-picker-user { display: flex; align-items: center; gap: var(--ts-s3); font-size: var(--ts-fs-sm); }
-.ts-org-picker-user > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.ts-org-picker-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); overflow: hidden; }
-.ts-org-picker-list li + li { border-top: 1px solid var(--ts-line); }
-.ts-org-picker-option { display: flex; align-items: center; gap: var(--ts-s3); width: 100%; padding: var(--ts-s4); background: transparent; color: var(--ts-ink); border: 0; text-align: left; font: inherit; cursor: pointer; }
-.ts-org-picker-option:hover { background: var(--ts-hover); }
-.ts-org-picker-option:focus-visible { outline: 2px solid var(--ts-focus); outline-offset: -2px; }
-.ts-org-picker-avatar { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: var(--ts-radius); background: var(--ts-accent-soft); color: var(--ts-link); font-weight: 600; }
-.ts-org-picker-main { flex: 1; min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
-.ts-org-picker-name { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ts-s2); }
-.ts-org-picker-footer { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--ts-s4); font-size: var(--ts-fs-xs); color: var(--ts-ink-3); }
-.ts-org-picker-footer a { color: inherit; }
-.ts-org-picker-footer .ts-select { width: 110px; }
-@media (max-width: 480px) { .ts-org-picker-card { padding: var(--ts-s5); } .ts-org-picker-user { flex-wrap: wrap; } }
 
-.ts-org-picker-powered { color: var(--ts-ink-3); font-size: 12px; text-align: center; }
-.ts-org-picker-powered b { color: var(--ts-ink-2); font-weight: 500; }
+html[data-theme="light"] .ts-org-picker {
+  color-scheme: light;
+}
+
+html[data-theme="system"] .ts-org-picker {
+  color-scheme: light dark;
+}
+
+html:has(.ts-org-picker) {
+  scrollbar-gutter: auto;
+}
+
+html[data-theme="light"]:has(.ts-org-picker) {
+  background: #ffffff;
+  color-scheme: light;
+}
+
+html[data-theme="system"]:has(.ts-org-picker) {
+  background: light-dark(#ffffff, #0a0a0a);
+  color-scheme: light dark;
+}
+
+.ts-org-picker-card {
+  display: grid;
+  gap: var(--ts-s5);
+  width: min(100%, 560px);
+  padding: var(--ts-s8);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-xl);
+  background: var(--ts-surface);
+}
+
+.ts-org-picker-user {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-org-picker-user > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ts-org-picker-list {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  list-style: none;
+}
+
+.ts-org-picker-list li + li {
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-org-picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  width: 100%;
+  padding: var(--ts-s4);
+  border: 0;
+  background: transparent;
+  color: var(--ts-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ts-org-picker-option:hover {
+  background: var(--ts-hover);
+}
+
+.ts-org-picker-option:focus-visible {
+  outline: var(--ts-ring);
+  outline-offset: -2px;
+}
+
+.ts-org-picker-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--ts-control-h);
+  height: var(--ts-control-h);
+  border-radius: var(--ts-radius);
+  background: var(--ts-accent-soft);
+  color: var(--ts-link);
+  font-weight: 600;
+}
+
+.ts-org-picker-main {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ts-org-picker-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-org-picker-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-s4);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-org-picker-footer a {
+  color: inherit;
+}
+
+.ts-org-picker-footer .ts-select {
+  width: 110px;
+}
+
+.ts-org-picker-powered {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  text-align: center;
+}
+
+.ts-org-picker-powered b {
+  color: var(--ts-ink-2);
+  font-weight: 500;
+}
+
+@media (max-width: 480px) {
+  .ts-org-picker-card {
+    padding: var(--ts-s5);
+  }
+
+  .ts-org-picker-user {
+    flex-wrap: wrap;
+  }
+}

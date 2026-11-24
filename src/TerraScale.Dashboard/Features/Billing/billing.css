@@ -16,15 +16,6 @@
   min-width: 0;
 }
 
-.ts-billing-layout > .ts-card.ts-card-boxed {
-  padding: var(--ts-s5);
-  border: 1px solid var(--ts-line);
-}
-
-.ts-billing-layout > .ts-card.ts-card-boxed.ts-card-flush {
-  padding: 0;
-}
-
 .ts-billing-layout > .ts-billing-wide {
   grid-column: 1 / -1;
 }
@@ -44,8 +35,8 @@
 .ts-billing-plan-icon {
   display: inline-grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: var(--ts-control-h);
+  height: var(--ts-control-h);
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius);
   background: var(--ts-surface-2);
@@ -55,7 +46,7 @@
 .ts-billing-plan-name {
   font-size: var(--ts-fs-2xl);
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--ts-heading-tracking);
 }
 
 .ts-billing-facts {
@@ -220,10 +211,10 @@
 
 .ts-plan-price {
   font-size: var(--ts-fs-xl);
-  white-space: nowrap;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+  letter-spacing: var(--ts-heading-tracking);
+  white-space: nowrap;
 }
 
 .ts-plan-price small,
@@ -242,9 +233,9 @@
   margin: 0;
   padding: var(--ts-s4) 0 0;
   border-top: 1px solid var(--ts-line);
-  list-style: none;
   color: var(--ts-ink-2);
   font-size: var(--ts-fs-sm);
+  list-style: none;
 }
 
 .ts-plan-features > li {
@@ -271,6 +262,29 @@
   border: 0;
 }
 
+.ts-billing-interval {
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.ts-billing-interval .ts-segment {
+  cursor: pointer;
+}
+
+.ts-billing-interval .ts-segment:has(input:checked) {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-billing-interval .ts-segment:has(input:focus-visible) {
+  outline: var(--ts-ring);
+  outline-offset: 0;
+}
+
+.ts-dialog .ts-billing-interval {
+  justify-self: start;
+}
+
 .ts-billing-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -293,13 +307,8 @@
 }
 
 .ts-billing-option:has(input:focus-visible) {
-  outline: 2px solid var(--ts-focus);
+  outline: var(--ts-ring);
   outline-offset: 2px;
-}
-
-.ts-billing-option > input {
-  margin: 0;
-  accent-color: var(--ts-accent);
 }
 
 .ts-billing-option-main {

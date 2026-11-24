@@ -1,39 +1,43 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
-@using TerraScale.Dashboard.Features.Data
 @using System.Text.Json
+@using TerraScale.Dashboard.Features.Data
 @inject AssetUrls Assets
 <main class="ts-page" data-database-id="@Model.Database.Id">
-@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "sql")))
-<h1 class="ts-sr-only">SQL editor</h1>
-@{ var catalog = Model.Catalog ?? SqlCatalog.Empty; }
-<div class="ts-data-sql" data-sql-catalog="sql-catalog" data-sql-diagnostics="sql-diagnostics" data-sql-check="/api/v1/dashboard/data/sql/check">
-<script type="application/json" id="sql-catalog" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(catalog,new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
-<script type="application/json" id="sql-diagnostics" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(new { sql=Model.Sql, diagnostics=Model.Sql.Trim().Length == 0 ? [] : SqlValidation.Diagnostics(Model.Sql) },new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
-<div class="ts-columns">
-<div class="ts-columns-main">
-<section class="ts-card" id="sql-editor" aria-labelledby="sql-editor-title">
-<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-editor-title">Query</h2></div></header>
-<div class="ts-card-body">
-<form id="sql-query-form" method="post" action="/api/v1/dashboard/data/sql" data-on:submit="evt.preventDefault(); if (evt.submitter?.hasAttribute('formaction')) { const action = el.action; el.action = evt.submitter.formAction; el.submit(); el.action = action; } else { @@post(el.action, {contentType:'form'}); }">
-<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" />
-<label class="ts-sr-only" for="sql">SQL</label>
-<ts-code-editor class="ts-code-editor" data-language="sql"><textarea class="ts-input ts-mono" id="sql" name="sql" rows="8" spellcheck="false" autocapitalize="off" autocomplete="off" required data-max-bytes="16384">@Model.Sql</textarea></ts-code-editor>
-</form>
-</div>
-<footer class="ts-card-foot ts-data-sql-toolbar">
-@(await RenderPartialAsync<SqlHistoryView,DataPage>(Model))
-<button class="ts-btn ts-btn-ghost" type="button" form="sql-query-form" data-sql-format hidden>@Icons.Render("Wand2",16)<span>Format</span></button>
-<button class="ts-btn ts-btn-secondary" type="submit" form="sql-query-form" formaction="/api/v1/dashboard/data/sql/check">@Icons.Render("CircleCheck",16)<span>Check input</span></button>
-<button class="ts-btn ts-btn-primary" type="submit" form="sql-query-form" aria-keyshortcuts="Control+Enter Meta+Enter">@Icons.Render("Play",16)<span>Run query</span></button>
-</footer>
-</section>
-@(await RenderPartialAsync<SqlOutputView,DataPage>(Model))
-</div>
-<div class="ts-columns-side">@(await RenderPartialAsync<SavedQueriesView,DataPage>(Model))</div>
-</div>
-</div>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "sql", Databases: Model.Context.Project?.Databases.Values)))
+    <h1 class="ts-sr-only">SQL editor</h1>
+    @{
+        var catalog = Model.Catalog ?? SqlCatalog.Empty;
+    }
+    <div class="ts-data-sql" data-sql-catalog="sql-catalog" data-sql-diagnostics="sql-diagnostics" data-sql-check="/api/v1/dashboard/data/sql/check">
+        <script type="application/json" id="sql-catalog" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(catalog, new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
+        <script type="application/json" id="sql-diagnostics" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(new { sql = Model.Sql, diagnostics = Model.Sql.Trim().Length == 0 ? [] : SqlValidation.Diagnostics(Model.Sql) }, new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
+        <div class="ts-columns">
+            <div class="ts-columns-main">
+                <section class="ts-card" id="sql-editor" aria-labelledby="sql-editor-title">
+                    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-editor-title">Query</h2></div></header>
+                    <div class="ts-card-body">
+                        <form id="sql-query-form" method="post" action="/api/v1/dashboard/data/sql" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})">
+                            <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                            <input type="hidden" name="databaseId" value="@Model.Database.Id" />
+                            <label class="ts-sr-only" for="sql">SQL</label>
+                            <ts-code-editor class="ts-code-editor" data-language="sql"><textarea class="ts-input ts-mono" id="sql" name="sql" rows="8" spellcheck="false" autocapitalize="off" autocomplete="off" required data-max-bytes="16384">@Model.Sql</textarea></ts-code-editor>
+                        </form>
+                    </div>
+                    <footer class="ts-card-foot ts-data-sql-toolbar">
+                        @(await RenderPartialAsync<SqlHistoryView, DataPage>(Model))
+                        <button class="ts-btn ts-btn-ghost" type="button" form="sql-query-form" data-sql-format hidden>@Icons.Render("Wand2", 16)<span>Format</span></button>
+                        <button class="ts-btn ts-btn-primary" type="submit" form="sql-query-form" aria-keyshortcuts="Control+Enter Meta+Enter">@Icons.Render("Play", 16)<span>Run query</span><kbd class="ts-kbd" aria-hidden="true">⌘↵</kbd></button>
+                    </footer>
+                </section>
+                @(await RenderPartialAsync<SqlOutputView, DataPage>(Model))
+            </div>
+            <div class="ts-columns-side">@(await RenderPartialAsync<SavedQueriesView, DataPage>(Model))</div>
+        </div>
+    </div>
 </main>
 <script type="module" src="@Assets.Url("js/code-editor.js")" nonce="@Model.Shell.Nonce"></script>
 <script type="module" src="@Assets.Url("js/sql-results.js")" nonce="@Model.Shell.Nonce"></script>
-@functions { public ShellModel LayoutModel => Model.Shell; }
+@functions {
+    public ShellModel LayoutModel => Model.Shell;
+}

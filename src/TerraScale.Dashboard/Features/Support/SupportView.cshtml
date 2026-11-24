@@ -2,7 +2,7 @@
 @inherits RazorSlice<SupportPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page">
-    <h1 class="ts-sr-only">Contact support</h1>
+    <header class="ts-page-header"><h1 class="ts-page-title">Contact support</h1></header>
     @(await RenderPartialAsync<SupportContent, SupportPage>(Model))
 </main>
 @functions { public ShellModel LayoutModel => Model.Shell; }

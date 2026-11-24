@@ -1,8 +1,35 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionsPage>
-<section class="ts-card" id="function-code" aria-labelledby="function-code-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title ts-mono" id="function-code-title">@(Model.Selected?.Name)</h2></div><div class="ts-card-actions">@if(Model.Selected is not null && !Model.Shell.Context.CanWriteProjectData){<span class="ts-meta">Read-only</span>}</div></header><div class="ts-card-body">
-@if(Model.Selected is { } selected){
-<form method="post" action="/api/v1/dashboard/functions/deploy" class="ts-form ts-stack" id="function-code-form" data-on:submit="@("@post('/api/v1/dashboard/functions/deploy', {contentType:'form'})")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><input type="hidden" name="name" value="@selected.Name" /><input type="hidden" name="editing" value="1" /><input type="hidden" name="intent" value="code" /><input type="hidden" name="trigger" value="@Model.LogsTrigger" /><input type="hidden" name="status" value="@Model.LogsStatus" /><input type="hidden" name="cron" value="@(selected.Cron ?? "")" />
-<div class="ts-field"><label class="ts-label" for="function-source">Source</label><ts-code-editor class="ts-code-editor" data-language="javascript" data-sql-schema="/api/v1/dashboard/data/schema?databaseId=@Model.Database.Id"><textarea class="ts-input ts-mono" id="function-source" name="source" rows="14" required spellcheck="false" autocapitalize="off" autocomplete="off" readonly="@(!Model.Shell.Context.CanWriteProjectData ? "readonly" : null)">@selected.Source</textarea></ts-code-editor>@if(Model.DeployError.Length > 0){<p class="ts-field-error" id="function-deploy-error" role="alert">@Model.DeployError</p>}</div>
-</form>
-}
-</div>@if(Model.Shell.Context.CanWriteProjectData && Model.Selected is not null){<footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit" form="function-code-form">Deploy</button></footer>}</section>
+<section class="ts-card" id="function-code" aria-labelledby="function-code-title">
+    <header class="ts-card-head">
+        <div class="ts-card-heading"><h2 class="ts-card-title ts-mono" id="function-code-title">@(Model.Selected?.Name)</h2></div>
+        <div class="ts-card-actions">
+            @if (Model.Selected is not null && !Model.Shell.Context.CanWriteProjectData)
+            {
+                <span class="ts-meta">Read-only</span>
+            }
+        </div>
+    </header>
+    <div class="ts-card-body">
+        @if (Model.Selected is { } selected)
+        {
+            <form method="post" action="/api/v1/dashboard/functions/deploy" class="ts-form ts-stack" id="function-code-form" data-on:submit="evt.preventDefault(); @@post('/api/v1/dashboard/functions/deploy', {contentType:'form'})">
+                <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                <input type="hidden" name="databaseId" value="@Model.Database.Id" />
+                <input type="hidden" name="name" value="@selected.Name" />
+                <input type="hidden" name="editing" value="1" />
+                <input type="hidden" name="intent" value="code" />
+                <input type="hidden" name="trigger" value="@Model.LogsTrigger" />
+                <input type="hidden" name="status" value="@Model.LogsStatus" />
+                <input type="hidden" id="function-code-cron" name="cron" value="@(selected.Cron is { Length: > 0 } existingCron ? existingCron : "")" />
+                <div class="ts-field">
+                    <label class="ts-label" for="function-source">Source</label>
+                    <ts-code-editor class="ts-code-editor" data-language="javascript" data-submit-shortcut="false" data-sql-schema="/api/v1/dashboard/data/schema?databaseId=@Model.Database.Id"><textarea class="ts-input ts-mono" id="function-source" name="source" rows="14" required spellcheck="false" autocapitalize="off" autocomplete="off" readonly="@(!Model.Shell.Context.CanWriteProjectData ? "readonly" : null)">@selected.Source</textarea></ts-code-editor>
+                </div>
+            </form>
+        }
+    </div>
+    @if (Model.Shell.Context.CanWriteProjectData && Model.Selected is not null)
+    {
+        <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit" form="function-code-form">Deploy</button></footer>
+    }
+</section>

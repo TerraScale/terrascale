@@ -5,6 +5,10 @@
 }
 
 .ts-region-map {
+  --ts-region-map-chrome: 0px;
+  --ts-region-map-dock: 0px;
+  --ts-region-map-tall: clamp(320px, 50cqi, 460px);
+  --ts-region-map-crop: calc(78.57cqi + 56px);
   position: relative;
   isolation: isolate;
   min-width: 0;
@@ -13,13 +17,6 @@
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
   touch-action: manipulation;
-}
-
-.ts-region-map {
-  --ts-region-map-chrome: 0px;
-  --ts-region-map-dock: 0px;
-  --ts-region-map-tall: clamp(320px, 50cqi, 460px);
-  --ts-region-map-crop: calc(78.57cqi + 56px);
 }
 
 .ts-region-map[data-mode="select"] {
@@ -40,7 +37,7 @@
 }
 
 .ts-region-map:has(.ts-region-callout[data-docked]) {
-  --ts-region-map-dock: 48px;
+  --ts-region-map-dock: var(--ts-s12);
 }
 
 .ts-region-map:not(:has(.ts-region-callout:not([data-docked]))) {
@@ -85,8 +82,8 @@
   top: 0;
   left: 0;
   z-index: 1;
-  width: 40px;
-  height: 40px;
+  width: var(--ts-s10);
+  height: var(--ts-s10);
   margin: -20px 0 0 -20px;
   padding: 0;
   border: 0;
@@ -183,6 +180,7 @@ label.ts-region-callout-body {
 }
 
 .ts-region-callout-body > .ts-region-toggle {
+  appearance: none;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -190,7 +188,6 @@ label.ts-region-callout-body {
   margin: 0;
   opacity: 0;
   cursor: pointer;
-  appearance: none;
 }
 
 .ts-region-tick {
@@ -222,8 +219,8 @@ label.ts-region-callout-body {
 }
 
 .ts-region-callout:has(.ts-region-toggle:checked) .ts-region-tick {
-  border-color: var(--ts-accent);
-  background: var(--ts-accent);
+  border-color: var(--ts-accent-fill);
+  background: var(--ts-accent-fill);
 }
 
 .ts-region-callout:has(.ts-region-toggle:checked) .ts-region-tick::after {
@@ -248,13 +245,13 @@ label.ts-region-callout-body {
 }
 
 label .ts-region-title {
-  padding-right: 24px;
+  padding-right: var(--ts-s6);
 }
 
 .ts-region-flag {
   display: block;
   flex: none;
-  width: 20px;
+  width: var(--ts-s5);
   height: 15px;
   margin-top: 1.5px;
   border-radius: 2px;
@@ -302,7 +299,7 @@ label .ts-region-title {
 }
 
 .ts-region-code {
-  color: var(--ts-ink-3);
+  color: var(--ts-ink-2);
   font-family: var(--ts-font-mono);
 }
 
@@ -318,10 +315,21 @@ label .ts-region-title {
   background: var(--ts-ink-3);
 }
 
-.ts-region-ping[data-state="good"]::before { background: var(--ts-success); }
-.ts-region-ping[data-state="fair"]::before { background: var(--ts-warning); }
-.ts-region-ping[data-state="slow"]::before { background: var(--ts-severe); }
-.ts-region-ping[data-state="down"]::before { background: var(--ts-danger); }
+.ts-region-ping[data-state="good"]::before {
+  background: var(--ts-success);
+}
+
+.ts-region-ping[data-state="fair"]::before {
+  background: var(--ts-warning);
+}
+
+.ts-region-ping[data-state="slow"]::before {
+  background: var(--ts-severe);
+}
+
+.ts-region-ping[data-state="down"]::before {
+  background: var(--ts-danger);
+}
 
 .ts-region-callout[data-fastest] .ts-region-ping {
   background: color-mix(in oklab, var(--ts-success) var(--ts-tint-badge), transparent);
@@ -384,12 +392,19 @@ label .ts-region-title {
 }
 
 @keyframes ts-region-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes ts-region-refuse {
-  25% { transform: translateX(-3px); }
-  75% { transform: translateX(3px); }
+  25% {
+    transform: translateX(-3px);
+  }
+
+  75% {
+    transform: translateX(3px);
+  }
 }
 
 @media (scripting: enabled) {
@@ -430,12 +445,6 @@ label .ts-region-title {
 }
 
 @media (max-width: 560px) {
-  .ts-region-map-ping-refresh::after {
-    content: "";
-    position: absolute;
-    inset: -4px;
-  }
-
   .ts-region-map {
     --ts-region-map-tall: 360px;
   }

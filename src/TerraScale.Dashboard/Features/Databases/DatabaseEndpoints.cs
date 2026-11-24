@@ -14,429 +14,423 @@ using System.Diagnostics;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Errors;
 
-namespace TerraScale.Dashboard.Features.Databases
+namespace TerraScale.Dashboard.Features.Databases;
+
+public static class DatabaseEndpoints
 {
-    public static class DatabaseEndpoints
+    public static IServiceCollection AddDatabaseFeatures(this IServiceCollection services)
     {
-        public static IServiceCollection AddDatabaseFeatures(this IServiceCollection services)
+        return services
+        .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
+        .AddSingleton<DatabaseConflicts>().AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>()
+        .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
+        .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
+        .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions().AddDatabaseRules();
+    }
+
+    public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
+    {
+        return endpoints;
+    }
+
+    internal static async Task<IResult> ListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases,
+        BackupService backups)
+    {
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null)
         {
-            return services
-            .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
-            .AddSingleton<DatabaseConflicts>().AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>()
-            .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
-            .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
-            .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions().AddDatabaseRules();
+            return AccountRequest.LoginRedirect(http);
         }
 
-        public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
+        context = await backups.SettleRestoresAsync(context, http.RequestAborted);
+        return await ListPageAsync(http, context, backend, databases);
+    }
+
+    internal static async Task<IResult> ApiListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases)
+    {
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null)
         {
-            return endpoints;
+            return TypedResults.Unauthorized();
         }
 
-        internal static async Task<IResult> ListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases,
-            BackupService backups)
+        try
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var (limit, after) = CursorPaging.Read(http.Request);
+            context = await http.RequestServices.GetRequiredService<BackupService>().SettleRestoresAsync(context, http.RequestAborted);
+            await databases.SyncAsync(context, http.RequestAborted);
+            var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
+                db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
+            var restricted = context.Organization is { } organization && !organization.ContainsMember(context.UserId);
+            return TypedResults.Json(new CursorPage<object>([.. page.Items.Select(database => DatabaseOutput(database, restricted))], page.NextCursor, page.Limit));
+        }
+        catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
+    }
+
+    internal static async Task<IResult> TabAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases, string section)
+    {
+        var databaseId = http.Request.RouteValues["databaseId"]?.ToString() ?? "";
+        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        if (context is null)
+        {
+            return AccountEndpoints.LoginRedirect(http);
+        }
+        if (section == "overview" && http.Request.Query["delete"] == "1")
+        {
+            return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
+        }
+        if (section == "replication")
+        {
+            await databases.SyncAsync(context, http.RequestAborted);
+        }
+
+        return await DetailPageAsync(http, context, databaseId, section, backend, databases);
+    }
+
+    internal static async Task<IResult> CreateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend)
+    {
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null)
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+        if (!Csrf.Validate(http, form))
+        {
+            return RequestError.FormExpired(http, "/databases", TypedResults.BadRequest("Invalid form token."));
+        }
+
+        try
+        {
+            var regions = Regions(form, context);
+            var created = await databases.CreateAsync(context, form["name"].ToString(), regions[0], http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), [.. regions.Skip(1)]);
+            return created switch
             {
-                return AccountRequest.LoginRedirect(http);
+                DatabaseRecord database when http.Request.IsDatastarRequest => await ListPageAsync(http, context, backend, databases, createdName: database.Name),
+                DatabaseRecord database => WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : TypedResults.Json(DatabaseOutput(database), statusCode: 201),
+                DatabaseRefusal refusal => WantsHtml(http) || http.Request.IsDatastarRequest
+                    ? await ListPageAsync(http, context, backend, databases, error: refusal.Message, openCreate: true, name: form["name"].ToString(), status: refusal.Status, selection: Picked(form) ? Chosen(form) : null)
+                    : DatabaseResults.ToResult(refusal),
+            };
+        }
+        catch (Exception error) when (KnownFailure(error))
+        {
+            return WantsHtml(http) || http.Request.IsDatastarRequest ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), selection: Picked(form) ? Chosen(form) : null) : Failure(error);
+        }
+    }
+
+    private static bool Picked(IFormCollection form)
+    {
+        return form.ContainsKey("regions") || form.ContainsKey("regionOrder");
+    }
+
+    private static IReadOnlyList<string> Regions(IFormCollection form, AccountContext context)
+    {
+        return Picked(form) ? DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"))
+            : context.Project?.Region is { Length: > 0 } region ? [region] : throw new AccountAccessException(DatabasePlacementEndpoints.Minimum, 422);
+    }
+
+    private static IReadOnlyList<string> Chosen(IFormCollection form)
+    {
+        try { return DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder")); }
+        catch (AccountAccessException) { return []; }
+    }
+
+    internal static async Task<IResult> OperateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend, string action)
+    {
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null)
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+        if (!Csrf.Validate(http, form))
+        {
+            return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), action == "delete" ? "danger" : "branches"), TypedResults.BadRequest("Invalid form token."));
+        }
+
+        var id = form["databaseId"].ToString();
+        try
+        {
+            if (action == "branch")
+            {
+                var pointInTime = form["pointInTime"].ToString();
+                if (!string.IsNullOrWhiteSpace(pointInTime))
+                {
+                    var recovery = http.RequestServices.GetRequiredService<WholeDatabaseRecovery>();
+                    var started = await recovery.StartForkAsync(context, id, pointInTime, form["name"].ToString(), DatabaseTtl.Seconds(DatabaseTtl.Hours(form["ttlHours"].ToString())), http.RequestAborted);
+                    return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "backups") + "?restore=" + started.OperationId) :
+                        TypedResults.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
+                }
+                var branched = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
+                return branched switch
+                {
+                    DatabaseRecord branch => WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : TypedResults.Json(DatabaseOutput(branch), statusCode: 201),
+                    DatabaseRefusal branchFailure => WantsHtml(http) && branchFailure.Status != 404
+                        ? await DetailPageAsync(http, context, id, "branches", backend, databases, branchFailure.Message, false, branchFailure.Status, branchName: form["name"].ToString(), ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString())
+                        : DatabaseResults.PageFailureOf(http, context, branchFailure),
+                };
+            }
+            var deleted = await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
+            return deleted switch
+            {
+                Done => WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : TypedResults.NoContent(),
+                DatabaseRefusal deleteFailure => WantsHtml(http) && deleteFailure.Status != 404
+                    ? await DetailPageAsync(http, context, id, "danger", backend, databases, deleteFailure.Message, action == "delete", deleteFailure.Status)
+                    : DatabaseResults.PageFailureOf(http, context, deleteFailure),
+            };
+        }
+        catch (Exception error) when (KnownFailure(error))
+        {
+            if (!WantsHtml(http) || Status(error) == 404)
+            {
+                return DatabaseResults.PageFailure(http, context, error);
             }
 
-            context = await backups.SettleRestoresAsync(context, http.RequestAborted);
-            return await ListPageAsync(http, context, backend, databases);
+            return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "danger", backend, databases, Message(error), action == "delete", Status(error), branchName: action == "branch" ? form["name"].ToString() : null, ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString());
+        }
+    }
+
+    internal static Task<IResult> BackupDetailPageAsync(HttpContext http, AccountContext context, string databaseId, string error, int status) =>
+        DetailPageAsync(http, context, databaseId, "backups", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
+            http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status);
+
+    internal static object DatabaseOutput(DatabaseRecord database, bool restricted = false)
+    {
+        return new
+        {
+            database.Id,
+            database.ProjectId,
+            database.Name,
+            database.Region,
+            database.Regions,
+            database.AllRegions,
+            database.Endpoint,
+            database.Status,
+            SpendCapCents = restricted ? (long?)null : database.SpendCapCents,
+            OperationLimits = restricted ? null : database.OperationLimits,
+            BackupRetentionDays = restricted ? (int?)null : database.BackupRetentionDays,
+            BranchedFrom = restricted ? null : database.BranchedFrom,
+            database.CreatedAt,
+            database.ExpiresAt
+        };
+    }
+
+    internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
+        string error = "", bool openCreate = false, string name = "", int status = 200, IReadOnlyList<string>? selection = null, string createdName = "")
+    {
+        var synced = await OptionalPanel.RunAsync(http, "database-sync", () => databases.SyncAsync(context, http.RequestAborted));
+        var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
+        var metricsRead = OptionalPanel.LoadAsync(http, "database-metrics",
+            () => DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted), DatabaseListMetrics.Failed);
+        var regionsRead = backend.DiscoveryAsync(http.RequestAborted);
+        IReadOnlyList<DatabaseRegion> choices = [];
+        var regionsError = "";
+        try
+        {
+            var discovery = await regionsRead;
+            choices = discovery.Regions;
+        }
+        catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
+        var search = http.Request.Query["q"].ToString().Trim();
+        var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
+        var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || database.Name == createdName).ToArray();
+        var metrics = await metricsRead;
+        var page = new DatabasesPage(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, Selection = selection, CreatedName = createdName, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." };
+        if (http.Request.IsDatastarRequest)
+        {
+            await DatastarEvents.PatchElementsAsync(http, DatabasesPatch.Create(page));
+            return TypedResults.Empty;
         }
 
-        internal static async Task<IResult> ApiListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases)
-        {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
-            {
-                return TypedResults.Unauthorized();
-            }
+        var result = DatabasesView.Create(page);
+        result.StatusCode = status;
+        return result;
+    }
 
-            try
+    internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseRegionsForm? regions = null, string formError = "", CreateTableDraft? tableDraft = null, bool openCreateTable = false, string createdTable = "")
+    {
+        DatabaseRecord database;
+        try
+        {
+            if (tab is "overview" or "backups")
             {
-                var (limit, after) = CursorPaging.Read(http.Request);
                 context = await http.RequestServices.GetRequiredService<BackupService>().SettleRestoresAsync(context, http.RequestAborted);
-                await databases.SyncAsync(context, http.RequestAborted);
-                var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
-                    db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
-                var restricted = context.Organization is { } organization && !organization.ContainsMember(context.UserId);
-                return TypedResults.Json(new CursorPage<object>([.. page.Items.Select(database => DatabaseOutput(database, restricted))], page.NextCursor, page.Limit));
             }
-            catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
+
+            if (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsHead(http.Request.Method))
+            {
+                (context, database) = await databases.LookupAsync(context, id, http.RequestAborted);
+            }
+            else
+            {
+                database = DatabaseService.Database(context, id);
+            }
+        }
+        catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
+            (KnownFailure(failure) || failure is HttpRequestException or IOException or InvalidDataException or System.Text.Json.JsonException or OperationCanceledException))
+        { return DatabaseResults.PageFailure(http, context, failure); }
+        IReadOnlyList<DatabaseRegion> choices = [];
+        var range = DatabaseActivity.RangeOf(http.Request.Query);
+        var selectedTable = tab == "tables" ? http.Request.Query["table"].ToString() : "";
+        var activityRead = tab == "overview"
+            ? OptionalPanel.LoadAsync(http, "database-activity",
+                () => DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id, range, http.RequestAborted),
+                DatabaseActivity.Failed) : null;
+        var storageRead = tab == "overview" ? OptionalPanel.LoadAsync(http, "database-storage",
+            () => DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, "24h", http.RequestAborted), DatabaseListMetrics.Failed) : null;
+        var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error, tab == "backups") : null;
+        async Task<(DatabaseTables Tables, string Table, DatabaseSqlResult? Preview)> TablesAsync()
+        {
+            var scope = DatabaseService.Scope(context);
+            var home = await databases.HomeAsync(context, database, http.RequestAborted);
+            var tables = await DatabaseTables.LoadAsync(backend, scope, home, database.Id, http.RequestAborted);
+            var shown = tables.Tables.FirstOrDefault(table => table.Name == selectedTable) ?? (selectedTable.Length == 0 && tables.Tables.Count > 0 ? tables.Tables[0] : null);
+            return tab != "tables" || shown is null ? (tables, "", null) : (tables, shown.Name, await DatabaseTables.PreviewAsync(backend, scope, home, database.Id, shown.Name, http.RequestAborted));
         }
 
-        internal static async Task<IResult> TabAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases, string section)
+        var replicationRead = tab == "replication" ? DatabaseReplication.LoadAsync(http, context, database, databases, http.RequestAborted) : null;
+        async Task<DatabaseConflictsPage> ConflictsAsync()
         {
-            var databaseId = http.Request.RouteValues["databaseId"]?.ToString() ?? "";
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null)
-            {
-                return AccountEndpoints.LoginRedirect(http);
-            }
-            if (section == "overview" && http.Request.Query["delete"] == "1")
-            {
-                return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
-            }
-            if (section == "replication")
-            {
-                await databases.SyncAsync(context, http.RequestAborted);
-            }
-
-            return await DetailPageAsync(http, context, databaseId, section, backend, databases);
-        }
-
-        internal static async Task<IResult> CreateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend)
-        {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
-            {
-                return TypedResults.Unauthorized();
-            }
-
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form))
-            {
-                return RequestError.FormExpired(http, "/databases", TypedResults.BadRequest("Invalid form token."));
-            }
-
+            var table = http.Request.Query["table"].ToString();
+            var since = http.Request.Query["since"].ToString();
+            var until = http.Request.Query["until"].ToString();
+            var before = http.Request.Query["before"].ToString();
             try
             {
-                var regions = Regions(form, context);
-                var created = await databases.CreateAsync(context, form["name"].ToString(), regions[0], http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), [.. regions.Skip(1)]);
-                return created switch
+                var listing = await http.RequestServices.GetRequiredService<DatabaseConflicts>()
+                    .ListAsync(context, database.Id, table, since, until, 50, before, http.RequestAborted);
+                return listing switch
                 {
-                    DatabaseRecord database when http.Request.IsDatastarRequest => await ListPageAsync(http, context, backend, databases, createdName: database.Name),
-                    DatabaseRecord database => WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : TypedResults.Json(DatabaseOutput(database), statusCode: 201),
-                    DatabaseRefusal refusal => WantsHtml(http) || http.Request.IsDatastarRequest
-                        ? await ListPageAsync(http, context, backend, databases, error: refusal.Message, openCreate: true, name: form["name"].ToString(), status: refusal.Status, selection: Picked(form) ? Chosen(form) : null)
-                        : DatabaseResults.ToResult(refusal),
+                    DatabaseConflictList conflicts => new(conflicts, table, since, until, before),
+                    DatabaseInvalid invalid => new(null, table, since, until, before, invalid.Message),
                 };
             }
-            catch (Exception error) when (KnownFailure(error))
+            catch (Exception failure) when (failure is HttpRequestException or IOException or System.Text.Json.JsonException or InvalidOperationException
+                || KnownFailure(failure) || failure is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             {
-                return WantsHtml(http) || http.Request.IsDatastarRequest ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), selection: Picked(form) ? Chosen(form) : null) : Failure(error);
+                return new(null, table, since, until, before, failure is AccountAccessException { StatusCode: 422 } ? failure.Message : "Conflicts for " + database.Name + " are unavailable.");
             }
         }
-
-        private static bool Picked(IFormCollection form)
+        var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;
+        var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
+        if (tab == "replication" || tab == "overview" && database.AllRegions)
         {
-            return form.ContainsKey("regions") || form.ContainsKey("regionOrder");
+            try { choices = await backend.RegionsAsync(http.RequestAborted); }
+            catch (HttpRequestException) { }
         }
 
-        private static IReadOnlyList<string> Regions(IFormCollection form, AccountContext context)
+        DatabaseTables? tables = null;
+        DatabaseSqlResult? preview = null;
+        var shownTable = "";
+        if (tablesRead is not null)
         {
-            return Picked(form) ? DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"))
-                : context.Project?.Region is { Length: > 0 } region ? [region] : throw new AccountAccessException(DatabasePlacementEndpoints.Minimum, 422);
-        }
-
-        private static IReadOnlyList<string> Chosen(IFormCollection form)
-        {
-            try { return DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder")); }
-            catch (AccountAccessException) { return []; }
-        }
-
-        internal static async Task<IResult> OperateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend, string action)
-        {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            try { (tables, shownTable, preview) = await tablesRead; }
+            catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException or OverflowException or InvalidOperationException || KnownFailure(failure))
             {
-                return TypedResults.Unauthorized();
+                if (error.Length == 0)
+                {
+                    error = "Tables are unavailable. The data plane did not answer.";
+                }
             }
-
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form))
-            {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), action == "delete" ? "danger" : "branches"), TypedResults.BadRequest("Invalid form token."));
-            }
-
-            var id = form["databaseId"].ToString();
+        }
+        var activity = activityRead is null ? null : await activityRead;
+        var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
+        var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
+        IReadOnlyList<string>? tableHistory = null;
+        if (tab == "tables")
+        {
             try
             {
-                if (action == "branch")
+                if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadWorkspaceAsync(context, database.Id, http.RequestAborted) is { } workspace)
                 {
-                    var pointInTime = form["pointInTime"].ToString();
-                    if (!string.IsNullOrWhiteSpace(pointInTime))
-                    {
-                        var recovery = http.RequestServices.GetRequiredService<WholeDatabaseRecovery>();
-                        var started = await recovery.StartForkAsync(context, id, pointInTime, form["name"].ToString(), DatabaseTtl.Seconds(DatabaseTtl.Hours(form["ttlHours"].ToString())), http.RequestAborted);
-                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "backups") + "?restore=" + started.OperationId) :
-                            TypedResults.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
-                    }
-                    var branched = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
-                    return branched switch
-                    {
-                        DatabaseRecord branch => WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : TypedResults.Json(DatabaseOutput(branch), statusCode: 201),
-                        DatabaseRefusal branchFailure => WantsHtml(http) && branchFailure.Status != 404
-                            ? await DetailPageAsync(http, context, id, "branches", backend, databases, branchFailure.Message, false, branchFailure.Status, branchName: form["name"].ToString(), ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString())
-                            : DatabaseResults.PageFailureOf(http, context, branchFailure),
-                    };
+                    tableHistory = workspace.History;
                 }
-                var deleted = await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
-                return deleted switch
-                {
-                    Done => WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : TypedResults.NoContent(),
-                    DatabaseRefusal deleteFailure => WantsHtml(http) && deleteFailure.Status != 404
-                        ? await DetailPageAsync(http, context, id, "danger", backend, databases, deleteFailure.Message, action == "delete", deleteFailure.Status)
-                        : DatabaseResults.PageFailureOf(http, context, deleteFailure),
-                };
             }
-            catch (Exception error) when (KnownFailure(error))
+            catch (SqlWorkspaceUnavailableException)
             {
-                if (!WantsHtml(http) || Status(error) == 404)
-                {
-                    return DatabaseResults.PageFailure(http, context, error);
-                }
-
-                return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "danger", backend, databases, Message(error), action == "delete", Status(error), branchName: action == "branch" ? form["name"].ToString() : null, ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString());
+                tableHistory = null;
             }
         }
-
-        internal static Task<IResult> BackupDetailPageAsync(HttpContext http, AccountContext context, string databaseId, string error, int status) =>
-            DetailPageAsync(http, context, databaseId, "backups", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
-                http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status);
-
-        internal static object DatabaseOutput(DatabaseRecord database, bool restricted = false)
+        var page = new DatabaseDetailPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity, formError)
         {
-            return new
-            {
-                database.Id,
-                database.ProjectId,
-                database.Name,
-                database.Region,
-                database.Regions,
-                database.AllRegions,
-                database.Endpoint,
-                database.Status,
-                SpendCapCents = restricted ? (long?)null : database.SpendCapCents,
-                OperationLimits = restricted ? null : database.OperationLimits,
-                BackupRetentionDays = restricted ? (int?)null : database.BackupRetentionDays,
-                BranchedFrom = restricted ? null : database.BranchedFrom,
-                database.CreatedAt,
-                database.ExpiresAt
-            };
-        }
-
-        internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
-            string error = "", bool openCreate = false, string name = "", int status = 200, IReadOnlyList<string>? selection = null, string createdName = "")
+            Conflicts = conflictsRead is null ? null : await conflictsRead,
+            Replication = replicationRead is null ? null : await replicationRead,
+            BranchName = branchName,
+            ShowFork = http.Request.Query["fork"] == "1",
+            TtlHours = ttlHours,
+            PointInTime = pointInTime,
+            Tables = tables,
+            Table = shownTable,
+            Preview = preview,
+            StorageBytes = storage,
+            RegionsForm = regions,
+            TableDraft = tableDraft,
+            ShowCreateTable = openCreateTable || http.Request.Query["dialog"] == "create-table",
+            CreatedTable = createdTable.Length > 0 ? createdTable : http.Request.Query["created"].ToString() is { Length: > 0 and <= 128 } requested && !requested.Any(char.IsControl) ? requested : "",
+            SqlHistory = tableHistory
+        };
+        if (tab == "replication" && HttpMethods.IsGet(http.Request.Method) && http.Request.IsDatastarRequest)
         {
-            var synced = await OptionalPanel.RunAsync(http, "database-sync", () => databases.SyncAsync(context, http.RequestAborted));
-            var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
-            var metricsRead = OptionalPanel.LoadAsync(http, "database-metrics",
-                () => DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted), DatabaseListMetrics.Failed);
-            var regionsRead = backend.DiscoveryAsync(http.RequestAborted);
-            IReadOnlyList<DatabaseRegion> choices = [];
-            var regionsError = "";
-            try
-            {
-                var discovery = await regionsRead;
-                choices = discovery.Regions;
-            }
-            catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
-            var search = http.Request.Query["q"].ToString().Trim();
-            var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
-            var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || database.Name == createdName).ToArray();
-            var metrics = await metricsRead;
-            var page = new DatabasesPage(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, Selection = selection, CreatedName = createdName, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." };
-            if (http.Request.IsDatastarRequest)
-            {
-                await DatastarEvents.PatchElementsAsync(http, DatabasesPatch.Create(page));
-                return TypedResults.Empty;
-            }
-
-            var result = DatabasesView.Create(page);
-            result.StatusCode = status;
-            return result;
+            await DatastarEvents.PatchElementsAsync(http, DatabaseReplicationView.Create(page));
+            return TypedResults.Empty;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseRegionsForm? regions = null, string formError = "", CreateTableDraft? tableDraft = null, bool openCreateTable = false, string createdTable = "")
+        if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups is { Recovery: { } recovery })
         {
-            DatabaseRecord database;
-            try
-            {
-                if (tab is "overview" or "backups")
-                {
-                    context = await http.RequestServices.GetRequiredService<BackupService>().SettleRestoresAsync(context, http.RequestAborted);
-                }
-
-                if (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsHead(http.Request.Method))
-                {
-                    (context, database) = await databases.LookupAsync(context, id, http.RequestAborted);
-                }
-                else
-                {
-                    database = DatabaseService.Database(context, id);
-                }
-            }
-            catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
-                (KnownFailure(failure) || failure is HttpRequestException or IOException or InvalidDataException or System.Text.Json.JsonException or OperationCanceledException))
-            { return DatabaseResults.PageFailure(http, context, failure); }
-            IReadOnlyList<DatabaseRegion> choices = [];
-            var range = HomePage.NormalizeRange(http.Request.Query["range"]);
-            var selectedTable = tab == "tables" ? http.Request.Query["table"].ToString() : "";
-            string CardRange(string key)
-            {
-                return http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range;
-            }
-
-            var activityRead = tab == "overview"
-                ? OptionalPanel.LoadAsync(http, "database-activity",
-                    () => DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id, CardRange, http.RequestAborted),
-                    () => DatabaseActivity.Failed(CardRange)) : null;
-            var storageRead = tab == "overview" ? OptionalPanel.LoadAsync(http, "database-storage",
-                () => DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, "24h", http.RequestAborted), DatabaseListMetrics.Failed) : null;
-            var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error, tab == "backups") : null;
-            async Task<(DatabaseTables Tables, string Table, DatabaseSqlResult? Preview)> TablesAsync()
-            {
-                var scope = DatabaseService.Scope(context);
-                var home = await databases.HomeAsync(context, database, http.RequestAborted);
-                var tables = await DatabaseTables.LoadAsync(backend, scope, home, database.Id, http.RequestAborted);
-                var shown = tables.Tables.FirstOrDefault(table => table.Name == selectedTable) ?? (selectedTable.Length == 0 && tables.Tables.Count > 0 ? tables.Tables[0] : null);
-                return tab != "tables" || shown is null ? (tables, "", null) : (tables, shown.Name, await DatabaseTables.PreviewAsync(backend, scope, home, database.Id, shown.Name, http.RequestAborted));
-            }
-
-            var replicationRead = tab == "replication" ? DatabaseReplication.LoadAsync(http, context, database, databases, http.RequestAborted) : null;
-            async Task<DatabaseConflictsPage> ConflictsAsync()
-            {
-                var table = http.Request.Query["table"].ToString();
-                var since = http.Request.Query["since"].ToString();
-                var until = http.Request.Query["until"].ToString();
-                var before = http.Request.Query["before"].ToString();
-                try
-                {
-                    var listing = await http.RequestServices.GetRequiredService<DatabaseConflicts>()
-                        .ListAsync(context, database.Id, table, since, until, 50, before, http.RequestAborted);
-                    return listing switch
-                    {
-                        DatabaseConflictList conflicts => new(conflicts, table, since, until, before),
-                        DatabaseInvalid invalid => new(null, table, since, until, before, invalid.Message),
-                    };
-                }
-                catch (Exception failure) when (failure is HttpRequestException or IOException or System.Text.Json.JsonException or InvalidOperationException
-                    || KnownFailure(failure) || failure is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                {
-                    return new(null, table, since, until, before, failure is AccountAccessException { StatusCode: 422 } ? failure.Message : "Conflicts for " + database.Name + " are unavailable.");
-                }
-            }
-            var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;
-            var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
-            if (tab == "replication" || tab == "overview" && database.AllRegions)
-            {
-                try { choices = await backend.RegionsAsync(http.RequestAborted); }
-                catch (HttpRequestException) { }
-            }
-
-            DatabaseTables? tables = null;
-            DatabaseSqlResult? preview = null;
-            var shownTable = "";
-            if (tablesRead is not null)
-            {
-                try { (tables, shownTable, preview) = await tablesRead; }
-                catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException or OverflowException or InvalidOperationException || KnownFailure(failure))
-                {
-                    if (error.Length == 0)
-                    {
-                        error = "Tables are unavailable. The data plane did not answer.";
-                    }
-                }
-            }
-            var activity = activityRead is null ? null : await activityRead;
-            var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
-            var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
-            IReadOnlyList<string>? tableHistory = null;
-            if (tab == "tables")
-            {
-                try
-                {
-                    if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadWorkspaceAsync(context, database.Id, http.RequestAborted) is { } workspace)
-                    {
-                        tableHistory = workspace.History;
-                    }
-                }
-                catch (SqlWorkspaceUnavailableException)
-                {
-                    tableHistory = null;
-                }
-            }
-            var page = new DatabaseDetailPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity, formError)
-            {
-                Conflicts = conflictsRead is null ? null : await conflictsRead,
-                Replication = replicationRead is null ? null : await replicationRead,
-                BranchName = branchName,
-                ShowFork = http.Request.Query["fork"] == "1",
-                TtlHours = ttlHours,
-                PointInTime = pointInTime,
-                Tables = tables,
-                Table = shownTable,
-                Preview = preview,
-                StorageBytes = storage,
-                RegionsForm = regions,
-                TableDraft = tableDraft,
-                ShowCreateTable = openCreateTable || http.Request.Query["dialog"] == "create-table",
-                CreatedTable = createdTable.Length > 0 ? createdTable : http.Request.Query["created"].ToString() is { Length: > 0 and <= 128 } requested && !requested.Any(char.IsControl) ? requested : "",
-                SqlHistory = tableHistory
-            };
-            if (tab == "replication" && HttpMethods.IsGet(http.Request.Method) && http.Request.IsDatastarRequest)
-            {
-                await DatastarEvents.PatchElementsAsync(http, DatabaseReplicationView.Create(page));
-                return TypedResults.Empty;
-            }
-
-            if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups is { Recovery: { } recovery })
-            {
-                var card = await BackupEndpoints.PitrCardAsync(http, context, database,
-                    recovery with { Error = page.Backups.Error }, page.Backups.Listing, page.Backups.Bucket, http.RequestAborted);
-                await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
-                return TypedResults.Empty;
-            }
-
-            if (tab == "conflicts" && http.Request.IsDatastarRequest)
-            {
-                await DatastarEvents.PatchElementsAsync(http, DatabaseConflictsView.Create(page));
-                return TypedResults.Empty;
-            }
-
-            if (tab == "replication" && http.Request.IsDatastarRequest)
-            {
-                await DatastarEvents.PatchElementsAsync(http, DatabaseDetailSection.Create(page));
-                return TypedResults.Empty;
-            }
-
-            if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups?.Restore is not null)
-            {
-                await DatastarEvents.PatchElementsAsync(http, RestoreStatusView.Create(page.Backups));
-                return TypedResults.Empty;
-            }
-
-            var result = DatabaseDetailView.Create(page);
-            result.StatusCode = status;
-            return result;
+            var card = await BackupEndpoints.PitrCardAsync(http, context, database,
+                recovery with { Error = page.Backups.Error }, page.Backups.Listing, page.Backups.Bucket, http.RequestAborted);
+            await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
+            return TypedResults.Empty;
         }
 
-        internal static bool WantsHtml(HttpContext http)
+        if (tab == "conflicts" && http.Request.IsDatastarRequest)
         {
-            return DatabaseResults.WantsHtml(http);
+            await DatastarEvents.PatchElementsAsync(http, DatabaseConflictsView.Create(page));
+            return TypedResults.Empty;
         }
 
-        internal static bool KnownFailure(Exception error)
+        if (tab == "replication" && http.Request.IsDatastarRequest)
         {
-            return DatabaseResults.KnownFailure(error);
+            await DatastarEvents.PatchElementsAsync(http, DatabaseDetailSection.Create(page));
+            return TypedResults.Empty;
         }
 
-        internal static int Status(Exception error)
+        if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups?.Restore is not null)
         {
-            return DatabaseResults.Status(error);
+            await DatastarEvents.PatchElementsAsync(http, RestoreStatusView.Create(page.Backups));
+            return TypedResults.Empty;
         }
 
-        internal static string Message(Exception error)
-        {
-            return DatabaseResults.Message(error);
-        }
+        var result = DatabaseDetailView.Create(page);
+        result.StatusCode = status;
+        return result;
+    }
 
-        internal static IResult Failure(Exception error)
-        {
-            return DatabaseResults.Failure(error);
-        }
+    internal static bool WantsHtml(HttpContext http)
+    {
+        return DatabaseResults.WantsHtml(http);
+    }
+
+    internal static bool KnownFailure(Exception error)
+    {
+        return DatabaseResults.KnownFailure(error);
+    }
+
+    internal static int Status(Exception error)
+    {
+        return DatabaseResults.Status(error);
+    }
+
+    internal static string Message(Exception error)
+    {
+        return DatabaseResults.Message(error);
+    }
+
+    internal static IResult Failure(Exception error)
+    {
+        return DatabaseResults.Failure(error);
     }
 }

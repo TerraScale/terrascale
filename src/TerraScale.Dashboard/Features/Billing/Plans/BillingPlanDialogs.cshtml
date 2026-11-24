@@ -6,16 +6,19 @@
     var owner = Model.CanManage;
     var subscribed = data.Binding?.SubscriptionId is { Length: > 0 } && data.Binding.Status is not ("canceled" or "incomplete_expired");
     var currentKey = data.State?.PlanKey ?? (subscribed ? Model.Plans.FirstOrDefault(plan => plan.Id == Model.Shell.Context.Organization!.PlanId)?.Key : null) ?? "";
+    var intervalPlans = Model.Plans.Where(plan => plan.SupportsInterval("monthly") && plan.SupportsInterval("annual")).ToList();
+    var defaultInterval = subscribed && (data.Binding?.EffectiveInterval is { Length: > 0 } bound ? bound : data.Binding?.Interval) == "annual" ? "annual" : "monthly";
 }
 @if (owner)
 {
     <dialog id="change-billing-plan" class="ts-dialog ts-dialog-wide" closedby="any" aria-labelledby="change-billing-plan-title"><div class="ts-dialog-content">
         <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="change-billing-plan-title">Choose a plan</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="change-billing-plan">@Icons.Render("X", 18)</button></header>
         <form method="get" action="/organization" class="ts-form"><input type="hidden" name="tab" value="billing" /><input type="hidden" name="review" value="1" />
+            @if (intervalPlans.Count > 0) { <fieldset class="ts-segmented ts-billing-interval"><legend class="ts-sr-only">Billing interval</legend><label class="ts-segment"><input class="ts-sr-only" type="radio" name="interval" value="monthly" checked="@(defaultInterval == "monthly")" data-bind="_billingInterval" /><span>Monthly</span></label><label class="ts-segment"><input class="ts-sr-only" type="radio" name="interval" value="annual" checked="@(defaultInterval == "annual")" data-bind="_billingInterval" /><span>Annual</span></label></fieldset> }
             <fieldset class="ts-billing-options"><legend class="ts-sr-only">Plan</legend>
             @foreach (var plan in Model.Plans.Where(plan => plan.PriceCents > 0))
             {
-                <label class="ts-billing-option"><input type="radio" name="plan" value="@plan.Key" required checked="@(plan.Key == currentKey ? "checked" : null)" /><span class="ts-billing-option-main"><span class="ts-billing-option-name">@plan.Name@if (plan.Key == currentKey) { <span class="ts-badge ts-badge-info">Current</span> }</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.OperationsAllowance · @plan.EgressAllowance · @plan.MemberAllowance</span></span><span class="ts-billing-option-price">@plan.Price<small>@plan.PriceUnit</small></span></label>
+                <label class="ts-billing-option"><input type="radio" name="plan" value="@plan.Key" required checked="@(plan.Key == currentKey ? "checked" : null)" /><span class="ts-billing-option-main"><span class="ts-billing-option-name">@plan.Name@if (plan.Key == currentKey) { <span class="ts-badge ts-badge-info">Current</span> }</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.OperationsAllowance · @plan.EgressAllowance · @plan.MemberAllowance</span></span>@if (intervalPlans.Contains(plan)) { <span class="ts-billing-option-price"><span data-text="@("$_billingInterval === 'annual' ? '" + plan.AnnualPrice + "' : '" + plan.MonthlyPrice + "'")">@MoneyFormat.Money(plan.IntervalPriceCents(defaultInterval))</span><small data-text="$_billingInterval === 'annual' ? '/ year' : '/ month'">@(defaultInterval == "annual" ? "/ year" : "/ month")</small></span> } else { <span class="ts-billing-option-price">@plan.Price<small>@plan.PriceUnit</small></span> }</label>
             }
             @if (Model.Shell.Context.Organization!.Kind == "personal" && data.State is not null)
             {

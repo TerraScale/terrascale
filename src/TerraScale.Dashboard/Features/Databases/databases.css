@@ -3,11 +3,6 @@
   display: contents;
 }
 
-/* Databases list and detail: search, name cell, region labels, detail header,
-   create dialog and its progress, region cards, facts grid, backup switch,
-   and the danger zone. */
-
-/* Keep search and creation together at the right edge of the list header. */
 #project-databases .ts-card-actions {
   flex-wrap: nowrap;
   margin-left: auto;
@@ -20,7 +15,6 @@
   }
 }
 
-/* Search shrinks as needed to leave room for the creation button. */
 .ts-db-search {
   flex: 0 1 auto;
   flex-wrap: nowrap;
@@ -45,13 +39,12 @@
   color: var(--ts-ink);
 }
 
-/* The detail header's database mark: a larger accent icon tile. */
 .ts-db-icon {
   display: grid;
   flex: none;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: var(--ts-s10);
+  height: var(--ts-s10);
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
@@ -73,29 +66,54 @@
 
 .ts-db-region-flag {
   flex: none;
-  width: 16px;
-  height: 12px;
+  width: var(--ts-s4);
+  height: var(--ts-s3);
   border: 1px solid var(--ts-line-strong);
   border-radius: 2px;
   object-fit: cover;
 }
 
-/* Detail header: breadcrumb above the database identity. */
 .ts-db-head {
   display: grid;
-  gap: var(--ts-s3);
+  gap: var(--ts-s2);
 }
 
 .ts-db-tabs {
+  gap: 0 var(--ts-s5);
   margin-top: calc(-1 * var(--ts-s4));
 }
 
-.ts-db-tabs .ts-tab[data-kind="danger"] {
-  color: var(--ts-danger);
+.ts-db-more > .ts-tab {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
 }
 
-.ts-db-tabs .ts-tab[data-kind="danger"][aria-current="page"]::after {
-  background: var(--ts-danger);
+.ts-db-more > .ts-tab > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ts-db-more > .ts-tab[data-active="true"],
+.ts-db-more:has(> :popover-open) > .ts-tab {
+  color: var(--ts-ink);
+}
+
+.ts-db-more > .ts-tab[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ts-accent);
+}
+
+.ts-db-more > .ts-tab:focus-visible {
+  outline: var(--ts-ring);
+  outline-offset: -2px;
 }
 
 .ts-breadcrumb {
@@ -111,6 +129,9 @@
 }
 
 .ts-breadcrumb > a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ts-s6);
   color: var(--ts-ink-2);
 }
 
@@ -122,131 +143,140 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: var(--ts-s3);
 }
 
-.ts-db-title {
-  font-size: var(--ts-fs-3xl);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-/* Danger zone: a boxed section with a red heading and one row per action. */
-.ts-card.ts-card-boxed.ts-db-danger { border-color: var(--ts-danger); }
-.ts-db-danger .ts-card-title { color: var(--ts-danger); }
-
-.ts-db-danger-row {
+.ts-db-meta,
+.ts-db-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-s4);
-  padding-top: var(--ts-s4);
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-db-danger-row > .ts-list-main {
-  flex: 1 1 240px;
-}
-
-/* Import tab: icon tile above the empty-state title. */
-.ts-db-empty-icon {
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  margin-bottom: var(--ts-s2);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface-2);
-  color: var(--ts-ink-2);
-}
-
-/* Branches tab: full-width rows; name wraps first on narrow screens. */
-.ts-db-branches {
-  display: grid;
-  margin: var(--ts-s4) 0 0;
-  padding: 0;
-  list-style: none;
-  border-top: 1px solid var(--ts-line);
-}
-
-.ts-db-branch {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-s2) var(--ts-s4);
-  min-height: 52px;
-  padding: var(--ts-s3) 0;
-  border-bottom: 1px solid var(--ts-line);
-}
-
-.ts-db-branch-name {
+  gap: var(--ts-s3);
   min-width: 0;
-  overflow-wrap: anywhere;
+}
+
+.ts-db-actions {
+  gap: var(--ts-s2);
+}
+
+.ts-db-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: var(--ts-s1) var(--ts-s2) var(--ts-s1) var(--ts-s1);
+  border: 0;
+  border-radius: var(--ts-radius);
+  background: transparent;
+  color: var(--ts-ink);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-db-switcher:hover,
+.ts-db-switch:has(> :popover-open) > .ts-db-switcher {
+  background: var(--ts-hover);
+}
+
+.ts-db-switcher:focus-visible {
+  outline: var(--ts-ring);
+  outline-offset: 2px;
+}
+
+.ts-db-switcher > .ts-db-icon {
+  width: var(--ts-control-h-sm);
+  height: var(--ts-control-h-sm);
+  border-radius: var(--ts-radius);
+}
+
+.ts-db-switcher > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--ts-ink-3);
+}
+
+.ts-db-title {
+  font-size: var(--ts-fs-2xl);
   font-weight: 600;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
-.ts-db-branch .ts-meta {
-  margin-left: auto;
-}
-
-/* Inline restore form in the restore points table. */
-.ts-db-restore {
-  display: flex;
+.ts-db-copy {
+  display: inline-flex;
   align-items: center;
   gap: var(--ts-s2);
 }
 
-.ts-db-restore > .ts-input {
-  min-width: 160px;
-}
-
-/* Label/value tiles split by vertical hairlines. Like .ts-stats, the grid is
-   shifted left and clipped so the first tile of each row hides its divider
-   and lines up with the section edge. */
-.ts-db-facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  row-gap: var(--ts-s4);
-  margin-left: calc(-1 * var(--ts-s4));
-  overflow: hidden;
-}
-
-.ts-db-facts > div {
-  display: grid;
-  align-content: start;
-  gap: 2px;
-  margin-left: -1px;
-  padding: 0 var(--ts-s4);
-  border-left: 1px solid var(--ts-line);
-}
-
-.ts-db-facts dt {
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-}
-
-.ts-db-facts dd {
-  font-weight: 600;
-}
-
-.ts-db-setting {
-  display: flex;
-  flex-wrap: wrap;
+.ts-db-id {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-s4);
-  padding: var(--ts-s4) 0;
-  border-bottom: 1px solid var(--ts-line);
+  gap: var(--ts-s1);
+  height: var(--ts-s6);
+  padding: 0 var(--ts-s2);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  cursor: pointer;
+  transition: color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
 }
 
-.ts-db-setting > .ts-list-main {
-  flex: 1 1 240px;
+.ts-db-id:hover {
+  background: var(--ts-hover);
+  color: var(--ts-ink);
 }
 
-/* Database list: roomy rows, the whole name cell is the link. Narrow
-   columns stack each database into a block: name, then status and regions. */
+.ts-db-id:focus-visible {
+  outline: var(--ts-ring);
+  outline-offset: 2px;
+}
+
+.ts-db-id > svg {
+  flex: none;
+  width: var(--ts-s3);
+  height: var(--ts-s3);
+}
+
+a.ts-db-region {
+  height: var(--ts-s6);
+  padding: 0 var(--ts-s2);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  transition: color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
+}
+
+a.ts-db-region:hover {
+  border-color: var(--ts-control-line);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-db-endpoint dd {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  min-width: 0;
+}
+
+.ts-db-endpoint code {
+  overflow-wrap: anywhere;
+}
+
+.ts-card.ts-card-boxed.ts-db-danger {
+  border-color: var(--ts-danger);
+}
+
+.ts-db-danger .ts-card-title {
+  color: var(--ts-danger);
+}
+
 .ts-db-table td {
   padding-block: var(--ts-s4);
 }
@@ -259,8 +289,25 @@
   font-size: var(--ts-fs-xs);
 }
 
+.ts-db-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-db-spark {
+  width: var(--ts-s16);
+  height: var(--ts-s5);
+}
+
+.ts-db-spark path {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 @container page (width < 768px) {
-  /* Visually hidden, still read as the column headers. */
   .ts-db-table thead {
     position: absolute;
     width: 1px;
@@ -287,36 +334,14 @@
   .ts-db-table td:first-child {
     grid-column: 1 / -1;
   }
-}
 
-/* List metrics: muted sparkline beside the canonical text value. */
-.ts-db-metric {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ts-s2);
-}
-
-.ts-db-spark {
-  width: 64px;
-  height: 20px;
-}
-
-.ts-db-spark path {
-  fill: none;
-  stroke: var(--series);
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-@container page (width < 768px) {
-  .ts-db-spark {
-    display: none;
-  }
-
-  /* Headers are hidden here, so each metric names itself. */
   .ts-db-table td[data-label]::before {
     content: attr(data-label) " ";
     color: var(--ts-ink-2);
+  }
+
+  .ts-db-spark {
+    display: none;
   }
 }
 
@@ -407,25 +432,6 @@ dialog.ts-db-create-dialog .ts-dialog-content {
   opacity: 0.4;
 }
 
-@media (max-width: 47.99rem) {
-  dialog.ts-db-create-dialog .ts-dialog-content {
-    padding: var(--ts-s4);
-  }
-
-  .ts-db-create-form > .ts-dialog-footer > .ts-btn {
-    flex: 1 1 auto;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ts-db-create-mark::after {
-    border-color: var(--ts-accent);
-    animation: none;
-  }
-}
-
-/* Ready: the new database's first view confirms the create finished. */
-/* The ?created=1 confirmation is a toast: opaque surface, bottom-right. */
 .ts-db-created {
   position: fixed;
   right: var(--ts-s6);
@@ -445,8 +451,8 @@ dialog.ts-db-create-dialog .ts-dialog-content {
 .ts-db-created-mark {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: var(--ts-control-h-sm);
+  height: var(--ts-control-h-sm);
   border-radius: var(--ts-radius-pill);
   background: color-mix(in oklab, var(--alert) var(--ts-tint-badge), transparent);
   color: var(--alert);
@@ -460,18 +466,18 @@ dialog.ts-db-create-dialog .ts-dialog-content {
 .ts-create-table-column {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(7.5rem, 0.8fr) auto;
-  gap: var(--ts-s2) var(--ts-s3);
   align-items: end;
+  gap: var(--ts-s2) var(--ts-s3);
   padding-bottom: var(--ts-s3);
   border-bottom: 1px solid var(--ts-line);
 }
 
 .ts-create-table-flags {
   display: flex;
+  grid-column: 1 / -1;
   flex-wrap: wrap;
   align-items: end;
   gap: var(--ts-s2) var(--ts-s4);
-  grid-column: 1 / -1;
 }
 
 .ts-create-table-default {
@@ -487,16 +493,10 @@ dialog.ts-db-create-dialog .ts-dialog-content {
   order: 3;
 }
 
-@media (max-width: 47.99rem) {
-  .ts-create-table-column {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 #conflicts .ts-card-actions {
   flex: 1 1 auto;
-  min-width: 0;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 #conflicts .ts-filters {
@@ -507,4 +507,25 @@ dialog.ts-db-create-dialog .ts-dialog-content {
 #conflicts .ts-filters .ts-field {
   flex: 1 1 10rem;
   min-width: 0;
+}
+
+@media (max-width: 47.99rem) {
+  dialog.ts-db-create-dialog .ts-dialog-content {
+    padding: var(--ts-s4);
+  }
+
+  .ts-db-create-form > .ts-dialog-footer > .ts-btn {
+    flex: 1 1 auto;
+  }
+
+  .ts-create-table-column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-db-create-mark::after {
+    border-color: var(--ts-accent);
+    animation: none;
+  }
 }
