@@ -63,10 +63,7 @@ public sealed class FileSweeper(
             foreach (var row in expired)
             {
                 after = row.Text(3);
-                if (!await EraseAsync(row, cancellationToken))
-                {
-                    return;
-                }
+                await EraseAsync(row, cancellationToken);
             }
 
             if (expired.Length < BatchSize)
@@ -76,7 +73,7 @@ public sealed class FileSweeper(
         }
     }
 
-    private async Task<bool> EraseAsync(SqlRow row, CancellationToken cancellationToken)
+    private async Task EraseAsync(SqlRow row, CancellationToken cancellationToken)
     {
         var key = S3FileObjectStore.Key(Ulid.Parse(row.Text(0)), Ulid.Parse(row.Text(1)), row.Text(2), row.Text(3));
         var erasedOutcome = await objects.DeleteAsync(row.Text(5), key, cancellationToken);
@@ -87,7 +84,7 @@ public sealed class FileSweeper(
         };
         if (!erased)
         {
-            return true;
+            return;
         }
 
         var forget = SqlValues.Statement(
@@ -97,12 +94,16 @@ public sealed class FileSweeper(
             SqlValues.Text(row.Text(3)),
             SqlValues.Text(row.Text(4)));
         var forgottenOutcome = await store.ExecuteAsync([forget], SqlContext.Fast, cancellationToken);
-        return forgottenOutcome switch
+        var failure = forgottenOutcome switch
         {
-            SqlExecuteResponse => true,
-            PlatformConflict conflict => Deferred(conflict.Message),
-            PlatformUnavailable unavailable => Deferred(unavailable.Message),
+            SqlExecuteResponse => null,
+            PlatformConflict conflict => conflict.Message,
+            PlatformUnavailable unavailable => unavailable.Message,
         };
+        if (failure is not null)
+        {
+            _ = Deferred(failure);
+        }
     }
 
     private SqlRow[] Skip(string message) => Deferred(message) ? [] : [];

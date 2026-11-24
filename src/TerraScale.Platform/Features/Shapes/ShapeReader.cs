@@ -250,15 +250,12 @@ public sealed class ShapeReader(
             return UpToDate(current.Shape, after, offsetText, NextCursor(cursor));
         }
 
-        if (!await notifier.WaitAsync(current.Shape.Database, current.Seen, remaining, cancellationToken))
-        {
-            return UpToDate(current.Shape, after, offsetText, NextCursor(cursor));
-        }
-
+        var advanced = await notifier.WaitAsync(current.Shape.Database, current.Seen, remaining, cancellationToken);
         var outcome = await ResolveAsync(context, route, current.Query, cancellationToken);
         return outcome switch
         {
             ResolvedShape next when next.Shape.Handle != current.Shape.Handle => Refetch(next.Shape, "shape lineage changed"),
+            ResolvedShape next when !advanced && next.Shape.Head <= after => UpToDate(next.Shape, after, offsetText, NextCursor(cursor)),
             ResolvedShape next => await WaitAsync(context, route, next, after, offsetText, cursor, deadline, pass + 1, cancellationToken),
             PlatformInvalidRequest invalid => invalid,
             PlatformUnauthorized unauthorized => unauthorized,

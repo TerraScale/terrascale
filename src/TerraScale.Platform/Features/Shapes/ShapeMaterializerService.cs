@@ -191,9 +191,23 @@ public sealed class ShapeMaterializerService(
 
     private async Task RefreshAsync(ShapeRecord shape, string bookmark, CancellationToken cancellationToken)
     {
+        var outcome = Accepted(shape)
+            ? await SnapshotAsync(shape, bookmark, cancellationToken)
+            : await RetireAsync(shape, "its persisted filter is no longer accepted", await registry.RetireShapeAsync(shape.Handle, cancellationToken), cancellationToken);
+        if (outcome is not null)
+        {
+            logger.ZLogWarning($"Shape {shape.Handle} was not materialized: {outcome}");
+        }
+    }
+
+    private static bool Accepted(ShapeRecord shape) =>
+        ShapeQuery.IsTable(shape.Table) && ShapeQuery.IsSafeFilter(shape.Where) && (shape.Columns is null || ShapeQuery.ColumnList(shape.Columns) is not null);
+
+    private async Task<string?> SnapshotAsync(ShapeRecord shape, string bookmark, CancellationToken cancellationToken)
+    {
         var query = new ShapeQuery(shape.Table, shape.Where, shape.Columns);
         var outcomeOutcome = await terraBase.ExecuteLowLatencyAsync(shape.Database, SqlValues.Batch(query.Select()), SqlContext.After(bookmark), cancellationToken);
-        var outcome = outcomeOutcome switch
+        return outcomeOutcome switch
         {
             SqlExecuteResponse response => ShapeQuery.Snapshot(response.Results[0]) switch
             {
@@ -208,10 +222,6 @@ public sealed class ShapeMaterializerService(
             PlatformNotFound missing => missing.Message ?? "the database no longer exists",
             PlatformUnavailable unavailable => unavailable.Message,
         };
-        if (outcome is not null)
-        {
-            logger.ZLogWarning($"Shape {shape.Handle} was not materialized: {outcome}");
-        }
     }
 
     private async Task<string?> RetireAsync(ShapeRecord shape, string reason, RetireShapeOutcome outcome, CancellationToken cancellationToken) =>

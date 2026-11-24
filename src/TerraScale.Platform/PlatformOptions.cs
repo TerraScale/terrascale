@@ -295,13 +295,13 @@ internal sealed class EnvironmentReader(IReadOnlyDictionary<string, string> valu
     public Uri HostLocalUri(string key, Uri fallback)
     {
         var uri = HttpUri(key, fallback);
-        return uri.Scheme == Uri.UriSchemeHttps || uri.IsLoopback || string.Equals(uri.Host, DockerHost, StringComparison.OrdinalIgnoreCase)
+        return uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && (uri.IsLoopback || string.Equals(uri.Host, DockerHost, StringComparison.OrdinalIgnoreCase)))
             ? uri
             : throw new ArgumentException($"{key} must use https unless it names a loopback address or {DockerHost}.");
     }
 
     public static Uri Secure(string key, Uri uri) =>
-        uri.Scheme == Uri.UriSchemeHttps || uri.IsLoopback
+        uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)
             ? uri
             : throw new ArgumentException($"{key} must use https unless it names a loopback address.");
 }
