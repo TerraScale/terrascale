@@ -712,7 +712,7 @@ paths:
       operationId: create_project
       tags: [Projects]
       summary: Create a project
-      description: Needs the member organization role for a person's own sign-in, or the admin organization role when an AI agent delegated mcp:write acts for the caller (agent_id and act in the token; other agents get 403 agent_forbidden). Creates the project's tenant; the caller becomes the project's explicit admin. 409 name_taken.
+      description: Needs the member organization role for a person's own sign-in, or the admin organization role when an AI agent delegated mcp:write acts for the caller (agent_id and act in the token). Such an agent whose owner holds only a lower role gets 403 forbidden_role; an agent without mcp:write gets 403 agent_forbidden. Creates the project's tenant; the caller becomes the project's explicit admin. 409 name_taken.
       requestBody:
         required: true
         content:
