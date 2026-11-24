@@ -180,7 +180,7 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
     }
 }
 
-public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollector votes, StrongTransactionRegistry registry, CommitFinalizer finalizer, AntiEntropyService antiEntropy, HlcClock clock, TimeProvider timeProvider, ILogger<StrongCoordinator> logger)
+public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollector votes, StrongTransactionRegistry registry, CommitFinalizer finalizer, AntiEntropyService antiEntropy, StrongCommitRecovery recovery, HlcClock clock, TimeProvider timeProvider, ILogger<StrongCoordinator> logger)
 {
     private static readonly TimeSpan SiblingSyncTimeout = TimeSpan.FromMilliseconds(500);
 
@@ -256,41 +256,56 @@ public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollec
             return reason;
         }
 
-        var now = timeProvider.GetTimestamp();
-        if (now >= tally.LeaseDeadline)
+        if (!recovery.TryReserve())
         {
             await AbortAsync(session, staged, handle, payload, tally);
-            return new ClusterTimeout("participant lock leases expired before the staged commit");
+            return new ClusterUnavailable("strong commit recovery is at capacity", "strong_commit_capacity");
         }
 
-        using var timer = new CancellationTokenSource();
-        var elapsed = Task.Delay(timeProvider.GetElapsedTime(now, tally.LeaseDeadline), timeProvider, timer.Token);
-        var completion = session.CommitStagedAsync(staged.Token, clock.Tick(), tally.LeaseDeadline, CancellationToken.None).AsTask();
-        if (await Task.WhenAny(completion, elapsed) != completion && !completion.IsCompletedSuccessfully)
+        var deferred = false;
+        CommitStagedOutcome committed;
+        try
         {
-            _ = ResolveExpiredCommitAsync(session, staged, handle, payload, tally, completion);
-            return new ClusterUnavailable("the staged commit's outcome could not be confirmed before its participant leases expired", "write_outcome_unknown");
+            var now = timeProvider.GetTimestamp();
+            if (now >= tally.LeaseDeadline)
+            {
+                await AbortAsync(session, staged, handle, payload, tally);
+                return new ClusterTimeout("participant lock leases expired before the staged commit");
+            }
+
+            using var timer = new CancellationTokenSource();
+            var elapsed = Task.Delay(timeProvider.GetElapsedTime(now, tally.LeaseDeadline), timeProvider, timer.Token);
+            var completion = session.CommitStagedAsync(staged.Token, clock.Tick(), tally.LeaseDeadline, CancellationToken.None).AsTask();
+            if (await Task.WhenAny(completion, elapsed) != completion && !completion.IsCompletedSuccessfully)
+            {
+                recovery.Enqueue(() => ResolveExpiredCommitAsync(session, staged, handle, payload, tally, completion));
+                deferred = true;
+                return new ClusterUnavailable("the staged commit's outcome could not be confirmed before its participant leases expired", "write_outcome_unknown");
+            }
+
+            await timer.CancelAsync();
+            committed = await completion;
+        }
+        finally
+        {
+            if (!deferred)
+            {
+                recovery.Release();
+            }
         }
 
-        await timer.CancelAsync();
-        return await ResolveCommitAsync(session, staged, handle, payload, tally, await completion);
+        return await ResolveCommitAsync(session, staged, handle, payload, tally, committed);
     }
 
     private async Task ResolveExpiredCommitAsync(
         ISqlDatabaseSession session, StagedWrite staged, StrongTransactionHandle handle, StrongPreparePayload payload, StrongVoteTally tally, Task<CommitStagedOutcome> completion)
     {
-        try
+        var outcome = await ResolveCommitAsync(session, staged, handle, payload, tally, await completion);
+        _ = outcome switch
         {
-            _ = await ResolveCommitAsync(session, staged, handle, payload, tally, await completion) switch
-            {
-                CommitMetadata => true,
-                SerializationConflict or SchemaMismatch or ClusterTimeout or ClusterUnavailable or StorageBusy => false,
-            };
-        }
-        catch (Exception exception)
-        {
-            ClusterLog.CommitResolutionFailed(logger, staged.DatabaseId, staged.TxId, exception);
-        }
+            CommitMetadata => true,
+            SerializationConflict or SchemaMismatch or ClusterTimeout or ClusterUnavailable or StorageBusy => false,
+        };
     }
 
     private async ValueTask<ClusterCommitTransactionOutcome> ResolveCommitAsync(

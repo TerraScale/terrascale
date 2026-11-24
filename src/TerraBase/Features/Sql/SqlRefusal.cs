@@ -49,7 +49,7 @@ public sealed record SqlRefusal(
     public static SqlRefusal RulesInvalid(string message, int statement) =>
         new("rules_invalid", message, "42501", statement, StatusCodes.Status403Forbidden);
 
-    public static SqlRefusal From(SqlError error) => IsUncertain(error.Code)
+    public static SqlRefusal From(SqlError error) => SqlWriteUncertainty.Matches(error.Code)
         ? Uncertain(error.Code, error.Message, error.StatementIndex)
         : new(MapCode(error.Code, error.SqlState), error.Message, error.SqlState, error.StatementIndex, MapStatus(error.Code));
 
@@ -73,14 +73,12 @@ public sealed record SqlRefusal(
     public static SqlRefusal From(BackendUnavailable unavailable) =>
         Unavailable(unavailable.Code, unavailable.Message);
 
-    private static SqlRefusal Unavailable(string code, string message) => IsUncertain(code)
+    private static SqlRefusal Unavailable(string code, string message) => SqlWriteUncertainty.Matches(code)
         ? Uncertain(code, message, 0)
         : new(code, message, "57P03", 0, StatusCodes.Status503ServiceUnavailable, TimeSpan.FromSeconds(1));
 
-    private static bool IsUncertain(string code) => code is "in_region_quorum_unconfirmed" or "write_outcome_unknown" or "commit_uncertain";
-
     private static SqlRefusal Uncertain(string code, string message, int statement) =>
-        new(code, message, "08007", statement, StatusCodes.Status503ServiceUnavailable);
+        new(code, message, SqlWriteUncertainty.SqlState, statement, StatusCodes.Status503ServiceUnavailable);
 
     private static string MapCode(string code, string sqlState) => (code, sqlState) switch
     {

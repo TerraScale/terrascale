@@ -12,7 +12,7 @@ public sealed record ClusterComponents(
     InRegionRaftRouter Raft,
     AntiEntropyService AntiEntropy);
 
-public sealed class ClusterHostedService(QuicRpcHost host, ClusterComponents components, IEnumerable<IQuicEndpoints> endpoints, TimeProvider timeProvider, ILogger<ClusterHostedService> logger) : IHostedService, IAsyncDisposable
+public sealed class ClusterHostedService(QuicRpcHost host, ClusterComponents components, IEnumerable<IQuicEndpoints> endpoints, StrongCommitRecovery recovery, TimeProvider timeProvider, ILogger<ClusterHostedService> logger) : IHostedService, IAsyncDisposable
 {
     private readonly CancellationTokenSource _stopping = new();
     private Task[] _loops = [];
@@ -50,11 +50,13 @@ public sealed class ClusterHostedService(QuicRpcHost host, ClusterComponents com
             ClusterLoop.RunAsync("health", components.Health.RunAsync, timeProvider, logger, stopping),
             ClusterLoop.RunAsync("anti-entropy", components.AntiEntropy.RunPeriodicAsync, timeProvider, logger, stopping),
             ClusterLoop.RunAsync("catch-up", components.AntiEntropy.RunOnDemandAsync, timeProvider, logger, stopping),
+            recovery.RunAsync(),
         ];
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        recovery.Complete();
         await _stopping.CancelAsync();
         await Task.WhenAll(_loops).WaitAsync(cancellationToken);
         await components.Raft.DisposeAsync();

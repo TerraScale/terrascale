@@ -46,7 +46,4 @@ internal static partial class ClusterLog
 
     [LoggerMessage(EventId = 2113, Level = LogLevel.Error, Message = "Cluster background loop {Loop} failed and will restart after {Delay}")]
     public static partial void LoopFailed(ILogger logger, string loop, TimeSpan delay, Exception exception);
-
-    [LoggerMessage(EventId = 2114, Level = LogLevel.Error, Message = "Could not finish resolving the staged commit {TxId} on database {DatabaseId}")]
-    public static partial void CommitResolutionFailed(ILogger logger, Ulid databaseId, Ulid txId, Exception exception);
 }
