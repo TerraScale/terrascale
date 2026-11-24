@@ -7,7 +7,8 @@ case "$thing" in
   dashboard) package=terrascale-dashboard ;;
   *) exit 2 ;;
 esac
-image=ghcr.io/terrascale/$package
+namespace=${OCIR_NAMESPACE:?}
+image="sa-saopaulo-1.ocir.io/${namespace}/terrascale/${package}"
 export TS_AUTH_REVISION="$REVISION"
 if [[ ${IMAGE_CACHED:?} == false ]]; then
   if [[ "$thing" == auth || "$thing" == platform ]]; then
@@ -38,5 +39,4 @@ fi
 [[ "$arm64" =~ ^sha256:[0-9a-f]{64}$ ]]
 docker buildx imagetools inspect "$image@$arm64" --format '{{json .Image}}' | \
   jq -e --arg revision "$REVISION" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-docker buildx imagetools create --tag "$image:main" "$image@$arm64"
 echo "IMAGE=$image@$arm64" >> "$GITHUB_ENV"
