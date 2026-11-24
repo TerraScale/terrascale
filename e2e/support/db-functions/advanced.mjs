@@ -225,6 +225,43 @@ export async function binaryParameters(client, check) {
     () => refused(client.execute([{ sql: 'SELECT ?', args: [{ base64: 'AA==' }], oids: [oid] }]), '22P02'));
 }
 
+export async function wireHardening(client, prefix, check) {
+  const execute = sql => client.execute([{ sql }]);
+  const healthy = async () => assert.deepEqual(rows(await execute('SELECT 1')), [['1']]);
+  await check('numeric-oversized-binary-read', async () => {
+    await refused(client.describeBind('c35_numeric_read', 'SELECT $1 AS "cast(value as numeric)"', ['1' + '0'.repeat(200000)], true), '22003');
+    await healthy();
+  });
+  for (const [name, hex] of [['weight', '00017fff000000000001'], ['scale', '0000000000003fff'], ['digit', '000100000000000027ff']]) {
+    await check('numeric-invalid-binary-' + name, async () => {
+      await refused(client.execute([{ sql: 'SELECT ?', args: [{ base64: Buffer.from(hex, 'hex').toString('base64') }], oids: [1700] }]), '22P03');
+      await healthy();
+    });
+  }
+  await check('listen-channel-limit', async () => {
+    try {
+      for (let channel = 0; channel < 64; channel++) await execute(`LISTEN c35_channel_${channel}`);
+      await execute('LISTEN c35_channel_0');
+      await refused(execute('LISTEN c35_channel_64'), '54000');
+    } finally { await execute('UNLISTEN *'); }
+    await execute('LISTEN c35_channel_64');
+    await execute('UNLISTEN *');
+  });
+  await check('bytea-literal-smuggling-refusal', async () => {
+    const table = prefix + '_smuggle';
+    await execute(`CREATE TABLE ${table}(id INTEGER PRIMARY KEY)`);
+    await execute(`INSERT INTO ${table} VALUES(1)`);
+    await refused(execute(String.raw`SELECT E'\\x41''; DELETE FROM ${table}; SELECT ''42'::bytea`), '22P02');
+    await refused(execute(String.raw`SELECT '\x0'::bytea`), '22P02');
+    assert.deepEqual(rows(await execute(String.raw`SELECT hex('\x00ff'::bytea)`)), [['00FF']]);
+    assert.deepEqual(rows(await execute(`SELECT count(*) FROM ${table}`)), [['1']]);
+  });
+  await check('nul-escape-refusal', async () => {
+    await refused(execute(String.raw`SELECT E'a\000b'`), '22021');
+    await healthy();
+  });
+}
+
 export async function requestLimits(open, surface, check) {
   const sql = 'SELECT length(?)';
   const statements = [{ sql, args: [''] }];

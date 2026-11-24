@@ -98,7 +98,7 @@ export async function transport(surface, region, project, database, credential, 
     }
     return results;
   };
-  const describeBind = (name, text, values) => new Promise((resolve, reject) => {
+  const describeBind = (name, text, values, binary = false) => new Promise((resolve, reject) => {
     let oids;
     const parameters = message => { oids = message.dataTypeIDs; };
     const query = new pg.Query({ name, text, values, types: [0], rowMode: 'array' }, undefined, (error, result) => {
@@ -112,7 +112,7 @@ export async function transport(surface, region, project, database, credential, 
         connection.submittedNamedStatements[name] = text;
       }
       connection.describe({ type: 'S', name });
-      connection.bind({ statement: name, values });
+      connection.bind({ statement: name, values, binary });
       connection.execute({ portal: '', rows: 0 });
       connection.sync();
     };

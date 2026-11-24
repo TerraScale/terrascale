@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { sqlCases } from './cases.mjs';
-import { advanced, binaryParameters, requestLimits } from './advanced.mjs';
+import { advanced, binaryParameters, requestLimits, wireHardening } from './advanced.mjs';
 import { token, transport } from './transports.mjs';
 
 const surfaces = ['REST', 'WebSocket', 'Postgres'];
@@ -109,7 +109,10 @@ export async function runMatrix(state, target, selection) {
           } finally { await readonly.close(); }
         });
         await advanced(client, surface, prefix, (name, action) => check(region, surface, name, action));
-        if (surface === 'Postgres') await binaryParameters(client, (name, action) => check(region, surface, name, action));
+        if (surface === 'Postgres') {
+          await binaryParameters(client, (name, action) => check(region, surface, name, action));
+          await wireHardening(client, prefix, (name, action) => check(region, surface, name, action));
+        }
         await requestLimits(() => transport(surface, region, state.projectId, state.databaseId, credential, ports),
           surface, (name, action) => check(region, surface, name, action));
       } finally { await client.close(); }
