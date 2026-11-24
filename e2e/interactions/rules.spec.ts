@@ -447,6 +447,7 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
   const audit = 'rules_sql_audit_' + suffix;
   const tasks = 'rules_sql_tasks_' + suffix;
   const taskAudit = 'rules_sql_task_audit_' + suffix;
+  const cteTrigger = 'rules_sql_cte_' + suffix;
   const owner = await ownerToken(request, current);
   const ownerHeaders = { authorization: 'Bearer ' + owner };
   const run = (credential: string, sql: string) =>
@@ -552,6 +553,14 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await answer(await run(aliceToken, `UPDATE ${tasks} SET title = 'via trigger' WHERE id = 1`), 403, 'sql_sandbox');
     console.log('end-user UPDATE whose trigger reads a column only the update rule uses -> 403 sql_sandbox');
     await execute(`DROP TRIGGER ${taskAudit}`);
+    await execute(`CREATE TRIGGER ${view} AFTER UPDATE ON ${tasks} BEGIN INSERT INTO ${vault} (pin) VALUES (OLD.assignee); END`);
+    await answer(await run(aliceToken, `UPDATE ${tasks} SET title = 'via view trigger' WHERE id IN (SELECT id FROM ${view})`), 403, 'sql_sandbox');
+    console.log('end-user UPDATE firing a trigger named like a ruled view -> 403 sql_sandbox');
+    await execute(`DROP TRIGGER ${view}`);
+    await execute(`CREATE TRIGGER ${cteTrigger} AFTER UPDATE ON ${tasks} BEGIN INSERT INTO ${vault} (pin) VALUES (OLD.assignee); END`);
+    await refused(`WITH ${cteTrigger} AS (SELECT 1) UPDATE ${tasks} SET title = 'via cte trigger' WHERE id = 1`, 'rule_denied');
+    await execute(`DROP TRIGGER ${cteTrigger}`);
+    expect(await allowed(`SELECT body FROM ${view} ORDER BY body`)).toEqual([['a1-edited'], ['a2']]);
     expect(await execute(`SELECT pin FROM ${vault} ORDER BY id`)).toEqual([['vault-9999']]);
     expect(await execute(`SELECT assignee, title FROM ${tasks}`)).toEqual([[alice, 't1-edited']]);
     expect(await execute(`SELECT id, body, secret FROM ${notes} ORDER BY id`)).toEqual([[1, 'a1-edited', 'pin-1111'], [2, 'a2', 'pin-2222'], [3, 'b1', 'pin-3333']]);
