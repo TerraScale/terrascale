@@ -27,7 +27,7 @@ jobs:
           global-json-file: global.json
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: sdk/go/go.mod
+          go-version-file: sdk/go/.go-version
           cache: false
       - id: findings
         name: List vulnerable packages
