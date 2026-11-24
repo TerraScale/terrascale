@@ -128,10 +128,55 @@ public sealed record SqlRuleScope(
     IReadOnlyDictionary<string, SqlTableScope> Tables,
     IReadOnlySet<string> Ctes,
     IReadOnlyDictionary<string, string> Guards,
-    IReadOnlySet<string> Views,
     SqlTargetScope? Target);
 
 public sealed record SqlTableScope(IReadOnlySet<string>? VisibleColumns);
+
+public sealed class AsciiIgnoreCaseComparer : IEqualityComparer<string>
+{
+    public static AsciiIgnoreCaseComparer Instance { get; } = new();
+
+    private AsciiIgnoreCaseComparer()
+    {
+    }
+
+    public bool Equals(string? x, string? y)
+    {
+        if (x is null || y is null)
+        {
+            return x is null && y is null;
+        }
+
+        if (x.Length != y.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < x.Length; index++)
+        {
+            if (Fold(x[index]) != Fold(y[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public int GetHashCode(string obj)
+    {
+        ArgumentNullException.ThrowIfNull(obj);
+        var hash = new HashCode();
+        foreach (var character in obj)
+        {
+            hash.Add(Fold(character));
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static char Fold(char character) => character is >= 'A' and <= 'Z' ? (char)(character + 32) : character;
+}
 
 public sealed record SqlTargetScope(
     string Table,

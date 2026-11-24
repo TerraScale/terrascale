@@ -15,6 +15,8 @@ internal sealed class StatementInfo
 
     public SqlRuleScope? Scope { get; set; }
 
+    public IReadOnlySet<string> Views { get; set; } = FrozenSet<string>.Empty;
+
     public HashSet<string> WrittenTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public HashSet<string> ReadTables { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -25,6 +27,7 @@ internal sealed class StatementInfo
         Denied = null;
         CreatedTable = null;
         Scope = null;
+        Views = FrozenSet<string>.Empty;
         WrittenTables.Clear();
         ReadTables.Clear();
     }
@@ -70,7 +73,7 @@ internal sealed unsafe partial class SqliteConnection
     private static readonly FrozenSet<string> DeniedFunctions = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
         "load_extension", "readfile", "writefile");
 
-    private static readonly FrozenSet<string> ScopedTableFunctions = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "json_each", "json_tree");
+    private static readonly FrozenSet<string> ScopedTableFunctions = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance, "json_each", "json_tree");
 
     private int Authorize(int action, string? first, string? second, string? database, string? inner)
     {
@@ -181,7 +184,7 @@ internal sealed unsafe partial class SqliteConnection
 
         if (action == SqliteNative.ActionUpdate)
         {
-            return direct && scope.Target is { WritableColumns: { } writable } written && string.Equals(written.Table, first, StringComparison.OrdinalIgnoreCase)
+            return direct && scope.Target is { WritableColumns: { } writable } written && AsciiIgnoreCaseComparer.Instance.Equals(written.Table, first)
                 && second is { } column && !writable.Contains(column)
                 ? Deny(info, string.Concat(column, " is not a writable column of ", first))
                 : null;
@@ -209,7 +212,7 @@ internal sealed unsafe partial class SqliteConnection
 
         if (inner is not null && scope.Guards.TryGetValue(inner, out var guarded))
         {
-            if (!string.Equals(guarded, first, StringComparison.OrdinalIgnoreCase))
+            if (!AsciiIgnoreCaseComparer.Instance.Equals(guarded, first))
             {
                 return Deny(info, string.Concat("the read rule of ", guarded, " cannot read ", first));
             }
@@ -217,12 +220,12 @@ internal sealed unsafe partial class SqliteConnection
             return scope.Tables.TryGetValue(first, out var table) && Hidden(table.VisibleColumns, second) ? SqliteNative.AuthIgnore : null;
         }
 
-        if (inner is not null && !direct && scope.Views.Contains(inner) && scope.Tables.ContainsKey(inner))
+        if (inner is not null && !direct && info.Views.Contains(inner))
         {
             return null;
         }
 
-        if (scope.Target is { } target && string.Equals(target.Table, first, StringComparison.OrdinalIgnoreCase))
+        if (scope.Target is { } target && AsciiIgnoreCaseComparer.Instance.Equals(target.Table, first))
         {
             return Hidden(direct ? target.VisibleColumns : target.ReadableColumns, second)
                 ? Deny(info, string.Concat(second, " of ", first, " is not readable"))

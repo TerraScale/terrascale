@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
@@ -274,7 +275,17 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     public SqliteStatus PrepareUser(ReadOnlySpan<byte> sql, SqlRuleScope? scope, StatementInfo info, out nint statement, out int consumed)
     {
         info.Reset();
-        info.Scope = scope;
+        if (scope is not null)
+        {
+            var scoped = BindScope(scope, info);
+            if (!scoped.IsOk)
+            {
+                statement = 0;
+                consumed = sql.Length;
+                return scoped;
+            }
+        }
+
         nint handle = 0;
         byte* tail = null;
         int rc;
@@ -311,6 +322,37 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
         statement = handle;
         return status;
+    }
+
+    private SqliteStatus BindScope(SqlRuleScope scope, StatementInfo info)
+    {
+        List<SqlValue[]> rows = [];
+        var status = Query("SELECT type, name FROM main.sqlite_schema WHERE type IN ('view', 'trigger')", rows);
+        if (!status.IsOk)
+        {
+            return status;
+        }
+
+        HashSet<string> views = new(AsciiIgnoreCaseComparer.Instance);
+        HashSet<string> triggers = new(AsciiIgnoreCaseComparer.Instance);
+        foreach (var row in rows)
+        {
+            if (row is [var type, var name] && type.TryGetText(out var kind) && name.TryGetText(out var text) && text is not null)
+            {
+                _ = (kind == "view" ? views : triggers).Add(text);
+            }
+        }
+
+        if (triggers.Overlaps(scope.Ctes) || scope.Guards.Keys.Any(triggers.Contains))
+        {
+            return new SqliteStatus(SqliteNative.Auth, "a common table expression name matches a trigger; rename it");
+        }
+
+        views.IntersectWith(scope.Tables.Keys);
+        views.ExceptWith(triggers);
+        info.Scope = scope;
+        info.Views = views.ToFrozenSet(AsciiIgnoreCaseComparer.Instance);
+        return SqliteStatus.Success;
     }
 
     public SqliteStatus BindUser(nint statement, SqlStatement source)
