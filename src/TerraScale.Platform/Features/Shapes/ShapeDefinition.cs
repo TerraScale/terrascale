@@ -220,7 +220,9 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
                 }
 
                 var word = where[start..index];
-                if (ForbiddenWordSet.Contains(word) || (Calls(where, index) && !AllowedFunctions.Contains(word) && !CallKeywords.Contains(word)))
+                var calls = Calls(where, index);
+                if (ForbiddenWordSet.Contains(word) || (calls && !AllowedFunctions.Contains(word) && !CallKeywords.Contains(word))
+                    || (!calls && string.Equals(word, "in", StringComparison.OrdinalIgnoreCase)))
                 {
                     return false;
                 }
@@ -228,7 +230,7 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
                 continue;
             }
 
-            if (!char.IsAscii(character) || character is '[' or '`' or ':' or '@' or '$')
+            if (!char.IsAscii(character) || character is '[' or '`' or ':' or '@' or '$' or '#')
             {
                 return false;
             }

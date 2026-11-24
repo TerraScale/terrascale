@@ -8,7 +8,8 @@ namespace TerraScale.Platform.TerraBase;
 
 public sealed record EndUserToken(string Digest, bool Guest)
 {
-    private static readonly FrozenSet<string> Lifetime = FrozenSet.Create(StringComparer.Ordinal, "exp", "iat", "nbf", "jti");
+    private static readonly FrozenSet<string> RulesInputs = FrozenSet.Create(
+        StringComparer.Ordinal, "iss", "sub", "aud", "token_use", "database", "org_id", "org_role", "is_anonymous", "claims");
 
     public static EndUserToken? Read(CallerCredential credential)
     {
@@ -35,7 +36,14 @@ public sealed record EndUserToken(string Digest, bool Guest)
             var buffer = new ArrayBufferWriter<byte>();
             using (var writer = new Utf8JsonWriter(buffer))
             {
-                WriteCanonical(writer, root, Lifetime);
+                writer.WriteStartObject();
+                foreach (var property in root.EnumerateObject().Where(static property => RulesInputs.Contains(property.Name)).OrderBy(static property => property.Name, StringComparer.Ordinal))
+                {
+                    writer.WritePropertyName(property.Name);
+                    WriteCanonical(writer, property.Value);
+                }
+
+                writer.WriteEndObject();
             }
 
             var guest = root.TryGetProperty("is_anonymous", out var anonymous) && anonymous.ValueKind == JsonValueKind.True;
@@ -43,16 +51,16 @@ public sealed record EndUserToken(string Digest, bool Guest)
         }
     }
 
-    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element, FrozenSet<string> skipped)
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
     {
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
                 writer.WriteStartObject();
-                foreach (var property in element.EnumerateObject().Where(property => !skipped.Contains(property.Name)).OrderBy(static property => property.Name, StringComparer.Ordinal))
+                foreach (var property in element.EnumerateObject().OrderBy(static property => property.Name, StringComparer.Ordinal))
                 {
                     writer.WritePropertyName(property.Name);
-                    WriteCanonical(writer, property.Value, FrozenSet<string>.Empty);
+                    WriteCanonical(writer, property.Value);
                 }
 
                 writer.WriteEndObject();
@@ -61,7 +69,7 @@ public sealed record EndUserToken(string Digest, bool Guest)
                 writer.WriteStartArray();
                 foreach (var item in element.EnumerateArray())
                 {
-                    WriteCanonical(writer, item, FrozenSet<string>.Empty);
+                    WriteCanonical(writer, item);
                 }
 
                 writer.WriteEndArray();

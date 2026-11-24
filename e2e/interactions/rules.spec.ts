@@ -391,7 +391,7 @@ test('one subject with different trusted claims never shares a shape handle, and
   await execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, team TEXT NOT NULL, body TEXT NOT NULL)`);
   try {
     await execute(`INSERT INTO ${table} (id, team, body) VALUES (1, 'red', 'r1'), (2, 'blue', 'b1')`);
-    for (const where of ['length(zeroblob(100000000)) > 0', '"zeroblob"(10) IS NOT NULL', "printf('%s', body) <> ''", "hex(randomblob(16)) <> ''", "unicode(body) > 0"]) {
+    for (const where of ['length(zeroblob(100000000)) > 0', '"zeroblob"(10) IS NOT NULL', "printf('%s', body) <> ''", "hex(randomblob(16)) <> ''", "unicode(body) > 0", `(1, 'red', 'r1') IN ${table}`, 'id = #a']) {
       await answer(await read(owner, 'offset=-1&where=' + encodeURIComponent(where), 0), 400, 'unsafe_where');
     }
     expect((await read(owner, 'offset=-1&where=' + encodeURIComponent("lower(body) = 'r1' AND coalesce(team, '') IN ('red', 'blue')"), 0)).status()).toBe(307);
