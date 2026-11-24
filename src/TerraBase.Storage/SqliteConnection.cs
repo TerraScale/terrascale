@@ -280,14 +280,19 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         int rc;
         _collecting = info;
         _userMode = true;
-        fixed (byte* sqlPointer = sql)
+        try
         {
-            rc = SqliteNative.PrepareV3(Handle, sqlPointer, sql.Length, 0, &handle, &tail);
-            consumed = tail is null ? sql.Length : (int)(tail - sqlPointer);
+            fixed (byte* sqlPointer = sql)
+            {
+                rc = SqliteNative.PrepareV3(Handle, sqlPointer, sql.Length, 0, &handle, &tail);
+                consumed = tail is null ? sql.Length : (int)(tail - sqlPointer);
+            }
         }
-
-        _userMode = false;
-        _collecting = null;
+        finally
+        {
+            _userMode = false;
+            _collecting = null;
+        }
         var status = rc == SqliteNative.Ok ? SqliteStatus.Success : UserStatus(Status(rc), info);
         if (handle != 0 || !status.IsOk)
         {
@@ -368,6 +373,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             _userMode = false;
             _collecting = null;
             _workCancellation = default;
+            info.Scope = null;
         }
 
         result = new SqlResultSet(columns, rows, readOnly ? 0 : SqliteNative.Changes64(_db), SqliteNative.LastInsertRowId(_db));

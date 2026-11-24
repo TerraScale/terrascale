@@ -81,7 +81,7 @@ internal sealed unsafe partial class SqliteConnection
 
         var info = _collecting;
         var main = database is null or "main";
-        if (info?.Scope is { } scope && (inner is null || scope.Ctes.Contains(inner)) && Scoped(info, scope, action, first, second, database) is { } scoped)
+        if (info?.Scope is { } scope && Scoped(info, scope, action, first, second, database, inner) is { } scoped)
         {
             return scoped;
         }
@@ -171,19 +171,24 @@ internal sealed unsafe partial class SqliteConnection
         }
     }
 
-    private static int? Scoped(StatementInfo info, SqlRuleScope scope, int action, string? first, string? second, string? database)
+    private static int? Scoped(StatementInfo info, SqlRuleScope scope, int action, string? first, string? second, string? database, string? inner)
     {
         if (action == SqliteNative.ActionPragma)
         {
             return Deny(info, "end users cannot run PRAGMA statements");
         }
 
-        if (action != SqliteNative.ActionRead || first is null || DeniedTables.Contains(first) || IsInternal(first))
+        if (action != SqliteNative.ActionRead || first is null || DeniedTables.Contains(first))
         {
             return null;
         }
 
-        if (database is null && scope.Ctes.Contains(first))
+        if (database is null && (scope.Ctes.Contains(first) || scope.Guards.ContainsKey(first)))
+        {
+            return SqliteNative.AuthOk;
+        }
+
+        if (IsInternal(first) || ScopedTableFunctions.Contains(first))
         {
             return null;
         }
@@ -193,18 +198,37 @@ internal sealed unsafe partial class SqliteConnection
             return Deny(info, "end users read only tables of the main database");
         }
 
-        if (ScopedTableFunctions.Contains(first))
+        if (inner is not null && scope.Guards.TryGetValue(inner, out var guarded))
+        {
+            if (!string.Equals(guarded, first, StringComparison.OrdinalIgnoreCase))
+            {
+                return Deny(info, string.Concat("the read rule of ", guarded, " cannot read ", first));
+            }
+
+            return scope.Tables.TryGetValue(first, out var table) && Hidden(table.VisibleColumns, second) ? SqliteNative.AuthIgnore : null;
+        }
+
+        var direct = inner is null || scope.Ctes.Contains(inner);
+        if (inner is not null && !direct && scope.Tables.ContainsKey(inner))
         {
             return null;
         }
 
-        if (!scope.Tables.TryGetValue(first, out var table))
+        if (scope.Target is { } target && string.Equals(target.Table, first, StringComparison.OrdinalIgnoreCase))
         {
-            return Deny(info, string.Concat("the rules do not allow reading ", first));
+            return Hidden(target.VisibleColumns, second) ? Deny(info, string.Concat(second, " of ", first, " is not readable")) : null;
         }
 
-        return table.VisibleColumns is { } visible && second is { Length: > 0 } column && !visible.Contains(column) ? SqliteNative.AuthIgnore : null;
+        if (direct && second is { Length: 0 } && scope.Tables.ContainsKey(first))
+        {
+            return null;
+        }
+
+        return Deny(info, string.Concat("the rules do not allow reading ", first, " outside its read rule"));
     }
+
+    private static bool Hidden(IReadOnlySet<string>? visible, string? column) =>
+        visible is not null && column is { Length: > 0 } name && !visible.Contains(name);
 
     private static SqliteStatus ValidatePreparedSql(ReadOnlySpan<byte> sql)
     {
@@ -215,13 +239,13 @@ internal sealed unsafe partial class SqliteConnection
             return new SqliteStatus(SqliteNative.Auth, string.Concat(tokens[start].Text, " is not permitted"));
         }
 
+        if (start >= 0 && tokens[start].Is("ALTER") && AlterNamesInternal(tokens, start))
+        {
+            return new SqliteStatus(SqliteNative.Auth, "reserved table name");
+        }
+
         for (var index = 0; index + 2 < tokens.Count; index++)
         {
-            if (tokens[index].Is("RENAME") && tokens[index + 1].Is("TO") && tokens[index + 2].IsIdentifier && IsInternal(tokens[index + 2].Text))
-            {
-                return new SqliteStatus(SqliteNative.Auth, "reserved table name");
-            }
-
             if (tokens[index].Kind == TokenKind.Word && tokens[index].Text.StartsWith("pragma_", StringComparison.OrdinalIgnoreCase)
                 && tokens[index + 1].IsSymbol("(") && IsInternal(Unquoted(tokens[index + 2])))
             {
@@ -230,6 +254,25 @@ internal sealed unsafe partial class SqliteConnection
         }
 
         return SqliteStatus.Success;
+    }
+
+    private static bool AlterNamesInternal(List<SqlToken> tokens, int start)
+    {
+        for (var index = start; index < tokens.Count; index++)
+        {
+            if (tokens[index].IsIdentifier && IsInternal(tokens[index].Text))
+            {
+                return true;
+            }
+
+            if (tokens[index].Is("RENAME") && index + 1 < tokens.Count && tokens[index + 1].Is("TO")
+                && (index + 2 >= tokens.Count || !(tokens[index + 2].IsIdentifier || tokens[index + 2].Kind == TokenKind.Literal) || IsInternal(Unquoted(tokens[index + 2]))))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string Unquoted(SqlToken token) =>

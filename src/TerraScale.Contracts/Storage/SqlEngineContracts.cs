@@ -124,9 +124,15 @@ public sealed record SqlStatement(string Sql, IReadOnlyList<SqlValue> Positional
     public SqlRuleScope? Scope { get; init; }
 }
 
-public sealed record SqlRuleScope(IReadOnlyDictionary<string, SqlTableScope> Tables, IReadOnlySet<string> Ctes);
+public sealed record SqlRuleScope(
+    IReadOnlyDictionary<string, SqlTableScope> Tables,
+    IReadOnlySet<string> Ctes,
+    IReadOnlyDictionary<string, string> Guards,
+    SqlTargetScope? Target);
 
 public sealed record SqlTableScope(IReadOnlySet<string>? VisibleColumns);
+
+public sealed record SqlTargetScope(string Table, IReadOnlySet<string>? VisibleColumns);
 
 public sealed record SqlStatementRequest(
     Ulid DatabaseId,
