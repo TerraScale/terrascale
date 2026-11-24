@@ -47,7 +47,7 @@ internal sealed partial class PostgresConnection
             if (ownBlock)
             {
                 failure = failure is null
-                    ? CopyInterruption(block.Started) ?? await FinishAsync(block, bounded.Token)
+                    ? await CommitImplicitAsync(block)
                     : await EndImplicitAsync(commit: false) ?? failure;
             }
 
@@ -60,6 +60,17 @@ internal sealed partial class PostgresConnection
                 await EndTransactionAsync(block, rollback: true);
             }
         }
+    }
+
+    private async ValueTask<PgError?> CommitImplicitAsync(PostgresTransactionBlock block)
+    {
+        if (CopyInterruption(block.Started) is { } interrupted)
+        {
+            await EndTransactionAsync(block, rollback: true);
+            return interrupted;
+        }
+
+        return await FinishAsync(block, closed);
     }
 
     private PgError? CopyInterruption(long started) =>

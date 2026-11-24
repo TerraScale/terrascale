@@ -117,7 +117,7 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
 
     public bool TryHold(string name, PgPortal portal, PgResult result)
     {
-        var bytes = PgValueCodec.Footprint(result.Rows);
+        var bytes = PgValueCodec.Footprint(result.Rows) + PgValueCodec.Footprint(result.Columns);
         if (PortalBytes(except: name) + portal.ParameterBytes + bytes > PostgresLimits.MaxPortalBytes)
         {
             return false;

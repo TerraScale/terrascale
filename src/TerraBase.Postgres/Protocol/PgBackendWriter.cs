@@ -19,7 +19,9 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
 
     public bool ShouldFlush => _buffer.Length >= PostgresLimits.OutputFlushBytes;
 
-    public async ValueTask<bool> FlushAsync(CancellationToken cancellationToken)
+    public ValueTask<bool> FlushAsync(CancellationToken cancellationToken) => FlushAsync(PostgresLimits.WriteTimeout, cancellationToken);
+
+    public async ValueTask<bool> FlushAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         if (_aborted)
         {
@@ -32,7 +34,7 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
             _buffer.Clear();
         }
 
-        using var deadline = new CancellationTokenSource(PostgresLimits.WriteTimeout, timeProvider);
+        using var deadline = new CancellationTokenSource(timeout < PostgresLimits.WriteTimeout ? timeout : PostgresLimits.WriteTimeout, timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {

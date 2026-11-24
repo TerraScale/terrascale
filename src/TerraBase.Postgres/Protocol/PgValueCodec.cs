@@ -194,10 +194,10 @@ internal static class PgValueCodec
 
     public static long Footprint(IReadOnlyList<IReadOnlyList<SqlValue>> rows)
     {
-        long total = ObjectOverhead;
+        var total = ObjectOverhead + ((long)Slots(rows) * IntPtr.Size);
         foreach (var row in rows)
         {
-            total += ObjectOverhead + IntPtr.Size;
+            total += ObjectOverhead + ((long)(Slots(row) - row.Count) * Unsafe.SizeOf<SqlValue>());
             foreach (var value in row)
             {
                 total += Footprint(value);
@@ -206,6 +206,24 @@ internal static class PgValueCodec
 
         return total;
     }
+
+    public static long Footprint(IReadOnlyList<PgColumn>? columns)
+    {
+        if (columns is null)
+        {
+            return 0;
+        }
+
+        var total = ObjectOverhead + ((long)Slots(columns) * IntPtr.Size);
+        foreach (var column in columns)
+        {
+            total += ObjectOverhead + IntPtr.Size + sizeof(int) + ObjectOverhead + ((long)column.Name.Length * sizeof(char));
+        }
+
+        return total;
+    }
+
+    private static int Slots<T>(IReadOnlyList<T> list) => list is List<T> owned ? owned.Capacity : list.Count;
 
     public static bool TryParseBool(ReadOnlySpan<char> text, out bool value)
     {

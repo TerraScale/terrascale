@@ -48,7 +48,7 @@ public sealed class PostgresConnectionHandler(
 
         if (!backends.TryAdmit())
         {
-            await RefuseAsync<object>(wire, new PgError("53300", "sorry, too many clients already", Fatal: true), closed);
+            await RefuseAsync<object>(wire, new PgError("53300", "sorry, too many clients already", Fatal: true), HandshakeRemaining(handshake), closed);
             return;
         }
 
@@ -76,7 +76,7 @@ public sealed class PostgresConnectionHandler(
             }
         }
 
-        await RefuseAsync<object>(wire, PgError.ProtocolViolation("too many encryption negotiation attempts"), closed);
+        await RefuseAsync<object>(wire, PgError.ProtocolViolation("too many encryption negotiation attempts"), HandshakeRemaining(handshake), closed);
         return null;
     }
 
@@ -91,7 +91,7 @@ public sealed class PostgresConnectionHandler(
         };
         if (received.Error is { } refusal)
         {
-            await RefuseAsync<object>(wire, refusal, closed);
+            await RefuseAsync<object>(wire, refusal, HandshakeRemaining(handshake), closed);
             return (false, null);
         }
 
@@ -99,9 +99,9 @@ public sealed class PostgresConnectionHandler(
         {
             null => (false, null),
             PgSslRequest => (await NegotiateTlsAsync(wire, handshake, closed), null),
-            PgGssEncryptionRequest => (await DeclineAsync(wire, closed), null),
+            PgGssEncryptionRequest => (await DeclineAsync(wire, HandshakeRemaining(handshake), closed), null),
             PgCancelRequest cancel => (Cancel(cancel), null),
-            PgStartupMessage message => await AcceptAsync(wire, message, closed) ? (true, message) : (false, null),
+            PgStartupMessage message => await AcceptAsync(wire, message, handshake, closed) ? (true, message) : (false, null),
         };
     }
 
@@ -109,11 +109,11 @@ public sealed class PostgresConnectionHandler(
     {
         if (options.Tls is not { } tls)
         {
-            return await DeclineAsync(wire, closed);
+            return await DeclineAsync(wire, HandshakeRemaining(handshake), closed);
         }
 
         wire.Writer.Raw((byte)'S');
-        if (!await wire.Writer.FlushAsync(closed))
+        if (!await wire.Writer.FlushAsync(HandshakeRemaining(handshake), closed))
         {
             return false;
         }
@@ -123,10 +123,10 @@ public sealed class PostgresConnectionHandler(
         return await wire.UpgradeAsync(tls, linked.Token);
     }
 
-    private static async ValueTask<bool> DeclineAsync(PgWire wire, CancellationToken closed)
+    private static async ValueTask<bool> DeclineAsync(PgWire wire, TimeSpan timeout, CancellationToken closed)
     {
         wire.Writer.Raw((byte)'N');
-        return await wire.Writer.FlushAsync(closed);
+        return await wire.Writer.FlushAsync(timeout, closed);
     }
 
     private bool Cancel(PgCancelRequest cancel)
@@ -135,7 +135,7 @@ public sealed class PostgresConnectionHandler(
         return false;
     }
 
-    private static async ValueTask<bool> AcceptAsync(PgWire wire, PgStartupMessage message, CancellationToken closed)
+    private async ValueTask<bool> AcceptAsync(PgWire wire, PgStartupMessage message, long handshake, CancellationToken closed)
     {
         if (message.ProtocolVersion != PgFrameReader.ProtocolVersion3)
         {
@@ -145,7 +145,7 @@ public sealed class PostgresConnectionHandler(
 
         if (!message.Parameters.TryGetValue("user", out var user) || user.Length == 0)
         {
-            await RefuseAsync<object>(wire, new PgError("28000", "no PostgreSQL user name specified in startup packet", Fatal: true), closed);
+            await RefuseAsync<object>(wire, new PgError("28000", "no PostgreSQL user name specified in startup packet", Fatal: true), HandshakeRemaining(handshake), closed);
             return false;
         }
 
@@ -159,12 +159,12 @@ public sealed class PostgresConnectionHandler(
         var slash = database.IndexOf('/', StringComparison.Ordinal);
         if (slash <= 0 || slash == database.Length - 1)
         {
-            await RefuseAsync<object>(wire, new PgError("3D000", $"database \"{database}\" does not exist", Fatal: true, Hint: "connect to <project>/<database>"), closed);
+            await RefuseAsync<object>(wire, new PgError("3D000", $"database \"{database}\" does not exist", Fatal: true, Hint: "connect to <project>/<database>"), HandshakeRemaining(handshake), closed);
             return;
         }
 
         wire.Writer.Authentication(CleartextPassword);
-        if (!await wire.Writer.FlushAsync(closed))
+        if (!await wire.Writer.FlushAsync(HandshakeRemaining(handshake), closed))
         {
             return;
         }
@@ -183,7 +183,7 @@ public sealed class PostgresConnectionHandler(
         };
         if (password is null)
         {
-            await RefuseAsync<object>(wire, PgError.ProtocolViolation("expected a password response"), closed);
+            await RefuseAsync<object>(wire, PgError.ProtocolViolation("expected a password response"), HandshakeRemaining(handshake), closed);
             return;
         }
 
@@ -193,10 +193,10 @@ public sealed class PostgresConnectionHandler(
         var grant = authenticated switch
         {
             PostgresGrant value => value,
-            PostgresPasswordRejected => await RefuseAsync<PostgresGrant>(wire, new PgError("28P01", $"password authentication failed for user \"{user}\"", Fatal: true), closed),
-            PostgresAccessDenied denied => await RefuseAsync<PostgresGrant>(wire, new PgError("28000", denied.Message, Fatal: true), closed),
-            PostgresSessionLimitReached limit => await RefuseAsync<PostgresGrant>(wire, new PgError("53300", limit.Message, Fatal: true), closed),
-            PostgresBackendUnavailable unavailable => await RefuseAsync<PostgresGrant>(wire, new PgError("57P03", unavailable.Message, Fatal: true), closed),
+            PostgresPasswordRejected => await RefuseAsync<PostgresGrant>(wire, new PgError("28P01", $"password authentication failed for user \"{user}\"", Fatal: true), HandshakeRemaining(handshake), closed),
+            PostgresAccessDenied denied => await RefuseAsync<PostgresGrant>(wire, new PgError("28000", denied.Message, Fatal: true), HandshakeRemaining(handshake), closed),
+            PostgresSessionLimitReached limit => await RefuseAsync<PostgresGrant>(wire, new PgError("53300", limit.Message, Fatal: true), HandshakeRemaining(handshake), closed),
+            PostgresBackendUnavailable unavailable => await RefuseAsync<PostgresGrant>(wire, new PgError("57P03", unavailable.Message, Fatal: true), HandshakeRemaining(handshake), closed),
         };
         if (grant is null)
         {
@@ -217,7 +217,7 @@ public sealed class PostgresConnectionHandler(
 
                 wire.Writer.BackendKeyData(session.ProcessId, session.SecretKey);
                 wire.Writer.ReadyForQuery(session.Status);
-                if (await wire.Writer.FlushAsync(closed))
+                if (await wire.Writer.FlushAsync(HandshakeRemaining(handshake), closed))
                 {
                     await new PostgresConnection(session, wire, closed).RunAsync();
                 }
@@ -230,11 +230,11 @@ public sealed class PostgresConnectionHandler(
         }
     }
 
-    private static async ValueTask<T?> RefuseAsync<T>(PgWire wire, PgError error, CancellationToken closed)
+    private static async ValueTask<T?> RefuseAsync<T>(PgWire wire, PgError error, TimeSpan timeout, CancellationToken closed)
         where T : class
     {
         wire.Writer.Error(error with { Fatal = true });
-        await wire.Writer.FlushAsync(closed);
+        await wire.Writer.FlushAsync(timeout, closed);
         return null;
     }
 }

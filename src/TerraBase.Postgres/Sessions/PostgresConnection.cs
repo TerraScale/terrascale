@@ -170,7 +170,17 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
             }
         }
 
-        return implicitBlock ? await EndImplicitAsync(commit: true) : null;
+        if (!implicitBlock)
+        {
+            return null;
+        }
+
+        if (session.Transaction is { Implicit: true } block && commands.Any(static command => command is PgCopyFromCommand))
+        {
+            return await CommitImplicitAsync(block);
+        }
+
+        return await EndImplicitAsync(commit: true);
     }
 
     private PgError? WriteResult(PgResult result, IReadOnlyList<short> formats, bool describe, IReadOnlyList<PgColumn>? columns)
