@@ -6,12 +6,13 @@ case ${1:?thing} in
   dashboard) package=terrascale-dashboard ;;
   *) exit 2 ;;
 esac
-image=ghcr.io/terrascale/$package
+namespace=${OCIR_NAMESPACE:?}
+image="sa-saopaulo-1.ocir.io/${namespace}/terrascale/${package}"
 if docker buildx imagetools inspect "$image:${REVISION:?}" --raw > "$RUNNER_TEMP/manifest.json" 2> "$RUNNER_TEMP/manifest-error"; then
   cached=true
   echo "Reusing $image:$REVISION"
 else
-  if ! grep -Eq 'manifest unknown|not found' "$RUNNER_TEMP/manifest-error"; then
+  if ! grep -Eqi 'manifest unknown|not found|name_unknown' "$RUNNER_TEMP/manifest-error"; then
     cat "$RUNNER_TEMP/manifest-error" >&2
     exit 1
   fi

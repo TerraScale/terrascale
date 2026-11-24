@@ -14,8 +14,8 @@ case "$service" in
   *) echo "Unknown service: $service" >&2; exit 2 ;;
 esac
 
-if ! [[ $image =~ ^ghcr\.io/terrascale/${package}@sha256:[0-9a-f]{64}$ ]]; then
-  echo "Expected a digest-pinned GHCR image for $service, got: $image" >&2
+if ! [[ $image =~ ^[a-z0-9-]+\.ocir\.io/[a-z0-9]+/terrascale/${package}@sha256:[0-9a-f]{64}$ ]]; then
+  echo "Expected a digest-pinned OCIR image for $service, got: $image" >&2
   exit 2
 fi
 

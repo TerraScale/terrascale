@@ -36,6 +36,7 @@ permissions:
   contents: read
 
 env:
+  OCIR_NAMESPACE: ${{ vars.OCIR_NAMESPACE }}
   TERRABASE_REVISION: ${{ github.sha }}
   TS_AUTH_REVISION: ${{ github.sha }}
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -107,6 +108,10 @@ jobs:
               - .github/docker/ts-auth.Dockerfile
               - .github/scripts/ci/image-payloads.sh
               - .github/scripts/ci/deploy-v2.sh
+              - .github/scripts/ci/publish-ocir.sh
+              - .github/scripts/ci/publish-image.sh
+              - .github/scripts/ci/ocir-repositories.sh
+              - .github/scripts/ci/attach-image-bundles.sh
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
               - src/TerraScale.Authentication/platform-api.openapi.yaml
               - .github/scripts/auth/export-openapi.sh
@@ -125,6 +130,10 @@ jobs:
               - .github/docker/terrabase.Dockerfile
               - .github/scripts/ci/image-payloads.sh
               - .github/scripts/ci/deploy-v2.sh
+              - .github/scripts/ci/publish-ocir.sh
+              - .github/scripts/ci/publish-image.sh
+              - .github/scripts/ci/ocir-repositories.sh
+              - .github/scripts/ci/attach-image-bundles.sh
               - src/TerraBase*/**/!(AGENTS.md)
               - src/TerraScale.QuicRpc/**/!(AGENTS.md)
               - native/{build-native.sh,native-pin.env}
@@ -135,6 +144,10 @@ jobs:
               - .github/docker/ts-platform.Dockerfile
               - .github/scripts/ci/image-payloads.sh
               - .github/scripts/ci/deploy-v2.sh
+              - .github/scripts/ci/publish-ocir.sh
+              - .github/scripts/ci/publish-image.sh
+              - .github/scripts/ci/ocir-repositories.sh
+              - .github/scripts/ci/attach-image-bundles.sh
               - src/TerraScale.Platform/**/!(AGENTS.md)
               - src/TerraScale.QuicRpc/**/!(AGENTS.md)
               - native/{build-native.sh,native-pin.env}
@@ -557,13 +570,15 @@ jobs:
           bash .github/scripts/ci/image-payloads.sh publish "$AREA"
           bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
           wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - name: Authenticate to OCIR with GitHub OIDC
         if: steps.qualify.outputs.qualified != 'false'
+        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      # Public images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-platform,ts-auth}:<sha> and :main.
+          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
+          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
+          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
+      # Private OCIR images ts-orch pulls via Instance Principal from each region's local OCIR mirror.
       - id: image
         if: steps.qualify.outputs.qualified != 'false'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -572,8 +587,8 @@ jobs:
           file: ${{ runner.temp }}/image-payloads/Dockerfile
           platforms: linux/arm64
           tags: |
-            ghcr.io/terrascale/${{ env.SERVICE }}:${{ github.sha }}
-            ${{ github.ref == 'refs/heads/main' && inputs.publication != 'build-only' && format('ghcr.io/terrascale/{0}:main', env.SERVICE) || '' }}
+            sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && inputs.publication != 'build-only' && format('sa-saopaulo-1.ocir.io/{0}/terrascale/{1}:main', vars.OCIR_NAMESPACE, env.SERVICE) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -585,7 +600,7 @@ jobs:
           INDEX: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          image="ghcr.io/terrascale/${SERVICE}"
+          image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}"
           { echo '```'; docker buildx imagetools inspect "${image}@${INDEX}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
             jq -r 'if .manifests then (.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest) else empty end')
@@ -607,14 +622,14 @@ jobs:
         if: steps.qualify.outputs.qualified != 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
+          subject-name: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}
           subject-digest: ${{ steps.digest.outputs.arm64 }}
-          push-to-registry: true
+          push-to-registry: false
       - name: Generate the linux/arm64 child SBOM
         if: steps.qualify.outputs.qualified != 'false'
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          image: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
+          image: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
           format: spdx-json
           output-file: ${{ runner.temp }}/sbom.spdx.json
           upload-artifact: false
@@ -623,22 +638,42 @@ jobs:
         if: steps.qualify.outputs.qualified != 'false'
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
-          subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
+          subject-name: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}
           subject-digest: ${{ steps.digest.outputs.arm64 }}
           sbom-path: ${{ runner.temp }}/sbom.spdx.json
-          push-to-registry: true
+          push-to-registry: false
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: steps.qualify.outputs.qualified != 'false'
+        with:
+          version: 1.3.6
+      - name: Mirror image and Sigstore bundles to every OCIR region
+        if: steps.qualify.outputs.qualified != 'false'
+        working-directory: terrascale
+        env:
+          SOURCE: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+          PUBLICATION: ${{ inputs.publication }}
+        run: |
+          tags=$GITHUB_SHA
+          if [[ $PUBLICATION != build-only ]]; then tags+=,main; fi
+          bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "$tags" "$PROVENANCE" "$SBOM"
       - name: Verify the attestations
         if: steps.qualify.outputs.qualified != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
-        run: gh attestation verify "oci://ghcr.io/terrascale/${SERVICE}@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
+          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
       - name: Deploy through ts-orch
         if: steps.qualify.outputs.qualified != 'false' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
         working-directory: terrascale
         env:
           ARM64: ${{ steps.digest.outputs.arm64 }}
-        run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "ghcr.io/terrascale/${SERVICE}@${ARM64}"
+        run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/${SERVICE}@${ARM64}"
 
   main-fallback:
     needs: [changes, checks, all-green, main]
@@ -759,11 +794,13 @@ jobs:
           revision: ${{ github.sha }}
           qualification: terrabase-maintenance
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - name: Authenticate to OCIR with GitHub OIDC
+        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
+          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
+          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
+          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
       - name: Verify and deploy the pinned arm64 digest through ts-orch
         env:
           GH_TOKEN: ${{ github.token }}
@@ -771,10 +808,10 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$ARM64" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'terrabase_arm64 must be sha256:<64 hex>' >&2; exit 1; }
-          image="ghcr.io/terrascale/terrabase@${ARM64}"
+          image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE}/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --bundle-from-oci
+          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA"
           bash .github/scripts/ci/deploy-v2.sh terrabase "$image"
 
   main-auth:
@@ -809,12 +846,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AUTH_LIVE_REVISION: ${{ steps.probe.outputs.revision }}
         run: node .github/scripts/ci/site-deploy-gate.mjs auth --reconcile
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - name: Authenticate to OCIR with GitHub OIDC
         if: steps.live.outputs.deploy == 'true'
+        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
+          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
+          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
+          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
       - id: cached
         name: Inspect the immutable target image
         if: steps.live.outputs.deploy == 'true'
@@ -835,20 +874,22 @@ jobs:
         if: steps.live.outputs.deploy == 'true'
         env:
           IMAGE: ${{ env.IMAGE }}
-        run: echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
+          echo "name=${IMAGE%@*}" >> "$GITHUB_OUTPUT"
       - id: provenance
         name: Attest build provenance (linux/arm64 child)
         if: steps.live.outputs.deploy == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
-          subject-name: ghcr.io/terrascale/ts-auth
+          subject-name: ${{ steps.authdigest.outputs.name }}
           subject-digest: ${{ steps.authdigest.outputs.arm64 }}
-          push-to-registry: true
+          push-to-registry: false
       - name: Generate the linux/arm64 child SBOM
         if: steps.live.outputs.deploy == 'true'
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          image: ghcr.io/terrascale/ts-auth@${{ steps.authdigest.outputs.arm64 }}
+          image: ${{ steps.authdigest.outputs.name }}@${{ steps.authdigest.outputs.arm64 }}
           format: spdx-json
           output-file: ${{ runner.temp }}/sbom.spdx.json
           upload-artifact: false
@@ -857,16 +898,32 @@ jobs:
         if: steps.live.outputs.deploy == 'true'
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
         with:
-          subject-name: ghcr.io/terrascale/ts-auth
+          subject-name: ${{ steps.authdigest.outputs.name }}
           subject-digest: ${{ steps.authdigest.outputs.arm64 }}
           sbom-path: ${{ runner.temp }}/sbom.spdx.json
-          push-to-registry: true
+          push-to-registry: false
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          version: 1.3.6
+      - name: Mirror image and Sigstore bundles to every OCIR region
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          SOURCE: ${{ env.IMAGE }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+        run: bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "${REVISION},main" "$PROVENANCE" "$SBOM"
       - name: Verify the attestations
         if: steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ steps.authdigest.outputs.arm64 }}
-        run: gh attestation verify "oci://ghcr.io/terrascale/ts-auth@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
+          NAME: ${{ steps.authdigest.outputs.name }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
       - name: Deploy ts-auth through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-auth "$IMAGE"

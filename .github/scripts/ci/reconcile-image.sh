@@ -7,7 +7,8 @@ case "$thing" in
   dashboard) package=terrascale-dashboard ;;
   *) exit 2 ;;
 esac
-image=ghcr.io/terrascale/$package
+namespace=${OCIR_NAMESPACE:?}
+image="sa-saopaulo-1.ocir.io/${namespace}/terrascale/${package}"
 export TS_AUTH_REVISION="$REVISION"
 if [[ ${IMAGE_CACHED:?} == false ]]; then
   if [[ "$thing" == auth || "$thing" == platform ]]; then

@@ -14,8 +14,13 @@ if [[ $destination == http://* ]]; then
   copy_transport=(--to-plain-http)
 fi
 repository=${destination%:*}
+source_repo=${source%@*}
 IFS=, read -ra tags <<< "${destination##*:}"
-oras copy "${copy_transport[@]}" "$source" "$repository:${tags[0]}"
+if [[ $source_repo != "$repository" ]]; then
+  oras copy "${copy_transport[@]}" "$source" "$repository:${tags[0]}"
+else
+  oras tag "${transport[@]}" "$repository@$digest" "${tags[0]}"
+fi
 actual=$(oras manifest fetch "${transport[@]}" --descriptor "$repository:${tags[0]}" | jq -er .digest)
 [[ $actual == "$digest" ]]
 target=$repository
