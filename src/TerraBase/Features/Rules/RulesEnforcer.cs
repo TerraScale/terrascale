@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
+using TerraBase.Engine;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 
@@ -16,7 +17,8 @@ internal readonly union EndUserStatementOutcome(EndUserStatement, SqlRefusal);
 
 internal sealed record EnforcedSql(IReadOnlyList<SqlStatement> Statements, string? RulesVersion);
 
-internal sealed record RewrittenSql(IReadOnlyList<string> Pieces, IReadOnlyDictionary<string, string> Guards, IReadOnlyDictionary<string, SqlTableScope> Tables);
+internal sealed record RewrittenSql(
+    IReadOnlyList<string> Pieces, IReadOnlyDictionary<string, string> Guards, IReadOnlyDictionary<string, SqlTableScope> Tables, IReadOnlySet<string> Views);
 
 internal sealed record EndUserStatement(string Sql, IReadOnlyList<SqlToken> Tokens, int Start, int Main, FrozenSet<string> Ctes);
 
@@ -120,7 +122,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             StatementKind.Read when main.Is("SELECT") || main.Is("VALUES") =>
                 await ReadsAsync(rules, auth, statement, index, skipTarget: -1, session, cancellationToken) switch
                 {
-                    RewrittenSql text => planned.Statement with { Sql = Join(text.Pieces), Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, null) },
+                    RewrittenSql text => planned.Statement with { Sql = Join(text.Pieces), Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, text.Views, null) },
                     SqlRefusal refusal => refusal,
                 },
             StatementKind.Read => SqlRefusal.RuleDenied("end users run SELECT, UPDATE and DELETE statements", index),
@@ -215,7 +217,10 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             targetVisible.UnionWith(RowColumns(compiled));
         }
 
-        var target = new SqlTargetScope(table, targetVisible?.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
+        var readableColumns = restricted is not null ? restricted.ToFrozenSet(StringComparer.OrdinalIgnoreCase)
+            : rule.Read is null ? FrozenSet<string>.Empty : null;
+        var target = new SqlTargetScope(table, targetVisible?.ToFrozenSet(StringComparer.OrdinalIgnoreCase), readableColumns,
+            rule.Writable?.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
         var predicate = RulesCompiler.Render(compiled, auth, time.GetUtcNow().ToUnixTimeMilliseconds());
         var rewrittenReads = await ReadsAsync(rules, auth, statement, index, skipTarget: targetAt, session, cancellationToken);
         return rewrittenReads switch
@@ -223,7 +228,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             RewrittenSql text => planned.Statement with
             {
                 Sql = AppendWhere(tokens, statement.Main, text.Pieces, predicate),
-                Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, target),
+                Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, text.Views, target),
             },
             SqlRefusal refusal => refusal,
         };
@@ -267,42 +272,39 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                     continue;
             }
 
-            if (token.Is("IN") && at + 1 < tokens.Count && tokens[at + 1].IsName && !(at + 2 < tokens.Count && tokens[at + 2].Kind == SqlTokenKind.Open))
+            if (token.Is("IN") && at + 1 < tokens.Count && (tokens[at + 1].Kind == SqlTokenKind.String
+                || (tokens[at + 1].IsName && !(at + 2 < tokens.Count && tokens[at + 2].Kind == SqlTokenKind.Open))))
             {
                 return SqlRefusal.RuleDenied("end users write IN (SELECT ...) instead of IN followed by a table name", index);
             }
 
-            if (token.Is("FROM") || token.Is("JOIN"))
+            if (expectTable && token.Kind == SqlTokenKind.String)
             {
-                if (token.Is("FROM"))
-                {
-                    fromDepths.Push(depth);
-                }
-
-                expectTable = true;
-                continue;
-            }
-
-            if (token.Kind == SqlTokenKind.Comma && fromDepths.Count > 0 && fromDepths.Peek() == depth)
-            {
-                expectTable = true;
-                continue;
-            }
-
-            if (token.Kind == SqlTokenKind.Word && ClauseEnds.Contains(token.Value) && fromDepths.Count > 0 && fromDepths.Peek() == depth)
-            {
-                if (!JoinWords.Contains(token.Value))
-                {
-                    fromDepths.Pop();
-                }
-
-                expectTable = false;
-                continue;
+                return SqlRefusal.RuleDenied("end users name tables without single quotes", index);
             }
 
             if (!expectTable || !token.IsName)
             {
                 expectTable = false;
+                if (token.Is("FROM") || token.Is("JOIN"))
+                {
+                    if (token.Is("FROM"))
+                    {
+                        fromDepths.Push(depth);
+                    }
+
+                    expectTable = true;
+                }
+                else if (token.Kind == SqlTokenKind.Comma && fromDepths.Count > 0 && fromDepths.Peek() == depth)
+                {
+                    expectTable = true;
+                }
+                else if (token.Kind == SqlTokenKind.Word && ClauseEnds.Contains(token.Value) && fromDepths.Count > 0 && fromDepths.Peek() == depth
+                    && !JoinWords.Contains(token.Value))
+                {
+                    fromDepths.Pop();
+                }
+
                 continue;
             }
 
@@ -381,7 +383,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 scoped[table] = new SqlTableScope(visible?.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
             }
 
-            var aliased = at + 1 < tokens.Count && (tokens[at + 1].Is("AS") || (tokens[at + 1].IsName && !(tokens[at + 1].Kind == SqlTokenKind.Word && ClauseEnds.Contains(tokens[at + 1].Value))));
+            var aliased = at + 1 < tokens.Count && (tokens[at + 1].Is("AS") || tokens[at + 1].Kind == SqlTokenKind.String || (tokens[at + 1].IsName && !(tokens[at + 1].Kind == SqlTokenKind.Word && ClauseEnds.Contains(tokens[at + 1].Value))));
             pieces[start] = aliased ? RulesCompiler.Quote(guard) : string.Concat(RulesCompiler.Quote(guard), " AS ", RulesCompiler.Quote(table));
             for (var consumed = start + 1; consumed <= at; consumed++)
             {
@@ -403,7 +405,27 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             }
         }
 
-        return new RewrittenSql(pieces, guards.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase), scoped.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase));
+        var views = await ViewsAsync(session, [.. scoped.Keys], cancellationToken);
+        return new RewrittenSql(pieces, guards.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase), scoped.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase), views);
+    }
+
+    private static async ValueTask<FrozenSet<string>> ViewsAsync(ISqlDatabaseSession? session, string[] tables, CancellationToken cancellationToken)
+    {
+        if (session is null || tables.Length == 0)
+        {
+            return FrozenSet<string>.Empty;
+        }
+
+        var names = string.Join(", ", tables.Select(static table => RulesCompiler.Literal(table)));
+        var request = new SqlStatementRequest(session.DatabaseId,
+            [new SqlStatement(string.Concat("SELECT name FROM sqlite_schema WHERE type = 'view' AND name COLLATE NOCASE IN (", names, ")"), [], SqlBuild.NoNamed)],
+            SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
+        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+        return outcome switch
+        {
+            SqlReadResult { ResultSets: [.., var last] } => last.Rows.Select(static row => SqlBuild.Format(row[0])).ToFrozenSet(StringComparer.OrdinalIgnoreCase),
+            SqlReadResult or SqlError or StorageBusy or StorageTimeout => FrozenSet<string>.Empty,
+        };
     }
 
     private static EndUserStatementOutcome Parse(string sql, int index)
@@ -747,7 +769,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 listing = false;
                 depth--;
             }
-            else if (listing && token.IsName)
+            else if (listing && (token.IsName || token.Kind == SqlTokenKind.String))
             {
                 columns.Add(token.Value);
             }
@@ -759,7 +781,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             {
                 break;
             }
-            else if (depth == 0 && token.IsName && at + 1 < tokens.Count && tokens[at + 1] is { Kind: SqlTokenKind.Symbol, Value: "=" })
+            else if (depth == 0 && (token.IsName || token.Kind == SqlTokenKind.String) && at + 1 < tokens.Count && tokens[at + 1] is { Kind: SqlTokenKind.Symbol, Value: "=" })
             {
                 columns.Add(token.Value);
             }
