@@ -6,6 +6,10 @@ public sealed record ActiveShapeDatabases(IReadOnlyList<Ulid> Items);
 
 public sealed record ClaimedShapes(IReadOnlyList<ShapeRecord> Items);
 
+public sealed record ShapePage(IReadOnlyList<ShapeRecord> Items);
+
+public sealed record ShapesForgotten(int Count);
+
 public readonly union RegisterShapeOutcome(ShapeRecord, PlatformUnavailable);
 
 public readonly union ReadShapeOutcome(ShapeRecord, PlatformNotFound, PlatformUnavailable);
@@ -23,6 +27,10 @@ public readonly union ActiveShapeDatabasesOutcome(ActiveShapeDatabases, Platform
 public readonly union ClaimShapesOutcome(ClaimedShapes, PlatformUnavailable);
 
 public readonly union RetireShapeOutcome(ShapeRetirement, PlatformUnavailable);
+
+public readonly union PageShapesOutcome(ShapePage, PlatformUnavailable);
+
+public readonly union ForgetShapesOutcome(ShapesForgotten, PlatformUnavailable);
 
 public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider)
 {
@@ -222,28 +230,65 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         };
     }
 
-    public ValueTask<RetireShapeOutcome> RetireShapeAsync(string handle, CancellationToken cancellationToken) =>
-        RetireAsync("handle = ?", SqlValues.Text(handle), cancellationToken);
+    public async ValueTask<PageShapesOutcome> PageAsync(string after, int limit, CancellationToken cancellationToken)
+    {
+        var outcome = await store.ReadAsync(
+            SqlValues.Statement($"SELECT {RecordColumns} FROM platform_shapes WHERE handle > ? ORDER BY handle LIMIT ?", SqlValues.Text(after), SqlValues.Number(limit)),
+            cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse { Results: var results } => new ShapePage([.. results[0].RowsOf().Select(Record)]),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
+        };
+    }
 
-    public ValueTask<RetireShapeOutcome> RetireDatabaseAsync(Ulid database, CancellationToken cancellationToken) =>
-        RetireAsync("database_id = ?", SqlValues.Text(database.ToString()), cancellationToken);
+    public ValueTask<RetireShapeOutcome> ShapeRetirementAsync(string handle, CancellationToken cancellationToken) =>
+        RetirementAsync("handle = ?", SqlValues.Text(handle), cancellationToken);
 
-    private async ValueTask<RetireShapeOutcome> RetireAsync(string condition, JsonElement key, CancellationToken cancellationToken)
+    public ValueTask<RetireShapeOutcome> DatabaseRetirementAsync(Ulid database, CancellationToken cancellationToken) =>
+        RetirementAsync("database_id = ?", SqlValues.Text(database.ToString()), cancellationToken);
+
+    public async ValueTask<ForgetShapesOutcome> ForgetAsync(IReadOnlyList<ShapeErased> erased, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(erased);
+        if (erased.Count == 0)
+        {
+            return new ShapesForgotten(0);
+        }
+
+        List<SqlHttpStatement> statements = [];
+        foreach (var shape in erased)
+        {
+            var handle = SqlValues.Text(shape.Handle);
+            statements.Add(SqlValues.Statement("DELETE FROM platform_shape_chunks WHERE handle = ? AND chunk_offset <= ?", handle, SqlValues.Number(shape.Through)));
+            statements.Add(SqlValues.Statement(
+                "DELETE FROM platform_shapes WHERE handle = ? AND NOT EXISTS (SELECT 1 FROM platform_shape_chunks WHERE handle = ?)", handle, handle));
+        }
+
+        var outcome = await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse { Results: var results } => new ShapesForgotten((int)results.Where(static (_, index) => index % 2 == 1).Sum(static result => result.RowsAffected)),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<RetireShapeOutcome> RetirementAsync(string condition, JsonElement key, CancellationToken cancellationToken)
     {
         var shapes = $"SELECT handle FROM platform_shapes WHERE {condition}";
         IReadOnlyList<SqlHttpStatement> statements =
         [
             SqlValues.Statement(shapes, key),
-            SqlValues.Statement($"SELECT handle, object FROM platform_shape_chunks WHERE handle IN ({shapes})", key),
-            SqlValues.Statement($"DELETE FROM platform_shape_chunks WHERE handle IN ({shapes})", key),
-            SqlValues.Statement($"DELETE FROM platform_shapes WHERE {condition}", key),
+            SqlValues.Statement($"SELECT handle, object, chunk_offset FROM platform_shape_chunks WHERE handle IN ({shapes})", key),
         ];
         var outcome = await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken);
         return outcome switch
         {
             SqlExecuteResponse { Results: var results } => new ShapeRetirement(
                 [.. results[0].RowsOf().Select(static row => row.Text(0))],
-                [.. results[1].RowsOf().Select(static row => new ShapeChunkObject(row.Text(0), row.Text(1)))]),
+                [.. results[1].RowsOf().Select(static row => new ShapeChunkObject(row.Text(0), row.Text(1), row.Number(2)))]),
             PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
             PlatformUnavailable unavailable => unavailable,
         };

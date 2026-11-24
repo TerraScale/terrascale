@@ -117,7 +117,7 @@ public sealed class ShapeReader(
         string offsetText,
         long cursor,
         CancellationToken cancellationToken) =>
-        await WaitAsync(context, route, resolved, after, offsetText, cursor, timeProvider.GetUtcNow() + LiveWait, 0, cancellationToken);
+        await WaitAsync(context, route, resolved, after, offsetText, cursor, timeProvider.GetUtcNow() + LiveWait, 0, false, cancellationToken);
 
     public async ValueTask<ShapeManifestOutcome> ManifestAsync(ShapeRecord shape, long after, CancellationToken cancellationToken)
     {
@@ -231,6 +231,7 @@ public sealed class ShapeReader(
         long cursor,
         DateTimeOffset deadline,
         int pass,
+        bool final,
         CancellationToken cancellationToken)
     {
         if (current.Shape.Head > after)
@@ -244,19 +245,24 @@ public sealed class ShapeReader(
             };
         }
 
-        var remaining = deadline - timeProvider.GetUtcNow();
-        if (remaining <= TimeSpan.Zero || pass >= MaxLivePasses)
+        if (final)
         {
             return UpToDate(current.Shape, after, offsetText, NextCursor(cursor));
         }
 
-        var advanced = await notifier.WaitAsync(current.Shape.Database, current.Seen, remaining, cancellationToken);
+        var remaining = deadline - timeProvider.GetUtcNow();
+        if (remaining > TimeSpan.Zero && pass < MaxLivePasses)
+        {
+            _ = await notifier.WaitAsync(current.Shape.Database, current.Seen, remaining, cancellationToken);
+        }
+
+        var started = timeProvider.GetUtcNow();
         var outcome = await ResolveAsync(context, route, current.Query, cancellationToken);
         return outcome switch
         {
             ResolvedShape next when next.Shape.Handle != current.Shape.Handle => Refetch(next.Shape, "shape lineage changed"),
-            ResolvedShape next when !advanced && next.Shape.Head <= after => UpToDate(next.Shape, after, offsetText, NextCursor(cursor)),
-            ResolvedShape next => await WaitAsync(context, route, next, after, offsetText, cursor, deadline, pass + 1, cancellationToken),
+            ResolvedShape next => await WaitAsync(
+                context, route, next, after, offsetText, cursor, deadline, pass + 1, started >= deadline || pass + 1 >= MaxLivePasses, cancellationToken),
             PlatformInvalidRequest invalid => invalid,
             PlatformUnauthorized unauthorized => unauthorized,
             PlatformForbidden forbidden => forbidden,

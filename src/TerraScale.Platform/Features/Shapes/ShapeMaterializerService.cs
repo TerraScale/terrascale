@@ -17,6 +17,8 @@ public sealed class ShapeMaterializerService(
     ILogger<ShapeMaterializerService> logger) : BackgroundService
 {
     private const int ClaimLimit = 64;
+    private const int AuditPage = 256;
+    private const string RefusedFilter = "its persisted filter is no longer accepted";
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Lease = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan Reconnect = TimeSpan.FromSeconds(1);
@@ -25,6 +27,7 @@ public sealed class ShapeMaterializerService(
     private readonly Dictionary<Ulid, ChangeSubscription> _subscriptions = [];
     private readonly string _owner = options.Region + "/" + options.Node + "/" + Ulid.NewUlid();
     private IReadOnlyList<ShapeRecord> _owned = [];
+    private string _audited = "";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -100,6 +103,8 @@ public sealed class ShapeMaterializerService(
         {
             await EnqueueAsync(shape.Database, "", cancellationToken);
         }
+
+        await AuditAsync(cancellationToken);
     }
 
     private async Task FollowAsync(Ulid database, CancellationToken cancellationToken)
@@ -193,7 +198,7 @@ public sealed class ShapeMaterializerService(
     {
         var outcome = Accepted(shape)
             ? await SnapshotAsync(shape, bookmark, cancellationToken)
-            : await RetireAsync(shape, "its persisted filter is no longer accepted", await registry.RetireShapeAsync(shape.Handle, cancellationToken), cancellationToken);
+            : await RetireAsync(shape, RefusedFilter, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken);
         if (outcome is not null)
         {
             logger.ZLogWarning($"Shape {shape.Handle} was not materialized: {outcome}");
@@ -215,10 +220,10 @@ public sealed class ShapeMaterializerService(
                 PlatformUnavailable unavailable => unavailable.Message,
             },
             SqlFailure { Error.SqlState: "42P01" or "42703" } failure =>
-                await RetireAsync(shape, failure.Error.Message, await registry.RetireShapeAsync(shape.Handle, cancellationToken), cancellationToken),
+                await RetireAsync(shape, failure.Error.Message, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken),
             SqlFailure failure => failure.Error.Message,
             PlatformNotFound { Code: "unknown_database" } missing =>
-                await RetireAsync(shape, missing.Message ?? "the database no longer exists", await registry.RetireDatabaseAsync(shape.Database, cancellationToken), cancellationToken),
+                await RetireAsync(shape, missing.Message ?? "the database no longer exists", await registry.DatabaseRetirementAsync(shape.Database, cancellationToken), cancellationToken),
             PlatformNotFound missing => missing.Message ?? "the database no longer exists",
             PlatformUnavailable unavailable => unavailable.Message,
         };
@@ -233,16 +238,46 @@ public sealed class ShapeMaterializerService(
 
     private async Task<string?> RetiredAsync(ShapeRecord shape, string reason, ShapeRetirement retired, CancellationToken cancellationToken)
     {
-        var handles = retired.Handles.ToHashSet(StringComparer.Ordinal);
-        Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
         if (retired.Handles.Count == 0)
         {
             return null;
         }
 
-        var kept = await sealer.RetireAsync(retired, cancellationToken);
-        logger.ZLogInformation($"Retired {retired.Handles.Count} shapes of {shape.Database} after {shape.Handle} failed permanently: {reason}");
-        return kept == 0 ? null : $"{reason}; {kept} retired shape objects could not be deleted";
+        var erased = await sealer.RetireAsync(retired, cancellationToken);
+        var forgottenOutcome = await registry.ForgetAsync(erased, cancellationToken);
+        var failure = forgottenOutcome switch
+        {
+            ShapesForgotten => null,
+            PlatformUnavailable unavailable => unavailable.Message,
+        };
+        if (failure is not null)
+        {
+            return $"{reason}; forgetting the erased shapes failed and will be retried: {failure}";
+        }
+
+        var handles = erased.Select(static shape => shape.Handle).ToHashSet(StringComparer.Ordinal);
+        Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
+        logger.ZLogInformation($"Retired {erased.Count} of {retired.Handles.Count} shapes of {shape.Database} after {shape.Handle} failed permanently: {reason}");
+        return erased.Count == retired.Handles.Count ? null : $"{reason}; {retired.Handles.Count - erased.Count} shapes keep objects that could not be deleted and will be retried";
+    }
+
+    private async Task AuditAsync(CancellationToken cancellationToken)
+    {
+        var pageOutcome = await registry.PageAsync(_audited, AuditPage, cancellationToken);
+        var page = pageOutcome switch
+        {
+            ShapePage { Items: var items } => items,
+            PlatformUnavailable unavailable => Deferred<ShapeRecord>(unavailable.Message),
+        };
+        _audited = page.Count < AuditPage ? "" : page[^1].Handle;
+        foreach (var shape in page.Where(static shape => !Accepted(shape)))
+        {
+            var outcome = await RetireAsync(shape, RefusedFilter, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken);
+            if (outcome is not null)
+            {
+                logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");
+            }
+        }
     }
 
     private async Task<string?> SealAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken)

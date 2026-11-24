@@ -153,7 +153,7 @@ public sealed class ShapeSealer(
         };
     }
 
-    public async ValueTask<int> RetireAsync(ShapeRetirement retirement, CancellationToken cancellationToken)
+    public async ValueTask<IReadOnlyList<ShapeErased>> RetireAsync(ShapeRetirement retirement, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(retirement);
         foreach (var handle in retirement.Handles)
@@ -165,8 +165,8 @@ public sealed class ShapeSealer(
         }
 
         var purge = new List<string>();
-        var kept = 0;
-        foreach (var chunk in retirement.Chunks.Concat(retirement.Handles.Select(static handle => new ShapeChunkObject(handle, "head.json"))))
+        var failed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in retirement.Chunks.Concat(retirement.Handles.Select(static handle => new ShapeChunkObject(handle, "head.json", 0))))
         {
             var deletedOutcome = await objects.DeleteAsync(ShapeObjectStore.Key(chunk.Handle, chunk.Name), cancellationToken);
             var deleted = deletedOutcome switch
@@ -180,12 +180,13 @@ public sealed class ShapeSealer(
             }
             else
             {
-                kept++;
+                _ = failed.Add(chunk.Handle);
             }
         }
 
         await cdn.QueueAsync(purge, cancellationToken);
-        return kept;
+        return [.. retirement.Handles.Where(handle => !failed.Contains(handle)).Select(handle => new ShapeErased(
+            handle, retirement.Chunks.Where(chunk => chunk.Handle == handle).Select(static chunk => chunk.Offset).DefaultIfEmpty(0).Max()))];
     }
 
     private async ValueTask<SyncShapeOutcome> RereadAsync(ShapeRecord shape, string lostObject, CancellationToken cancellationToken)
