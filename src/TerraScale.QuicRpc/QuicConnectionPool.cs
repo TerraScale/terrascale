@@ -12,7 +12,20 @@ namespace TerraScale.QuicRpc;
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
-internal sealed record class StreamLease(PeerSlot Slot, QuicConnection Connection, QuicStream Stream);
+internal sealed class StreamLease(PeerSlot slot, QuicConnection connection, QuicStream stream)
+{
+    public PeerSlot Slot { get; } = slot;
+
+    public QuicConnection Connection { get; } = connection;
+
+    public QuicStream Stream { get; } = stream;
+
+    public Task ReleaseAsync()
+    {
+        Slot.EndUse();
+        return QuicIo.DisposeStreamAsync(Stream);
+    }
+}
 
 internal readonly union StreamLeaseOutcome(StreamLease, QuicFault);
 
@@ -24,13 +37,15 @@ internal sealed record class ActiveConnection(QuicPeer Peer, QuicConnection Conn
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
-internal sealed class PeerSlot(QuicPeer peer)
+internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, OrderedPushChannel> _channels = new(StringComparer.Ordinal);
     private QuicPeer _peer = peer;
     private ActiveConnection? _active;
     private Task<QuicConnectionOpenOutcome>? _connecting;
+    private int _uses;
+    private long _idleSince;
     private long _lastConnectFailureTimestamp;
     private QuicFault? _lastConnectFault;
     private bool _everConnected;
@@ -104,6 +119,7 @@ internal sealed class PeerSlot(QuicPeer peer)
             }
 
             _active = active;
+            _idleSince = timeProvider.GetTimestamp();
             _everConnected = true;
             _lastConnectFailureTimestamp = 0;
             _lastConnectFault = null;
@@ -137,8 +153,43 @@ internal sealed class PeerSlot(QuicPeer peer)
         }
     }
 
+    public void BeginUse()
+    {
+        lock (_gate)
+        {
+            _uses++;
+        }
+    }
+
+    public void EndUse()
+    {
+        lock (_gate)
+        {
+            _uses--;
+            if (_uses == 0)
+            {
+                _idleSince = timeProvider.GetTimestamp();
+            }
+        }
+    }
+
+    public ActiveConnection? TakeIdle()
+    {
+        lock (_gate)
+        {
+            if (_closed || _uses != 0 || _active is not { } active
+                || timeProvider.GetElapsedTime(_idleSince) < QuicMeshLimits.PooledConnectionIdleTimeout)
+            {
+                return null;
+            }
+
+            _active = null;
+            _everConnected = false;
+            return active;
+        }
+    }
+
     public bool TryJoinOrStartConnect(
-        TimeProvider timeProvider,
         out QuicConnection? current,
         out Task<QuicConnectionOpenOutcome>? inFlight,
         out QuicFault? immediateFault,
@@ -182,7 +233,7 @@ internal sealed class PeerSlot(QuicPeer peer)
         }
     }
 
-    public void FinishConnect(TaskCompletionSource<QuicConnectionOpenOutcome> leader, QuicConnectionOpenOutcome outcome, TimeProvider timeProvider)
+    public void FinishConnect(TaskCompletionSource<QuicConnectionOpenOutcome> leader, QuicConnectionOpenOutcome outcome)
     {
         lock (_gate)
         {
@@ -224,10 +275,9 @@ internal sealed class PeerSlot(QuicPeer peer)
     {
         lock (_gate)
         {
-            if (_channels.TryGetValue(key, out var existing) && ReferenceEquals(existing, channel))
+            if (_channels.TryGetValue(key, out var existing) && ReferenceEquals(existing, channel) && channel.TryCompleteIdle())
             {
                 _ = _channels.Remove(key);
-                channel.CompleteIdle();
             }
         }
     }
@@ -255,35 +305,42 @@ internal sealed class PeerSlot(QuicPeer peer)
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
-internal sealed class QuicConnectionPool(
-    QuicMeshOptions options,
-    QuicCertificateValidator validator,
-    QuicMeshMetrics metrics,
-    TimeProvider timeProvider,
-    ILogger logger,
-    CancellationToken shutdownToken)
+internal sealed class QuicConnectionPool
 {
     private readonly ConcurrentDictionary<string, PeerSlot> _slots = new(StringComparer.Ordinal);
-    private readonly QuicCertificateSource _certificates = new(options, timeProvider);
+    private readonly QuicCertificateValidator _validator;
+    private readonly QuicCertificateSource _certificates;
+    private readonly ILogger _logger;
+    private readonly ITimer _idleSweep;
 
-    public QuicMeshOptions Options => options;
+    public QuicConnectionPool(QuicMeshOptions options, QuicCertificateValidator validator, QuicMeshMetrics metrics,
+        TimeProvider timeProvider, ILogger logger, CancellationToken shutdownToken)
+    {
+        _validator = validator;
+        _logger = logger;
+        _certificates = new QuicCertificateSource(options, timeProvider);
+        Metrics = metrics;
+        TimeProvider = timeProvider;
+        ShutdownToken = shutdownToken;
+        _idleSweep = timeProvider.CreateTimer(EvictIdleConnections, null, QuicMeshLimits.IdleSweepInterval, QuicMeshLimits.IdleSweepInterval);
+    }
 
-    public QuicMeshMetrics Metrics => metrics;
+    public QuicMeshMetrics Metrics { get; }
 
-    public TimeProvider TimeProvider => timeProvider;
+    public TimeProvider TimeProvider { get; }
 
-    public CancellationToken ShutdownToken => shutdownToken;
+    public CancellationToken ShutdownToken { get; }
 
     public void Upsert(QuicPeer peer) =>
         _slots.AddOrUpdate(
             peer.NodeId,
-            static (_, latest) => new PeerSlot(latest),
-            static (_, slot, latest) =>
+            static (_, state) => new PeerSlot(state.Peer, state.Clock),
+            static (_, slot, state) =>
             {
-                slot.Observe(latest);
+                slot.Observe(state.Peer);
                 return slot;
             },
-            peer);
+            (Peer: peer, Clock: TimeProvider));
 
     public bool TryGet(string nodeId, [NotNullWhen(true)] out PeerSlot? slot) => _slots.TryGetValue(nodeId, out slot);
 
@@ -299,7 +356,7 @@ internal sealed class QuicConnectionPool(
     {
         if (_slots.TryGetValue(nodeId, out var slot) && slot.Take() is { } active)
         {
-            metrics.ConnectionClosed(QuicSide.Client);
+            Metrics.ConnectionClosed(QuicSide.Client);
             _ = QuicIo.DisposeConnectionAsync(active.Connection);
         }
     }
@@ -323,12 +380,26 @@ internal sealed class QuicConnectionPool(
 
     public async ValueTask<StreamLeaseOutcome> OpenStreamAsync(PeerSlot slot, QuicStreamType type, CallScope scope)
     {
-        var outcome = await GetConnectionAsync(slot, scope);
-        return outcome switch
+        slot.BeginUse();
+        StreamLease? opened = null;
+        try
         {
-            QuicConnection connection => await OpenOnAsync(slot, connection, type, true, scope),
-            QuicFault fault => fault,
-        };
+            var outcome = await GetConnectionAsync(slot, scope);
+            StreamLeaseOutcome result = outcome switch
+            {
+                QuicConnection connection => await OpenOnAsync(slot, connection, type, true, scope),
+                QuicFault fault => fault,
+            };
+            opened = result switch { StreamLease lease => lease, QuicFault => null };
+            return result;
+        }
+        finally
+        {
+            if (opened is null)
+            {
+                slot.EndUse();
+            }
+        }
     }
 
     public void InvalidateIfDead(StreamLease lease, QuicFault fault)
@@ -339,8 +410,23 @@ internal sealed class QuicConnectionPool(
         }
     }
 
-    public async ValueTask ShutdownAsync() =>
+    public async ValueTask ShutdownAsync()
+    {
+        await _idleSweep.DisposeAsync();
         await Task.WhenAll(_slots.Values.Select(slot => CloseSlotAsync(slot).AsTask()));
+    }
+
+    private void EvictIdleConnections(object? state)
+    {
+        foreach (var slot in _slots.Values)
+        {
+            if (slot.TakeIdle() is { } idle)
+            {
+                Metrics.ConnectionClosed(QuicSide.Client);
+                _ = QuicIo.DisposeConnectionAsync(idle.Connection);
+            }
+        }
+    }
 
     private async ValueTask<StreamLeaseOutcome> OpenOnAsync(PeerSlot slot, QuicConnection connection, QuicStreamType type, bool reconnectIfDead, CallScope scope)
     {
@@ -368,7 +454,7 @@ internal sealed class QuicConnectionPool(
     {
         if (slot.Clear(connection))
         {
-            metrics.ConnectionClosed(QuicSide.Client);
+            Metrics.ConnectionClosed(QuicSide.Client);
             _ = QuicIo.DisposeConnectionAsync(connection);
         }
     }
@@ -380,7 +466,7 @@ internal sealed class QuicConnectionPool(
             return cached;
         }
 
-        if (!slot.TryJoinOrStartConnect(timeProvider, out var current, out var inFlight, out var immediateFault, out var leader))
+        if (!slot.TryJoinOrStartConnect(out var current, out var inFlight, out var immediateFault, out var leader))
         {
             if (current is not null)
             {
@@ -406,12 +492,12 @@ internal sealed class QuicConnectionPool(
         {
             if (slot.TakeStale() is { } stale)
             {
-                metrics.ConnectionClosed(QuicSide.Client);
-                await stale.Connection.DisposeAsync();
+                Metrics.ConnectionClosed(QuicSide.Client);
+                await QuicIo.DisposeConnectionAsync(stale.Connection);
             }
 
             var peer = slot.Peer;
-            using var dialScope = new CallScope(QuicMeshLimits.HandshakeTimeout, timeProvider, shutdownToken, CancellationToken.None);
+            using var dialScope = new CallScope(QuicMeshLimits.HandshakeTimeout, TimeProvider, ShutdownToken, CancellationToken.None);
             var outcome = await QuicIo.ConnectAsync(ConnectionOptions(peer), dialScope);
             result = outcome switch
             {
@@ -421,7 +507,7 @@ internal sealed class QuicConnectionPool(
         }
         finally
         {
-            slot.FinishConnect(leader, result, timeProvider);
+            slot.FinishConnect(leader, result);
         }
 
         return result;
@@ -429,33 +515,33 @@ internal sealed class QuicConnectionPool(
 
     private static async ValueTask<QuicConnectionOpenOutcome> WaitForConnectAsync(Task<QuicConnectionOpenOutcome> connectTask, CallScope scope)
     {
-        try
-        {
-            return await connectTask.WaitAsync(scope.Token);
-        }
-        catch (OperationCanceledException) when (!scope.Caller.IsCancellationRequested)
+        var wait = connectTask.WaitAsync(scope.Token);
+        await ((Task)wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (wait.IsCanceled && !scope.Caller.IsCancellationRequested)
         {
             return scope.Interrupted();
         }
+
+        return await wait;
     }
 
     private async ValueTask<QuicConnectionOpenOutcome> ActivateAsync(PeerSlot slot, QuicPeer peer, QuicConnection connection)
     {
         if (!slot.TryActivate(new ActiveConnection(peer, connection), out var reconnect))
         {
-            await connection.DisposeAsync();
+            await QuicIo.DisposeConnectionAsync(connection);
             return new TransportShutdown("The peer was removed from the QUIC client.");
         }
 
-        metrics.ConnectionOpened(QuicSide.Client, reconnect);
-        QuicRpcLog.ClientConnected(logger, peer.NodeId, peer.EndPoint, reconnect);
+        Metrics.ConnectionOpened(QuicSide.Client, reconnect);
+        QuicRpcLog.ClientConnected(_logger, peer.NodeId, peer.EndPoint, reconnect);
         return connection;
     }
 
     private QuicFault ConnectFailed(QuicPeer peer, QuicFault fault)
     {
-        metrics.Error(QuicSide.Client, fault);
-        QuicRpcLog.ClientConnectFailed(logger, peer.NodeId, peer.EndPoint, fault.Message);
+        Metrics.Error(QuicSide.Client, fault);
+        QuicRpcLog.ClientConnectFailed(_logger, peer.NodeId, peer.EndPoint, fault.Message);
         return fault;
     }
 
@@ -476,7 +562,7 @@ internal sealed class QuicConnectionPool(
             ClientCertificateContext = _certificates.Current(),
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
             RemoteCertificateValidationCallback = (_, certificate, chain, _) =>
-                validator.ValidateRemote(certificate, chain, QuicCertificateValidator.ServerAuthOid) is { } identity
+                _validator.ValidateRemote(certificate, chain, QuicCertificateValidator.ServerAuthOid) is { } identity
                 && string.Equals(identity.NodeId, peer.NodeId, StringComparison.Ordinal)
                 && string.Equals(identity.Region, peer.Region, StringComparison.Ordinal),
         },
@@ -489,7 +575,7 @@ internal sealed class QuicConnectionPool(
         {
             var closeTask = QuicIo.CloseAsync(active.Connection, QuicProtocol.CloseErrorCode).AsTask();
             using var timeout = new CancellationTokenSource();
-            var delay = Task.Delay(QuicMeshLimits.CloseTimeout, timeProvider, timeout.Token);
+            var delay = Task.Delay(QuicMeshLimits.CloseTimeout, TimeProvider, timeout.Token);
             var winner = await Task.WhenAny(closeTask, delay);
             await timeout.CancelAsync();
             if (winner == closeTask)
@@ -497,7 +583,7 @@ internal sealed class QuicConnectionPool(
                 Observe(await closeTask);
             }
 
-            metrics.ConnectionClosed(QuicSide.Client);
+            Metrics.ConnectionClosed(QuicSide.Client);
             _ = QuicIo.DisposeConnectionAsync(active.Connection);
         }
     }
@@ -506,7 +592,7 @@ internal sealed class QuicConnectionPool(
     {
         if (closed switch { QuicConnectionClosed => null, QuicFault fault => fault } is { } failure)
         {
-            metrics.Error(QuicSide.Client, failure);
+            Metrics.Error(QuicSide.Client, failure);
         }
     }
 }
