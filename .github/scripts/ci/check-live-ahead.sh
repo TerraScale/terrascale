@@ -22,6 +22,13 @@ decide() {
   printf -- '- %s: %s\n' "$service" "$2" | tee -a "$summary"
 }
 
+reject_nul() {
+  if [[ -n $(LC_ALL=C tr -cd '\0' < "$1" | tr '\0' x) ]]; then
+    echo "::error::$2 contained a NUL byte" >&2
+    exit 1
+  fi
+}
+
 sep='?'
 if [[ $ACTIONS_ID_TOKEN_REQUEST_URL == *\?* ]]; then
   sep='&'
@@ -41,6 +48,7 @@ if ! curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
   echo "::error::Cannot read ${orch_url}/api/status; refusing to guess the live ${service} images" >&2
   exit 1
 fi
+reject_nul "$status_file" "${orch_url}/api/status"
 if ! jq -se 'length == 1 and (.[0] | type == "object") and (.[0].services | type == "array") and (.[0].placements | type == "array") and (.[0].rollouts | type == "array")' "$status_file" > /dev/null 2>&1; then
   echo "::error::${orch_url}/api/status did not return a single object with services, placements and rollouts arrays; refusing to guess the live ${service} images" >&2
   exit 1
@@ -103,6 +111,7 @@ inspect_json() {
     echo "Inspecting the ${field} of live ${service} image ${ref} failed on attempt ${attempt}; retrying in 2s" >&2
     sleep 2
   done
+  reject_nul "$file" "docker inspect ${field} for ${ref}"
   if ! jq -se 'length == 1 and (.[0] | type == "object")' "$file" > /dev/null 2>&1; then
     echo "::error::Live ${service} image ${ref} returned no single ${field} object; refusing to release" >&2
     return 1
