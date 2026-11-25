@@ -327,10 +327,9 @@ internal sealed partial class DatabaseSession
         return null;
     }
 
-    private ApplyRemoteBatchOutcome ApplyRemote(IReadOnlyList<CommitMetadata> commits, bool allowLocalOrigin)
+    private ApplyRemoteBatchOutcome ApplyRemote(IReadOnlyList<CommitMetadata> commits, bool isReplay)
     {
         var duplicates = 0;
-        var queued = 0;
         foreach (var commit in commits)
         {
             if (!StorageEngineOptions.IsValidRegion(commit.OriginRegion) || commit.Sequence <= 0)
@@ -344,7 +343,7 @@ internal sealed partial class DatabaseSession
                 continue;
             }
 
-            if (!allowLocalOrigin && string.Equals(commit.OriginRegion, Region, StringComparison.Ordinal))
+            if (!isReplay && string.Equals(commit.OriginRegion, Region, StringComparison.Ordinal))
             {
                 return new StorageCorrupted(DatabaseId, "remote batch carries a local-origin commit ahead of the local log");
             }
@@ -358,13 +357,10 @@ internal sealed partial class DatabaseSession
             if (!queue.TryAdd(commit.Sequence, commit))
             {
                 duplicates++;
-                continue;
             }
-
-            queued++;
         }
 
-        if (_pending.Values.Sum(static queue => queue.Count) > Options.MaxPendingRemoteCommits)
+        if (!isReplay && _pending.Values.Sum(static queue => queue.Count) > Options.MaxPendingRemoteCommits)
         {
             _pending.Clear();
             return new StorageBusy("remote apply buffer overflowed; resend from the bookmark", TimeSpan.FromMilliseconds(100));
@@ -382,76 +378,99 @@ internal sealed partial class DatabaseSession
 
     private ApplyRemoteBatchOutcome ApplyPending(IReadOnlyList<CommitMetadata> requested, bool persist)
     {
-        var tentative = _versions.Copy();
-        var epoch = SchemaEpoch;
-        List<(CommitMetadata Commit, DeltaBatch Batch)> order = [];
-        var progressed = true;
-        while (progressed)
+        var applied = 0;
+        var duplicates = 0;
+        var batchFull = true;
+        while (batchFull)
         {
-            progressed = false;
-            foreach (var (origin, queue) in _pending)
+            var tentative = _versions.Copy();
+            var epoch = SchemaEpoch;
+            List<(CommitMetadata Commit, DeltaBatch Batch)> order = [];
+            var bytes = 0L;
+            batchFull = false;
+            var progressed = true;
+            while (progressed && !batchFull)
             {
-                var next = tentative.GetValueOrDefault(origin) + 1;
-                if (!queue.TryGetValue(next, out var commit) || !Satisfied(commit, tentative))
+                progressed = false;
+                foreach (var (origin, queue) in _pending)
                 {
-                    continue;
-                }
-
-                if (!MutationBatchCodec.TryDecode(commit.DeltaPayload.Span, out var batch))
-                {
-                    _ = queue.Remove(next);
-                    return new StorageCorrupted(DatabaseId, string.Concat("undecodable delta payload from ", origin));
-                }
-
-                if (batch.Ddl.Count > 0 && commit.SchemaEpoch != epoch + 1)
-                {
-                    if (commit.SchemaEpoch <= epoch)
+                    var next = tentative.GetValueOrDefault(origin) + 1;
+                    if (!queue.TryGetValue(next, out var commit) || !Satisfied(commit, tentative))
                     {
-                        _ = queue.Remove(next);
-                        return new SchemaMismatch(DatabaseId, epoch + 1, commit.SchemaEpoch);
+                        continue;
                     }
 
-                    continue;
-                }
+                    if (!MutationBatchCodec.TryDecode(commit.DeltaPayload.Span, out var batch))
+                    {
+                        _ = queue.Remove(next);
+                        return new StorageCorrupted(DatabaseId, string.Concat("undecodable delta payload from ", origin));
+                    }
 
-                if (batch.Ddl.Count == 0 && commit.SchemaEpoch > epoch)
-                {
-                    continue;
-                }
+                    if (batch.Ddl.Count > 0 && commit.SchemaEpoch != epoch + 1)
+                    {
+                        if (commit.SchemaEpoch <= epoch)
+                        {
+                            _ = queue.Remove(next);
+                            return new SchemaMismatch(DatabaseId, epoch + 1, commit.SchemaEpoch);
+                        }
 
-                epoch = batch.Ddl.Count > 0 ? commit.SchemaEpoch : epoch;
-                order.Add((commit, batch));
-                tentative[origin] = next;
-                progressed = true;
+                        continue;
+                    }
+
+                    if (batch.Ddl.Count == 0 && commit.SchemaEpoch > epoch)
+                    {
+                        continue;
+                    }
+
+                    if (persist)
+                    {
+                        var size = CommitFrame.EncodedSize(commit);
+                        if (size > CommitFrame.MaxEncodedSize)
+                        {
+                            _ = queue.Remove(next);
+                            return new StorageCorrupted(DatabaseId, "remote commit exceeds the maximum commit log frame size");
+                        }
+
+                        if (order.Count > 0 && bytes + size > Options.SegmentMaxBytes)
+                        {
+                            batchFull = true;
+                            break;
+                        }
+
+                        bytes += size;
+                    }
+
+                    epoch = batch.Ddl.Count > 0 ? commit.SchemaEpoch : epoch;
+                    order.Add((commit, batch));
+                    tentative[origin] = next;
+                    progressed = true;
+                }
             }
-        }
 
-        if (order.Count > 0)
-        {
-            var status = ApplyInTransaction(order, persist, out var skipped);
-            if (!status.IsOk)
+            if (order.Count == 0)
             {
-                foreach (var (commit, _) in order)
-                {
-                    _ = _pending[commit.OriginRegion].Remove(commit.Sequence);
-                }
-
-                return status.IsBusy ? status.ToBusy() : new StorageCorrupted(DatabaseId, status.Message);
+                break;
             }
 
+            var status = ApplyInTransaction(order, persist, out var skipped);
             foreach (var (commit, _) in order)
             {
                 _ = _pending[commit.OriginRegion].Remove(commit.Sequence);
             }
 
+            if (!status.IsOk)
+            {
+                return status.IsBusy ? status.ToBusy() : new StorageCorrupted(DatabaseId, status.Message);
+            }
+
             Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
             _versions.Set(tentative);
-            var buffered = requested.Count(commit => _pending.TryGetValue(commit.OriginRegion, out var queue) && queue.ContainsKey(commit.Sequence));
-            return new RemoteApplyOutcome(order.Count - skipped, skipped, buffered, _versions.Snapshot());
+            applied += order.Count - skipped;
+            duplicates += skipped;
         }
 
-        var waiting = requested.Count(commit => _pending.TryGetValue(commit.OriginRegion, out var queue) && queue.ContainsKey(commit.Sequence));
-        return new RemoteApplyOutcome(0, 0, waiting, _versions.Snapshot());
+        var buffered = requested.Count(commit => _pending.TryGetValue(commit.OriginRegion, out var queue) && queue.ContainsKey(commit.Sequence));
+        return new RemoteApplyOutcome(applied, duplicates, buffered, _versions.Snapshot());
     }
 
     private static bool Satisfied(CommitMetadata commit, Dictionary<string, long> tentative)

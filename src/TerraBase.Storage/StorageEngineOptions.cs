@@ -51,6 +51,7 @@ public sealed record StorageEngineOptions(string RootDirectory, string Region, u
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxBatchSize);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(QueueCapacity);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(SegmentMaxBytes);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(SegmentMaxBytes, SqliteCommitLog.MaxSegmentBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxPendingRemoteCommits);
     }
 }

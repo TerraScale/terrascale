@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 
 namespace TerraBase.Continuity;
 
@@ -19,12 +21,22 @@ internal sealed record CachedManifest(ArchiveManifest Manifest, string? ETag);
 
 internal readonly union CachedManifestOutcome(CachedManifest, ContinuityUnavailable);
 
-public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics metrics, TimeProvider timeProvider)
+internal sealed record StagedArchiveRetirement(string Key, PendingArchiveRetirement Retirement);
+
+internal readonly union StageArchiveRetirementOutcome(StagedArchiveRetirement, ContinuityUnavailable);
+
+internal sealed record StagedSnapshotUpload(string Key, DateTimeOffset DeadlineUtc);
+
+internal readonly union StageSnapshotUploadOutcome(StagedSnapshotUpload, ContinuityUnavailable);
+
+public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics metrics, TimeProvider timeProvider, ILogger<ArchiveManifests> logger)
 {
     private const int MaxCompareAndSwapAttempts = 5;
+    private static readonly TimeSpan RetirementSweepInterval = TimeSpan.FromHours(1);
 
     private readonly ConcurrentDictionary<Ulid, CachedManifest> _cache = new();
     private readonly ConcurrentDictionary<Ulid, SemaphoreSlim> _gates = new();
+    private readonly ConcurrentDictionary<Ulid, DateTimeOffset> _nextRetirementSweep = new();
 
     public bool IsEnabled => store.IsEnabled;
 
@@ -62,9 +74,15 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         };
     }
 
-    internal async ValueTask<ArchiveManifestOutcome> UpdateAsync(
+    internal ValueTask<ArchiveManifestOutcome> UpdateAsync(
         Ulid databaseId,
         Func<ArchiveManifest, ArchiveManifest> transform,
+        CancellationToken cancellationToken) =>
+        UpdateAsync(databaseId, current => new RetainedArchive(transform(current), []), cancellationToken);
+
+    private async ValueTask<ArchiveManifestOutcome> UpdateAsync(
+        Ulid databaseId,
+        Func<ArchiveManifest, RetainedArchive> transform,
         CancellationToken cancellationToken)
     {
         CachedManifest current;
@@ -80,18 +98,53 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
                 return loadError;
             }
 
-            current = fetched switch { CachedManifest loaded => loaded, ContinuityUnavailable => throw new InvalidOperationException() };
+            current = fetched switch { CachedManifest loaded => loaded, ContinuityUnavailable => throw new UnreachableException() };
             _cache[databaseId] = current;
         }
 
         for (var attempt = 0; attempt < MaxCompareAndSwapAttempts; attempt++)
         {
-            var updated = transform(current.Manifest) with { UpdatedAtUtc = timeProvider.GetUtcNow() };
+            var transformed = transform(current.Manifest);
+            if (ReferenceEquals(transformed.Manifest, current.Manifest) && transformed.RemovedKeys.Count == 0)
+            {
+                return current.Manifest;
+            }
+
+            StagedArchiveRetirement? retirement = null;
+            if (transformed.RemovedKeys.Count > 0)
+            {
+                if (current.ETag is not { } expectedETag)
+                {
+                    return new ContinuityUnavailable("cannot retire archive objects without a manifest ETag", "archive_etag_missing");
+                }
+
+                var staged = await StageRetirementAsync(databaseId, new PendingArchiveRetirement(expectedETag, transformed.RemovedKeys), cancellationToken);
+                if (staged switch { StagedArchiveRetirement => null, ContinuityUnavailable unavailable => unavailable } is { } stageError)
+                {
+                    return stageError;
+                }
+
+                retirement = staged switch { StagedArchiveRetirement written => written, ContinuityUnavailable => throw new UnreachableException() };
+            }
+
+            var updatedAt = timeProvider.GetUtcNow();
+            if (updatedAt <= current.Manifest.UpdatedAtUtc)
+            {
+                updatedAt = current.Manifest.UpdatedAtUtc.AddTicks(1);
+            }
+
+            var updated = transformed.Manifest with { UpdatedAtUtc = updatedAt };
             var json = ManifestCodec.Serialize(updated);
             var stored = await store.PutBytesIfMatchAsync(ArchiveKeys.Manifest(databaseId), json, ManifestCodec.JsonContentType, current.ETag, cancellationToken);
             if (stored switch { ArchiveConditionalWritten written => written, ArchivePreconditionFailed or ArchiveUnavailable or ArchiveTimedOut => null } is { } saved)
             {
-                return Stored(databaseId, updated, saved.ETag, json.Length);
+                var published = Stored(databaseId, updated, saved.ETag, json.Length);
+                if (retirement is not null && await RetireAsync(databaseId, published, retirement, cancellationToken) is { } failure)
+                {
+                    ContinuityLog.RetirementDeferred(logger, databaseId, failure.Message);
+                }
+
+                return published;
             }
 
             var nonConflict = stored switch
@@ -111,26 +164,67 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
                 return reloadError;
             }
 
-            current = reloaded switch { CachedManifest fresh => fresh, ContinuityUnavailable => throw new InvalidOperationException() };
+            current = reloaded switch { CachedManifest fresh => fresh, ContinuityUnavailable => throw new UnreachableException() };
             _cache[databaseId] = current;
         }
 
         return new ContinuityUnavailable("archive manifest changed concurrently; retry", "archive_manifest_conflict");
     }
 
-    internal ValueTask<ArchiveManifestOutcome> SaveAsync(ArchiveManifest manifest, CancellationToken cancellationToken)
+    internal async ValueTask<ArchiveManifestOutcome> PublishAsync(
+        Ulid databaseId,
+        IReadOnlyList<ArchivedSegment> segments,
+        StagedArchiveSnapshot? snapshot,
+        DateTimeOffset? cutoff,
+        CancellationToken cancellationToken)
     {
-        if (!Ulid.TryParse(manifest.DatabaseId, out var databaseId))
+        var saved = await UpdateAsync(
+            databaseId,
+            current =>
+            {
+                var retained = cutoff is { } before ? ArchiveRetention.Select(current, before) : new RetainedArchive(current, []);
+                var ready = snapshot is not null && timeProvider.GetUtcNow() < snapshot.Upload.DeadlineUtc
+                    ? snapshot.Snapshot
+                    : null;
+                return retained with { Manifest = Append(retained.Manifest, segments, ready) };
+            },
+            cancellationToken);
+        return saved switch
         {
-            throw new ArgumentException("manifest database id is not a ULID", nameof(manifest));
+            ArchiveManifest published => await CompletePublicationAsync(databaseId, published, snapshot, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<ArchiveManifest> CompletePublicationAsync(
+        Ulid databaseId, ArchiveManifest published, StagedArchiveSnapshot? snapshot, CancellationToken cancellationToken)
+    {
+        if (snapshot is not null && published.Snapshots.Any(item => item.Key == snapshot.Snapshot.Key))
+        {
+            var deleted = await DeleteObjectsAsync([snapshot.Upload.Key], cancellationToken);
+            ReportDeferredRetirement(databaseId, deleted);
         }
 
-        return UpdateAsync(databaseId, remote => Merge(remote, manifest), cancellationToken);
+        if (await SweepRetirementsIfDueAsync(databaseId, cancellationToken) is { } failure)
+        {
+            ContinuityLog.RetirementDeferred(logger, databaseId, failure.Message);
+        }
+
+        return published;
+    }
+
+    private void ReportDeferredRetirement(Ulid databaseId, ArchiveObjectsDeletedOutcome deleted)
+    {
+        if (deleted switch { ArchiveObjectsDeleted => null, ContinuityUnavailable unavailable => unavailable } is { } failure)
+        {
+            ContinuityLog.RetirementDeferred(logger, databaseId, failure.Message);
+        }
     }
 
     internal async ValueTask<ArchivePurgeOutcome> PurgeAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         _cache.TryRemove(databaseId, out _);
+        _nextRetirementSweep.TryRemove(databaseId, out _);
         var listed = await store.ListKeysAsync(ArchiveKeys.DatabasePrefix(databaseId), cancellationToken);
         return listed switch
         {
@@ -173,55 +267,216 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
             ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
         };
 
-        static CachedManifestOutcome Decode(Ulid id, ArchiveVersionedBytes versioned) => ManifestCodec.Deserialize(id, versioned.Content) switch
-        {
-            ArchiveManifest manifest => new CachedManifest(manifest, versioned.ETag),
-            ArchiveManifestCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, corrupted.Code),
-        };
+        static CachedManifestOutcome Decode(Ulid id, ArchiveVersionedBytes versioned) =>
+            versioned.ETag is not { Length: > 0 } etag
+                ? new ContinuityUnavailable("archive manifest is missing its ETag", "archive_etag_missing")
+                : ManifestCodec.Deserialize(id, versioned.Content) switch
+                {
+                    ArchiveManifest manifest => new CachedManifest(manifest, etag),
+                    ArchiveManifestCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, corrupted.Code),
+                };
     }
 
-    private static ArchiveManifest Merge(ArchiveManifest remote, ArchiveManifest local)
+    private static ArchiveManifest Append(ArchiveManifest current, IReadOnlyList<ArchivedSegment> segments, ArchivedSnapshot? snapshot)
     {
-        Dictionary<string, ArchivedSnapshot> snapshots = new(StringComparer.Ordinal);
-        foreach (var snapshot in remote.Snapshots)
+        if (segments.Count == 0 && snapshot is null)
         {
-            snapshots[snapshot.Key] = snapshot;
+            return current;
         }
 
-        foreach (var snapshot in local.Snapshots)
+        var floor = ArchiveRetention.SnapshotFloor(current);
+        var snapshots = current.Snapshots;
+        if (snapshot is not null && !snapshots.Any(existing => existing.Key == snapshot.Key)
+            && (snapshots.Count == 0 || snapshot.TakenAtUtc >= snapshots.Min(static existing => existing.TakenAtUtc))
+            && CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark) && bookmark.Dominates(floor))
         {
-            snapshots[snapshot.Key] = snapshot;
+            snapshots = [.. snapshots.Append(snapshot).OrderBy(static item => item.TakenAtUtc)];
         }
 
-        Dictionary<string, ArchivedSegment> segments = new(StringComparer.Ordinal);
-        foreach (var segment in remote.Segments)
+        var archived = current.Segments;
+        if (segments.Count > 0)
         {
-            segments[segment.Key] = segment;
+            var keys = archived.Select(static segment => segment.Key).ToHashSet(StringComparer.Ordinal);
+            var added = segments.Where(segment => segment.LastSequence > floor.Get(segment.Origin) && keys.Add(segment.Key)).ToArray();
+            if (added.Length > 0)
+            {
+                archived = [.. archived.Concat(added).OrderBy(static item => item.Origin, StringComparer.Ordinal).ThenBy(static item => item.FirstSequence)];
+            }
         }
 
-        foreach (var segment in local.Segments)
-        {
-            segments[segment.Key] = segment;
-        }
+        return ReferenceEquals(snapshots, current.Snapshots) && ReferenceEquals(archived, current.Segments)
+            ? current
+            : current with { Snapshots = snapshots, Segments = archived };
+    }
 
-        Dictionary<string, ArchivedOperation> operations = new(StringComparer.Ordinal);
-        foreach (var operation in remote.Operations)
+    private async ValueTask<StageArchiveRetirementOutcome> StageRetirementAsync(
+        Ulid databaseId,
+        PendingArchiveRetirement pending,
+        CancellationToken cancellationToken)
+    {
+        _nextRetirementSweep.TryRemove(databaseId, out _);
+        var key = string.Concat(ArchiveKeys.RetirementPrefix(databaseId), Ulid.NewUlid(timeProvider.GetUtcNow()).ToString(), ".json");
+        var staged = await store.PutBytesAsync(key, ManifestCodec.Serialize(pending), ManifestCodec.JsonContentType, cancellationToken);
+        return staged switch
         {
-            operations[operation.OperationId] = operation;
-        }
-
-        foreach (var operation in local.Operations)
-        {
-            operations[operation.OperationId] = operation;
-        }
-
-        return remote with
-        {
-            Snapshots = [.. snapshots.Values.OrderBy(static item => item.TakenAtUtc)],
-            Segments = [.. segments.Values.OrderBy(static item => item.Origin, StringComparer.Ordinal).ThenBy(static item => item.FirstSequence)],
-            Operations = [.. operations.Values.OrderBy(static item => item.StartedAtUtc)],
+            ArchiveObjectWritten => new StagedArchiveRetirement(key, pending),
+            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
         };
     }
+
+    internal async ValueTask<StageSnapshotUploadOutcome> StageSnapshotUploadAsync(Ulid databaseId, string snapshotKey, CancellationToken cancellationToken)
+    {
+        var current = await FetchRemoteAsync(databaseId, cancellationToken);
+        if (current switch { CachedManifest => null, ContinuityUnavailable unavailable => unavailable } is { } loadError)
+        {
+            return loadError;
+        }
+
+        var etag = current switch { CachedManifest cached => cached.ETag, ContinuityUnavailable => throw new UnreachableException() };
+        var deadline = timeProvider.GetUtcNow() + 2 * S3ArchiveStore.RequestTimeout;
+        var pending = new PendingArchiveRetirement(etag, [snapshotKey]) { SnapshotUploadDeadlineUtc = deadline };
+        var staged = await StageRetirementAsync(databaseId, pending, cancellationToken);
+        return staged switch
+        {
+            StagedArchiveRetirement retirement => new StagedSnapshotUpload(retirement.Key, deadline),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<ContinuityUnavailable?> RetireAsync(
+        Ulid databaseId,
+        ArchiveManifest manifest,
+        StagedArchiveRetirement staged,
+        CancellationToken cancellationToken)
+    {
+        var referenced = manifest.Snapshots.Select(static snapshot => snapshot.Key)
+            .Concat(manifest.Segments.Select(static segment => segment.Key))
+            .ToHashSet(StringComparer.Ordinal);
+        var prefix = ArchiveKeys.DatabasePrefix(databaseId);
+        var segmentsPrefix = string.Concat(prefix, "segments/");
+        var snapshotsPrefix = string.Concat(prefix, "snapshots/");
+        var pending = staged.Retirement.Keys.Where(key => key is not null && !referenced.Contains(key) && IsSafeArchiveKey(key)
+            && (key.StartsWith(segmentsPrefix, StringComparison.Ordinal) || key.StartsWith(snapshotsPrefix, StringComparison.Ordinal)))
+            .Distinct(StringComparer.Ordinal)
+            .Append(staged.Key);
+        var deleted = await DeleteObjectsAsync(pending, cancellationToken);
+        return deleted switch
+        {
+            ArchiveObjectsDeleted => null,
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<ContinuityUnavailable?> SweepRetirementsIfDueAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var now = timeProvider.GetUtcNow();
+        if (_nextRetirementSweep.TryGetValue(databaseId, out var next) && now < next)
+        {
+            return null;
+        }
+
+        var listed = await store.ListKeysAsync(ArchiveKeys.RetirementPrefix(databaseId), cancellationToken);
+        var failure = listed switch
+        {
+            IReadOnlyList<string> { Count: 0 } => null,
+            IReadOnlyList<string> keys => await SweepRetirementsAsync(databaseId, keys, cancellationToken),
+            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
+        };
+        if (failure is null)
+        {
+            _nextRetirementSweep[databaseId] = now + RetirementSweepInterval;
+        }
+
+        return failure;
+    }
+
+    private async ValueTask<ContinuityUnavailable?> SweepRetirementsAsync(
+        Ulid databaseId,
+        IReadOnlyList<string> keys,
+        CancellationToken cancellationToken)
+    {
+        var sweepStarted = timeProvider.GetUtcNow();
+        var fetched = await FetchRemoteAsync(databaseId, cancellationToken);
+        if (fetched switch { CachedManifest => null, ContinuityUnavailable unavailable => unavailable } is { } loadError)
+        {
+            return loadError;
+        }
+
+        var current = fetched switch { CachedManifest manifest => manifest, ContinuityUnavailable => throw new UnreachableException() };
+        var prefix = ArchiveKeys.RetirementPrefix(databaseId);
+        foreach (var key in keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal) && IsSafeArchiveKey(key)))
+        {
+            var marker = await store.GetBytesAsync(key, cancellationToken);
+            var failure = marker switch
+            {
+                byte[] json => await SweepRetirementAsync(databaseId, current, key, json, sweepStarted, cancellationToken),
+                ArchiveObjectMissing => null,
+                ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+                ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
+            };
+            if (failure is not null)
+            {
+                return failure;
+            }
+        }
+
+        return null;
+    }
+
+    private async ValueTask<ContinuityUnavailable?> SweepRetirementAsync(
+        Ulid databaseId,
+        CachedManifest current,
+        string key,
+        ReadOnlyMemory<byte> json,
+        DateTimeOffset sweepStarted,
+        CancellationToken cancellationToken)
+    {
+        var decoded = ManifestCodec.DeserializeRetirement(json.Span);
+        return decoded switch
+        {
+            PendingArchiveRetirement { SnapshotUploadDeadlineUtc: { } deadline } when sweepStarted - S3ArchiveStore.RequestTimeout < deadline => null,
+            PendingArchiveRetirement { SnapshotUploadDeadlineUtc: not null } pending =>
+                await SweepSnapshotUploadAsync(databaseId, current.Manifest, new StagedArchiveRetirement(key, pending), cancellationToken),
+            PendingArchiveRetirement pending when string.Equals(pending.ManifestETag, current.ETag, StringComparison.Ordinal) => null,
+            PendingArchiveRetirement pending => await RetireAsync(databaseId, current.Manifest, new StagedArchiveRetirement(key, pending), cancellationToken),
+            ArchiveRetirementCorrupted corrupted => await DeleteCorruptRetirementAsync(databaseId, key, corrupted, cancellationToken),
+        };
+    }
+
+    private async ValueTask<ContinuityUnavailable?> SweepSnapshotUploadAsync(
+        Ulid databaseId, ArchiveManifest current, StagedArchiveRetirement upload, CancellationToken cancellationToken)
+    {
+        if (current.Snapshots.Any(snapshot => snapshot.Key == upload.Retirement.Keys[0]))
+        {
+            var deleted = await DeleteObjectsAsync([upload.Key], cancellationToken);
+            return deleted switch
+            {
+                ArchiveObjectsDeleted => null,
+                ContinuityUnavailable unavailable => unavailable,
+            };
+        }
+
+        var fenced = await UpdateAsync(databaseId, static manifest => manifest with { }, cancellationToken);
+        return fenced switch
+        {
+            ArchiveManifest published => await RetireAsync(databaseId, published, upload, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<ContinuityUnavailable?> DeleteCorruptRetirementAsync(
+        Ulid databaseId, string key, ArchiveRetirementCorrupted corrupted, CancellationToken cancellationToken)
+    {
+        ContinuityLog.RetirementCorrupted(logger, key, corrupted.Message);
+        var deleted = await DeleteObjectsAsync([key], cancellationToken);
+        ReportDeferredRetirement(databaseId, deleted);
+        return null;
+    }
+
+    private static bool IsSafeArchiveKey(string key) => !key.Contains("..", StringComparison.Ordinal)
+        && key.All(static character => char.IsAsciiLetterOrDigit(character) || character is '/' or '-' or '_' or '.');
 
     private async ValueTask<ArchivePurgeOutcome> DeleteAllAsync(IReadOnlyList<string> keys, CancellationToken cancellationToken)
     {

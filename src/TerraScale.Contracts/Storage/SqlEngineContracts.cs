@@ -279,7 +279,13 @@ public readonly union ListSegmentsOutcome(IReadOnlyList<CommitLogSegment>, Stora
 
 public readonly union OpenSegmentOutcome(Stream, SegmentNotFound, StorageBusy);
 
-public readonly union ReadArchivedSegmentOutcome(IReadOnlyList<CommitMetadata>, InvalidSegment, StorageCorrupted);
+public delegate ValueTask<bool> ReplayArchivedCommitBatch(IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken);
+
+public sealed record ArchivedSegmentRead;
+
+public sealed record ArchivedSegmentReplayStopped;
+
+public readonly union ReadArchivedSegmentOutcome(ArchivedSegmentRead, ArchivedSegmentReplayStopped, InvalidSegment, StorageCorrupted);
 
 public readonly union WaitForBookmarkOutcome(BookmarkReached, StorageTimeout);
 
@@ -345,7 +351,8 @@ public interface ISqlDatabaseSession : IAsyncDisposable
 
     ValueTask<OpenSegmentOutcome> OpenSegmentAsync(CommitLogSegment segment, CancellationToken cancellationToken);
 
-    ValueTask<ReadArchivedSegmentOutcome> ReadArchivedSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken);
+    ValueTask<ReadArchivedSegmentOutcome> ReadArchivedSegmentAsync(
+        CommitLogSegment segment, Stream content, ReplayArchivedCommitBatch replay, CancellationToken cancellationToken);
 
     ValueTask<WaitForBookmarkOutcome> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);
 

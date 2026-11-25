@@ -31,6 +31,14 @@ internal sealed class SystemBootstrap(
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        if (SqliteStorageEngine.RecoverBranchStaging(storage.RootDirectory) is { } stagingFailure)
+        {
+            Failure = new ConfigurationError(stagingFailure.Message);
+            logger.ZLogCritical($"TerraBase could not clean interrupted database branches: {stagingFailure.Message}");
+            lifetime.StopApplication();
+            return;
+        }
+
         Func<CancellationToken, ValueTask>? sync = cluster.Peers.Count > 0 ? SyncSystemAsync : null;
         bool AnyRemotePeerReachable() => cluster.RemotePeers.Any(peer => health.IsReachable(peer.NodeId));
         var openedOutcome = await system.OpenAsync(

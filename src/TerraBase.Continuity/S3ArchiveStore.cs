@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using Amazon.Runtime;
@@ -16,6 +17,8 @@ public sealed record ArchiveVersionedBytes(byte[] Content, string? ETag);
 
 public sealed record ArchiveObjectMissing(string Message, string Code);
 
+public sealed record ArchiveObjectTooLarge(string Key, long MaximumBytes);
+
 public sealed record ArchiveUnavailable(string Message, string Code);
 
 public sealed record ArchiveTimedOut(string Message, string Code);
@@ -28,7 +31,7 @@ public readonly union ArchiveBytesOutcome(byte[], ArchiveObjectMissing, ArchiveU
 
 public readonly union ArchiveVersionedBytesOutcome(ArchiveVersionedBytes, ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
 
-public readonly union ArchiveDownloadOutcome(long, ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
+public readonly union ArchiveDownloadOutcome(long, ArchiveObjectMissing, ArchiveObjectTooLarge, ArchiveUnavailable, ArchiveTimedOut);
 
 public readonly union ArchiveListOutcome(IReadOnlyList<string>, ArchiveUnavailable, ArchiveTimedOut);
 
@@ -36,6 +39,8 @@ internal readonly union ArchiveTransportFailure(ArchiveObjectMissing, ArchivePre
 
 public sealed class S3ArchiveStore : IDisposable
 {
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(5);
+
     private const string NoSuchBucket = "NoSuchBucket";
 
     private static readonly ArchiveUnavailable Disabled = new("continuous backup is disabled on this node", "backup_disabled");
@@ -57,9 +62,9 @@ public sealed class S3ArchiveStore : IDisposable
             ServiceURL = archive.Endpoint.ToString(),
             AuthenticationRegion = archive.Region,
             ForcePathStyle = true,
-            RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
-            ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED,
-            Timeout = TimeSpan.FromMinutes(5),
+            RequestChecksumCalculation = RequestChecksumCalculation.WHEN_SUPPORTED,
+            ResponseChecksumValidation = ResponseChecksumValidation.WHEN_SUPPORTED,
+            Timeout = RequestTimeout,
         });
     }
 
@@ -72,8 +77,10 @@ public sealed class S3ArchiveStore : IDisposable
         var uploaded = await InvokeAsync(
             async (client, bucket, token) =>
             {
+                using var deadline = new CancellationTokenSource(RequestTimeout);
+                using var request = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
                 await using var content = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                _ = await client.PutObjectAsync(Put(bucket, key, content, ManifestCodec.BinaryContentType), token);
+                _ = await client.PutObjectAsync(Put(bucket, key, content, ManifestCodec.BinaryContentType), request.Token);
             },
             cancellationToken);
         return Narrow(uploaded);
@@ -187,17 +194,39 @@ public sealed class S3ArchiveStore : IDisposable
         };
     }
 
-    public async ValueTask<ArchiveDownloadOutcome> DownloadToFileAsync(string key, string path, CancellationToken cancellationToken)
+    public ValueTask<ArchiveDownloadOutcome> DownloadToFileAsync(string key, string path, CancellationToken cancellationToken) =>
+        DownloadToFileAsync(key, path, maximumBytes: null, cancellationToken);
+
+    internal async ValueTask<ArchiveDownloadOutcome> DownloadToFileAsync(string key, string path, long? maximumBytes, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         long? length = null;
+        var tooLarge = false;
         var fetched = await InvokeAsync(
             async (client, bucket, token) =>
             {
                 using var response = await client.GetObjectAsync(new GetObjectRequest { BucketName = bucket, Key = key }, token);
+                if (maximumBytes is { } limit && response.ContentLength > limit)
+                {
+                    tooLarge = true;
+                    return;
+                }
+
                 await using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous);
-                await response.ResponseStream.CopyToAsync(file, token);
+                if (maximumBytes is { } maximum)
+                {
+                    tooLarge = !await CopyWithinLimitAsync(response.ResponseStream, file, maximum, token);
+                    if (tooLarge)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    await response.ResponseStream.CopyToAsync(file, token);
+                }
+
                 await file.FlushAsync(token);
                 file.Flush(flushToDisk: true);
                 length = file.Length;
@@ -214,12 +243,38 @@ public sealed class S3ArchiveStore : IDisposable
             };
         }
 
+        if (tooLarge && maximumBytes is { } rejectedLimit)
+        {
+            return new ArchiveObjectTooLarge(key, rejectedLimit);
+        }
+
         if (length is not { } bytes)
         {
             throw new UnreachableException();
         }
 
         return bytes;
+    }
+
+    private static async Task<bool> CopyWithinLimitAsync(Stream source, Stream destination, long remaining, CancellationToken cancellationToken)
+    {
+        using var buffer = MemoryPool<byte>.Shared.Rent(1 << 16);
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer.Memory[..((int)Math.Min(remaining, buffer.Memory.Length - 1L) + 1)], cancellationToken);
+            if (read == 0)
+            {
+                return true;
+            }
+
+            if (read > remaining)
+            {
+                return false;
+            }
+
+            await destination.WriteAsync(buffer.Memory[..read], cancellationToken);
+            remaining -= read;
+        }
     }
 
     public async ValueTask<ArchiveListOutcome> ListKeysAsync(string prefix, CancellationToken cancellationToken)
@@ -346,6 +401,10 @@ public sealed class S3ArchiveStore : IDisposable
         {
             return new ArchiveUnavailable(string.Concat("archive request failed: ", exception.Message), "archive_unavailable");
         }
+        catch (AmazonClientException exception)
+        {
+            return new ArchiveUnavailable(string.Concat("archive client failed: ", exception.Message), "archive_client_error");
+        }
         catch (HttpRequestException exception)
         {
             return new ArchiveUnavailable(string.Concat("archive unreachable: ", exception.Message), "archive_unreachable");
@@ -354,7 +413,7 @@ public sealed class S3ArchiveStore : IDisposable
         {
             return new ArchiveUnavailable(string.Concat("archive transfer failed: ", exception.Message), "archive_io");
         }
-        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
             return new ArchiveTimedOut(string.Concat("archive request timed out: ", exception.Message), "archive_timeout");
         }

@@ -2,9 +2,11 @@ using System.Diagnostics;
 
 namespace TerraBase.Storage;
 
-internal sealed record LocalItemPrepared(CommitMetadata? Commit);
+internal sealed record LocalItemPrepared(CommitMetadata? Commit, long EncodedBytes);
 
-internal readonly union LocalItemOutcome(LocalItemPrepared, SqlError, StrongRequired);
+internal sealed record LocalWriteGroupFull;
+
+internal readonly union LocalItemOutcome(LocalItemPrepared, LocalWriteGroupFull, SqlError, StrongRequired);
 
 internal sealed partial class DatabaseSession
 {
@@ -20,7 +22,7 @@ internal sealed partial class DatabaseSession
 
     private sealed record class TransactionRequest(WriteTransaction Transaction) : LaneRequest;
 
-    private sealed record class RemoteApplyRequest(IReadOnlyList<CommitMetadata> Commits, bool AllowLocalOrigin, TaskCompletionSource<ApplyRemoteBatchOutcome> Completion, CancellationToken CancellationToken) : LaneRequest;
+    private sealed record class RemoteApplyRequest(IReadOnlyList<CommitMetadata> Commits, bool IsReplay, TaskCompletionSource<ApplyRemoteBatchOutcome> Completion, CancellationToken CancellationToken) : LaneRequest;
 
     private sealed record class CommitStagedRequest(StagedDescriptor Descriptor, HlcTimestamp CommitHlc, long? LeaseDeadline, TaskCompletionSource<CommitStagedOutcome> Completion) : LaneRequest;
 
@@ -241,7 +243,7 @@ internal sealed partial class DatabaseSession
         _ = request switch
         {
             TransactionRequest transaction => await RunTransactionAsync(transaction.Transaction),
-            RemoteApplyRequest remote => remote.Completion.TrySetResult(remote.CancellationToken.IsCancellationRequested ? Closing() : ApplyRemote(remote.Commits, remote.AllowLocalOrigin)),
+            RemoteApplyRequest remote => remote.Completion.TrySetResult(remote.CancellationToken.IsCancellationRequested ? Closing() : ApplyRemote(remote.Commits, remote.IsReplay)),
             CommitStagedRequest staged => staged.Completion.TrySetResult(CommitStaged(staged.Descriptor, staged.CommitHlc, staged.LeaseDeadline)),
             LocalWriteRequest or StageRequest => ProcessGroup([request]),
         };
@@ -256,9 +258,11 @@ internal sealed partial class DatabaseSession
 
         var nextSequence = 0L;
         var epoch = 0UL;
+        var groupBytes = 0L;
         List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed = [];
         var schemaTouched = false;
         var active = false;
+        var succeeded = true;
         for (var index = 0; index < group.Count; index++)
         {
             if (!active)
@@ -280,12 +284,13 @@ internal sealed partial class DatabaseSession
             }
 
             var request = group[index];
-            schemaTouched |= request switch
+            var (touched, groupFull) = request switch
             {
-                LocalWriteRequest local => RunLocalItem(local, completed, ref nextSequence, ref epoch),
-                StageRequest stage => RunStageItem(stage),
-                TransactionRequest or RemoteApplyRequest or CommitStagedRequest => RejectFromGroup(request),
+                LocalWriteRequest local => RunLocalItem(local, completed, ref nextSequence, ref epoch, ref groupBytes),
+                StageRequest stage => (RunStageItem(stage), false),
+                TransactionRequest or RemoteApplyRequest or CommitStagedRequest => (RejectFromGroup(request), false),
             };
+            schemaTouched |= touched;
 
             if (!_writer.InTransaction)
             {
@@ -299,14 +304,33 @@ internal sealed partial class DatabaseSession
                 _writer.InvalidateSchemaCache();
                 schemaTouched = false;
                 active = false;
+                groupBytes = 0;
+                succeeded = false;
+            }
+
+            if (groupFull)
+            {
+                if (active)
+                {
+                    succeeded &= CompleteWriteGroup(completed, epoch, schemaTouched);
+                }
+
+                completed.Clear();
+                schemaTouched = false;
+                active = false;
+                groupBytes = 0;
+                index--;
             }
         }
 
-        if (!active)
-        {
-            return false;
-        }
+        return active && CompleteWriteGroup(completed, epoch, schemaTouched) && succeeded;
+    }
 
+    private bool CompleteWriteGroup(
+        List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed,
+        ulong epoch,
+        bool schemaTouched)
+    {
         if (schemaTouched)
         {
             _writer.InvalidateSchemaCache();
@@ -330,27 +354,41 @@ internal sealed partial class DatabaseSession
         return false;
     }
 
-    private bool RunLocalItem(LocalWriteRequest local, List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed, ref long nextSequence, ref ulong epoch)
+    private (bool SchemaTouched, bool GroupFull) RunLocalItem(
+        LocalWriteRequest local,
+        List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed,
+        ref long nextSequence,
+        ref ulong epoch,
+        ref long groupBytes)
     {
         if (local.CancellationToken.IsCancellationRequested)
         {
             local.Completion.TrySetCanceled(local.CancellationToken);
+            return (false, false);
+        }
+
+        var (outcome, context) = RunLocal(local.Request, ref nextSequence, ref epoch, groupBytes, local.CancellationToken);
+        var full = outcome switch
+        {
+            LocalItemPrepared prepared => Prepared(completed, local, context, prepared, ref groupBytes),
+            LocalWriteGroupFull => true,
+            SqlError error => Complete(local, error),
+            StrongRequired strong => Complete(local, strong),
+        };
+        return (context.IsSchemaChange, full);
+
+        static bool Prepared(List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed,
+            LocalWriteRequest local, WriteContext context, LocalItemPrepared prepared, ref long groupBytes)
+        {
+            completed.Add((local, context.Results, prepared.Commit));
+            groupBytes += prepared.EncodedBytes;
             return false;
         }
 
-        var (outcome, context) = RunLocal(local.Request, local.CancellationToken, ref nextSequence, ref epoch);
-        _ = outcome switch
+        static bool Complete(LocalWriteRequest local, SqlWriteOutcome outcome)
         {
-            LocalItemPrepared prepared => Prepared(completed, local, context, prepared.Commit),
-            SqlError error => local.Completion.TrySetResult(error),
-            StrongRequired strong => local.Completion.TrySetResult(strong),
-        };
-        return context.IsSchemaChange;
-
-        static bool Prepared(List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed, LocalWriteRequest local, WriteContext context, CommitMetadata? commit)
-        {
-            completed.Add((local, context.Results, commit));
-            return true;
+            local.Completion.TrySetResult(outcome);
+            return false;
         }
     }
 
@@ -367,7 +405,8 @@ internal sealed partial class DatabaseSession
         return schemaTouched;
     }
 
-    private (LocalItemOutcome Outcome, WriteContext Context) RunLocal(SqlStatementRequest request, CancellationToken cancellationToken, ref long nextSequence, ref ulong epoch)
+    private (LocalItemOutcome Outcome, WriteContext Context) RunLocal(
+        SqlStatementRequest request, ref long nextSequence, ref ulong epoch, long groupBytes, CancellationToken cancellationToken)
     {
         var context = new WriteContext(request.Mode, analyzeReads: false, cancellationToken);
         var savepoint = _writer.Exec(ItemSavepoint);
@@ -380,14 +419,14 @@ internal sealed partial class DatabaseSession
         var executed = ExecuteStatements(context, request.Statements);
         LocalItemOutcome outcome = executed switch
         {
-            SqlResultSet => FinishLocalItem(context, ref nextSequence, ref epoch),
+            SqlResultSet => FinishLocalItem(context, ref nextSequence, ref epoch, groupBytes),
             SqlError error => AbortItem(context, error),
             StrongRequired strong => AbortItem(context, strong),
         };
         return (outcome, context);
     }
 
-    private LocalItemOutcome FinishLocalItem(WriteContext context, ref long nextSequence, ref ulong epoch)
+    private LocalItemOutcome FinishLocalItem(WriteContext context, ref long nextSequence, ref ulong epoch, long groupBytes)
     {
         var savedSequence = nextSequence;
         var savedEpoch = epoch;
@@ -396,8 +435,24 @@ internal sealed partial class DatabaseSession
         {
             nextSequence = savedSequence;
             epoch = savedEpoch;
-            RollbackItemSchema(context);
-            return finished.ToSqlError(-1);
+            var rolledBack = RollbackItemSchema(context);
+            return (rolledBack.IsOk ? finished : rolledBack).ToSqlError(-1);
+        }
+
+        var bytes = commit is null ? 0 : CommitFrame.EncodedSize(commit);
+        if (bytes > CommitFrame.MaxEncodedSize || (groupBytes > 0 && bytes > 0 && groupBytes + bytes > Options.SegmentMaxBytes))
+        {
+            nextSequence = savedSequence;
+            epoch = savedEpoch;
+            var rolledBack = RollbackItemSchema(context);
+            if (!rolledBack.IsOk)
+            {
+                return rolledBack.ToSqlError(-1);
+            }
+
+            return bytes > CommitFrame.MaxEncodedSize
+                ? new SqliteStatus(SqliteNative.TooBig, "commit log frame exceeds the maximum frame size").ToSqlError(-1)
+                : new LocalWriteGroupFull();
         }
 
         var released = _writer.Exec(ReleaseItem);
@@ -405,18 +460,18 @@ internal sealed partial class DatabaseSession
         {
             nextSequence = savedSequence;
             epoch = savedEpoch;
-            RollbackItemSchema(context);
-            return released.ToSqlError(-1);
+            var rolledBack = RollbackItemSchema(context);
+            return (rolledBack.IsOk ? released : rolledBack).ToSqlError(-1);
         }
 
-        return new LocalItemPrepared(commit);
+        return new LocalItemPrepared(commit, bytes);
     }
 
     private LocalItemOutcome AbortItem(WriteContext context, LocalItemOutcome failure)
     {
         _capture.End();
-        RollbackItemSchema(context);
-        return failure;
+        var rolledBack = RollbackItemSchema(context);
+        return rolledBack.IsOk ? failure : rolledBack.ToSqlError(-1);
     }
 
     private StatementOutcome ExecuteStatements(WriteContext context, IReadOnlyList<SqlStatement> statements)
@@ -457,13 +512,18 @@ internal sealed partial class DatabaseSession
             if (failure is not null)
             {
                 _capture.End();
-                RollbackItemSchema(context);
-                return (failure, context.IsSchemaChange);
+                var reverted = RollbackItemSchema(context);
+                return (reverted.IsOk ? failure : reverted.ToSqlError(-1), context.IsSchemaChange);
             }
         }
 
         var finished = FinishStage(context, out var descriptor);
-        RollbackItemSchema(context);
+        var rolledBack = RollbackItemSchema(context);
+        if (!rolledBack.IsOk)
+        {
+            return (rolledBack.ToSqlError(-1), context.IsSchemaChange);
+        }
+
         if (!finished.IsOk || descriptor is null)
         {
             return (finished.ToSqlError(-1), context.IsSchemaChange);
@@ -600,17 +660,20 @@ internal sealed partial class DatabaseSession
         return true;
     }
 
-    private void RollbackItemSchema(WriteContext context)
+    private SqliteStatus RollbackItemSchema(WriteContext context)
     {
-        if (_writer.InTransaction)
+        var rolledBack = _writer.InTransaction ? _writer.Exec(RollbackItem) : SqliteStatus.Success;
+        if (!rolledBack.IsOk && _writer.InTransaction)
         {
-            _ = _writer.Exec(RollbackItem);
+            _ = _writer.Exec("ROLLBACK;");
         }
 
         if (context.IsSchemaChange)
         {
             _writer.InvalidateSchemaCache();
         }
+
+        return rolledBack;
     }
 
     private static string ReasonText(StrongRequiredReason reason) => reason switch

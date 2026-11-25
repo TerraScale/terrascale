@@ -53,6 +53,8 @@ internal readonly union ContinuityFileOutcome(ContinuityFilesChanged, Continuity
 
 internal readonly union ContinuityFileListOutcome(IReadOnlyList<string>, ContinuityIoFailure);
 
+internal readonly union ContinuityOpenFileOutcome(Stream, ContinuityIoFailure);
+
 internal static class ContinuityFiles
 {
     public static ContinuityFileOutcome CreateDirectory(string path) => Run(() => Directory.CreateDirectory(path));
@@ -72,6 +74,22 @@ internal static class ContinuityFiles
     public static ContinuityFileOutcome CopyFile(string source, string destination) => Run(() => File.Copy(source, destination, overwrite: false));
 
     public static ContinuityFileOutcome DeleteFile(string path) => Run(() => File.Delete(path));
+
+    public static ContinuityOpenFileOutcome OpenRead(string path)
+    {
+        try
+        {
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+        catch (IOException exception)
+        {
+            return Failure(exception.Message);
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return Failure(exception.Message);
+        }
+    }
 
     public static ContinuityFileListOutcome ListFiles(string directory, string pattern) =>
         List(directory, () => [.. Directory.EnumerateFiles(directory, pattern)]);

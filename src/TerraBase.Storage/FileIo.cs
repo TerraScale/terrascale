@@ -6,22 +6,24 @@ namespace TerraBase.Storage;
 
 internal static partial class FileIo
 {
-    public static void SyncDirectory(string? directory)
+    public static void SyncDirectory(string? directory) => _ = SyncDirectoryError(directory);
+
+    private static string? SyncDirectoryError(string? directory)
     {
         if (!OperatingSystem.IsLinux() || string.IsNullOrEmpty(directory))
         {
-            return;
+            return null;
         }
 
         var fd = OpenDirectory(directory, 0);
         if (fd < 0)
         {
-            return;
+            return Marshal.GetLastPInvokeErrorMessage();
         }
 
         try
         {
-            _ = Fsync(fd);
+            return Fsync(fd) == 0 ? null : Marshal.GetLastPInvokeErrorMessage();
         }
         finally
         {
@@ -29,10 +31,10 @@ internal static partial class FileIo
         }
     }
 
-    [LibraryImport("libc", EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport("libc", EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int OpenDirectory(string path, int flags);
 
-    [LibraryImport("libc", EntryPoint = "fsync")]
+    [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
     private static partial int Fsync(int fd);
 
     [LibraryImport("libc", EntryPoint = "close")]
@@ -162,6 +164,30 @@ internal static partial class FileIo
         }
     }
 
+    public static string? MoveDirectory(string source, string destination)
+    {
+        try
+        {
+            if (SyncDirectoryError(source) is { } error)
+            {
+                return error;
+            }
+
+            Directory.Move(source, destination);
+            var destinationSync = SyncDirectoryError(Path.GetDirectoryName(destination));
+            var sourceSync = SyncDirectoryError(Path.GetDirectoryName(source));
+            return destinationSync ?? sourceSync;
+        }
+        catch (IOException exception)
+        {
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return exception.Message;
+        }
+    }
+
     public static Stream? OpenRead(string path)
     {
         try
@@ -191,6 +217,23 @@ internal static partial class FileIo
                 RandomAccess.FlushToDisk(handle);
             }
 
+            File.Delete(path);
+            return null;
+        }
+        catch (IOException exception)
+        {
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return exception.Message;
+        }
+    }
+
+    public static string? DeleteFile(string path)
+    {
+        try
+        {
             File.Delete(path);
             return null;
         }

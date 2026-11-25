@@ -65,7 +65,7 @@ public sealed class BackupContinuityService(
             return Disabled;
         }
 
-        var loaded = await manifests.LoadAsync(databaseId, cancellationToken);
+        var loaded = await manifests.ReadCurrentAsync(databaseId, cancellationToken);
         return loaded switch
         {
             ArchiveManifest manifest => await StatusAsync(manifest, databaseId, cancellationToken),
@@ -375,26 +375,66 @@ public sealed class BackupContinuityService(
     private async ValueTask<ContinuityUnavailable?> ReplayArchivedSegmentAsync(
         ISqlDatabaseSession session, ArchivedSegment segment, ReplayArchiveSegment replay, CancellationToken cancellationToken)
     {
-        var fetched = await manifests.Store.GetBytesAsync(segment.Key, cancellationToken);
-        return fetched switch
+        var staging = restorer.Layout.StagingDirectory(Ulid.NewUlid(timeProvider.GetUtcNow()));
+        var created = ContinuityFiles.CreateDirectory(staging);
+        if (created switch
         {
-            byte[] bytes => await ReadAndReplayAsync(bytes, cancellationToken),
-            ArchiveObjectMissing missing => new ContinuityUnavailable(missing.Message, missing.Code),
-            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
-            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
+            ContinuityFilesChanged => null,
+            ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
+        } is { } createFailure)
+        {
+            return createFailure;
+        }
+
+        try
+        {
+            var path = Path.Combine(staging, "segment.tblog");
+            var fetched = await manifests.Store.DownloadToFileAsync(segment.Key, path, segment.SizeBytes, cancellationToken);
+            return fetched switch
+            {
+                long bytes when bytes == segment.SizeBytes => await ReplayDownloadedSegmentAsync(session, segment, path, replay, cancellationToken),
+                long => new ContinuityUnavailable("archived segment size does not match its manifest", "invalid_segment"),
+                ArchiveObjectTooLarge => new ContinuityUnavailable("archived segment exceeds its declared size", "invalid_segment"),
+                ArchiveObjectMissing missing => new ContinuityUnavailable(missing.Message, missing.Code),
+                ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+                ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
+            };
+        }
+        finally
+        {
+            restorer.Cleanup(staging);
+        }
+    }
+
+    private static async ValueTask<ContinuityUnavailable?> ReplayDownloadedSegmentAsync(
+        ISqlDatabaseSession session, ArchivedSegment segment, string path, ReplayArchiveSegment replay, CancellationToken cancellationToken)
+    {
+        var opened = ContinuityFiles.OpenRead(path);
+        return opened switch
+        {
+            Stream content => await ReadAndReplayAsync(content, cancellationToken),
+            ContinuityIoFailure failure => new ContinuityUnavailable(failure.Message, failure.Code),
         };
 
-        async ValueTask<ContinuityUnavailable?> ReadAndReplayAsync(byte[] bytes, CancellationToken token)
+        async ValueTask<ContinuityUnavailable?> ReadAndReplayAsync(Stream content, CancellationToken token)
         {
-            using var content = new MemoryStream(bytes, writable: false);
-            var descriptor = new CommitLogSegment(session.DatabaseId, segment.Origin, segment.FirstSequence, segment.LastSequence, segment.SizeBytes, segment.SealedAtUtc);
-            var result = await session.ReadArchivedSegmentAsync(descriptor, content, token);
-            return result switch
+            await using (content)
             {
-                IReadOnlyList<CommitMetadata> entries => await replay(session, entries, token),
-                InvalidSegment invalid => new ContinuityUnavailable(invalid.Message, invalid.Code),
-                StorageCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, "storage_corrupted"),
-            };
+                ContinuityUnavailable? replayFailure = null;
+                var descriptor = new CommitLogSegment(session.DatabaseId, segment.Origin, segment.FirstSequence, segment.LastSequence, segment.SizeBytes, segment.SealedAtUtc);
+                var result = await session.ReadArchivedSegmentAsync(descriptor, content, async (entries, batchToken) =>
+                {
+                    replayFailure = await replay(session, entries, batchToken);
+                    return replayFailure is null;
+                }, token);
+                return result switch
+                {
+                    ArchivedSegmentRead => null,
+                    ArchivedSegmentReplayStopped => replayFailure,
+                    InvalidSegment invalid => new ContinuityUnavailable(invalid.Message, invalid.Code),
+                    StorageCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, "storage_corrupted"),
+                };
+            }
         }
     }
 
@@ -510,8 +550,31 @@ public sealed class BackupContinuityService(
         return opened switch
         {
             ISqlDatabaseSession session => await ArchiveSessionAsync(session, forceSnapshot, cancellationToken),
+            ContinuitySessionMissing missing when !forceSnapshot => await RetainRemoteArchiveAsync(missing, cancellationToken),
             ContinuitySessionMissing missing => new ContinuityNotFound(missing.Message, missing.Code),
             ContinuitySessionUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> RetainRemoteArchiveAsync(ContinuitySessionMissing missing, CancellationToken cancellationToken)
+    {
+        var loaded = await manifests.LoadAsync(missing.DatabaseId, cancellationToken);
+        return loaded switch
+        {
+            ArchiveManifest { IsEmpty: true } => new ContinuityNotFound(missing.Message, missing.Code),
+            ArchiveManifest => await RetainRemoteArchiveAsync(missing.DatabaseId, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<BackupStatusOutcome> RetainRemoteArchiveAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var cutoff = await sessions.ReadRetentionCutoffAsync(databaseId, cancellationToken);
+        var saved = await manifests.PublishAsync(databaseId, [], null, cutoff, cancellationToken);
+        return saved switch
+        {
+            ArchiveManifest stored => Status(stored, 0, null),
+            ContinuityUnavailable unavailable => unavailable,
         };
     }
 
@@ -519,23 +582,22 @@ public sealed class BackupContinuityService(
     {
         await using (session)
         {
-            var archiver = new SessionArchiver(session, manifests, sessions.Engine, options, metrics, timeProvider);
             var loaded = await manifests.LoadAsync(session.DatabaseId, cancellationToken);
             return loaded switch
             {
-                ArchiveManifest manifest => await ArchivedAsync(archiver, manifest, session, forceSnapshot, cancellationToken),
+                ArchiveManifest manifest => await ArchivedAsync(manifest, session, forceSnapshot, cancellationToken),
                 ContinuityUnavailable unavailable => unavailable,
             };
         }
     }
 
     private async ValueTask<BackupStatusOutcome> ArchivedAsync(
-        SessionArchiver archiver,
         ArchiveManifest manifest,
         ISqlDatabaseSession session,
         bool forceSnapshot,
         CancellationToken cancellationToken)
     {
+        var archiver = new SessionArchiver(session, manifests, sessions, options, metrics, timeProvider);
         var archived = await archiver.RunAsync(manifest, forceSnapshot, cancellationToken);
         return archived switch
         {
@@ -568,10 +630,11 @@ public sealed class BackupContinuityService(
     {
         var checkedAt = timeProvider.GetUtcNow();
         var current = session.CurrentBookmark;
+        var archivedThrough = manifest.ArchivedThrough(ArchiveRetention.SnapshotFloor(manifest));
         var pending = 0;
         foreach (var (origin, _) in current.Entries)
         {
-            var listed = await session.ListSealedSegmentsAsync(origin, manifest.ArchivedSegmentThrough(origin), cancellationToken);
+            var listed = await session.ListSealedSegmentsAsync(origin, archivedThrough.GetValueOrDefault(origin), cancellationToken);
             var (count, busy) = Pending(listed);
             if (busy is not null)
             {
