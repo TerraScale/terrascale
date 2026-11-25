@@ -174,15 +174,29 @@ internal sealed partial class PostgresConnection
             return new PgError("08P01", "bind message has an invalid number of parameter formats");
         }
 
+        var budget = PostgresLimits.MaxPortalBytes - session.PortalBytes(except: message.Portal);
+        var bytes = PgValueCodec.Footprint(message.ResultFormats);
         var values = new SqlValue[message.Parameters.Length];
         for (var index = 0; index < values.Length; index++)
         {
             var format = message.ParameterFormats.Length == 0 ? (short)0 : message.ParameterFormats[Math.Min(index, message.ParameterFormats.Length - 1)];
-            if (!PgValueCodec.TryDecode(statement.ParameterOids[index], format, message.Parameters[index], out values[index]))
+            var oid = statement.ParameterOids[index];
+            if (!PgValueCodec.TryDecode(oid, format, message.Parameters[index], out values[index]))
             {
-                return new PgError("22P02",
-                    $"invalid input for parameter ${(index + 1).ToString(CultureInfo.InvariantCulture)} of type {PgOid.FormatName(statement.ParameterOids[index])}");
+                return new PgError(PgValueCodec.DecodeFailureState(oid, format),
+                    $"invalid input for parameter ${(index + 1).ToString(CultureInfo.InvariantCulture)} of type {PgOid.FormatName(oid)}");
             }
+
+            bytes += PgValueCodec.Footprint(values[index]);
+            if (bytes > budget)
+            {
+                return PgErrors.PortalMemory;
+            }
+        }
+
+        if (bytes > budget)
+        {
+            return PgErrors.PortalMemory;
         }
 
         if (message.Portal.Length > 0 && session.Portals.ContainsKey(message.Portal))
@@ -195,7 +209,7 @@ internal sealed partial class PostgresConnection
             return new PgError("54000", $"at most {PostgresLimits.MaxPortals.ToString(CultureInfo.InvariantCulture)} portals per session");
         }
 
-        session.Portals[message.Portal] = new PgPortal(statement, values, message.ResultFormats) { Columns = statement.Described ? statement.Columns : null };
+        session.Portals[message.Portal] = new PgPortal(statement, values, bytes, message.ResultFormats) { Columns = statement.Described ? statement.Columns : null };
         Writer.Empty('2');
         return null;
     }
@@ -251,7 +265,12 @@ internal sealed partial class PostgresConnection
                     return error;
                 }
 
-                portal.Result = executed.Result;
+                if (executed.Result is { } result && !session.TryHold(message.Name, portal, result))
+                {
+                    session.Portals.Remove(message.Name);
+                    return PgErrors.PortalMemory;
+                }
+
                 portal.Columns = executed.Result?.Columns;
             }
             else
@@ -293,12 +312,20 @@ internal sealed partial class PostgresConnection
             return new PgError("34000", $"portal \"{message.Portal}\" does not exist");
         }
 
-        if (portal.Result is null)
+        var current = portal.Result;
+        var deferredCommit = false;
+        if (current is null)
         {
             if (portal.Completed)
             {
                 Writer.CommandComplete("SELECT 0");
                 return null;
+            }
+
+            deferredCommit = message.MaxRows > 0 && session.Transaction is null && portal.Statement.Command is PgSqlCommand { Access: SqlAccess.Write };
+            if (deferredCommit)
+            {
+                session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
             }
 
             var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, portal.Columns ?? portal.Statement.Columns);
@@ -312,31 +339,56 @@ internal sealed partial class PostgresConnection
                 return error;
             }
 
-            portal.Result = executed.Result;
+            current = executed.Result ?? PgResult.EmptyQuery;
         }
 
-        var current = portal.Result ?? PgResult.EmptyQuery;
         if (current.Tag is null)
         {
+            if (await CommitDeferredAsync(deferredCommit) is { } emptyCommitError)
+            {
+                session.Portals.Remove(message.Portal);
+                return emptyCommitError;
+            }
+
             Writer.Empty('I');
-            portal.Result = null;
+            portal.Release();
             portal.Completed = true;
             return null;
         }
 
         var shape = portal.Columns ?? current.Columns ?? [];
         var end = message.MaxRows > 0 ? Math.Min(current.Rows.Count, portal.Position + message.MaxRows) : current.Rows.Count;
+        if (end < current.Rows.Count && !ReferenceEquals(portal.Result, current) && !session.TryHold(message.Portal, portal, current))
+        {
+            session.Portals.Remove(message.Portal);
+            return PgErrors.PortalMemory;
+        }
+
+        var unsent = Writer.Buffer.Length;
         for (var index = portal.Position; index < end; index++)
         {
             if (Writer.DataRow(current.Rows[index], shape, portal.ResultFormats) is { } encodeError)
             {
+                if (deferredCommit)
+                {
+                    Writer.Buffer.Truncate(unsent);
+                }
+
+                session.Portals.Remove(message.Portal);
                 return encodeError;
             }
 
-            if (Writer.ShouldFlush && !await Writer.FlushAsync(closed))
+            if (!deferredCommit && Writer.ShouldFlush && !await Writer.FlushAsync(closed))
             {
                 return new PgError("08006", "the client stopped reading results", Fatal: true);
             }
+        }
+
+        if (await CommitDeferredAsync(deferredCommit) is { } commitError)
+        {
+            Writer.Buffer.Truncate(unsent);
+            session.Portals.Remove(message.Portal);
+            return commitError;
         }
 
         portal.Position = end;
@@ -352,10 +404,12 @@ internal sealed partial class PostgresConnection
         }
 
         Writer.CommandComplete(current.Tag);
-        portal.Result = null;
+        portal.Release();
         portal.Completed = true;
         return null;
     }
+
+    private async ValueTask<PgError?> CommitDeferredAsync(bool deferred) => deferred ? await EndImplicitAsync(commit: true) : null;
 
     private PgError? Close(PgCloseMessage message)
     {

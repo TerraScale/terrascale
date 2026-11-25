@@ -57,6 +57,7 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
 
     public async ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var completion = new TaskCompletionSource<TransactionCommitLocalResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.Exchange(ref _finished, 1) != 0 || !_commands.Writer.TryWrite(new CommitCommand(completion)))
         {
@@ -69,6 +70,7 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
 
     public async ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var completion = new TaskCompletionSource<TransactionStageResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (Interlocked.Exchange(ref _finished, 1) != 0 || !_commands.Writer.TryWrite(new StageCommand(completion)))
         {

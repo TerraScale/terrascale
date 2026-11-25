@@ -21,15 +21,34 @@ internal sealed class PgPreparedStatement(string name, PgCommand command, int[] 
     public bool Described { get; set; }
 }
 
-internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlValue> parameters, short[] resultFormats)
+internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlValue> parameters, long parameterBytes, short[] resultFormats)
 {
+    private long _resultBytes;
+
     public PgPreparedStatement Statement => statement;
 
     public IReadOnlyList<SqlValue> Parameters => parameters;
 
     public short[] ResultFormats => resultFormats;
 
-    public PgResult? Result { get; set; }
+    public PgResult? Result { get; private set; }
+
+    public long ParameterBytes => parameterBytes;
+
+    public long Bytes => parameterBytes + PgValueCodec.Footprint(Columns) + _resultBytes;
+
+    public void Hold(PgResult result, long bytes)
+    {
+        Columns ??= result.Columns;
+        Result = result;
+        _resultBytes = bytes;
+    }
+
+    public void Release()
+    {
+        Result = null;
+        _resultBytes = 0;
+    }
 
     public int Position { get; set; }
 
@@ -82,6 +101,34 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
     public Dictionary<string, PgPreparedStatement> Statements { get; } = new(StringComparer.Ordinal);
 
     public Dictionary<string, PgPortal> Portals { get; } = new(StringComparer.Ordinal);
+
+    public long PortalBytes(string? except = null)
+    {
+        long total = 0;
+        foreach (var (name, portal) in Portals)
+        {
+            if (name != except)
+            {
+                total += portal.Bytes;
+            }
+        }
+
+        return total;
+    }
+
+    public bool TryHold(string name, PgPortal portal, PgResult result)
+    {
+        var bytes = PgValueCodec.Footprint(result.Rows)
+            + (portal.Columns is { } kept && !ReferenceEquals(kept, result.Columns) ? PgValueCodec.Footprint(result.Columns) : 0);
+        var columns = PgValueCodec.Footprint(portal.Columns ?? result.Columns);
+        if (PortalBytes(except: name) + portal.ParameterBytes + columns + bytes > PostgresLimits.MaxPortalBytes)
+        {
+            return false;
+        }
+
+        portal.Hold(result, bytes);
+        return true;
+    }
 
     public Dictionary<string, string> PendingReports { get; } = new(StringComparer.Ordinal);
 

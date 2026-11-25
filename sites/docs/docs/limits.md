@@ -33,7 +33,9 @@ A transaction left open past the limit rolls back and answers `transaction_rolle
 | Startup | 10 seconds to finish the handshake, packets at most 10,000 bytes | connection closed (`08P01` on a bad packet) |
 | Message size | 1 MiB per protocol message | connection closed (`08P01`) |
 | Prepared statements | 256 per session | `54000` |
-| Portals | 256 per session | `54000` |
+| Portals | 256 per session, holding at most 16 MiB of parameters and pending rows together | `54000` |
+| `LISTEN` channels | 64 per session | `54000` |
+| `numeric` values | 1,000 digits before and 1,000 after the decimal point | `22003` on results, `22P03` on binary parameters |
 | Extensions, `NOTIFY`, `CREATE SEQUENCE`, two-phase commit | not supported | `0A000` |
 
 ## Requests per organization

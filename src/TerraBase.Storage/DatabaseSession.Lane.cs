@@ -160,7 +160,12 @@ internal sealed partial class DatabaseSession
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var winner = await Task.WhenAny(started, Task.Delay(Options.LaneWaitTimeout, _context.Time, timeout.Token));
         await timeout.CancelAsync();
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+        {
+            transaction.Abandon();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         if (winner != started)
         {
             transaction.Abandon();

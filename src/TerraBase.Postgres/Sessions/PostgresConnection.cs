@@ -12,6 +12,10 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
     private volatile bool _revoked;
     private volatile bool _shuttingDown;
 
+    private bool ShuttingDown => _shuttingDown || session.Grant.Shutdown.IsCancellationRequested;
+
+    private bool Revoked => _revoked || session.Grant.Revocation.IsCancellationRequested;
+
     private PgFrameReader Reader => wire.Reader;
 
     private PgBackendWriter Writer => wire.Writer;
@@ -42,15 +46,15 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         });
         while (true)
         {
-            if (_shuttingDown)
+            if (ShuttingDown)
             {
-                await FatalAsync(new PgError("57P01", "terminating connection due to administrator command", Fatal: true));
+                await FatalAsync(PgErrors.AdministratorShutdown);
                 return;
             }
 
-            if (_revoked)
+            if (Revoked)
             {
-                await FatalAsync(new PgError("28000", "the credential for this session was revoked", Fatal: true));
+                await FatalAsync(PgErrors.CredentialRevoked);
                 return;
             }
 
@@ -61,9 +65,11 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
 
             var open = session.Transaction is { Failed: false } block ? block : null;
             var timeout = open is null ? PostgresLimits.SessionIdleTimeout : PostgresLimits.MaxTransaction - session.Time.GetElapsedTime(open.Started);
-            var read = await Reader.ReadMessageAsync(timeout, closed);
+            var read = await Reader.ReadMessageAsync(timeout, open is null ? null : new PgReadDeadline(timeout, PostgresLimits.TransactionMessageGrace), closed);
             var proceed = read switch
             {
+                PgFrontendMessage when ShuttingDown => await FatalAsync(PgErrors.AdministratorShutdown),
+                PgFrontendMessage when Revoked => await FatalAsync(PgErrors.CredentialRevoked),
                 PgFrontendMessage when open is not null && session.Time.GetElapsedTime(open.Started, Reader.LastMessageStarted) > PostgresLimits.MaxTransaction =>
                     await FatalAsync(PgErrors.TransactionExpired),
                 PgFrontendMessage message => await HandleAsync(message),
@@ -71,7 +77,9 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
                 PgIdleExpired => await FatalAsync(open is null
                     ? new PgError("57P05", "terminating connection due to idle-session timeout", Fatal: true)
                     : PgErrors.TransactionExpired),
-                PgIncompleteExpired => await FatalAsync(new PgError("57P05", "incomplete message timeout exceeded", Fatal: true)),
+                PgIncompleteExpired => await FatalAsync(open is null
+                    ? new PgError("57P05", "incomplete message timeout exceeded", Fatal: true)
+                    : PgErrors.TransactionExpired),
                 PgReadInterrupted => true,
                 PgError error => await FatalAsync(error),
             };
@@ -168,7 +176,17 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
             }
         }
 
-        return implicitBlock ? await EndImplicitAsync(commit: true) : null;
+        if (!implicitBlock)
+        {
+            return null;
+        }
+
+        if (session.Transaction is { Implicit: true } block && commands.Any(static command => command is PgCopyFromCommand))
+        {
+            return await CommitImplicitAsync(block);
+        }
+
+        return await EndImplicitAsync(commit: true);
     }
 
     private PgError? WriteResult(PgResult result, IReadOnlyList<short> formats, bool describe, IReadOnlyList<PgColumn>? columns)
@@ -217,6 +235,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
     private async ValueTask<bool> SyncAsync()
     {
         session.SkipUntilSync = false;
+        session.Portals.Remove(string.Empty);
         return await ReadyAsync();
     }
 

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Frozen;
 using System.Globalization;
 using System.Text;
@@ -15,6 +16,8 @@ internal sealed partial class PostgresSqlRewriter
         "OFFSET", "ON", "OR", "ORDER", "OUTER", "OVER", "PARTITION", "PRIMARY", "REFERENCES", "RETURNING", "RIGHT", "SELECT", "SET", "SIMILAR", "SOME",
         "TABLE", "THEN", "TO", "UNION", "UNIQUE", "UPDATE", "USING", "VALUES", "WHEN", "WHERE", "WINDOW", "WITH",
     ]);
+
+    private static readonly SearchValues<char> HexCharacters = SearchValues.Create("0123456789abcdefABCDEF");
 
     private static readonly FrozenSet<string> NamespaceColumns = FrozenSet.Create(StringComparer.Ordinal, ["oid", "nspname", "nspowner", "nspacl"]);
 
@@ -133,6 +136,11 @@ internal sealed partial class PostgresSqlRewriter
                     if (DecodeEscapeString(_tokens.Raw(index)[2..^1]) is not { } escaped)
                     {
                         return new PgError("22025", "invalid Unicode escape value in string literal");
+                    }
+
+                    if (escaped.Contains('\0', StringComparison.Ordinal))
+                    {
+                        return PgRewrite.NulCharacter;
                     }
 
                     _literals[index] = escaped;
@@ -382,6 +390,11 @@ internal sealed partial class PostgresSqlRewriter
             if (single && _tokens.Kind(start) == PgTokenKind.Parameter && CastOid(type, isArray) is > 0 and var hint)
             {
                 _parameterTypes[int.Parse(_tokens.Raw(start)[1..], NumberStyles.None, CultureInfo.InvariantCulture)] = hint;
+            }
+
+            if (!isArray && type == "bytea" && literal is not null && literal.StartsWith("\\x", StringComparison.Ordinal) && !IsHexBytea(literal.AsSpan(2)))
+            {
+                return new PgError("22P02", "invalid input syntax for type bytea");
             }
 
             ApplyCast(start, index, end, type, isArray, literal);
@@ -930,6 +943,8 @@ internal sealed partial class PostgresSqlRewriter
         (_tokens.Kind(index) == PgTokenKind.Operator && _tokens.Raw(index) is "=" or "<>" or "!=" or "<" or ">" or "<=" or ">=")
         || _tokens.IsAnyWord(index, "LIKE", "ILIKE");
 
+    private static bool IsHexBytea(ReadOnlySpan<char> hex) => hex.Length % 2 == 0 && !hex.ContainsAnyExcept(HexCharacters);
+
     private static string? DecodeEscapeString(ReadOnlySpan<char> body)
     {
         var builder = new StringBuilder(body.Length);
@@ -986,7 +1001,7 @@ internal sealed partial class PostgresSqlRewriter
                     var digits = escape == 'u' ? 4 : 8;
                     if (index + digits >= body.Length
                         || !int.TryParse(body.Slice(index + 1, digits), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var codePoint)
-                        || codePoint > 0x10FFFF || codePoint is >= 0xD800 and <= 0xDFFF)
+                        || codePoint is < 0 or > 0x10FFFF or (>= 0xD800 and <= 0xDFFF))
                     {
                         return null;
                     }

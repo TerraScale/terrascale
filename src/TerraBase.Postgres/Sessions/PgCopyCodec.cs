@@ -32,12 +32,22 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
 
     public PgCopyRowsResult Complete()
     {
-        if (_finished || _start == _end)
+        if (_finished)
         {
             return new List<SqlValue[]>();
         }
 
-        return Drain(final: true);
+        PgCopyRowsResult drained = _start == _end ? new List<SqlValue[]>() : Drain(final: true);
+        if (options.Format != PgCopyFormat.Binary || _finished)
+        {
+            return drained;
+        }
+
+        return drained switch
+        {
+            List<SqlValue[]> => new PgError("22P04", "invalid COPY data", Detail: "binary COPY data ended without the file trailer"),
+            PgError error => error,
+        };
     }
 
     public void Dispose()
@@ -85,6 +95,11 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
                 case < 0:
                     return new PgError("22P04", "invalid COPY data", Detail: $"row {records.Count + 1}");
                 case 0:
+                    if (final)
+                    {
+                        return new PgError("22P04", "invalid COPY data", Detail: $"row {records.Count + 1} is incomplete at the end of the data");
+                    }
+
                     if (_end - _start > PostgresLimits.MaxCopyRecordBytes)
                     {
                         return new PgError("54000", "COPY row exceeds the maximum record size");
@@ -301,9 +316,14 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
             }
 
             var extension = BinaryPrimitives.ReadInt32BigEndian(pending[(Signature.Length + 4)..]);
-            if (extension < 0 || pending.Length < Signature.Length + 8 + extension)
+            if (extension < 0 || extension > PostgresLimits.MaxCopyRecordBytes)
             {
-                return extension < 0 ? -1 : 0;
+                return -1;
+            }
+
+            if (pending.Length - Signature.Length - 8 < extension)
+            {
+                return 0;
             }
 
             _headerConsumed = true;
@@ -322,6 +342,11 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
             return 2;
         }
 
+        if (count < 0)
+        {
+            return -1;
+        }
+
         consumed = 2;
         var values = new SqlValue[count];
         for (var index = 0; index < count; index++)
@@ -333,13 +358,18 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
 
             var length = BinaryPrimitives.ReadInt32BigEndian(pending[consumed..]);
             consumed += 4;
-            if (length < 0)
+            if (length < -1)
+            {
+                return -1;
+            }
+
+            if (length == -1)
             {
                 values[index] = SqlValue.Null;
                 continue;
             }
 
-            if (pending.Length < consumed + length)
+            if (pending.Length - consumed < length)
             {
                 return 0;
             }
@@ -485,7 +515,7 @@ internal static class PgCopyWriter
                 if (!PgValueCodec.TryWrite(buffer, row[index], oid, binary: true))
                 {
                     buffer.Truncate(start);
-                    return new PgError("22P02", $"value of column {index + 1} cannot be encoded as {PgOid.FormatName(oid)}");
+                    return new PgError(PgValueCodec.EncodeFailureState(row[index], oid), $"value of column {index + 1} cannot be encoded as {PgOid.FormatName(oid)}");
                 }
             }
 

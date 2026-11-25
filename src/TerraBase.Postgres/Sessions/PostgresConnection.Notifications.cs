@@ -20,6 +20,11 @@ internal sealed partial class PostgresConnection
             return new PgError("42622", $"channel name \"{command.Channel}\" is too long");
         }
 
+        if (!session.Channels.Contains(command.Channel) && session.Channels.Count >= PostgresLimits.MaxChannels)
+        {
+            return PgErrors.TooManyChannels;
+        }
+
         session.Channels.Add(command.Channel);
         if (session.SubscriptionTask is null)
         {
@@ -101,6 +106,10 @@ internal sealed partial class PostgresConnection
             {
                 Writer.Notification(session.ProcessId, channel, payload);
                 delivered = true;
+                if (Writer.ShouldFlush && !await Writer.FlushAsync(closed))
+                {
+                    return false;
+                }
             }
         }
 

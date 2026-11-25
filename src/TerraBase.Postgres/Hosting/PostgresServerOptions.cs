@@ -17,16 +17,19 @@ internal static class PostgresLimits
     public const int OutputFlushBytes = 64 * 1024;
     public const int NotificationQueue = 1024;
     public const int MaxChannelLength = 63;
+    public const int MaxChannels = 64;
+    public const int MaxPortalBytes = 16 * 1024 * 1024;
 
     public static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan SessionIdleTimeout = TimeSpan.FromMinutes(30);
-    public static readonly TimeSpan IdleInTransactionTimeout = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan StatementTimeout = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(30);
 
     public static readonly TimeSpan MessageTimeout = TimeSpan.FromSeconds(30);
 
     public static readonly TimeSpan MaxTransaction = TimeSpan.FromSeconds(5);
+
+    public static readonly TimeSpan TransactionMessageGrace = TimeSpan.FromSeconds(20);
 
     public const int MinimumMessageBytesPerSecond = 16 * 1024;
 

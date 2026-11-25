@@ -3,9 +3,11 @@ using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Unicode;
+using TerraBase.Postgres.Hosting;
 
 namespace TerraBase.Postgres.Protocol;
 
@@ -13,6 +15,7 @@ internal static class PgValueCodec
 {
     private const int TextFormatCode = 0;
     private const int BinaryFormatCode = 1;
+    private const int ObjectOverhead = 24;
     private static ReadOnlySpan<byte> HexDigits => "0123456789abcdef"u8;
 
     public static bool SupportsBinary(int oid) => PgOid.IsKnown(oid) && oid != PgOid.Unknown;
@@ -175,6 +178,52 @@ internal static class PgValueCodec
                 return true;
         }
     }
+
+    public static string EncodeFailureState(SqlValue value, int oid) =>
+        oid is PgOid.Int2 or PgOid.Int4 || (oid == PgOid.Numeric && NumericText(value) is { } numeric && !PgNumeric.Fits(numeric)) ? "22003" : "22P02";
+
+    public static string DecodeFailureState(int oid, short format) => format == BinaryFormatCode && oid == PgOid.Numeric ? "22P03" : "22P02";
+
+    public static long Footprint(SqlValue value) =>
+        Unsafe.SizeOf<SqlValue>()
+        + (value.TryGetText(out var text) ? ObjectOverhead + ((long)text.Length * sizeof(char))
+            : value.TryGetBlob(out var blob) ? ObjectOverhead + blob.Length
+            : 0);
+
+    public static long Footprint(IReadOnlyList<short> formats) => ObjectOverhead + ObjectOverhead + ((long)formats.Count * sizeof(short));
+
+    public static long Footprint(IReadOnlyList<IReadOnlyList<SqlValue>> rows)
+    {
+        var total = ObjectOverhead + ((long)Slots(rows) * IntPtr.Size);
+        foreach (var row in rows)
+        {
+            total += ObjectOverhead + ((long)(Slots(row) - row.Count) * Unsafe.SizeOf<SqlValue>());
+            foreach (var value in row)
+            {
+                total += Footprint(value);
+            }
+        }
+
+        return total;
+    }
+
+    public static long Footprint(IReadOnlyList<PgColumn>? columns)
+    {
+        if (columns is null)
+        {
+            return 0;
+        }
+
+        var total = ObjectOverhead + ((long)Slots(columns) * IntPtr.Size);
+        foreach (var column in columns)
+        {
+            total += ObjectOverhead + IntPtr.Size + sizeof(int) + ObjectOverhead + ((long)column.Name.Length * sizeof(char));
+        }
+
+        return total;
+    }
+
+    private static int Slots<T>(IReadOnlyList<T> list) => list is List<T> owned ? owned.Capacity : list.Count;
 
     public static bool TryParseBool(ReadOnlySpan<char> text, out bool value)
     {
@@ -424,6 +473,11 @@ internal static class PgValueCodec
                 }
 
                 WriteJson(json, item);
+                if (json.BytesCommitted + json.BytesPending > PostgresLimits.MaxPortalBytes)
+                {
+                    return false;
+                }
+
                 span = span[length..];
             }
 

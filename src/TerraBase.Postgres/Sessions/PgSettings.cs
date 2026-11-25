@@ -220,14 +220,15 @@ internal sealed class PgSettings
             return null;
         }
 
-        return text[digits..].Trim() switch
+        long? unit = text[digits..].Trim() switch
         {
-            "" or "ms" => TimeSpan.FromMilliseconds(amount),
-            "s" or "sec" or "seconds" => TimeSpan.FromSeconds(amount),
-            "min" or "minutes" => TimeSpan.FromMinutes(amount),
-            "h" or "hours" => TimeSpan.FromHours(amount),
-            "us" => TimeSpan.FromMicroseconds(amount),
+            "" or "ms" => TimeSpan.TicksPerMillisecond,
+            "s" or "sec" or "seconds" => TimeSpan.TicksPerSecond,
+            "min" or "minutes" => TimeSpan.TicksPerMinute,
+            "h" or "hours" => TimeSpan.TicksPerHour,
+            "us" => TimeSpan.TicksPerMicrosecond,
             _ => null,
         };
+        return unit is { } ticks && amount <= TimeSpan.MaxValue.Ticks / ticks ? TimeSpan.FromTicks(amount * ticks) : null;
     }
 }

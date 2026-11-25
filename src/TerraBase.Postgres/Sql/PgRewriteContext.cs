@@ -31,6 +31,8 @@ internal sealed record PgRewrite(
 
     internal static PgError StatementTooLong { get; } = new("0A000", "a statement is at most 16 KiB");
 
+    internal static PgError NulCharacter { get; } = new("22021", "invalid byte sequence for encoding \"UTF8\": 0x00");
+
     internal string ProbeSql => string.Concat(ProbePrefix, Sql, ProbeSuffix);
 
     internal static bool Fits(ReadOnlySpan<char> sql, bool describe = false) =>
