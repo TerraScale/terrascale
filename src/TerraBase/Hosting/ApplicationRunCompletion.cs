@@ -26,16 +26,18 @@ internal sealed class ApplicationRunCompletion
     public static async Task RunAsync(WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var logger = app.Services.GetRequiredService<ILogger<ApplicationRunCompletion>>();
-        var faults = app.Services.GetRequiredService<HostFaults>();
+        ILogger? completed = null;
         long stoppingAt = 0;
-        using var stopping = app.Lifetime.ApplicationStopping.Register(() =>
-        {
-            Interlocked.Exchange(ref stoppingAt, Stopwatch.GetTimestamp());
-            logger.ZLogInformation($"Shutdown started");
-        });
         try
         {
+            var logger = app.Services.GetRequiredService<ILogger<ApplicationRunCompletion>>();
+            completed = logger;
+            var faults = app.Services.GetRequiredService<HostFaults>();
+            using var stopping = app.Lifetime.ApplicationStopping.Register(() =>
+            {
+                Interlocked.Exchange(ref stoppingAt, Stopwatch.GetTimestamp());
+                logger.ZLogInformation($"Shutdown started");
+            });
             var started = await StartAsync(app, logger, faults);
             if (started == Start.Failed)
             {
@@ -70,7 +72,7 @@ internal sealed class ApplicationRunCompletion
         {
             var disposingAt = Stopwatch.GetTimestamp();
             await app.DisposeAsync();
-            logger.ZLogInformation($"Shutdown completed: services and storage closed after {Stopwatch.GetElapsedTime(disposingAt).TotalMilliseconds:@ElapsedMilliseconds} ms");
+            completed?.ZLogInformation($"Shutdown completed: services and storage closed after {Stopwatch.GetElapsedTime(disposingAt).TotalMilliseconds:@ElapsedMilliseconds} ms");
         }
 
         async Task ObserveAsync(BackgroundService service)
@@ -80,7 +82,7 @@ internal sealed class ApplicationRunCompletion
                 await running.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                 if (Interlocked.Read(ref stoppingAt) is var at and not 0)
                 {
-                    logger.ZLogInformation($"Shutdown step {service.GetType().Name:@Step} completed after {Stopwatch.GetElapsedTime(at).TotalMilliseconds:@ElapsedMilliseconds} ms");
+                    completed?.ZLogInformation($"Shutdown step {service.GetType().Name:@Step} completed after {Stopwatch.GetElapsedTime(at).TotalMilliseconds:@ElapsedMilliseconds} ms");
                 }
             }
         }

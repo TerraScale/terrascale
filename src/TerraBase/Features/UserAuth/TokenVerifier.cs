@@ -79,6 +79,19 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private async ValueTask<CallerAuthenticationOutcome> VerifyTrustedAsync(string token, TrustedIssuer trusted, CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref trusted.Entry.Discovering);
+        try
+        {
+            return await VerifyPinnedAsync(token, trusted, cancellationToken);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref trusted.Entry.Discovering);
+        }
+    }
+
+    private async ValueTask<CallerAuthenticationOutcome> VerifyPinnedAsync(string token, TrustedIssuer trusted, CancellationToken cancellationToken)
+    {
         if (await CurrentConfigurationAsync(trusted.Entry, cancellationToken) is not { } configuration)
         {
             return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
@@ -196,9 +209,10 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                 return slot.Entry;
             }
 
-            if (_projects.Count >= MaxProjectIssuers)
+            if (_projects.Count >= MaxProjectIssuers
+                && _projects.Where(static pair => Volatile.Read(ref pair.Value.Entry.Discovering) == 0).MinBy(static pair => pair.Value.LastUsed) is { Key: { } idle })
             {
-                _projects.Remove(_projects.MinBy(static pair => pair.Value.LastUsed).Key);
+                _projects.Remove(idle);
             }
 
             var created = CreateIssuer(http, issuer);
@@ -443,6 +457,7 @@ internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever 
     public volatile FreshConfigurationState? Fresh;
     public long LastRefreshAttemptTimestamp;
     public long LastConfigurationFailureTimestamp;
+    public int Discovering;
     public bool LastRefreshFailed;
 }
 

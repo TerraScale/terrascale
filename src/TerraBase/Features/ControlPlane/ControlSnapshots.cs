@@ -52,6 +52,11 @@ internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider ti
             return new InvalidInput("the control snapshot is incomplete", "invalid_snapshot");
         }
 
+        if (snapshot.Databases.DistinctBy(static database => database.Id).Count() != snapshot.Databases.Count)
+        {
+            return new InvalidInput("the control snapshot lists a database more than once", "invalid_snapshot");
+        }
+
         if (snapshot.IssuedAtUtc - time.GetUtcNow() > MaxSkew)
         {
             return new InvalidInput("the control snapshot is issued in the future", "invalid_snapshot");
