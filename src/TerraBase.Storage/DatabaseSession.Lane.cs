@@ -22,7 +22,7 @@ internal sealed partial class DatabaseSession
 
     private sealed record class RemoteApplyRequest(IReadOnlyList<CommitMetadata> Commits, bool AllowLocalOrigin, TaskCompletionSource<ApplyRemoteBatchOutcome> Completion, CancellationToken CancellationToken) : LaneRequest;
 
-    private sealed record class CommitStagedRequest(StagedDescriptor Descriptor, HlcTimestamp CommitHlc, TaskCompletionSource<CommitStagedOutcome> Completion) : LaneRequest;
+    private sealed record class CommitStagedRequest(StagedDescriptor Descriptor, HlcTimestamp CommitHlc, long? LeaseDeadline, TaskCompletionSource<CommitStagedOutcome> Completion) : LaneRequest;
 
     public async ValueTask<SqlWriteOutcome> ExecuteWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
@@ -60,7 +60,7 @@ internal sealed partial class DatabaseSession
         return await completion.Task;
     }
 
-    public async ValueTask<CommitStagedOutcome> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, CancellationToken cancellationToken)
+    public async ValueTask<CommitStagedOutcome> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, long? leaseDeadline, CancellationToken cancellationToken)
     {
         if (TakeStaged(token) is not { } descriptor)
         {
@@ -68,9 +68,13 @@ internal sealed partial class DatabaseSession
         }
 
         var completion = NewCompletion<CommitStagedOutcome>();
-        if (!await EnqueueAsync(new CommitStagedRequest(descriptor, commitHlc, completion), cancellationToken))
+        var request = new CommitStagedRequest(descriptor, commitHlc, leaseDeadline, completion);
+        var queued = leaseDeadline is null
+            ? await EnqueueAsync(request, cancellationToken)
+            : _requests.Writer.TryWrite(request);
+        if (!queued)
         {
-            return Closing();
+            return new StorageBusy("the writer lane cannot queue the staged commit", TimeSpan.Zero);
         }
 
         return await completion.Task;
@@ -238,7 +242,7 @@ internal sealed partial class DatabaseSession
         {
             TransactionRequest transaction => await RunTransactionAsync(transaction.Transaction),
             RemoteApplyRequest remote => remote.Completion.TrySetResult(remote.CancellationToken.IsCancellationRequested ? Closing() : ApplyRemote(remote.Commits, remote.AllowLocalOrigin)),
-            CommitStagedRequest staged => staged.Completion.TrySetResult(CommitStaged(staged.Descriptor, staged.CommitHlc)),
+            CommitStagedRequest staged => staged.Completion.TrySetResult(CommitStaged(staged.Descriptor, staged.CommitHlc, staged.LeaseDeadline)),
             LocalWriteRequest or StageRequest => ProcessGroup([request]),
         };
     }

@@ -131,10 +131,11 @@ static MeshPkiInvalid? ConfigureQuic(IServiceCollection services, PlatformOption
 
     MeshPkiOutcome outcome = endpoint.Pem is { } pem
         ? QuicMeshPki.LoadPem(pem.CertificatePath, pem.KeyPath, pem.AuthorityPath, options.Node, options.Region, timeProvider)
-        : QuicMeshPki.DeriveNode(QuicMeshPki.DecodeSecret(options.PeerSecret), options.Node, options.Region, timeProvider);
+        : QuicMeshPki.DeriveNode(QuicMeshPki.DecodeSecret(options.PeerSecret), options.Node, options.Region, timeProvider, isPlatform: true);
     return outcome switch
     {
-        QuicMeshCertificates certificates => Register(certificates),
+        QuicMeshCertificates certificates when QuicMeshIdentity.Read(certificates.Certificate) is { IsPlatform: true } => Register(certificates),
+        QuicMeshCertificates => new MeshPkiInvalid("the platform QUIC certificate must carry the ts-platform service URI SAN"),
         MeshPkiInvalid invalid => invalid,
     };
 

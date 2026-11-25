@@ -19,10 +19,11 @@ internal sealed record class OutboundDeltaAck(Ulid DatabaseId, DeltaAckMessage M
 
 public readonly union RemoteReplicationOutcome(RemoteApplyOutcome, DatabaseNotFound, SchemaMismatch, StorageCorrupted, StorageBusy, ClusterUnavailable);
 
-public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient client, ClusterDatabases databases, ChangefeedPublisher changefeed, StrongLockTable locks, ILogger<DeltaReplicator> logger) : IAsyncDisposable
+public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient client, ClusterDatabases databases, ChangefeedPublisher changefeed, StrongLockTable locks, TimeProvider timeProvider, ILogger<DeltaReplicator> logger) : IAsyncDisposable
 {
     private const int OutboundCapacity = 16384;
 
+    private readonly Lock _outboxGate = new();
     private readonly ConcurrentDictionary<string, PeerOutbox> _outboxes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<(Ulid DatabaseId, string NodeId), CausalBookmark> _acknowledged = new();
     private readonly CancellationTokenSource _shutdown = new();
@@ -116,18 +117,24 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        ICollection<PeerOutbox> outboxes;
+        lock (_outboxGate)
         {
-            return;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            outboxes = _outboxes.Values;
         }
 
         await _shutdown.CancelAsync();
-        foreach (var outbox in _outboxes.Values)
+        foreach (var outbox in outboxes)
         {
             outbox.Queue.Writer.TryComplete();
         }
 
-        await Task.WhenAll(_outboxes.Values.Select(static outbox => outbox.Pump));
+        await Task.WhenAll(outboxes.Select(static outbox => outbox.Pump));
         _shutdown.Dispose();
     }
 
@@ -170,8 +177,13 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         return outcome;
     }
 
-    private async ValueTask HandleDeltaPushAsync(QuicCallContext context, DeltaPushMessage message, CancellationToken cancellationToken)
+    private async ValueTask<PushDispatchOutcome> HandleDeltaPushAsync(QuicCallContext context, DeltaPushMessage message, CancellationToken cancellationToken)
     {
+        if (!topology.IsPeer(context, message.SenderNodeId) || message.Commits.Any(commit => !topology.IsPeerOrigin(context, commit.OriginRegion)))
+        {
+            return ClusterTopology.PeerForbidden();
+        }
+
         var applied = await ApplyAsync(message.DatabaseId, message.Commits, cancellationToken);
         var bookmark = applied switch
         {
@@ -182,26 +194,38 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         {
             ClusterLog.RemoteApplyDeferred(logger, message.DatabaseId, context.RemoteNodeId, Describe(applied));
             _ = databases.RequestCatchUp(message.DatabaseId);
-            return;
+            return new QuicSent();
         }
 
         if (message.AckRequested)
         {
             Enqueue(context.RemoteNodeId, new OutboundDeltaAck(message.DatabaseId, new DeltaAckMessage(message.DatabaseId, topology.LocalNodeId, bookmark)));
         }
+
+        return new QuicSent();
     }
 
-    private ValueTask HandleDeltaAckAsync(QuicCallContext context, DeltaAckMessage message, CancellationToken cancellationToken)
+    private ValueTask<PushDispatchOutcome> HandleDeltaAckAsync(QuicCallContext context, DeltaAckMessage message, CancellationToken cancellationToken)
     {
-        _ = _acknowledged.AddOrUpdate((message.DatabaseId, message.NodeId), message.Bookmark, (_, existing) => existing.Merge(message.Bookmark));
-        return ValueTask.CompletedTask;
+        if (!topology.IsPeer(context, message.NodeId))
+        {
+            return ValueTask.FromResult<PushDispatchOutcome>(ClusterTopology.PeerForbidden());
+        }
+
+        _ = _acknowledged.AddOrUpdate((message.DatabaseId, context.RemoteNodeId), message.Bookmark, (_, existing) => existing.Merge(message.Bookmark));
+        return ValueTask.FromResult<PushDispatchOutcome>(new QuicSent());
     }
 
-    private async ValueTask HandleStrongCommitAsync(QuicCallContext context, StrongCommitMessage message, CancellationToken cancellationToken)
+    private async ValueTask<PushDispatchOutcome> HandleStrongCommitAsync(QuicCallContext context, StrongCommitMessage message, CancellationToken cancellationToken)
     {
         var payload = message.Payload;
+        if (!topology.IsPeer(context, message.SenderNodeId) || payload.Commit.Mode != ConsistencyMode.Strong
+            || !topology.IsPeerOrigin(context, payload.Commit.OriginRegion))
+        {
+            return ClusterTopology.PeerForbidden();
+        }
+
         var applied = await ApplyAsync(payload.DatabaseId, [payload.Commit], cancellationToken);
-        _ = locks.Release(payload.DatabaseId, payload.Commit.TxId);
         var failure = applied switch
         {
             RemoteApplyOutcome => null,
@@ -212,12 +236,20 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             ClusterLog.RemoteApplyDeferred(logger, payload.DatabaseId, context.RemoteNodeId, failure);
             _ = databases.RequestCatchUp(payload.DatabaseId);
         }
+
+        return new QuicSent();
     }
 
-    private ValueTask HandleStrongReleaseAsync(QuicCallContext context, StrongWoundMessage message, CancellationToken cancellationToken)
+    private ValueTask<PushDispatchOutcome> HandleStrongReleaseAsync(QuicCallContext context, StrongWoundMessage message, CancellationToken cancellationToken)
     {
-        _ = locks.Release(message.Payload.DatabaseId, message.Payload.TxId);
-        return ValueTask.CompletedTask;
+        var payload = message.Payload;
+        if (!topology.IsPeer(context) || payload.WoundedBy != payload.TxId)
+        {
+            return ValueTask.FromResult<PushDispatchOutcome>(ClusterTopology.PeerForbidden());
+        }
+
+        locks.AbortFrom(payload.DatabaseId, payload.TxId, context.RemoteNodeId);
+        return ValueTask.FromResult<PushDispatchOutcome>(new QuicSent());
     }
 
     private static string Describe(RemoteReplicationOutcome applied) => applied switch
@@ -232,7 +264,19 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
     private void Enqueue(string nodeId, OutboundMessage message)
     {
-        var outbox = _outboxes.GetOrAdd(nodeId, CreateOutbox);
+        if (!_outboxes.TryGetValue(nodeId, out var outbox))
+        {
+            lock (_outboxGate)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    return;
+                }
+
+                outbox = _outboxes.GetOrAdd(nodeId, CreateOutbox);
+            }
+        }
+
         if (!outbox.Queue.Writer.TryWrite(message))
         {
             Interlocked.Increment(ref _dropped);
@@ -244,26 +288,33 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     {
         var queue = Channel.CreateBounded<OutboundMessage>(new BoundedChannelOptions(OutboundCapacity)
         {
-            FullMode = BoundedChannelFullMode.DropWrite,
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false,
         });
-        return new PeerOutbox(queue, PumpAsync(nodeId, queue.Reader));
+        var pump = ClusterLoop.RunAsync(
+            string.Concat("push:", nodeId), token => PumpAsync(nodeId, queue.Reader, token), timeProvider, logger, _shutdown.Token);
+        return new PeerOutbox(queue, pump);
     }
 
-    private async Task PumpAsync(string nodeId, ChannelReader<OutboundMessage> reader)
+    private async Task PumpAsync(string nodeId, ChannelReader<OutboundMessage> reader, CancellationToken cancellationToken)
     {
-        var cancellationToken = _shutdown.Token;
-        try
+        await foreach (var message in reader.ReadAllAsync(cancellationToken))
         {
-            await foreach (var message in reader.ReadAllAsync(cancellationToken))
+            var sent = false;
+            try
             {
                 await SendAsync(nodeId, message, cancellationToken);
+                sent = true;
             }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return;
+            finally
+            {
+                if (!sent && !cancellationToken.IsCancellationRequested)
+                {
+                    Interlocked.Increment(ref _dropped);
+                    _ = databases.RequestCatchUp(message.DatabaseId);
+                }
+            }
         }
     }
 

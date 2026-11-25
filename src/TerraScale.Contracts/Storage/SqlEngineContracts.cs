@@ -231,8 +231,6 @@ public sealed record ReadSetValid;
 
 public sealed record StagedWriteAborted;
 
-public sealed record SegmentImported;
-
 public sealed record BookmarkReached;
 
 public sealed record DatabaseDeleted;
@@ -269,7 +267,7 @@ public readonly union BeginTransactionOutcome(ISqlTransaction, StorageBusy, Stor
 
 public readonly union ValidateReadSetOutcome(ReadSetValid, ReadSetConflict, SchemaMismatch, StorageBusy);
 
-public readonly union CommitStagedOutcome(CommitMetadata, StagedWriteMissing, ReadSetConflict, SchemaMismatch, StorageBusy);
+public readonly union CommitStagedOutcome(CommitMetadata, StagedWriteMissing, ReadSetConflict, SchemaMismatch, StorageBusy, StorageTimeout);
 
 public readonly union AbortStagedOutcome(StagedWriteAborted, StagedWriteMissing);
 
@@ -281,7 +279,7 @@ public readonly union ListSegmentsOutcome(IReadOnlyList<CommitLogSegment>, Stora
 
 public readonly union OpenSegmentOutcome(Stream, SegmentNotFound, StorageBusy);
 
-public readonly union ImportSegmentOutcome(SegmentImported, InvalidSegment, StorageCorrupted, StorageBusy);
+public readonly union ReadArchivedSegmentOutcome(IReadOnlyList<CommitMetadata>, InvalidSegment, StorageCorrupted);
 
 public readonly union WaitForBookmarkOutcome(BookmarkReached, StorageTimeout);
 
@@ -335,7 +333,7 @@ public interface ISqlDatabaseSession : IAsyncDisposable
         ulong schemaEpoch,
         CancellationToken cancellationToken);
 
-    ValueTask<CommitStagedOutcome> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, CancellationToken cancellationToken);
+    ValueTask<CommitStagedOutcome> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, long? leaseDeadline, CancellationToken cancellationToken);
 
     ValueTask<AbortStagedOutcome> AbortStagedAsync(StagedWriteToken token, CancellationToken cancellationToken);
 
@@ -347,7 +345,7 @@ public interface ISqlDatabaseSession : IAsyncDisposable
 
     ValueTask<OpenSegmentOutcome> OpenSegmentAsync(CommitLogSegment segment, CancellationToken cancellationToken);
 
-    ValueTask<ImportSegmentOutcome> ImportSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken);
+    ValueTask<ReadArchivedSegmentOutcome> ReadArchivedSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken);
 
     ValueTask<WaitForBookmarkOutcome> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);
 
