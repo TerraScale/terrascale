@@ -454,8 +454,9 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
     }
 
-    internal bool HasPrunableSegments(DateTimeOffset cutoff, CausalBookmark archiveFloor) =>
-        Logs().Any(log => log.HasSealedBefore(cutoff, Math.Min(_versions.Get(log.Origin), archiveFloor.Get(log.Origin))));
+    internal CausalBookmark PrunableThrough(DateTimeOffset cutoff, CausalBookmark archiveFloor) =>
+        CausalBookmark.Create(Logs().Select(log => new KeyValuePair<string, long>(
+            log.Origin, log.PrunableThrough(cutoff, Math.Min(_versions.Get(log.Origin), archiveFloor.Get(log.Origin))))));
 
     internal StorageBusy? PruneArchivedSegments(DateTimeOffset cutoff, CausalBookmark archiveFloor, CausalBookmark confirmed)
     {

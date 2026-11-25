@@ -2,7 +2,7 @@ using TerraBase.Storage;
 
 namespace TerraBase.Continuity;
 
-internal sealed record StagedArchiveSnapshot(ArchivedSnapshot Snapshot, string Path);
+internal sealed record StagedArchiveSnapshot(ArchivedSnapshot Snapshot, string Path, StagedSnapshotUpload Upload);
 
 internal readonly union ArchiveSnapshotOutcome(StagedArchiveSnapshot, ContinuityUnavailable);
 
@@ -51,7 +51,7 @@ internal sealed class SessionArchiver(
         }
 
         var cutoff = await sessions.ReadRetentionCutoffAsync(session.DatabaseId, cancellationToken);
-        var saved = await manifests.PublishAsync(session.DatabaseId, segments, snapshot?.Snapshot, cutoff, cancellationToken);
+        var saved = await manifests.PublishAsync(session.DatabaseId, segments, snapshot, cutoff, cancellationToken);
         return saved switch
         {
             ArchiveManifest stored => await FinishAsync(stored, snapshot, cutoff, failure, cancellationToken),
@@ -74,10 +74,11 @@ internal sealed class SessionArchiver(
         if (cutoff is { } before)
         {
             var floor = ArchiveRetention.SnapshotFloor(stored);
-            if (SqliteCommitLog.HasPrunableSegments(session, before, floor))
+            var prunable = SqliteCommitLog.PrunableThrough(session, before, floor);
+            if (!prunable.IsEmpty)
             {
-                var confirmed = await sessions.Catalog.ConfirmReplicaWatermarksAsync(session.DatabaseId, session.CurrentBookmark, cancellationToken);
-                if (SqliteCommitLog.PruneArchivedSegments(session, before, floor, confirmed) is { } busy)
+                var confirmed = await sessions.ConfirmPrunableThroughAsync(session.DatabaseId, session.CurrentBookmark, prunable, cancellationToken);
+                if (SqliteCommitLog.PruneArchivedSegments(session, before, prunable, confirmed) is { } busy)
                 {
                     return Busy(busy);
                 }
@@ -228,6 +229,19 @@ internal sealed class SessionArchiver(
     private async ValueTask<ArchiveSnapshotOutcome> UploadSnapshotAsync(DatabaseSnapshot snapshot, CancellationToken cancellationToken)
     {
         var key = ArchiveKeys.Snapshot(session.DatabaseId, snapshot.TakenAtUtc, snapshot.Bookmark);
+        var staged = await manifests.StageSnapshotUploadAsync(session.DatabaseId, key, cancellationToken);
+        return staged switch
+        {
+            StagedSnapshotUpload upload when timeProvider.GetUtcNow() < upload.DeadlineUtc =>
+                await UploadSnapshotAsync(snapshot, key, upload, cancellationToken),
+            StagedSnapshotUpload => new ContinuityUnavailable("snapshot upload reservation expired", "snapshot_upload_expired"),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<ArchiveSnapshotOutcome> UploadSnapshotAsync(
+        DatabaseSnapshot snapshot, string key, StagedSnapshotUpload upload, CancellationToken cancellationToken)
+    {
         var uploaded = await manifests.Store.UploadFileAsync(key, snapshot.Path, cancellationToken);
         var failure = uploaded switch
         {
@@ -242,7 +256,7 @@ internal sealed class SessionArchiver(
 
         metrics.Uploaded(ArchiveObjectKind.Snapshot, snapshot.SizeBytes);
         var archived = new ArchivedSnapshot(key, snapshot.Bookmark.Encode(), snapshot.SchemaEpoch, snapshot.SizeBytes, snapshot.TakenAtUtc);
-        return new StagedArchiveSnapshot(archived, snapshot.Path);
+        return new StagedArchiveSnapshot(archived, snapshot.Path, upload);
     }
 
     private ContinuityUnavailable? PruneLocalSnapshots(string snapshotPath)

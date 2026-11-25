@@ -70,7 +70,11 @@ internal readonly union ArchiveManifestDecodeOutcome(ArchiveManifest, ArchiveMan
 
 internal readonly union ArchiveManifestOutcome(ArchiveManifest, ContinuityUnavailable);
 
-internal sealed record PendingArchiveRetirement(string ManifestETag, IReadOnlyList<string> Keys);
+internal sealed record PendingArchiveRetirement(string? ManifestETag, IReadOnlyList<string> Keys)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? SnapshotUploadDeadlineUtc { get; init; }
+}
 
 internal sealed record ArchiveRetirementCorrupted(string Message);
 
@@ -91,9 +95,13 @@ internal static class ManifestCodec
     {
         try
         {
-            return JsonSerializer.Deserialize(json, ContinuityJsonContext.Default.PendingArchiveRetirement) is { ManifestETag.Length: > 0, Keys.Count: > 0 } retirement
-                ? retirement
-                : new ArchiveRetirementCorrupted("archive retirement record is missing its ETag or keys");
+            var retirement = JsonSerializer.Deserialize(json, ContinuityJsonContext.Default.PendingArchiveRetirement);
+            return retirement switch
+            {
+                { SnapshotUploadDeadlineUtc: not null, Keys.Count: 1 } => retirement,
+                { SnapshotUploadDeadlineUtc: null, ManifestETag.Length: > 0, Keys.Count: > 0 } => retirement,
+                _ => new ArchiveRetirementCorrupted("archive retirement record is missing its ETag or keys"),
+            };
         }
         catch (JsonException exception)
         {
@@ -116,6 +124,7 @@ internal static class ManifestCodec
         if (manifest is not { Version: ArchiveManifest.CurrentVersion } decoded
             || !Ulid.TryParse(decoded.DatabaseId, out var id)
             || id != databaseId
+            || decoded.UpdatedAtUtc == DateTimeOffset.MaxValue
             || decoded.Snapshots is null
             || decoded.Segments is null
             || decoded.Operations is null

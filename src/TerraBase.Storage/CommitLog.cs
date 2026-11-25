@@ -18,8 +18,8 @@ public static class SqliteCommitLog
 {
     public const int MaxSegmentBytes = 128 * 1024 * 1024;
 
-    public static bool HasPrunableSegments(ISqlDatabaseSession session, DateTimeOffset cutoff, CausalBookmark archiveFloor) =>
-        session is DatabaseSession sqlite && sqlite.HasPrunableSegments(cutoff, archiveFloor);
+    public static CausalBookmark PrunableThrough(ISqlDatabaseSession session, DateTimeOffset cutoff, CausalBookmark archiveFloor) =>
+        session is DatabaseSession sqlite ? sqlite.PrunableThrough(cutoff, archiveFloor) : CausalBookmark.Empty;
 
     public static StorageBusy? PruneArchivedSegments(
         ISqlDatabaseSession session, DateTimeOffset cutoff, CausalBookmark archiveFloor, CausalBookmark confirmed) =>
@@ -367,7 +367,6 @@ internal sealed class OriginLog : IDisposable
         {
             previousLength = _length;
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var offset = _length;
             List<(long Offset, long Sequence)> added = [];
             using var buffer = new MemoryStream();
             foreach (var commit in commits)
@@ -377,8 +376,23 @@ internal sealed class OriginLog : IDisposable
                     return SqliteStatus.Fail(string.Concat("commit log sequence gap for origin ", Origin));
                 }
 
+                if (commit.DeltaPayload.Length > CommitFrame.MaxBodySize)
+                {
+                    return SqliteStatus.Fail("commit log frame exceeds the maximum frame size");
+                }
+
                 var frame = CommitFrame.Encode(commit, _cipher);
-                added.Add((offset + buffer.Length, commit.Sequence));
+                if (frame.Length - CommitFrame.PrefixSize - CommitFrame.CrcSize > CommitFrame.MaxBodySize)
+                {
+                    return SqliteStatus.Fail("commit log frame exceeds the maximum frame size");
+                }
+
+                if (buffer.Length + frame.Length > SqliteCommitLog.MaxSegmentBytes)
+                {
+                    return SqliteStatus.Fail("commit log batch exceeds the maximum segment size");
+                }
+
+                added.Add((buffer.Length, commit.Sequence));
                 buffer.Write(frame);
             }
 
@@ -387,6 +401,17 @@ internal sealed class OriginLog : IDisposable
                 return SqliteStatus.Success;
             }
 
+            if (_frames.Count > 0 && _length + buffer.Length > _options.SegmentMaxBytes)
+            {
+                SealIfDue(force: true);
+                if (_frames.Count > 0)
+                {
+                    return new SqliteStatus(SqliteNative.IoError, "active commit log could not be sealed before append");
+                }
+            }
+
+            var offset = _length;
+            previousLength = offset;
             if (EnsureActiveHandle() is not { } active)
             {
                 return new SqliteStatus(SqliteNative.IoError, "active commit log could not be opened");
@@ -402,7 +427,11 @@ internal sealed class OriginLog : IDisposable
                 _activeSince = _time.GetUtcNow();
             }
 
-            _frames.AddRange(added);
+            foreach (var (frameOffset, sequence) in added)
+            {
+                _frames.Add((offset + frameOffset, sequence));
+            }
+
             _length = offset + buffer.Length;
             _lastSequence = added[^1].Sequence;
             if (_firstAvailable > _lastSequence || _firstAvailable == 0)
@@ -589,12 +618,27 @@ internal sealed class OriginLog : IDisposable
         }
     }
 
-    public bool HasSealedBefore(DateTimeOffset cutoff, long through)
+    public long PrunableThrough(DateTimeOffset cutoff, long through)
     {
         lock (_gate)
         {
-            return !_disposed && _sealedReaders == 0 && _sealed.Count > 0
-                && CanPrune(_sealed[0].Segment, cutoff, through);
+            if (_disposed || _sealedReaders > 0)
+            {
+                return 0;
+            }
+
+            var last = 0L;
+            foreach (var (segment, _) in _sealed)
+            {
+                if (!CanPrune(segment, cutoff, through))
+                {
+                    break;
+                }
+
+                last = segment.LastSequence;
+            }
+
+            return last;
         }
     }
 
@@ -611,7 +655,7 @@ internal sealed class OriginLog : IDisposable
             string? failure = null;
             foreach (var (segment, path) in _sealed)
             {
-                if (!CanPrune(segment, cutoff, through) || (failure = DeleteSealedFile(path)) is not null)
+                if (!CanPrune(segment, cutoff, through) || (failure = FileIo.DeleteFile(path)) is not null)
                 {
                     break;
                 }
@@ -634,23 +678,6 @@ internal sealed class OriginLog : IDisposable
 
     private static bool CanPrune(CommitLogSegment segment, DateTimeOffset cutoff, long through) =>
         segment.SealedAtUtc < cutoff && segment.LastSequence <= through;
-
-    private static string? DeleteSealedFile(string path)
-    {
-        try
-        {
-            File.Delete(path);
-            return null;
-        }
-        catch (IOException exception)
-        {
-            return exception.Message;
-        }
-        catch (UnauthorizedAccessException exception)
-        {
-            return exception.Message;
-        }
-    }
 
     public bool TryParse(ReadOnlySpan<byte> bytes, List<CommitMetadata> commits) => CommitFrame.TryParseAll(bytes, Origin, _cipher, commits);
 

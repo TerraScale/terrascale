@@ -204,6 +204,23 @@ internal static partial class FileIo
         }
     }
 
+    public static string? DeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            return null;
+        }
+        catch (IOException exception)
+        {
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return exception.Message;
+        }
+    }
+
     public static string? DeleteDirectory(string path)
     {
         try

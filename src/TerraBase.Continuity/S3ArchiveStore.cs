@@ -39,6 +39,8 @@ internal readonly union ArchiveTransportFailure(ArchiveObjectMissing, ArchivePre
 
 public sealed class S3ArchiveStore : IDisposable
 {
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(5);
+
     private const string NoSuchBucket = "NoSuchBucket";
 
     private static readonly ArchiveUnavailable Disabled = new("continuous backup is disabled on this node", "backup_disabled");
@@ -62,7 +64,7 @@ public sealed class S3ArchiveStore : IDisposable
             ForcePathStyle = true,
             RequestChecksumCalculation = RequestChecksumCalculation.WHEN_SUPPORTED,
             ResponseChecksumValidation = ResponseChecksumValidation.WHEN_SUPPORTED,
-            Timeout = TimeSpan.FromMinutes(5),
+            Timeout = RequestTimeout,
         });
     }
 
@@ -75,8 +77,10 @@ public sealed class S3ArchiveStore : IDisposable
         var uploaded = await InvokeAsync(
             async (client, bucket, token) =>
             {
+                using var deadline = new CancellationTokenSource(RequestTimeout);
+                using var request = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
                 await using var content = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                _ = await client.PutObjectAsync(Put(bucket, key, content, ManifestCodec.BinaryContentType), token);
+                _ = await client.PutObjectAsync(Put(bucket, key, content, ManifestCodec.BinaryContentType), request.Token);
             },
             cancellationToken);
         return Narrow(uploaded);
@@ -409,7 +413,7 @@ public sealed class S3ArchiveStore : IDisposable
         {
             return new ArchiveUnavailable(string.Concat("archive transfer failed: ", exception.Message), "archive_io");
         }
-        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
             return new ArchiveTimedOut(string.Concat("archive request timed out: ", exception.Message), "archive_timeout");
         }

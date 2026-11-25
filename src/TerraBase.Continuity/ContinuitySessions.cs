@@ -50,6 +50,18 @@ public sealed class ContinuitySessions(
 
     public IContinuityDatabaseCatalog Catalog => catalog;
 
+    internal async ValueTask<CausalBookmark> ConfirmPrunableThroughAsync(
+        Ulid databaseId, CausalBookmark local, CausalBookmark prunable, CancellationToken cancellationToken)
+    {
+        var confirmed = await catalog.ConfirmReplicaWatermarksAsync(databaseId, local, cancellationToken);
+        if (!confirmed.Dominates(prunable))
+        {
+            ContinuityLog.ReplicaRetentionHeld(logger, databaseId, prunable, confirmed);
+        }
+
+        return confirmed;
+    }
+
     public async ValueTask<ContinuityRawKeyOutcome> ResolveKeyAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         var resolved = await catalog.ResolveRawKeyAsync(databaseId, cancellationToken);
