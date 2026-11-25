@@ -1,4 +1,22 @@
+using System.Net;
+
 namespace TerraScale.DotNet.TerraBase;
+
+internal readonly record struct TerraBaseSqlFrame(string Kind, bool Wrapped)
+{
+    private static readonly TerraBaseSqlStatementResult Acknowledged = new([], [], 0);
+
+    public IReadOnlyList<TerraBaseSqlStatementResult> Results(IReadOnlyList<TerraBaseSqlStatementBody>? bodies, int statements, HttpStatusCode? status)
+    {
+        var expected = Kind != "execute" ? 0 : Wrapped ? statements - 2 : statements;
+        if (bodies is null || bodies.Count != expected)
+            throw new TerraBaseException(status, "TerraBase returned a result count that does not match the statements.", "invalid_response", null);
+        IReadOnlyList<TerraBaseSqlStatementResult> results = [.. bodies.Select(static body => body.ToResult())];
+        return Kind != "execute" ? [.. Enumerable.Repeat(Acknowledged, statements)]
+            : Wrapped ? [Acknowledged, .. results, Acknowledged]
+            : results;
+    }
+}
 
 internal sealed record TerraBaseScriptStatement(string Sql, IReadOnlyList<string> Named, int Positional, bool Numbered);
 
@@ -12,54 +30,121 @@ internal static class TerraBaseSqlScript
         Other,
     }
 
-    public static string? TransactionControl(string sql)
+    public static TerraBaseSqlFrame Frame(IReadOnlyList<TerraBaseSqlStatement> statements)
     {
-        var words = Words(sql);
-        return words switch
+        string?[] controls = [.. statements.Select(static statement => TransactionControl(statement.Sql))];
+        var wrapped = controls is ["begin", .., "commit"] && controls.Length >= 2;
+        var inner = wrapped ? controls[1..^1] : controls;
+        return new(inner is [{ } control] ? control : "execute", wrapped);
+    }
+
+    private static string? TransactionControl(string sql)
+    {
+        var tokens = Tokens(sql);
+        return tokens switch
         {
             ["BEGIN" or "START", ..] => "begin",
             ["COMMIT" or "END", ..] => "commit",
-            ["ROLLBACK", ..] when !words.Contains("TO") => "rollback",
+            ["ROLLBACK", ..] when !tokens.Contains("TO") => "rollback",
             _ => null,
         };
     }
 
-    private static List<string> Words(string sql)
+    private static List<string?> Tokens(string sql)
     {
-        List<string> words = [];
+        List<string?> tokens = [];
         var i = 0;
         while (i < sql.Length)
         {
             var c = sql[i];
-            if (c == '-' && i + 1 < sql.Length && sql[i + 1] == '-')
+            var next = i + 1 < sql.Length ? sql[i + 1] : '\0';
+            if (char.IsWhiteSpace(c))
+            {
+                i++;
+                continue;
+            }
+
+            if (c == '-' && next == '-')
             {
                 var end = sql.IndexOf('\n', i);
                 i = end < 0 ? sql.Length : end + 1;
+                continue;
             }
-            else if (c == '/' && i + 1 < sql.Length && sql[i + 1] == '*')
+
+            if (c == '/' && next == '*')
             {
                 var end = sql.IndexOf("*/", i + 2, StringComparison.Ordinal);
                 i = end < 0 ? sql.Length : end + 2;
+                continue;
             }
-            else if (c is '\'' or '"' or '`' or '[')
+
+            if (c is '\'' or '"' or '`' || c is 'x' or 'X' && next == '\'')
             {
-                var end = sql.IndexOf(c == '[' ? ']' : c, i + 1);
-                i = end < 0 ? sql.Length : end + 1;
+                var quote = c is 'x' or 'X' ? next : c;
+                i = Unquote(sql, c is 'x' or 'X' ? i + 1 : i, quote);
+                tokens.Add(null);
+                continue;
             }
-            else if (char.IsAsciiLetter(c) || c == '_')
+
+            if (c == '[')
             {
-                var start = i;
-                while (i < sql.Length && (char.IsAsciiLetterOrDigit(sql[i]) || sql[i] is '_' or '$')) i++;
-                words.Add(sql[start..i].ToUpperInvariant());
+                var close = sql.IndexOf(']', i + 1);
+                i = close < 0 ? sql.Length : close + 1;
+                tokens.Add(null);
+                continue;
             }
-            else
+
+            if (c == '?')
             {
                 i++;
+                while (i < sql.Length && char.IsAsciiDigit(sql[i])) i++;
+                tokens.Add(null);
+                continue;
             }
+
+            if (c is ':' or '@' or '$' && WordPart(next) || char.IsAsciiDigit(c) || c == '.' && char.IsAsciiDigit(next))
+            {
+                i++;
+                while (i < sql.Length && (WordPart(sql[i]) || sql[i] == '.')) i++;
+                tokens.Add(null);
+                continue;
+            }
+
+            if (WordStart(c))
+            {
+                var start = i;
+                while (i < sql.Length && WordPart(sql[i])) i++;
+                tokens.Add(sql[start..i].ToUpperInvariant());
+                continue;
+            }
+
+            tokens.Add(null);
+            i++;
         }
 
-        return words;
+        return tokens;
     }
+
+    private static int Unquote(string sql, int open, char quote)
+    {
+        for (var j = open + 1; j < sql.Length; j++)
+        {
+            if (sql[j] != quote) continue;
+            if (j + 1 < sql.Length && sql[j + 1] == quote)
+            {
+                j++;
+                continue;
+            }
+
+            return j + 1;
+        }
+
+        return sql.Length;
+    }
+
+    private static bool WordStart(char c) => char.IsAsciiLetter(c) || c == '_' || c >= 0x80;
+
+    private static bool WordPart(char c) => WordStart(c) || char.IsAsciiDigit(c) || c == '$';
 
     public static IReadOnlyList<TerraBaseScriptStatement> Split(string sql)
     {

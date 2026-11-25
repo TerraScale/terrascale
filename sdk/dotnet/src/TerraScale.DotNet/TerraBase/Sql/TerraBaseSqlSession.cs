@@ -83,22 +83,21 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
     {
         TerraBaseSqlStatement.Validate(statements);
         ArgumentNullException.ThrowIfNull(options);
-        var answer = await SendAsync("execute", statements, options.Consistency, options.Bookmark, cancellationToken).ConfigureAwait(false);
-        return answer.Results is { } results && results.Count == statements.Count
-            ? [.. results.Select(result => result.ToResult())]
-            : throw new TerraBaseException(null, "TerraBase returned a result count that does not match the statements.", "invalid_response", null);
+        var plan = TerraBaseSqlScript.Frame(statements);
+        var answer = await SendAsync("execute", plan.Kind, statements, options.Consistency, options.Bookmark, cancellationToken).ConfigureAwait(false);
+        return plan.Results(answer.Results, statements.Count, null);
     }
 
-    public Task BeginAsync(CancellationToken cancellationToken = default) => SendAsync("begin", null, null, null, cancellationToken);
+    public Task BeginAsync(CancellationToken cancellationToken = default) => SendAsync("begin", "begin", null, null, null, cancellationToken);
 
     public Task BeginAsync(TerraBaseConsistencyMode consistency, CancellationToken cancellationToken = default) =>
-        SendAsync("begin", null, consistency, null, cancellationToken);
+        SendAsync("begin", "begin", null, consistency, null, cancellationToken);
 
     public Task BeginStrongAsync(CancellationToken cancellationToken = default) => BeginAsync(TerraBaseConsistencyMode.Strong, cancellationToken);
 
-    public Task CommitAsync(CancellationToken cancellationToken = default) => SendAsync("commit", null, null, null, cancellationToken);
+    public Task CommitAsync(CancellationToken cancellationToken = default) => SendAsync("commit", "commit", null, null, null, cancellationToken);
 
-    public Task RollbackAsync(CancellationToken cancellationToken = default) => SendAsync("rollback", null, null, null, cancellationToken);
+    public Task RollbackAsync(CancellationToken cancellationToken = default) => SendAsync("rollback", "rollback", null, null, null, cancellationToken);
 
     public async Task<T> TransactionAsync<T>(Func<TerraBaseSqlSession, CancellationToken, Task<T>> work, CancellationToken cancellationToken = default)
     {
@@ -222,7 +221,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         }
     }
 
-    private async Task<TerraBaseSqlSocketAnswer> SendAsync(string type, IReadOnlyList<TerraBaseSqlStatement>? statements, TerraBaseConsistencyMode? consistency,
+    private async Task<TerraBaseSqlSocketAnswer> SendAsync(string type, string kind, IReadOnlyList<TerraBaseSqlStatement>? statements, TerraBaseConsistencyMode? consistency,
         string? bookmark, CancellationToken cancellationToken)
     {
         lock (stateGate)
@@ -231,7 +230,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
             ObjectDisposedException.ThrowIf(disposed, this);
             if (lostTransaction)
             {
-                if (type != "rollback")
+                if (kind != "rollback")
                 {
                     throw new TerraBaseSqlException(null, "The SQL session lost its connection during a transaction, which rolled back; call RollbackAsync.",
                         TerraBaseSqlErrorCodes.TransactionRolledBack, 0, "40000");
@@ -249,7 +248,6 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
             TerraBaseSqlJsonContext.Wire.TerraBaseSqlSocketRequest);
         if (frame.Length > MaxFrameBytes) throw new ArgumentException("A SQL frame is at most 1 MiB.", nameof(statements));
         var current = await CurrentAsync(cancellationToken).ConfigureAwait(false);
-        var kind = type == "execute" && statements is [{ Sql: var sql }] ? TerraBaseSqlScript.TransactionControl(sql) ?? type : type;
         var pending = new Pending(kind);
         current.Pending[id] = pending;
         try

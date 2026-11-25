@@ -189,7 +189,7 @@ public sealed class TerraBaseSqlDatabase
             },
             cancellationToken, requestTimeout, bookmarks.ObserveResponse).ConfigureAwait(false);
         bookmarks.ObserveAnswer(response.Bookmark, status);
-        return response.ToResults(statements.Count, status);
+        return TerraBaseSqlScript.Frame(statements).Results(response.Results, statements.Count, status);
     }
 
     public Task<Stream> ExportDatabaseAsync(CancellationToken cancellationToken = default) =>
