@@ -59,7 +59,7 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     private async ValueTask<ContinuityUnavailable?> ReplayArchiveSegmentAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> entries, CancellationToken cancellationToken)
     {
         var replicator = services.GetRequiredService<DeltaReplicator>();
-        var applied = await replicator.ApplyToSessionAsync(session, entries, cancellationToken);
+        var applied = await replicator.ApplyToSessionAsync(session, entries, requestCatchUpOnBuffered: false, cancellationToken);
         return applied switch
         {
             RemoteApplyOutcome => null,

@@ -77,10 +77,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         }
         finally
         {
-            if (tracked.EndSync(timeProvider.GetUtcNow(), progressed))
-            {
-                _ = databases.RequestCatchUp(databaseId);
-            }
+            databases.EndSync(databaseId, tracked, progressed, requeue: !cancellationToken.IsCancellationRequested);
         }
     }
 
@@ -260,7 +257,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             return (0, 0, false, null, false);
         }
 
-        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, cancellationToken);
+        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, requestCatchUpOnBuffered: false, cancellationToken);
         return applied switch
         {
             RemoteApplyOutcome outcome => (page.Entries.Count, outcome.Applied, page.HasMore, null, false),
@@ -305,7 +302,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             var bookmark = session.CurrentBookmark;
             if (!bookmark.Dominates(message.Have))
             {
-                _ = databases.RequestCatchUp(session.DatabaseId);
+                _ = databases.RequestCatchUp(session.DatabaseId, message.Have);
             }
 
             var budget = Math.Clamp(message.MaxEntries, 1, options.CatchUpPageSize);

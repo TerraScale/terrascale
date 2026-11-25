@@ -94,7 +94,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         };
     }
 
-    public async ValueTask<RemoteReplicationOutcome> ApplyToSessionAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
+    public async ValueTask<RemoteReplicationOutcome> ApplyToSessionAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, bool requestCatchUpOnBuffered, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(commits);
@@ -108,7 +108,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         var applied = await session.ApplyRemoteBatchAsync(new RemoteCommitBatch(session.DatabaseId, foreign), cancellationToken);
         return applied switch
         {
-            RemoteApplyOutcome outcome => await AppliedAsync(session.DatabaseId, foreign, before, outcome, cancellationToken),
+            RemoteApplyOutcome outcome => await AppliedAsync(session.DatabaseId, foreign, before, outcome, requestCatchUpOnBuffered, cancellationToken),
             SchemaMismatch mismatch => mismatch,
             StorageCorrupted corrupted => corrupted,
             StorageBusy busy => busy,
@@ -142,11 +142,11 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     {
         await using (session)
         {
-            return await ApplyToSessionAsync(session, commits, cancellationToken);
+            return await ApplyToSessionAsync(session, commits, requestCatchUpOnBuffered: true, cancellationToken);
         }
     }
 
-    private async ValueTask<RemoteReplicationOutcome> AppliedAsync(Ulid databaseId, CommitMetadata[] commits, CausalBookmark before, RemoteApplyOutcome outcome, CancellationToken cancellationToken)
+    private async ValueTask<RemoteReplicationOutcome> AppliedAsync(Ulid databaseId, CommitMetadata[] commits, CausalBookmark before, RemoteApplyOutcome outcome, bool requestCatchUpOnBuffered, CancellationToken cancellationToken)
     {
         databases.Observe(databaseId, outcome.Bookmark);
         Interlocked.Add(ref _applied, outcome.Applied);
@@ -169,7 +169,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             }
         }
 
-        if (outcome.Buffered > 0)
+        if (requestCatchUpOnBuffered && outcome.Buffered > 0)
         {
             _ = databases.RequestCatchUp(databaseId);
         }
