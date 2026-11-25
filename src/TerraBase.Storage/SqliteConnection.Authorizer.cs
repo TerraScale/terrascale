@@ -5,9 +5,20 @@ using System.Text;
 
 namespace TerraBase.Storage;
 
+internal enum SavepointOperation
+{
+    Begin,
+    Release,
+    Rollback,
+}
+
+internal sealed record UserSavepoint(SavepointOperation Operation, string Name);
+
 internal sealed class StatementInfo
 {
     public bool IsDdl { get; set; }
+
+    public UserSavepoint? Savepoint { get; set; }
 
     public string? Denied { get; set; }
 
@@ -24,6 +35,7 @@ internal sealed class StatementInfo
     public void Reset()
     {
         IsDdl = false;
+        Savepoint = null;
         Denied = null;
         CreatedTable = null;
         Scope = null;
@@ -105,7 +117,7 @@ internal sealed unsafe partial class SqliteConnection
             case SqliteNative.ActionFunction when second is not null && DeniedFunctions.Contains(second):
                 return Deny(info, "the function is not permitted");
             case SqliteNative.ActionSavepoint:
-                return IsInternal(second) ? Deny(info, "reserved savepoint name") : SqliteNative.AuthOk;
+                return Savepoint(info, first, second);
             case SqliteNative.ActionPragma:
                 return first is not null && !IsInternal(second) && (ReadPragmas.Contains(first) || (second is null && QueryOnlyPragmas.Contains(first)))
                     ? SqliteNative.AuthOk
@@ -242,6 +254,29 @@ internal sealed unsafe partial class SqliteConnection
 
     private static bool Hidden(IReadOnlySet<string>? visible, string? column) =>
         visible is not null && column is { Length: > 0 } name && !visible.Contains(name);
+
+    private static int Savepoint(StatementInfo? info, string? operation, string? name)
+    {
+        if (IsInternal(name))
+        {
+            return Deny(info, "reserved savepoint name");
+        }
+
+        SavepointOperation? parsed = operation switch
+        {
+            "BEGIN" => SavepointOperation.Begin,
+            "RELEASE" => SavepointOperation.Release,
+            "ROLLBACK" => SavepointOperation.Rollback,
+            _ => null,
+        };
+        if (parsed is not { } kind || name is null)
+        {
+            return Deny(info, "unsupported savepoint statement");
+        }
+
+        info?.Savepoint = new UserSavepoint(kind, name);
+        return SqliteNative.AuthOk;
+    }
 
     private static SqliteStatus ValidatePreparedSql(ReadOnlySpan<byte> sql)
     {

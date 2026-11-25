@@ -20,6 +20,8 @@ internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, Canc
 
     public List<string> Ddl { get; } = [];
 
+    public List<(string Name, int DdlCount)> Savepoints { get; } = [];
+
     public HashSet<string> ScannedTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public StrongRequiredReason? StrongReason { get; set; }
@@ -101,6 +103,7 @@ internal sealed partial class DatabaseSession
             }
 
             var isDdl = info.IsDdl;
+            var savepoint = info.Savepoint;
             if (context.AnalyzeReads)
             {
                 CollectScannedTables(context, handle, segment);
@@ -173,11 +176,63 @@ internal sealed partial class DatabaseSession
                 _ = _writer.ValidateSchemaCache();
             }
 
+            if (savepoint is not null)
+            {
+                TrackSavepoint(context, savepoint);
+            }
+
             last = result;
         }
 
         context.Results.Add(last);
         return last;
+    }
+
+    private void TrackSavepoint(WriteContext context, UserSavepoint savepoint)
+    {
+        var savepoints = context.Savepoints;
+        if (savepoint.Operation == SavepointOperation.Begin)
+        {
+            savepoints.Add((savepoint.Name, context.Ddl.Count));
+            return;
+        }
+
+        var index = savepoints.FindLastIndex(entry => SameSavepointName(entry.Name, savepoint.Name));
+        if (index < 0)
+        {
+            return;
+        }
+
+        if (savepoint.Operation == SavepointOperation.Release)
+        {
+            savepoints.RemoveRange(index, savepoints.Count - index);
+            return;
+        }
+
+        var kept = savepoints[index].DdlCount;
+        context.Ddl.RemoveRange(kept, context.Ddl.Count - kept);
+        savepoints.RemoveRange(index + 1, savepoints.Count - index - 1);
+        _ = _writer.ValidateSchemaCache();
+    }
+
+    private static bool SameSavepointName(string left, string right)
+    {
+        if (left.Length != right.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Length; index++)
+        {
+            var first = left[index];
+            var second = right[index];
+            if (first != second && !(char.IsAsciiLetter(first) && (first | 0x20) == (second | 0x20)))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool CreatesPopulatedTable(List<SqlToken> tokens)
