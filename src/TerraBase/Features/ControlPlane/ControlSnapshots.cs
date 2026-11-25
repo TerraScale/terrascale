@@ -53,7 +53,8 @@ internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider ti
         }
 
         if (snapshot.Organizations.Contains(null) || snapshot.Projects.Contains(null) || snapshot.Databases.Contains(null)
-            || snapshot.ApiKeys.Contains(null) || snapshot.Regions.Contains(null))
+            || snapshot.ApiKeys.Contains(null) || snapshot.Regions.Contains(null)
+            || snapshot.Databases.Any(static database => database.Regions is null || database.Regions.Any(static region => region is null)))
         {
             return new InvalidInput("the control snapshot contains an empty entry", "invalid_snapshot");
         }

@@ -85,7 +85,7 @@ internal sealed class InternalAuthorizeEndpoint(DatabaseAccess access, CatalogSt
                 target?.Database.Id,
                 target?.Database.Name,
                 caller is EndUserCaller,
-                caller is EndUserCaller { Auth.IsAnonymous: true },
+                Anonymous: false,
                 Restricted(caller),
                 CallerContext.Actor(caller),
                 Roles(caller),

@@ -226,7 +226,11 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             var now = time.GetTimestamp();
             if (_projects.TryGetValue(issuer, out var slot))
             {
-                slot.Entry.Retired = false;
+                if (slot.Entry.Retired)
+                {
+                    return null;
+                }
+
                 slot.LastUsed = now;
                 slot.Entry.Pins++;
                 return slot.Entry;
@@ -280,22 +284,11 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         return new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token");
     }
 
-    private async Task ReleaseWhenSettledAsync(Task operation, IssuerEntry entry)
-    {
-        await operation.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        Unpin(entry);
-    }
-
     private static IssuerEntry CreateIssuer(IHttpClientFactory http, string issuer)
     {
         var metadataAddress = string.Concat(issuer.TrimEnd('/'), "/.well-known/openid-configuration");
         var retriever = new HttpDocumentRetriever(http.CreateClient(HttpClientName)) { RequireHttps = new Uri(issuer).Scheme == Uri.UriSchemeHttps };
-        var manager = new ConfigurationManager<OpenIdConnectConfiguration>(metadataAddress, new OpenIdConnectConfigurationRetriever(), retriever)
-        {
-            AutomaticRefreshInterval = TimeSpan.FromHours(1),
-            RefreshInterval = TimeSpan.FromSeconds(30),
-        };
-        return new IssuerEntry(issuer, metadataAddress, retriever, manager);
+        return new IssuerEntry(issuer, metadataAddress, retriever);
     }
 
     private static bool IsCanonicalUlid(string value) =>
@@ -415,90 +408,77 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         },
     };
 
-    private async Task<OpenIdConnectConfiguration?> ConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
-    {
-        var operation = entry.Manager.GetConfigurationAsync(cancellationToken);
-        _ = ReleaseWhenSettledAsync(operation, Pin(entry));
-        try
-        {
-            return await operation.WaitAsync(cancellationToken);
-        }
-        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
-            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            return null;
-        }
-    }
+    private static readonly TimeSpan RefreshCooldown = TimeSpan.FromSeconds(5);
 
-    private static readonly TimeSpan UnknownKeyRefreshCooldown = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan FreshConfigurationLifetime = TimeSpan.FromSeconds(35);
+    private static readonly TimeSpan ConfigurationLifetime = TimeSpan.FromHours(1);
 
     private async Task<OpenIdConnectConfiguration?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
-        var fresh = entry.Fresh;
-        if (fresh is not null && time.GetElapsedTime(fresh.FetchedTimestamp) < FreshConfigurationLifetime)
+        if (entry.Fresh is { } fresh && time.GetElapsedTime(fresh.FetchedTimestamp) < ConfigurationLifetime)
         {
             return fresh.Configuration;
         }
 
-        var failed = Interlocked.Read(ref entry.LastConfigurationFailureTimestamp);
-        if (failed != 0 && time.GetElapsedTime(failed) < UnknownKeyRefreshCooldown)
-        {
-            return null;
-        }
-
-        var configuration = await ConfigurationAsync(entry, cancellationToken);
-        if (configuration is null)
-        {
-            Interlocked.Exchange(ref entry.LastConfigurationFailureTimestamp, time.GetTimestamp());
-        }
-
-        return configuration;
+        return await Retrieval(entry).WaitAsync(cancellationToken) ?? entry.Fresh?.Configuration;
     }
 
-    private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
-    {
-        await entry.RefreshGate.WaitAsync(cancellationToken);
-        try
-        {
-            if (entry.LastRefreshAttemptTimestamp != 0 && time.GetElapsedTime(entry.LastRefreshAttemptTimestamp) < UnknownKeyRefreshCooldown)
-            {
-                if (entry.LastRefreshFailed)
-                {
-                    return null;
-                }
+    private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken) =>
+        await Retrieval(entry).WaitAsync(cancellationToken);
 
-                return entry.Fresh?.Configuration ?? await ConfigurationAsync(entry, cancellationToken);
+    private Task<OpenIdConnectConfiguration?> Retrieval(IssuerEntry entry)
+    {
+        lock (entry.Gate)
+        {
+            if (entry.Inflight is { } running)
+            {
+                return running;
             }
 
-            entry.Manager.RequestRefresh();
-            var fetched = await FetchFreshAsync(entry, cancellationToken);
-            var now = time.GetTimestamp();
-            entry.LastRefreshAttemptTimestamp = now;
-            entry.LastRefreshFailed = fetched is null;
-            if (fetched is not null)
+            if (entry.LastRefreshAttemptTimestamp != 0 && time.GetElapsedTime(entry.LastRefreshAttemptTimestamp) < RefreshCooldown)
             {
-                entry.Fresh = new FreshConfigurationState(fetched, now);
+                return Task.FromResult(entry.LastRefreshFailed ? null : entry.Fresh?.Configuration);
+            }
+
+            var started = RetrieveAsync(Pin(entry));
+            entry.Inflight = started;
+            return started;
+        }
+    }
+
+    private async Task<OpenIdConnectConfiguration?> RetrieveAsync(IssuerEntry entry)
+    {
+        await Task.Yield();
+        try
+        {
+            var fetched = await FetchAsync(entry);
+            var now = time.GetTimestamp();
+            lock (entry.Gate)
+            {
+                entry.LastRefreshAttemptTimestamp = now;
+                entry.LastRefreshFailed = fetched is null;
+                if (fetched is not null)
+                {
+                    entry.Fresh = new FreshConfigurationState(fetched, now);
+                }
+
+                entry.Inflight = null;
             }
 
             return fetched;
         }
         finally
         {
-            _ = entry.RefreshGate.Release();
+            Unpin(entry);
         }
     }
 
-    private async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    private static async Task<OpenIdConnectConfiguration?> FetchAsync(IssuerEntry entry)
     {
-        var operation = OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, cancellationToken);
-        _ = ReleaseWhenSettledAsync(operation, Pin(entry));
         try
         {
-            return await operation.WaitAsync(cancellationToken);
+            return await OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, CancellationToken.None);
         }
-        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
-            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException or OperationCanceledException)
         {
             return null;
         }
@@ -507,16 +487,15 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
 internal sealed record FreshConfigurationState(OpenIdConnectConfiguration Configuration, long FetchedTimestamp);
 
-internal sealed class IssuerEntry(string issuer, string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
+internal sealed class IssuerEntry(string issuer, string metadataAddress, HttpDocumentRetriever retriever)
 {
     public string Issuer { get; } = issuer;
     public string MetadataAddress { get; } = metadataAddress;
     public HttpDocumentRetriever Retriever { get; } = retriever;
-    public ConfigurationManager<OpenIdConnectConfiguration> Manager { get; } = manager;
-    public SemaphoreSlim RefreshGate { get; } = new(1, 1);
+    public Lock Gate { get; } = new();
+    public Task<OpenIdConnectConfiguration?>? Inflight;
     public volatile FreshConfigurationState? Fresh;
     public long LastRefreshAttemptTimestamp;
-    public long LastConfigurationFailureTimestamp;
     public int Pins;
     public bool Retired;
     public bool LastRefreshFailed;

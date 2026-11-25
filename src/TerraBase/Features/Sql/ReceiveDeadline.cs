@@ -39,6 +39,14 @@ internal sealed class ReceiveDeadline : IDisposable
                 return;
             }
 
+            if (_time.GetElapsedTime(_armedAt, started) > _budget)
+            {
+                _finished = true;
+                _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                Expiry = ExpireAsync(_partial);
+                return;
+            }
+
             _partial = true;
             _armedAt = started;
             _budget = QosPolicy.MessageBudget(bytes);

@@ -34,7 +34,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private const int MaxAuthFrameBytes = 32 * 1024;
 
-    private const int MaxPendingFrames = 64;
+    private const int MaxPendingFrames = 512;
 
     private const long MaxPendingBytes = 4L * 1024 * 1024;
 
@@ -511,9 +511,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                 return null;
             }
 
-            var completed = time.GetTimestamp();
-            var started = input.Complete() ?? completed;
-            return deadline.Complete() ? new SocketMessage(payload, started, completed) : null;
+            var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp());
+            return deadline.Complete() ? new SocketMessage(payload, arrived.Started, arrived.Completed) : null;
         }
         finally
         {
@@ -537,6 +536,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             SingleWriter = true,
         });
         _inbox = inbox;
+        input.Failed = MarkTerminal;
         input.Progress = Progressed;
         _pump = PumpAsync(inbox.Writer, _pumpStop.Token);
         return inbox.Reader;
@@ -594,8 +594,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                     return;
                 }
 
-                var completed = time.GetTimestamp();
-                var message = new SocketMessage(payload, input.Complete() ?? completed, completed);
+                var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp());
+                var message = new SocketMessage(payload, arrived.Started, arrived.Completed);
 
                 if (Interlocked.Add(ref _pendingBytes, message.Payload.Length) > MaxPendingBytes || !inbox.TryWrite(message))
                 {
@@ -609,6 +609,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         {
             MarkTerminal();
             input.Progress = null;
+            input.Failed = null;
             inbox.TryComplete();
             await ArrivedOnTimeAsync();
             ArrayPool<byte>.Shared.Return(buffer);
@@ -617,6 +618,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private async Task<SocketMessage?> NextAsync(ChannelReader<SocketMessage> inbox, CancellationToken cancellationToken)
     {
+        if (inbox.TryRead(out var ready))
+        {
+            Interlocked.Add(ref _pendingBytes, -ready.Payload.Length);
+            return Volatile.Read(ref _terminal) == 0 ? ready : null;
+        }
+
         using var deadline = new ReceiveDeadline(time, IdleBudget(), ExpireAsync);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         lock (_progress)

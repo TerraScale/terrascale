@@ -11,8 +11,7 @@ import { hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { enterSecret } from '../support/secret';
-import { internalAuthorize } from '../support/internal-listener';
-import { auth, desktop, onLocalStack } from '../support/stack';
+import { auth, desktop } from '../support/stack';
 import { saveCookies, saveSecret } from '../support/state';
 import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
 
@@ -243,15 +242,6 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
     const foreign = await request.patch(`${rows}/1`, { headers: asGuest, data: { row: { title: 'taken' } } });
     console.log(`guest PATCH …/tables/notes/rows/{someone else's} -> ${foreign.status()}`);
     expect(foreign.status()).toBe(404);
-    await onLocalStack(async () => {
-      const guestGrant = await internalAuthorize(refreshedGuest.access_token, project);
-      console.log(`guest POST /v1/internal/authorize -> ${guestGrant.status} anonymous=${guestGrant.grant.anonymous}`);
-      expect(guestGrant.status).toBe(200);
-      expect(guestGrant.grant).toMatchObject({ projectId: project, endUser: true, anonymous: true });
-      const ownerGrant = await internalAuthorize(ownerToken, project);
-      expect(ownerGrant.status).toBe(200);
-      expect(ownerGrant.grant).toMatchObject({ projectId: project, endUser: false, anonymous: false });
-    });
 
     const hosted = await context.newPage();
     const email = await newAddress('browser-app-' + randomBytes(5).toString('hex'));

@@ -2,8 +2,12 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraBase.Features.Sql;
 
+internal readonly record struct ArrivedMessage(long Started, long Completed);
+
 internal sealed class SocketInput(TimeProvider time)
 {
+    private static readonly TimeSpan ProtocolErrorCloseBudget = TimeSpan.FromSeconds(2);
+
     private const int MaxQueuedMessages = 256;
 
     private static readonly byte[] ProtocolErrorClose = [0x88, 0x02, 0x03, 0xEA];
@@ -61,7 +65,11 @@ internal sealed class SocketInput(TimeProvider time)
         }
     }
 
-    public long? Complete()
+    public Action? Failed { get; set; }
+
+    private TimeProvider Clock => time;
+
+    public ArrivedMessage? Complete()
     {
         lock (_gate)
         {
@@ -75,7 +83,7 @@ internal sealed class SocketInput(TimeProvider time)
                 Progress?.Invoke(next.Started, next.Received);
             }
 
-            return message.Started;
+            return new ArrivedMessage(message.Started, message.Completed ?? time.GetTimestamp());
         }
     }
 
@@ -193,6 +201,7 @@ internal sealed class SocketInput(TimeProvider time)
         _header = 0;
         if (!_control && _final)
         {
+            _current?.Completed = time.GetTimestamp();
             _message = false;
             _current = null;
         }
@@ -203,6 +212,8 @@ internal sealed class SocketInput(TimeProvider time)
         public long Started { get; } = started;
 
         public int Received { get; set; }
+
+        public long? Completed { get; set; }
     }
 
     private sealed class Upgrade(IHttpUpgradeFeature inner, SocketInput input) : IHttpUpgradeFeature
@@ -242,12 +253,25 @@ internal sealed class SocketInput(TimeProvider time)
             var read = await inner.ReadAsync(buffer, cancellationToken);
             if (input.Inspect(buffer.Span[..read]))
             {
-                await WriteAsync(ProtocolErrorClose, CancellationToken.None);
-                await inner.FlushAsync(CancellationToken.None);
+                input.Failed?.Invoke();
+                await CloseAsync();
                 await DrainPeerCloseAsync(cancellationToken);
             }
 
             return read;
+        }
+
+        private async ValueTask CloseAsync()
+        {
+            using var bounded = new CancellationTokenSource(ProtocolErrorCloseBudget, input.Clock);
+            try
+            {
+                await WriteAsync(ProtocolErrorClose, bounded.Token);
+                await inner.FlushAsync(bounded.Token);
+            }
+            catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+            }
         }
 
         private async ValueTask DrainPeerCloseAsync(CancellationToken cancellationToken)
