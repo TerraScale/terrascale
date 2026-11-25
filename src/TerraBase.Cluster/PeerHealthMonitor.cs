@@ -117,8 +117,8 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             client.ResetPeer(state.Info.NodeId);
         }
 
-        var (previous, next, failures) = Record(state, success, timeProvider.GetElapsedTime(started), refused);
-        if (restarted || (previous == PeerStatus.Unreachable && next == PeerStatus.Healthy))
+        var (previous, next, failures, outboundRecovered) = Record(state, success, timeProvider.GetElapsedTime(started), refused);
+        if (restarted || outboundRecovered || (previous == PeerStatus.Unreachable && next == PeerStatus.Healthy))
         {
             databases.OnPeerRecovered();
         }
@@ -129,7 +129,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         }
     }
 
-    private (PeerStatus Previous, PeerStatus Next, int Failures) Record(PeerState state, bool success, TimeSpan roundTrip, bool refused)
+    private (PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(PeerState state, bool success, TimeSpan roundTrip, bool refused)
     {
         var recorded = state.Record(success, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures);
         if (recorded.Previous != recorded.Next)
@@ -208,9 +208,13 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
         }
 
-        if (restarted)
+        if (restarted || previous != next)
         {
             client.ResetPeer(context.RemoteNodeId);
+        }
+
+        if (restarted)
+        {
             databases.OnPeerRecovered();
         }
         else
@@ -260,18 +264,19 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
         }
 
-        public (PeerStatus Previous, PeerStatus Next, int Failures) Record(bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter)
+        public (PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter)
         {
             lock (_gate)
             {
                 var previous = _health.Status;
                 _failures = success ? 0 : _failures + 1;
+                var outboundRecovered = success && _inboundPromoted;
                 _inboundPromoted &= !success;
                 var status = success ? PeerStatus.Healthy : _failures >= unreachableAfter ? PeerStatus.Unreachable : PeerStatus.Suspect;
                 _health = success
                     ? new PeerHealth(Info, status, roundTrip, now)
                     : _health with { Status = status };
-                return (previous, status, _failures);
+                return (previous, status, _failures, outboundRecovered);
             }
         }
 

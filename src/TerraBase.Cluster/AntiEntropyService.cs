@@ -118,7 +118,8 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         ArgumentNullException.ThrowIfNull(target);
         var started = timeProvider.GetTimestamp();
         var retried = false;
-        for (var page = 0; page < MaxPagesPerPeer && !session.CurrentBookmark.Dominates(target); page++)
+        var page = 0;
+        while (page < MaxPagesPerPeer && !session.CurrentBookmark.Dominates(target))
         {
             var remaining = timeout - timeProvider.GetElapsedTime(started);
             if (remaining <= TimeSpan.Zero)
@@ -142,6 +143,8 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             {
                 break;
             }
+
+            page++;
         }
 
         return session.CurrentBookmark.Dominates(target);
