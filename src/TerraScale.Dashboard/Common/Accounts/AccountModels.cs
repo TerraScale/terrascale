@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Common.Accounts
 {
@@ -252,6 +253,18 @@ namespace TerraScale.Dashboard.Common.Accounts
         public bool CanManageKeys => CanManage || CanWriteProjectData;
         public bool CanManageProjectCidrs => CanManage || CanManageProject;
         [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
+        [System.Text.Json.Serialization.JsonIgnore] public McpAgent? Agent { get; init; }
+
+        public string AuditSource(string fallback) =>
+            Agent is { } agent ? "mcp-agent:" + agent.AgentId : Session.Actor is { } actor ? "impersonation:" + actor : fallback;
+
+        public void DemandWrite()
+        {
+            if (Agent is { Write: false })
+            {
+                throw new AccountAccessException(McpAgents.ReadOnlyRefusal);
+            }
+        }
     }
 
     public sealed record InvitationReservation(string Email, DateTimeOffset ReservedAt, string InvitationId = "")

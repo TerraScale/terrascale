@@ -78,13 +78,15 @@ namespace TerraScale.Dashboard
                 problem.ProblemDetails.Extensions["requestId"] = problem.HttpContext.TraceIdentifier);
             builder.Services.AddSingleton<ServiceSloTelemetry>();
             builder.Services.AddSingleton(TimeProvider.System);
-            builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
+            builder.Services.AddSingleton<IDashboardIdentity>(provider => new DashboardIdentity(Environment.GetEnvironmentVariable, provider.GetRequiredService<TimeProvider>()));
             builder.Services.AddDashboardStorage();
             builder.Services.AddSingleton<TerraBasePlanSync>();
             builder.Services.AddSingleton<DashboardDbUpRunner>();
             builder.Services.AddHostedService(services => services.GetRequiredService<DashboardDbUpRunner>());
             builder.Services.AddSingleton<DependencyReadiness>();
             builder.Services.AddSingleton<DashboardSessions>();
+            builder.Services.AddSingleton<EntryRateLimits>();
+            builder.Services.AddSingleton<McpRejectedBearers>();
             builder.Services.AddAccountFeatures();
             builder.Services.AddAllowanceNotifications();
             builder.Services.AddSupport();

@@ -201,5 +201,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("sub")] string Subject,
         [property: JsonPropertyName("email")] string? Email,
         [property: JsonPropertyName("email_verified")] bool? EmailVerified,
-        [property: JsonPropertyName("name")] string? Name);
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("act")] TsAuthActor? Actor = null,
+        [property: JsonPropertyName("is_anonymous")] bool? IsAnonymous = null);
+
+    public sealed record TsAuthActor([property: JsonPropertyName("sub")] string Subject);
 }

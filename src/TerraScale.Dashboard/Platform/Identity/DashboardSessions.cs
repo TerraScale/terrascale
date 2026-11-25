@@ -37,7 +37,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             await EndAsync(context);
         }
 
-        record = record with { SessionExpiresAt = time.GetUtcNow().AddHours(12), RefreshLease = "", RefreshLeaseUntil = null, Device = DeviceLabel.Parse(context.Request.Headers.UserAgent) };
+        record = record with { SessionExpiresAt = record.Actor is null ? time.GetUtcNow().AddHours(12) : record.ExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = DeviceLabel.Parse(context.Request.Headers.UserAgent) };
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         var credentials = await identity.ReadAsync(context.RequestAborted);
         var now = time.GetUtcNow().UtcDateTime;
@@ -83,30 +83,6 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             return null;
         }
         return (record, await work!);
-    }
-
-    public async Task<SessionRecord?> ReadForPrivilegeAsync(HttpContext context)
-    {
-        if (BrowserToken(context) is not { } token)
-        {
-            return null;
-        }
-
-        var lookup = Lookup.Browser(Key(token));
-        var current = await ResolveAsync(lookup, context.RequestAborted);
-        if (current is null) { Clear(context); return null; }
-        var record = await ResolveAsync(lookup, context.RequestAborted, forceRefresh: true, initialAccessToken: current.AccessToken);
-        if (record is not null && (record.UserId != current.UserId || record.Email != current.Email))
-        {
-            throw new IOException("Privileged session identity changed.");
-        }
-
-        if (record is null)
-        {
-            Clear(context);
-        }
-
-        return record;
     }
 
     public async Task<string> CreateCredentialAsync(SessionRecord record, DateTimeOffset expiresAt, CancellationToken cancellationToken)
@@ -188,12 +164,10 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             .OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal)];
     }
 
-    private async Task<SessionRecord?> ResolveAsync(Lookup lookup, CancellationToken cancellationToken, bool forceRefresh = false, string? initialAccessToken = null,
-        Func<SessionRecord, Task>? alongside = null)
+    private async Task<SessionRecord?> ResolveAsync(Lookup lookup, CancellationToken cancellationToken, Func<SessionRecord, Task>? alongside = null)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
         var waitDeadline = Stopwatch.StartNew();
-        var accessOnEntry = initialAccessToken;
         var renewBefore = RenewBeforeExpiry;
         while (true)
         {
@@ -204,7 +178,6 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             }
 
             var record = Open(row, credentials.SessionEncryptionKey);
-            accessOnEntry ??= record.AccessToken;
             var now = time.GetUtcNow();
             if ((record.SessionExpiresAt ?? record.ExpiresAt) <= now)
             {
@@ -216,15 +189,10 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 return null;
             }
 
-            if (record.ExpiresAt <= now + renewBefore || forceRefresh && record.AccessToken == accessOnEntry)
+            if (record.ExpiresAt <= now + renewBefore)
             {
                 if (string.IsNullOrWhiteSpace(record.RefreshToken))
                 {
-                    if (forceRefresh && record.ExpiresAt > now)
-                    {
-                        throw new IOException("Fresh platform authorization is unavailable.");
-                    }
-
                     await RemoveAsync(row, "no refresh token", cancellationToken);
                     return null;
                 }
@@ -274,7 +242,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                         await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, cancellationToken);
                     }
 
-                    if (forceRefresh || record.ExpiresAt <= time.GetUtcNow())
+                    if (record.ExpiresAt <= time.GetUtcNow())
                     {
                         throw;
                     }
@@ -289,8 +257,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                     throw;
                 }
 
-                if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||
-                    forceRefresh && refreshed.AccessToken == accessOnEntry)
+                if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now)
                 {
                     throw new IOException("Refreshed session identity is invalid.");
                 }
@@ -580,7 +547,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
 public sealed record SessionRecord(string UserId, string Name, string Email, string AccessToken, string? RefreshToken, DateTimeOffset ExpiresAt,
     DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null, string? IdToken = null,
-    string? Device = null, bool OrganizationPicker = false)
+    string? Device = null, bool OrganizationPicker = false, string? Actor = null)
 {
     public override string ToString()
     {

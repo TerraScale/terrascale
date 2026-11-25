@@ -523,6 +523,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public async Task UpdateOrganizationAsync(AccountContext context, Func<OrganizationRecord, Task> update, CancellationToken cancellationToken)
         {
             var id = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
+            context.DemandWrite();
             for (var attempt = 0; attempt < 4; attempt++)
             {
                 var live = (await platform.ListOrganizationsAsync(context.Session, cancellationToken)).FirstOrDefault(org => org.Id == id);
@@ -556,10 +557,8 @@ namespace TerraScale.Dashboard.Common.Accounts
 
                 for (var index = recorded; index < org.AuditEvents.Count; index++)
                 {
-                    if (org.AuditEvents[index].Ip is null)
-                    {
-                        org.AuditEvents[index] = org.AuditEvents[index] with { Ip = ClientIp };
-                    }
+                    var item = org.AuditEvents[index];
+                    org.AuditEvents[index] = item with { Ip = item.Ip ?? ClientIp, Source = context.AuditSource(item.Source) };
                 }
 
                 if (org.Id != id)

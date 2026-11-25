@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.Features.Auth
         public async Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            var metadata = await Client().Oidc.GetDiscoveryDocumentAsync(cancellationToken);
+            var metadata = await MetadataAsync(Client(), cancellationToken);
             var endpoint = TrustedEndpoint(metadata.AuthorizationEndpoint);
             var fields = new Dictionary<string, string>
             {
@@ -45,7 +45,10 @@ namespace TerraScale.Dashboard.Features.Auth
             catch (TsAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_request" && credentialExpiresAt is not null)
             { return new DashboardValidation("This token could not be created with that expiry. Choose a shorter expiry."); }
-            return new ExchangeResult(await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken));
+            var session = await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken);
+            return session.Actor is not null && credentialExpiresAt is not null
+                ? new ExchangeResult(new DashboardValidation("An impersonated session can't create long-lived tokens."))
+                : new ExchangeResult(session);
         }
 
         public async Task<SessionRecord> RefreshAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -83,14 +86,15 @@ namespace TerraScale.Dashboard.Features.Auth
                 var metadata = await metadataRead;
                 _ = TrustedIssuer(metadata.Issuer);
                 var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, null,
-                    await keysRead, time.GetUtcNow());
+                    await SigningKeysAsync(client, tokens.IdToken, cancellationToken), time.GetUtcNow());
                 if (claims.Subject != session.UserId)
                 {
                     throw new SignInRejectedException();
                 }
             }
             var user = await userRead;
-            if (user.Subject != session.UserId || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != session.Email)
+            if (user.Subject != session.UserId || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != session.Email ||
+                !Acceptable(user) || user.Actor?.Subject != session.Actor)
             {
                 throw new SignInRejectedException();
             }
@@ -100,7 +104,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 AccessToken = tokens.AccessToken,
                 RefreshToken = string.IsNullOrWhiteSpace(tokens.RefreshToken) ? session.RefreshToken : tokens.RefreshToken,
                 IdToken = tokens.IdToken is { Length: > 0 } ? tokens.IdToken : session.IdToken,
-                ExpiresAt = AccessTokenExpiry(tokens.AccessToken, TrustedIssuer((await metadataRead).Issuer), await keysRead),
+                ExpiresAt = AccessTokenExpiry(tokens.AccessToken, TrustedIssuer((await metadataRead).Issuer), await SigningKeysAsync(client, tokens.AccessToken, cancellationToken)),
                 RefreshLease = "",
                 RefreshLeaseUntil = null
             };
@@ -124,7 +128,7 @@ namespace TerraScale.Dashboard.Features.Auth
             try
             {
                 var credentials = await identity.ReadAsync(cancellationToken);
-                var metadata = await Client().Oidc.GetDiscoveryDocumentAsync(cancellationToken);
+                var metadata = await MetadataAsync(Client(), cancellationToken);
                 if (string.IsNullOrWhiteSpace(metadata.EndSessionEndpoint))
                 {
                     return "/login";
@@ -147,21 +151,26 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             var client = Client();
-            var metadata = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
+            var metadata = await MetadataAsync(client, cancellationToken);
             var issuer = TrustedIssuer(metadata.Issuer);
             if (!metadata.IdTokenSigningAlgValuesSupported.Contains("ES256", StringComparer.Ordinal))
             {
                 throw new SignInRejectedException();
             }
 
-            var keys = await client.Oidc.GetJwksAsync(cancellationToken);
+            var keys = await SigningKeysAsync(client, tokens.IdToken, cancellationToken);
             var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, nonce, keys, time.GetUtcNow());
             var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, AccessTokenExpiry(tokens.AccessToken, issuer, keys))
             { IdToken = tokens.IdToken, OrganizationPicker = claims.OrganizationPicker };
             var user = await SessionUserInfoAsync(client, session, cancellationToken);
-            if (user.Subject != claims.Subject || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != claims.Email)
+            if (user.Subject != claims.Subject || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != claims.Email || !Acceptable(user))
             {
                 throw new SignInRejectedException();
+            }
+
+            if (user.Actor is { } actor)
+            {
+                session = session with { Actor = actor.Subject, RefreshToken = null };
             }
 
             if (!await IsActiveAsync(session, cancellationToken))
@@ -171,6 +180,9 @@ namespace TerraScale.Dashboard.Features.Auth
 
             return session;
         }
+
+        private static bool Acceptable(TsAuthUserInfo user) =>
+            user.IsAnonymous != true && user.Actor is null or { Subject.Length: > 0 and <= 128 } && user.Actor?.Subject != user.Subject;
 
         private DateTimeOffset AccessTokenExpiry(string accessToken, string issuer, TsAuthJwkSet keys)
         {

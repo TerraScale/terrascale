@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,32 @@ namespace TerraScale.Dashboard.Features.Auth
     internal static class AuthJwtClaims
     {
         internal const string OrganizationPickerClaim = "ts_org_picker";
+
+        public static string? KeyId(string? token)
+        {
+            var dot = token?.IndexOf('.', StringComparison.Ordinal) ?? -1;
+            if (token is not { Length: <= 65536 } || dot <= 0 || !Base64Url.IsValid(token.AsSpan(0, dot)))
+            {
+                return null;
+            }
+
+            var reader = new Utf8JsonReader(Base64Url.DecodeFromChars(token.AsSpan(0, dot)));
+            try
+            {
+                if (!JsonDocument.TryParseValue(ref reader, out var parsed))
+                {
+                    return null;
+                }
+
+                using var header = parsed;
+                return header.RootElement.ValueKind == JsonValueKind.Object && header.RootElement.TryGetProperty("kid", out var kid) &&
+                    kid.ValueKind == JsonValueKind.String ? kid.GetString() : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
 
         public static JsonElement Read(string? token, string issuer, string? audience, TsAuthJwkSet keys, DateTimeOffset now,
             string? requiredType = null, int maxLength = 65536)
