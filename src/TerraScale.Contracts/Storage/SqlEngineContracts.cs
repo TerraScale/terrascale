@@ -373,6 +373,8 @@ public interface ISqlTransaction : IAsyncDisposable
 
     ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
+    ValueTask<SqlReadOutcome> ReadCatalogAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken);
+
     ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken);
 
     ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken);

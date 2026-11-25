@@ -354,7 +354,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
             if (current is not [var value] || !value.TryGetIntegral(out var live) || live != checkedVersion)
             {
-                return new SqliteStatus(SqliteNative.Auth, "the schema changed after the rules were checked; retry the statement");
+                return new SqliteStatus(SqliteNative.Schema, "the schema changed after the rules were checked; retry the statement");
             }
         }
 

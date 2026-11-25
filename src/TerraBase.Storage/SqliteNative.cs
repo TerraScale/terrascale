@@ -22,6 +22,7 @@ internal static unsafe partial class SqliteNative
     public const int Constraint = 19;
     public const int Mismatch = 20;
     public const int Misuse = 21;
+    public const int Schema = 17;
     public const int Auth = 23;
     public const int Range = 25;
     public const int NotADatabase = 26;

@@ -300,7 +300,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return new SqlRefusal("transaction_aborted", "the transaction failed; only rollback is accepted", "25P02", 0, StatusCodes.Status400BadRequest);
         }
 
-        var outcome = await runner.PrepareAsync(target, batch.Statements, cancellationToken, _session);
+        var outcome = await runner.PrepareAsync(target, batch.Statements, RulesEnforcer.Catalog(transaction), cancellationToken);
         return outcome switch
         {
             EnforcedSql enforced => await RunInTransactionAsync(target, transaction, enforced.Statements, batch.Writes, cancellationToken),

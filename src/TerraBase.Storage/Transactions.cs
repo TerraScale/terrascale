@@ -6,7 +6,7 @@ internal sealed record TransactionStarted;
 
 internal readonly union TransactionStartOutcome(TransactionStarted, StorageBusy);
 
-internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId) : ISqlTransaction
+internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOptions options, Ulid txId) : ISqlTransaction
 {
     private readonly Channel<Command> _commands = Channel.CreateUnbounded<Command>(new UnboundedChannelOptions { SingleReader = true });
     private int _statements;
@@ -54,6 +54,9 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
 
         return await completion.Task.WaitAsync(cancellationToken);
     }
+
+    public ValueTask<SqlReadOutcome> ReadCatalogAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken) =>
+        session.ExecuteReadAsync(new SqlStatementRequest(session.DatabaseId, statements, SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty), cancellationToken);
 
     public async ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken)
     {
@@ -181,6 +184,46 @@ internal sealed class ReadTransaction : ISqlTransaction
         }
 
         return ValueTask.FromResult(outcome);
+    }
+
+    public ValueTask<SqlReadOutcome> ReadCatalogAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(statements);
+        cancellationToken.ThrowIfCancellationRequested();
+        SqlReadOutcome outcome;
+        lock (_gate)
+        {
+            outcome = _finished ? new StorageTimeout("transaction has finished") : ReadCatalog(statements, cancellationToken);
+        }
+
+        return ValueTask.FromResult(outcome);
+    }
+
+    private SqlReadOutcome ReadCatalog(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
+    {
+        List<SqlResultSet> results = [];
+        var info = new StatementInfo();
+        for (var index = 0; index < statements.Count; index++)
+        {
+            var executed = DatabaseSession.ExecuteOnReader(_reader, statements[index], index, info, null, limitResults: true, cancellationToken);
+            var failure = executed switch
+            {
+                SqlResultSet result => Collect(results, result),
+                SqlError error => error,
+            };
+            if (failure is not null)
+            {
+                return failure;
+            }
+        }
+
+        return new SqlReadResult(results, CausalBookmark.Empty);
+    }
+
+    private static SqlError? Collect(List<SqlResultSet> results, SqlResultSet result)
+    {
+        results.Add(result);
+        return null;
     }
 
     public ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken)

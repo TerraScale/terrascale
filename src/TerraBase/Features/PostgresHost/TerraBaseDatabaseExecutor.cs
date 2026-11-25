@@ -44,7 +44,7 @@ internal sealed class TerraBaseDatabaseExecutor(
         var begun = await coordinator.BeginTransactionAsync(session, options, cancellationToken);
         return begun switch
         {
-            ISqlTransaction transaction => Transaction(target.EndUser is { } auth ? new RulesTransaction(transaction, session, auth, rules) : transaction),
+            ISqlTransaction transaction => Transaction(target.EndUser is { } auth ? new RulesTransaction(transaction, target.Database.Id, auth, rules) : transaction),
             StorageBusy busy => busy,
             ClusterTimeout timeout => timeout,
         };
@@ -113,7 +113,7 @@ internal sealed class TerraBaseDatabaseExecutor(
             }
         }
 
-        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, cancellationToken, session);
+        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, cancellationToken, RulesEnforcer.Catalog(session));
         return enforced switch
         {
             EnforcedSql ready => request with { Statements = ready.Statements },
@@ -134,7 +134,7 @@ internal sealed class TerraBaseDatabaseExecutor(
     }
 }
 
-internal sealed class RulesTransaction(ISqlTransaction inner, ISqlDatabaseSession session, RulesAuth auth, RulesEnforcer rules) : ISqlTransaction
+internal sealed class RulesTransaction(ISqlTransaction inner, Ulid databaseId, RulesAuth auth, RulesEnforcer rules) : ISqlTransaction
 {
     public ISqlTransaction Inner { get; } = inner;
 
@@ -152,6 +152,9 @@ internal sealed class RulesTransaction(ISqlTransaction inner, ISqlDatabaseSessio
         };
     }
 
+    public ValueTask<SqlReadOutcome> ReadCatalogAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken) =>
+        Inner.ReadCatalogAsync(statements, cancellationToken);
+
     public ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken) => Inner.CommitLocalAsync(cancellationToken);
 
     public ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken) => Inner.StageAsync(cancellationToken);
@@ -162,7 +165,7 @@ internal sealed class RulesTransaction(ISqlTransaction inner, ISqlDatabaseSessio
 
     private async ValueTask<TransactionExecuteResult> ExecutePlannedAsync(PlannedStatement planned, CancellationToken cancellationToken)
     {
-        var enforced = await rules.ApplyAsync(session.DatabaseId, auth, [planned], cancellationToken, session);
+        var enforced = await rules.ApplyAsync(databaseId, auth, [planned], cancellationToken, RulesEnforcer.Catalog(Inner));
         return enforced switch
         {
             EnforcedSql { Statements: [var rewritten] } => await Inner.ExecuteAsync(rewritten, cancellationToken),

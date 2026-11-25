@@ -84,7 +84,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     }
 
     public async ValueTask<EnforcementOutcome> PrepareAsync(
-        ResolvedDatabase target, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken, ISqlDatabaseSession? session = null)
+        ResolvedDatabase target, IReadOnlyList<PlannedStatement> statements, CatalogReader catalog, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(statements);
@@ -95,7 +95,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         }
 
         return target.EndUser is { } auth
-            ? await rules.ApplyAsync(target.Database.Id, auth, statements, cancellationToken, session)
+            ? await rules.ApplyAsync(target.Database.Id, auth, statements, cancellationToken, catalog)
             : new EnforcedSql([.. statements.Select(static statement => statement.Statement)], null);
     }
 
@@ -145,7 +145,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         {
             Completed => await access.OpenAsync(target.Database, cancellationToken) switch
             {
-                ISqlDatabaseSession session => await PrepareAsync(target, batch.Statements, cancellationToken, session) switch
+                ISqlDatabaseSession session => await PrepareAsync(target, batch.Statements, RulesEnforcer.Catalog(session), cancellationToken) switch
                 {
                     EnforcedSql enforced => await ExecuteAsync(target, session, enforced.Statements, batch.Writes, mode, causality.After, enforced.RulesVersion, serviceRead, cancellationToken),
                     SqlRefusal refusal => refusal,
