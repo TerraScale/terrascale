@@ -256,7 +256,7 @@ public sealed record CommitMetadata(
 
 public sealed record RemoteCommitBatch(Ulid DatabaseId, IReadOnlyList<CommitMetadata> Commits);
 
-public sealed record RemoteApplyOutcome(int Applied, int Duplicates, int Buffered, CausalBookmark Bookmark);
+public sealed record RemoteApplyOutcome(int Applied, int Duplicates, int Buffered, CausalBookmark Bookmark, int Quarantined);
 
 public sealed record CommitLogPage(Ulid DatabaseId, string OriginRegion, IReadOnlyList<CommitMetadata> Entries, long NextSequence);
 
@@ -337,7 +337,7 @@ public readonly union AbortStagedOutcome(StagedWriteAborted, StagedWriteMissing)
 
 public readonly union ApplyRemoteBatchOutcome(RemoteApplyOutcome, SchemaMismatch, StorageCorrupted, StorageBusy);
 
-public readonly union ReadCommitLogOutcome(CommitLogPage, CommitLogGap, StorageBusy);
+public readonly union ReadCommitLogOutcome(CommitLogPage, CommitLogGap, StorageCorrupted, StorageBusy);
 
 public readonly union ListSegmentsOutcome(IReadOnlyList<CommitLogSegment>, StorageBusy);
 
@@ -389,6 +389,8 @@ public interface ISqlDatabaseSession : IAsyncDisposable
     ulong SchemaEpoch { get; }
 
     CausalBookmark CurrentBookmark { get; }
+
+    bool IsUsable { get; }
 
     ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken);
 

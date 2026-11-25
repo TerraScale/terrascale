@@ -43,6 +43,9 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             : session.ExecuteReadAsync(request, cancellationToken);
     }
 
+    public static int TakeRecoveredQuarantined(ISqlDatabaseSession session) =>
+        session is DatabaseSession sqlite ? sqlite.TakeRecoveredQuarantined() : 0;
+
     public static void SealCommittedLogs(ISqlDatabaseSession session)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -81,6 +84,11 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         await gate.WaitAsync(cancellationToken);
         try
         {
+            if (Tracked(request.DatabaseId) is { IsFaulted: true } faulted)
+            {
+                await CloseLockedAsync(faulted.DatabaseId);
+            }
+
             if (Tracked(request.DatabaseId) is { } existing)
             {
                 if (!CryptographicOperations.FixedTimeEquals(existing.RawKey, request.RawKey.Span))
@@ -266,11 +274,17 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
     private async ValueTask<BranchDatabaseOutcome> ReplayBranchAsync(
         DatabaseSession branch, SessionContext destination, IReadOnlyList<CommitMetadata> entries, CausalBookmark target, CancellationToken cancellationToken)
     {
+        var quarantined = 0;
         try
         {
             foreach (var chunk in CommitFrame.Batches(entries, _options.SegmentMaxBytes))
             {
                 var replayed = await branch.ReplayAsync(chunk, cancellationToken);
+                quarantined += replayed switch
+                {
+                    RemoteApplyOutcome outcome => outcome.Quarantined,
+                    SchemaMismatch or StorageCorrupted or StorageBusy => 0,
+                };
                 var failure = replayed switch
                 {
                     RemoteApplyOutcome => null,
@@ -303,7 +317,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         var opened = DatabaseSession.Open(destination, create: false, strict: false, ReleaseAsync);
         return opened switch
         {
-            DatabaseSession session => Branch(Track(session)),
+            DatabaseSession session => Branch(Track(session.WithQuarantined(quarantined))),
             StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.Zero),
             StorageBusy busy => busy,
         };

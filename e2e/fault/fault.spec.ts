@@ -375,7 +375,7 @@ async function completed(cells: Cells, source: string, operation: string): Promi
   return copy;
 }
 
-test('catalog replication ignores replays, keeps a deletion against a stale create, and refuses malformed commits', async () => {
+test('catalog replication ignores replays, keeps a deletion against a stale create, and quarantines poison commits', async () => {
   const environment: NodeJS.ProcessEnv = { ...process.env, DOTNET_ENVIRONMENT: 'Development', ASPNETCORE_ENVIRONMENT: 'Development' };
   for (const key of Object.keys(environment)) {
     if (key.startsWith('TS_') || key.startsWith('TERRABASE_')) delete environment[key];
@@ -393,7 +393,7 @@ test('catalog replication ignores replays, keeps a deletion against a stale crea
   for (const label of ['identical', 'foreign-delete', 'stale-create', 'duplicate-transaction', 'malformed', 'invalid-origin', 'stale-schema', 'local-ahead', 'gap', 'gap-filled']) {
     expect(result.stdout).toContain(`CATALOG_CASE ${label} passed`);
   }
-  expect(result.stdout).toContain('CATALOG_IMPORT identical=duplicate foreign=applied stale_create=deleted refused=4 gap=buffered unchanged=true');
+  expect(result.stdout).toContain('CATALOG_IMPORT identical=duplicate foreign=applied stale_create=deleted quarantined=2 refused=2 gap=buffered unchanged=true');
   console.log(result.stdout.split('\n').filter(line => line.startsWith('CATALOG_')).join('\n'));
 });
 

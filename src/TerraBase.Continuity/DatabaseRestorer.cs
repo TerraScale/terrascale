@@ -187,7 +187,7 @@ public sealed class DatabaseRestorer(
         }
     }
 
-    private static async ValueTask<ContinuityCopyOutcome> BranchAsync(
+    private async ValueTask<ContinuityCopyOutcome> BranchAsync(
         ISqlStorageEngine engine,
         Ulid sourceId,
         Ulid targetId,
@@ -206,8 +206,13 @@ public sealed class DatabaseRestorer(
         };
     }
 
-    private static async ValueTask<ContinuityCopyOutcome> CloseBranchAsync(ISqlDatabaseSession branch)
+    private async ValueTask<ContinuityCopyOutcome> CloseBranchAsync(ISqlDatabaseSession branch)
     {
+        if (SqliteStorageEngine.TakeRecoveredQuarantined(branch) is > 0 and var quarantined)
+        {
+            ContinuityLog.RecoveredCommitsQuarantined(logger, branch.DatabaseId, quarantined, branch.CurrentBookmark);
+        }
+
         var bookmark = branch.CurrentBookmark;
         await branch.DisposeAsync();
         return bookmark;
@@ -293,7 +298,7 @@ public sealed class DatabaseRestorer(
         }
     }
 
-    private static async ValueTask<ContinuityCopyOutcome> BranchStagedAsync(
+    private async ValueTask<ContinuityCopyOutcome> BranchStagedAsync(
         SqliteStorageEngine engine,
         ISqlDatabaseSession source,
         Ulid targetId,
@@ -604,6 +609,7 @@ public sealed class DatabaseRestorer(
         {
             CommitLogPage page => Accept(page),
             CommitLogGap gap => new OperationFailed(string.Concat("commit log for origin ", origin, " no longer holds history before sequence ", gap.OldestAvailable.ToString(CultureInfo.InvariantCulture)), ArchiveMayHelp: true),
+            StorageCorrupted corrupted => new OperationFailed(corrupted.Message),
             StorageBusy busy => new OperationFailed(busy.Message),
         };
 

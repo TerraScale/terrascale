@@ -1,5 +1,6 @@
 using System.Collections.Frozen;
 using Microsoft.Extensions.Logging;
+using TerraBase.Storage;
 
 namespace TerraBase.Continuity;
 
@@ -88,12 +89,22 @@ public sealed class ContinuitySessions(
         var opened = await engine.OpenAsync(new DatabaseOpenRequest(databaseId, rawKey), cancellationToken);
         return opened switch
         {
-            ISqlDatabaseSession session => session,
+            ISqlDatabaseSession session => Audited(session),
             DatabaseNotFound missing => new ContinuitySessionMissing(missing.DatabaseId, missing.Message, "not_found"),
             InvalidDatabaseRequest invalid => new ContinuitySessionUnavailable(invalid.Message, invalid.Code),
             StorageCorrupted corrupted => new ContinuitySessionUnavailable(corrupted.Message, "storage_corrupted"),
             StorageBusy busy => new ContinuitySessionUnavailable(busy.Message, "storage_busy"),
         };
+    }
+
+    private ISqlDatabaseSession Audited(ISqlDatabaseSession session)
+    {
+        if (SqliteStorageEngine.TakeRecoveredQuarantined(session) is > 0 and var quarantined)
+        {
+            ContinuityLog.RecoveredCommitsQuarantined(logger, session.DatabaseId, quarantined, session.CurrentBookmark);
+        }
+
+        return session;
     }
 
     internal async ValueTask<DateTimeOffset?> ReadRetentionCutoffAsync(Ulid databaseId, CancellationToken cancellationToken)

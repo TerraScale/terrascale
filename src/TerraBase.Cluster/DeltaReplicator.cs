@@ -104,7 +104,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         var foreign = commits.Where(commit => !string.Equals(commit.OriginRegion, topology.StorageOrigin, StringComparison.Ordinal) && commit.Sequence > 0).ToArray();
         if (foreign.Length == 0)
         {
-            return new RemoteApplyOutcome(0, commits.Count, 0, session.CurrentBookmark);
+            return new RemoteApplyOutcome(0, commits.Count, 0, session.CurrentBookmark, 0);
         }
 
         var before = session.CurrentBookmark;
@@ -153,6 +153,11 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     {
         databases.Observe(databaseId, outcome.Bookmark);
         Interlocked.Add(ref _applied, outcome.Applied);
+        if (outcome.Quarantined > 0)
+        {
+            ClusterLog.RemoteCommitsQuarantined(logger, databaseId, outcome.Quarantined, outcome.Bookmark);
+        }
+
         foreach (var commit in commits)
         {
             if (commit.Mode == ConsistencyMode.Strong && commit.Sequence <= outcome.Bookmark.Get(commit.OriginRegion))

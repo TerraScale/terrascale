@@ -4,7 +4,13 @@ public readonly record struct HlcTimestamp(long WallMs, ushort Logical, ushort N
 {
     public const int EncodedSize = 10;
 
+    public const long MaxWallMs = 253402300799999;
+
     public static HlcTimestamp Zero => default;
+
+    public bool IsValid => WallMs is >= 0 and <= MaxWallMs;
+
+    public DateTimeOffset WallTime => DateTimeOffset.FromUnixTimeMilliseconds(Math.Clamp(WallMs, 0, MaxWallMs));
 
     public int CompareTo(HlcTimestamp other)
     {

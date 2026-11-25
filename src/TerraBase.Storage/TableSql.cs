@@ -65,9 +65,9 @@ internal sealed class TableSql
         return sql;
     }
 
-    public string Insert(IReadOnlyList<TableColumn> columns, bool orIgnore)
+    public string Insert(IReadOnlyList<TableColumn> columns)
     {
-        var key = string.Concat(orIgnore ? "i" : "s", string.Join('\u001f', columns.Select(static column => column.Name)));
+        var key = string.Join('\u001f', columns.Select(static column => column.Name));
         if (_inserts.TryGetValue(key, out var sql))
         {
             return sql;
@@ -87,7 +87,7 @@ internal sealed class TableSql
             parameters.Append('?').Append((index + 1).ToString(CultureInfo.InvariantCulture));
         }
 
-        sql = string.Concat(orIgnore ? "INSERT OR IGNORE INTO " : "INSERT INTO ", _table, " (", names.ToString(), ") VALUES (", parameters.ToString(), ")");
+        sql = string.Concat("INSERT INTO ", _table, " (", names.ToString(), ") VALUES (", parameters.ToString(), ")");
         _inserts[key] = sql;
         return sql;
     }

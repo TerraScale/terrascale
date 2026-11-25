@@ -85,25 +85,29 @@ internal static class CatalogImportProof
         Require(!deleted.Contains(database.Id.ToString(), StringComparison.Ordinal) && await AbsentAsync(catalog, project.Id, database, cancellationToken),
             "the deletion left catalog rows behind: " + deleted);
 
-        Require(Describe(await session.ApplyRemoteBatchAsync(new RemoteCommitBatch(SystemDatabase.Id, [create, delete]), cancellationToken)) == "applied=0 duplicates=2 buffered=0"
-            && Describe(await replicator.ApplyAsync(SystemDatabase.Id, [create, delete], cancellationToken)) == "applied=0 duplicates=2 buffered=0",
+        Require(Describe(await session.ApplyRemoteBatchAsync(new RemoteCommitBatch(SystemDatabase.Id, [create, delete]), cancellationToken)) == "applied=0 duplicates=2 buffered=0 quarantined=0"
+            && Describe(await replicator.ApplyAsync(SystemDatabase.Id, [create, delete], cancellationToken)) == "applied=0 duplicates=2 buffered=0 quarantined=0",
             "replaying the local catalog log was not a duplicate");
         await UnchangedAsync("identical");
 
-        await ExpectAsync("foreign-delete", [delete with { OriginRegion = Foreign, Sequence = 1 }], "applied=1 duplicates=0 buffered=0", 1);
-        await ExpectAsync("stale-create", [create with { OriginRegion = Foreign, Sequence = 2 }], "applied=1 duplicates=0 buffered=0", 2);
-        await ExpectAsync("duplicate-transaction", [delete with { OriginRegion = Foreign, Sequence = 3 }], "applied=0 duplicates=1 buffered=0", 3);
-        await ExpectAsync("malformed", [delete with { OriginRegion = Foreign, Sequence = 4, DeltaPayload = "{"u8.ToArray() }], "storage_corrupted", 3);
-        await ExpectAsync("invalid-origin", [delete with { OriginRegion = "FRA!", Sequence = 4 }], "storage_corrupted", 3);
-        await ExpectAsync("stale-schema", [schema with { OriginRegion = Foreign, Sequence = 4 }], "schema_mismatch", 3);
+        await ExpectAsync("foreign-delete", [delete with { OriginRegion = Foreign, Sequence = 1 }], "applied=1 duplicates=0 buffered=0 quarantined=0", 1);
+        await ExpectAsync("stale-create", [create with { OriginRegion = Foreign, Sequence = 2 }], "applied=1 duplicates=0 buffered=0 quarantined=0", 2);
+        await ExpectAsync("duplicate-transaction", [delete with { OriginRegion = Foreign, Sequence = 3 }], "applied=0 duplicates=1 buffered=0 quarantined=0", 3);
+        var epoch = session.SchemaEpoch;
+        await ExpectAsync("malformed", [delete with { OriginRegion = Foreign, Sequence = 4, DeltaPayload = "{"u8.ToArray(), SchemaEpoch = ulong.MaxValue }],
+            "applied=0 duplicates=0 buffered=0 quarantined=1", 4);
+        Require(session.SchemaEpoch == epoch, "a quarantined malformed commit moved the schema epoch");
+        await ExpectAsync("invalid-origin", [delete with { OriginRegion = "FRA!", Sequence = 5 }], "storage_corrupted", 4);
+        await ExpectAsync("stale-schema", [schema with { OriginRegion = Foreign, Sequence = 5 }], "applied=0 duplicates=0 buffered=0 quarantined=1", 5);
+        Require(session.SchemaEpoch == epoch, "a quarantined stale schema commit moved the schema epoch");
         var ahead = Sequence(session.CurrentBookmark, origin) + 1000;
         Require(Describe(await session.ApplyRemoteBatchAsync(new RemoteCommitBatch(SystemDatabase.Id, [create with { Sequence = ahead }]), cancellationToken)) == "storage_corrupted",
             "a local-origin commit ahead of the local log was accepted");
         await UnchangedAsync("local-ahead");
-        await ExpectAsync("gap", [create with { OriginRegion = Foreign, Sequence = 6 }], "applied=0 duplicates=0 buffered=1", 3);
-        await ExpectAsync("gap-filled", [delete with { OriginRegion = Foreign, Sequence = 4 }, delete with { OriginRegion = Foreign, Sequence = 5 }],
-            "applied=0 duplicates=3 buffered=0", 6);
-        Console.WriteLine("CATALOG_IMPORT identical=duplicate foreign=applied stale_create=deleted refused=4 gap=buffered unchanged=true");
+        await ExpectAsync("gap", [create with { OriginRegion = Foreign, Sequence = 8 }], "applied=0 duplicates=0 buffered=1 quarantined=0", 5);
+        await ExpectAsync("gap-filled", [delete with { OriginRegion = Foreign, Sequence = 6 }, delete with { OriginRegion = Foreign, Sequence = 7 }],
+            "applied=0 duplicates=3 buffered=0 quarantined=0", 8);
+        Console.WriteLine("CATALOG_IMPORT identical=duplicate foreign=applied stale_create=deleted quarantined=2 refused=2 gap=buffered unchanged=true");
 
         async Task ExpectAsync(string name, IReadOnlyList<CommitMetadata> commits, string expected, long foreignSequence)
         {
@@ -162,6 +166,7 @@ internal static class CatalogImportProof
             {
                 CommitLogPage found => found,
                 CommitLogGap => null,
+                StorageCorrupted => null,
                 StorageBusy => null,
             };
             if (page is not { Entries.Count: > 0 } read)
@@ -235,7 +240,7 @@ internal static class CatalogImportProof
     };
 
     private static string Counts(RemoteApplyOutcome applied) => string.Create(CultureInfo.InvariantCulture,
-        $"applied={applied.Applied} duplicates={applied.Duplicates} buffered={applied.Buffered}");
+        $"applied={applied.Applied} duplicates={applied.Duplicates} buffered={applied.Buffered} quarantined={applied.Quarantined}");
 
     private static void Require(bool accepted, string message)
     {

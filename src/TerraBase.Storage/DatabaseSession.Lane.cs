@@ -201,6 +201,37 @@ internal sealed partial class DatabaseSession
         return staged;
     }
 
+    private async Task RunGuardedLaneAsync()
+    {
+        var lane = RunLaneAsync();
+        await lane.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (!lane.IsCompletedSuccessfully)
+        {
+            FaultLane();
+        }
+    }
+
+    private void FaultLane()
+    {
+        Volatile.Write(ref _laneFaulted, 1);
+        _requests.Writer.TryComplete();
+        var faulted = LaneFaulted();
+        foreach (var request in Volatile.Read(ref _inFlight))
+        {
+            _ = Fail(request, faulted);
+        }
+
+        Volatile.Read(ref _activeTransaction)?.Fault(faulted);
+        while (_requests.Reader.TryRead(out var queued))
+        {
+            _ = Fail(queued, faulted);
+        }
+
+        _capture.Suppressed = false;
+        _capture.End();
+        _ = _writer.RollbackOpenTransaction();
+    }
+
     private async Task RunLaneAsync()
     {
         var reader = _requests.Reader;
@@ -214,6 +245,7 @@ internal sealed partial class DatabaseSession
                 drained.Add(request);
             }
 
+            Volatile.Write(ref _inFlight, [.. drained]);
             group.Clear();
             foreach (var request in drained)
             {
@@ -229,6 +261,7 @@ internal sealed partial class DatabaseSession
             }
 
             ProcessGroup(group);
+            Volatile.Write(ref _inFlight, []);
         }
 
         while (reader.TryRead(out var abandoned))
@@ -546,9 +579,9 @@ internal sealed partial class DatabaseSession
 
     private async Task<bool> RunTransactionAsync(WriteTransaction transaction)
     {
-        if (transaction.IsAbandoned)
+        if (transaction.IsAbandoned || IsClosed)
         {
-            return false;
+            return transaction.Started.TrySetResult(Closing());
         }
 
         var begun = BeginWrite(applying: false);
@@ -559,7 +592,15 @@ internal sealed partial class DatabaseSession
 
         var context = new WriteContext(transaction.Options.Mode, analyzeReads: transaction.Options.Mode == ConsistencyMode.Strong, CancellationToken.None);
         _capture.Begin();
-        Volatile.Write(ref _activeTransaction, transaction);
+        _ = Interlocked.Exchange(ref _activeTransaction, transaction);
+        if (IsClosed)
+        {
+            _ = EndTransaction(context);
+            _ = Interlocked.Exchange(ref _activeTransaction, null);
+            transaction.Abandon();
+            return transaction.Started.TrySetResult(Closing());
+        }
+
         transaction.Started.TrySetResult(new TransactionStarted());
         var finished = false;
         while (!finished)
@@ -699,7 +740,12 @@ internal sealed partial class DatabaseSession
     private SqliteStatus BeginWrite(bool applying)
     {
         _writeGroupBroken = false;
-        var status = _writer.SetApplyMode(applying);
+        var status = _writer.RollbackOpenTransaction();
+        if (status.IsOk)
+        {
+            status = _writer.SetApplyMode(applying);
+        }
+
         if (status.IsOk)
         {
             status = _writer.Begin("BEGIN IMMEDIATE;");
@@ -712,6 +758,11 @@ internal sealed partial class DatabaseSession
             {
                 _ = _writer.Exec("ROLLBACK;");
             }
+        }
+
+        if (!status.IsOk && applying)
+        {
+            _ = _writer.SetApplyMode(false);
         }
 
         return status;
@@ -747,16 +798,17 @@ internal sealed partial class DatabaseSession
         var committed = _writer.Exec("COMMIT;");
         if (!committed.IsOk)
         {
-            log.Truncate(previousLength, previousLast);
+            var truncated = log.Truncate(previousLength, previousLast);
             if (_writer.InTransaction)
             {
                 _ = _writer.Exec("ROLLBACK;");
             }
 
             _writer.InvalidateSchemaCache();
-            return committed;
+            return truncated ? committed : UntruncatableLog(committed);
         }
 
+        log.MarkCommitted();
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
         _versions.Set([new(Region, commits[^1].Sequence)]);
         log.SealIfDue();

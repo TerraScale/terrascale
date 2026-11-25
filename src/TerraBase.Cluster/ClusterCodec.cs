@@ -82,6 +82,17 @@ internal static class ClusterCodec
 
     public static HlcTimestamp ReadHlc(ref WireReader reader)
     {
+        var hlc = ReadCommitHlc(ref reader);
+        if (!hlc.IsValid)
+        {
+            reader.MarkFaulted();
+        }
+
+        return hlc;
+    }
+
+    private static HlcTimestamp ReadCommitHlc(ref WireReader reader)
+    {
         var wall = reader.ReadInt64();
         var logical = reader.ReadUInt16();
         var node = reader.ReadUInt16();
@@ -117,7 +128,7 @@ internal static class ClusterCodec
         var txId = reader.ReadUlid();
         var origin = reader.ReadString();
         var sequence = (long)Math.Min(reader.ReadVarUInt64(), long.MaxValue);
-        var hlc = ReadHlc(ref reader);
+        var hlc = ReadCommitHlc(ref reader);
         var epoch = reader.ReadVarUInt64();
         var mode = ReadMode(ref reader);
         var bookmark = ReadBookmark(ref reader);

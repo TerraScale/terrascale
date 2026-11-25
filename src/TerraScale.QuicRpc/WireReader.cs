@@ -17,6 +17,8 @@ public ref struct WireReader(ReadOnlySpan<byte> buffer)
 
     public readonly bool IsComplete => !_faulted && _position == _buffer.Length;
 
+    public void MarkFaulted() => _faulted = true;
+
     public byte ReadUInt8()
     {
         var span = Take(1);

@@ -424,6 +424,11 @@ internal static class SqlAnalyzer
                 }
                 else if (Slot(tokens, row + 1, close, keyPosition) is var (first, last) && first >= 0)
                 {
+                    if (first == last && tokens[first].Is("DEFAULT"))
+                    {
+                        return null;
+                    }
+
                     edits.Add((tokens[first].Start, "coalesce("));
                     edits.Add((tokens[last].End, string.Concat(", ", SnowflakeCall, ")")));
                 }
@@ -460,6 +465,59 @@ internal static class SqlAnalyzer
         foreach (var (position, text) in edits.OrderByDescending(static edit => edit.Position))
         {
             builder.Insert(position, text);
+        }
+
+        return builder.ToString();
+    }
+
+    public static string? RewriteTriggerInserts(string sql, List<SqlToken> tokens, Func<string, TableSchema?> schemas)
+    {
+        var create = tokens.FindIndex(static token => !token.IsSymbol(";"));
+        if (create < 0 || !tokens[create].Is("CREATE"))
+        {
+            return null;
+        }
+
+        var trigger = FindTopLevel(tokens, create + 1, static (list, index) => list[index].Is("TRIGGER") || list[index].Is("TABLE") || list[index].Is("VIEW") || list[index].Is("INDEX"));
+        var begin = trigger < 0 || !tokens[trigger].Is("TRIGGER") ? -1 : FindTopLevel(tokens, trigger + 1, static (list, index) => list[index].Is("BEGIN"));
+        var end = tokens.FindLastIndex(static token => token.Is("END"));
+        if (begin < 0 || end <= begin)
+        {
+            return null;
+        }
+
+        List<(int Start, int End, string Text)> edits = [];
+        var first = begin + 1;
+        for (var index = first; index <= end; index++)
+        {
+            if (index < end && !tokens[index].IsSymbol(";"))
+            {
+                continue;
+            }
+
+            if (index > first)
+            {
+                var start = tokens[first].Start;
+                var stop = tokens[index - 1].End;
+                var inner = sql[start..stop];
+                if (RewriteSnowflakeInsert(inner, SqlTokenizer.Tokenize(inner), schemas) is { } rewritten)
+                {
+                    edits.Add((start, stop, rewritten));
+                }
+            }
+
+            first = index + 1;
+        }
+
+        if (edits.Count == 0)
+        {
+            return null;
+        }
+
+        var builder = new StringBuilder(sql);
+        foreach (var (start, stop, text) in edits.OrderByDescending(static edit => edit.Start))
+        {
+            _ = builder.Remove(start, stop - start).Insert(start, text);
         }
 
         return builder.ToString();

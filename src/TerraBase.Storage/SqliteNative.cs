@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using Utf8Text = System.Text.Unicode.Utf8;
 
 namespace TerraBase.Storage;
 
@@ -11,6 +12,8 @@ internal static unsafe partial class SqliteNative
     public const int Ok = 0;
     public const int Error = 1;
     public const int Internal = 2;
+    public const int Perm = 3;
+    public const int Abort = 4;
     public const int Busy = 5;
     public const int Locked = 6;
     public const int NoMem = 7;
@@ -19,10 +22,13 @@ internal static unsafe partial class SqliteNative
     public const int IoError = 10;
     public const int Corrupt = 11;
     public const int Full = 13;
+    public const int CantOpen = 14;
+    public const int Protocol = 15;
     public const int TooBig = 18;
     public const int Constraint = 19;
     public const int Mismatch = 20;
     public const int Misuse = 21;
+    public const int NoLargeFile = 22;
     public const int Schema = 17;
     public const int Auth = 23;
     public const int Range = 25;
@@ -106,6 +112,7 @@ internal static unsafe partial class SqliteNative
     public const int ConfigDefensive = 1010;
     public const int ConfigTrustedSchema = 1017;
     public const int Utf8 = 1;
+    public const int Innocuous = 0x000200000;
 
     public static readonly nint Transient = -1;
 
@@ -313,38 +320,52 @@ internal static unsafe partial class SqliteNative
     public static string? ReadOptionalUtf8(byte* pointer) =>
         pointer is null ? null : Encoding.UTF8.GetString(MemoryMarshal.CreateReadOnlySpanFromNullTerminated(pointer));
 
-    public static SqlValue ReadValue(nint value)
+    public static SqliteStatus ReadValue(nint value, out SqlValue result) => ValueType(value) switch
     {
-        var type = ValueType(value);
-        return type switch
-        {
-            TypeInteger => SqlValue.FromIntegral(ValueInt64(value)),
-            TypeFloat => Real(ValueDouble(value)),
-            TypeText => SqlValue.FromText(Text(ValueText(value), ValueBytes(value))),
-            TypeBlob => SqlValue.FromBlob(Blob(ValueBlob(value), ValueBytes(value))),
-            _ => SqlValue.Null,
-        };
+        TypeInteger => Read(SqlValue.FromIntegral(ValueInt64(value)), out result),
+        TypeFloat => Real(ValueDouble(value), out result),
+        TypeText => Text(ValueText(value), ValueBytes(value), out result),
+        TypeBlob => Read(SqlValue.FromBlob(Blob(ValueBlob(value), ValueBytes(value))), out result),
+        _ => Read(SqlValue.Null, out result),
+    };
+
+    public static SqliteStatus ReadColumn(nint statement, int index, out SqlValue result) => ColumnType(statement, index) switch
+    {
+        TypeInteger => Read(SqlValue.FromIntegral(ColumnInt64(statement, index)), out result),
+        TypeFloat => Real(ColumnDouble(statement, index), out result),
+        TypeText => Text(ColumnText(statement, index), ColumnBytes(statement, index), out result),
+        TypeBlob => Read(SqlValue.FromBlob(Blob(ColumnBlob(statement, index), ColumnBytes(statement, index))), out result),
+        _ => Read(SqlValue.Null, out result),
+    };
+
+    private static SqliteStatus Read(SqlValue value, out SqlValue result)
+    {
+        result = value;
+        return SqliteStatus.Success;
     }
 
-    public static SqlValue ReadColumn(nint statement, int index)
+    private static SqliteStatus Real(double value, out SqlValue result)
     {
-        var type = ColumnType(statement, index);
-        return type switch
+        if (double.IsFinite(value))
         {
-            TypeInteger => SqlValue.FromIntegral(ColumnInt64(statement, index)),
-            TypeFloat => Real(ColumnDouble(statement, index)),
-            TypeText => SqlValue.FromText(Text(ColumnText(statement, index), ColumnBytes(statement, index))),
-            TypeBlob => SqlValue.FromBlob(Blob(ColumnBlob(statement, index), ColumnBytes(statement, index))),
-            _ => SqlValue.Null,
-        };
+            return Read(SqlValue.FromReal(value), out result);
+        }
+
+        result = SqlValue.Null;
+        return SqliteStatus.NonFiniteReal;
     }
 
-    private static SqlValue Real(double value) => double.IsFinite(value)
-        ? SqlValue.FromReal(value)
-        : SqlValue.FromText(double.IsPositiveInfinity(value) ? "Infinity" : double.IsNegativeInfinity(value) ? "-Infinity" : "NaN");
+    private static SqliteStatus Text(byte* text, int length, out SqlValue result)
+    {
+        var bytes = text is null || length == 0 ? [] : new ReadOnlySpan<byte>(text, length);
+        if (!Utf8Text.IsValid(bytes))
+        {
+            result = SqlValue.Null;
+            return SqliteStatus.InvalidUtf8;
+        }
 
-    private static string Text(byte* text, int length) =>
-        text is null || length == 0 ? string.Empty : Encoding.UTF8.GetString(text, length);
+        return Read(SqlValue.FromText(Encoding.UTF8.GetString(bytes)), out result);
+    }
 
     private static byte[] Blob(void* blob, int length) =>
         blob is null || length == 0 ? [] : new ReadOnlySpan<byte>(blob, length).ToArray();

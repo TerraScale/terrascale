@@ -25,6 +25,11 @@ public sealed class HlcClock(ushort nodeId, TimeProvider time)
 
     public void Restore(HlcTimestamp persisted)
     {
+        if (!persisted.IsValid)
+        {
+            return;
+        }
+
         lock (_gate)
         {
             if (persisted.WallMs > _wall)
@@ -41,7 +46,7 @@ public sealed class HlcClock(ushort nodeId, TimeProvider time)
 
     public HlcTimestamp Tick()
     {
-        var wall = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var wall = Now();
         lock (_gate)
         {
             if (wall > _wall)
@@ -60,10 +65,11 @@ public sealed class HlcClock(ushort nodeId, TimeProvider time)
 
     public HlcTimestamp Observe(HlcTimestamp remote)
     {
-        var wall = time.GetUtcNow().ToUnixTimeMilliseconds();
-        var maxWall = wall + MaxFutureSkewMs;
-        var remoteWall = remote.WallMs > maxWall ? maxWall : remote.WallMs;
-        var remoteLogical = remote.WallMs > maxWall ? (ushort)0 : remote.Logical;
+        var wall = Now();
+        var maxWall = Math.Min(wall + MaxFutureSkewMs, HlcTimestamp.MaxWallMs);
+        var clamped = remote.WallMs > maxWall || remote.WallMs < 0;
+        var remoteWall = clamped ? Math.Clamp(remote.WallMs, 0, maxWall) : remote.WallMs;
+        var remoteLogical = clamped ? (ushort)0 : remote.Logical;
         lock (_gate)
         {
             var next = Math.Max(Math.Max(_wall, remoteWall), wall);
@@ -92,16 +98,19 @@ public sealed class HlcClock(ushort nodeId, TimeProvider time)
         }
     }
 
+    private long Now() => Math.Clamp(time.GetUtcNow().ToUnixTimeMilliseconds(), 0, HlcTimestamp.MaxWallMs);
+
     private void Increment()
     {
-        if (_logical == ushort.MaxValue)
+        if (_logical < ushort.MaxValue)
+        {
+            _logical++;
+        }
+        else if (_wall < HlcTimestamp.MaxWallMs)
         {
             _wall++;
             _logical = 0;
-            return;
         }
-
-        _logical++;
     }
 }
 

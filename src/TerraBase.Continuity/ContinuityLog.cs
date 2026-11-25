@@ -43,6 +43,9 @@ internal static partial class ContinuityLog
     [LoggerMessage(EventId = 2114, Level = LogLevel.Warning, Message = "Removing stale continuity staging files failed: {Reason}")]
     public static partial void StagingCleanupFailed(ILogger logger, string reason);
 
+    [LoggerMessage(EventId = 2116, Level = LogLevel.Error, Message = "Quarantined {Count} poison remote commits for database {DatabaseId}; their effects were skipped and the origin watermark advanced to {Bookmark}")]
+    public static partial void RecoveredCommitsQuarantined(ILogger logger, Ulid databaseId, int count, CausalBookmark bookmark);
+
     [LoggerMessage(EventId = 2120, Level = LogLevel.Warning, Message = "Changefeed replay for database {DatabaseId} origin {Origin} stopped: {Reason}")]
     public static partial void ReplayStopped(ILogger logger, Ulid databaseId, string origin, string reason);
 }

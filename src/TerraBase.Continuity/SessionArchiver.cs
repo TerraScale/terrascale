@@ -208,9 +208,10 @@ internal sealed class SessionArchiver(
         var read = await session.ReadCommitLogAsync(origin, sequence, 1, cancellationToken);
         return read switch
         {
-            CommitLogPage { Entries: [var entry, ..] } when entry.Sequence == sequence => DateTimeOffset.FromUnixTimeMilliseconds(entry.Hlc.WallMs),
+            CommitLogPage { Entries: [var entry, ..] } when entry.Sequence == sequence => entry.Hlc.WallTime,
             CommitLogPage => new ContinuityUnavailable("archived segment entry is not readable from the local commit log", "segment_unreadable"),
             CommitLogGap gap => new ContinuityUnavailable(string.Concat("local commit log no longer holds origin ", gap.OriginRegion, " entries for the archived segment"), "segment_unreadable"),
+            StorageCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, "storage_corrupted"),
             StorageBusy busy => Busy(busy),
         };
     }

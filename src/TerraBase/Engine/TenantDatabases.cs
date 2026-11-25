@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using TerraBase.Hosting;
+using TerraBase.Storage;
 using TerraScale.Contracts.Cluster;
 
 namespace TerraBase.Engine;
@@ -14,7 +15,7 @@ internal readonly union TenantBranchOutcome(ISqlDatabaseSession, ResourceNotFoun
 
 internal readonly union TenantDeleteOutcome(Completed, BackendUnavailable);
 
-internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring keyring, IClusterCoordinator cluster) : IAsyncDisposable
+internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring keyring, IClusterCoordinator cluster, ILogger<TenantDatabases> logger) : IAsyncDisposable
 {
     private static readonly BackendUnavailable MissingKey = new("the database's master key is not configured on this node", "master_key_missing");
 
@@ -26,7 +27,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
 
     public async ValueTask<TenantOpenOutcome> OpenAsync(Ulid databaseId, string keyId, CancellationToken cancellationToken)
     {
-        if (Cached(databaseId) is { } cached)
+        if (Cached(databaseId) is { IsUsable: true } cached)
         {
             return Opened(cached);
         }
@@ -81,7 +82,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
             var outcome = await engine.BranchAsync(new DatabaseBranchRequest(source.DatabaseId, branchId, key.RawKey, at), cancellationToken);
             return outcome switch
             {
-                ISqlDatabaseSession session => Branched(Track(branchId, session)),
+                ISqlDatabaseSession session => Branched(Track(branchId, Audited(session))),
                 DatabaseNotFound missing => new ResourceNotFound(missing.Message),
                 DatabaseAlreadyExists exists => new StateConflict(exists.Message),
                 InvalidDatabaseRequest error => new StateConflict(error.Message, "branch_point_invalid"),
@@ -180,7 +181,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         await gate.WaitAsync(cancellationToken);
         try
         {
-            if (Cached(databaseId) is { } raced)
+            if (await UsableAsync(databaseId) is { } raced)
             {
                 return Opened(raced);
             }
@@ -188,7 +189,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
             var outcome = await engine.OpenAsync(new DatabaseOpenRequest(databaseId, key.RawKey), cancellationToken);
             return outcome switch
             {
-                ISqlDatabaseSession session => Opened(Track(databaseId, session)),
+                ISqlDatabaseSession session => Opened(Track(databaseId, Audited(session))),
                 DatabaseNotFound => new ResourceNotFound("the database has no local copy on this node", "database_not_local"),
                 InvalidDatabaseRequest error => new BackendUnavailable(error.Message, "database_key_mismatch"),
                 StorageCorrupted corrupted => new BackendUnavailable(corrupted.Message, "storage_corrupted"),
@@ -207,7 +208,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         await gate.WaitAsync(cancellationToken);
         try
         {
-            if (Cached(databaseId) is { } raced)
+            if (await UsableAsync(databaseId) is { } raced)
             {
                 return Ready(raced);
             }
@@ -227,12 +228,43 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         }
     }
 
+    private async ValueTask<ISqlDatabaseSession?> UsableAsync(Ulid databaseId)
+    {
+        ISqlDatabaseSession? stale;
+        lock (_gate)
+        {
+            if (_sessions.GetValueOrDefault(databaseId) is not { } cached || cached.IsUsable)
+            {
+                return _sessions.GetValueOrDefault(databaseId);
+            }
+
+            _ = _sessions.Remove(databaseId, out stale);
+        }
+
+        if (stale is not null)
+        {
+            await stale.DisposeAsync();
+        }
+
+        return null;
+    }
+
     private ISqlDatabaseSession? Cached(Ulid databaseId)
     {
         lock (_gate)
         {
             return _sessions.GetValueOrDefault(databaseId);
         }
+    }
+
+    private ISqlDatabaseSession Audited(ISqlDatabaseSession session)
+    {
+        if (SqliteStorageEngine.TakeRecoveredQuarantined(session) is > 0 and var quarantined)
+        {
+            TenantLog.RecoveredCommitsQuarantined(logger, session.DatabaseId, quarantined, session.CurrentBookmark);
+        }
+
+        return session;
     }
 
     private ISqlDatabaseSession Track(Ulid databaseId, ISqlDatabaseSession session)
