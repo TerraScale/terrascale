@@ -129,6 +129,17 @@ internal sealed partial class DatabaseSession
                 }
             }
 
+            long cookieBefore = 0;
+            if (isDdl)
+            {
+                status = _writer.ReadSchemaCookie(out cookieBefore);
+                if (!status.IsOk)
+                {
+                    SqliteConnection.FinalizeStatement(handle);
+                    return status.ToSqlError(index);
+                }
+            }
+
             _capture.Annotation = SqlAnalyzer.Annotate(tokens, _writer.Schema);
             status = _writer.StepUser(handle, info, out var result, limitResults: true, context.CancellationToken);
             _capture.Annotation = null;
@@ -138,7 +149,19 @@ internal sealed partial class DatabaseSession
                 return status.ToSqlError(index);
             }
 
+            var schemaChanged = false;
             if (isDdl)
+            {
+                status = _writer.ReadSchemaCookie(out var cookieAfter);
+                if (!status.IsOk)
+                {
+                    return status.ToSqlError(index);
+                }
+
+                schemaChanged = cookieAfter != cookieBefore;
+            }
+
+            if (schemaChanged)
             {
                 context.Ddl.Add(segment.Trim().TrimEnd(';'));
                 if (populatedTable is not null)

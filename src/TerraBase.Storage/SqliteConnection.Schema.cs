@@ -2,12 +2,24 @@ namespace TerraBase.Storage;
 
 internal sealed partial class SqliteConnection
 {
-    public SqliteStatus ValidateSchemaCache()
+    public SqliteStatus ReadSchemaCookie(out long cookie)
     {
+        cookie = 0;
         var status = QueryFirst("PRAGMA schema_version", out var row);
-        if (!status.IsOk || row is null || !row[0].TryGetIntegral(out var cookie))
+        if (!status.IsOk || row is null || !row[0].TryGetIntegral(out cookie))
         {
             return status.IsOk ? SqliteStatus.Fail("schema_version unavailable") : status;
+        }
+
+        return SqliteStatus.Success;
+    }
+
+    public SqliteStatus ValidateSchemaCache()
+    {
+        var status = ReadSchemaCookie(out var cookie);
+        if (!status.IsOk)
+        {
+            return status;
         }
 
         var deltaVersion = _options.DeltaColumns.Version;

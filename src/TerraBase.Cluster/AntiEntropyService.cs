@@ -215,7 +215,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         var response = await client.CallAsync<CatchUpRequestMessage, CatchUpResponseMessage>(nodeId, QuicMessageType.CatchUpRequest, request, timeout, cancellationToken);
         return response switch
         {
-            CatchUpResponseMessage page when page.DatabaseId == session.DatabaseId => await ApplyPageAsync(session, page, cancellationToken),
+            CatchUpResponseMessage page when page.DatabaseId == session.DatabaseId => await ApplyPageAsync(session, nodeId, page, cancellationToken),
             CatchUpResponseMessage => (0, 0, false, "catch-up response named a different database", false),
             QuicUnavailable unavailable => (0, 0, false, string.Concat(nodeId, ": ", unavailable.Message), true),
             QuicTimeout timeoutError => TimedOutPull(nodeId, timeoutError),
@@ -253,7 +253,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         return (0, 0, false, string.Concat(nodeId, ": ", timeoutError.Message), false);
     }
 
-    private async ValueTask<(int Fetched, int Applied, bool More, string? Failure, bool TransportReset)> ApplyPageAsync(ISqlDatabaseSession session, CatchUpResponseMessage page, CancellationToken cancellationToken)
+    private async ValueTask<(int Fetched, int Applied, bool More, string? Failure, bool TransportReset)> ApplyPageAsync(ISqlDatabaseSession session, string nodeId, CatchUpResponseMessage page, CancellationToken cancellationToken)
     {
         if (!page.Found || page.Entries.Count == 0)
         {
@@ -265,11 +265,21 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         {
             RemoteApplyOutcome outcome => (page.Entries.Count, outcome.Applied, page.HasMore, null, false),
             DatabaseNotFound notFound => (page.Entries.Count, 0, false, notFound.Message, false),
-            SchemaMismatch mismatch => (page.Entries.Count, 0, false, string.Concat("schema epoch mismatch: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture)), false),
-            StorageCorrupted corrupted => (page.Entries.Count, 0, false, corrupted.Message, false),
+            SchemaMismatch mismatch => Stuck(session, nodeId, page, string.Concat(
+                "schema epoch mismatch: expected ",
+                mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture),
+                ", local ",
+                mismatch.ActualEpoch.ToString(CultureInfo.InvariantCulture))),
+            StorageCorrupted corrupted => Stuck(session, nodeId, page, corrupted.Message),
             StorageBusy busy => (page.Entries.Count, 0, false, busy.Message, false),
             ClusterUnavailable unavailable => (page.Entries.Count, 0, false, unavailable.Message, false),
         };
+    }
+
+    private (int Fetched, int Applied, bool More, string? Failure, bool TransportReset) Stuck(ISqlDatabaseSession session, string nodeId, CatchUpResponseMessage page, string reason)
+    {
+        ClusterLog.CatchUpApplyFailed(logger, session.DatabaseId, nodeId, page.Entries.Count, reason);
+        return (page.Entries.Count, 0, false, reason, false);
     }
 
     private static QuicRemoteError Gap(CausalBookmark available, string origin, long sequence)

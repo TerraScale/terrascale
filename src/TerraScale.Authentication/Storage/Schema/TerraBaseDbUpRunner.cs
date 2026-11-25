@@ -15,6 +15,12 @@ public readonly union SchemaUpgrade(AuthCompleted, AuthUnavailable, SchemaScript
 
 public sealed record SchemaJournalEntry(string ScriptName, string? Checksum);
 
+internal sealed record SchemaJournalPresent;
+
+internal sealed record SchemaJournalMissing;
+
+internal readonly union SchemaJournalProbe(SchemaJournalPresent, SchemaJournalMissing, AuthUnavailable);
+
 internal sealed record SchemaScript(string Name, string Contents, string Checksum);
 
 public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeProvider clock, ILogger<TerraBaseDbUpRunner> logger)
@@ -22,6 +28,8 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
     private const string ScriptPrefix = "schema/";
 
     private const string CreateJournal = "CREATE TABLE IF NOT EXISTS schema_versions (script_name TEXT NOT NULL PRIMARY KEY, applied TEXT NOT NULL, checksum TEXT)";
+
+    private const string JournalColumns = "SELECT COUNT(*) FROM pragma_table_info('schema_versions')";
 
     private const string ChecksumColumn = "SELECT COUNT(*) FROM pragma_table_info('schema_versions') WHERE name = 'checksum'";
 
@@ -41,7 +49,7 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
     public async Task<SchemaUpgrade> UpgradeAsync(CancellationToken cancellationToken)
     {
         await using var connection = await connections.OpenAsync(cancellationToken);
-        var journal = await ExecuteAsync(() => connection.ExecuteAsync(CreateJournal), "schema journal", cancellationToken) switch
+        var journal = await EnsureJournalAsync(connection, cancellationToken) switch
         {
             AuthCompleted => await ChecksumColumnAsync(connection, cancellationToken),
             AuthUnavailable unavailable => unavailable,
@@ -69,6 +77,30 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
         await using var connection = await connections.OpenAsync(cancellationToken);
         return await JournalAsync(connection, cancellationToken) is { } journal
             && Scripts.All(script => journal.TryGetValue(script.Name, out var checksum) && checksum == script.Checksum);
+    }
+
+    private async Task<SchemaUpgrade> EnsureJournalAsync(DbConnection connection, CancellationToken cancellationToken)
+    {
+        var probe = await ProbeJournalAsync(connection, cancellationToken);
+        return probe switch
+        {
+            SchemaJournalPresent => new AuthCompleted(),
+            SchemaJournalMissing => await ExecuteAsync(() => connection.ExecuteAsync(CreateJournal), "schema journal", cancellationToken),
+            AuthUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async Task<SchemaJournalProbe> ProbeJournalAsync(DbConnection connection, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await connection.ExecuteScalarAsync<long>(JournalColumns) > 0 ? new SchemaJournalPresent() : new SchemaJournalMissing();
+        }
+        catch (TerraBaseException failure) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning($"Schema journal could not be inspected ({failure.ErrorCode:@Code})");
+            return new AuthUnavailable("The schema journal could not be inspected.");
+        }
     }
 
     private async Task<SchemaUpgrade> ChecksumColumnAsync(DbConnection connection, CancellationToken cancellationToken)
@@ -182,15 +214,16 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
     private static async Task<bool> HasChecksumColumnAsync(DbConnection connection) =>
         await connection.ExecuteScalarAsync<long>(ChecksumColumn) > 0;
 
-    private static async Task<Dictionary<string, string?>?> JournalAsync(DbConnection connection, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, string?>?> JournalAsync(DbConnection connection, CancellationToken cancellationToken)
     {
         try
         {
             var entries = await connection.QueryAsync<SchemaJournalEntry>(ReadJournal);
             return entries.ToDictionary(entry => entry.ScriptName, entry => entry.Checksum, StringComparer.Ordinal);
         }
-        catch (TerraBaseException) when (!cancellationToken.IsCancellationRequested)
+        catch (TerraBaseException failure) when (!cancellationToken.IsCancellationRequested)
         {
+            logger.ZLogWarning($"Schema journal could not be read ({failure.ErrorCode:@Code})");
             return null;
         }
     }
