@@ -29,6 +29,8 @@ internal static class PostgresLimits
 
     public static readonly TimeSpan MaxTransaction = TimeSpan.FromSeconds(5);
 
+    public static readonly TimeSpan TransactionMessageGrace = TimeSpan.FromSeconds(20);
+
     public const int MinimumMessageBytesPerSecond = 16 * 1024;
 
     public static TimeSpan MessageBudget(long bytes) => MessageTimeout + TimeSpan.FromSeconds((double)bytes / MinimumMessageBytesPerSecond);

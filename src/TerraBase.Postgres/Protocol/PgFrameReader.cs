@@ -60,14 +60,18 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         }
     }
 
+    private long? _interruptedStart;
+
     public long LastMessageStarted { get; private set; }
 
     public async ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, PgReadDeadline? ceiling, CancellationToken cancellationToken)
     {
         var called = timeProvider.GetTimestamp();
-        using var deadline = new CancellationTokenSource(timeout > TimeSpan.Zero ? timeout : TimeSpan.Zero, timeProvider);
+        var started = _interruptedStart;
+        _interruptedStart = null;
+        var initial = started is { } resumed ? Remaining(resumed, 0, ceiling, called) : timeout;
+        using var deadline = new CancellationTokenSource(initial > TimeSpan.Zero ? initial : TimeSpan.Zero, timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        long? started = null;
         var seen = 0L;
         var oversized = 0L;
         var discarded = 0L;
@@ -88,12 +92,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             {
                 var first = started ??= timeProvider.GetTimestamp();
                 seen = discarded + buffer.Length;
-                var remaining = PostgresLimits.MessageBudget(seen) - timeProvider.GetElapsedTime(first);
-                if (ceiling is { } limit && Bound(limit, called, first) - timeProvider.GetElapsedTime(called) is var left && left < remaining)
-                {
-                    remaining = left;
-                }
-
+                var remaining = Remaining(first, seen, ceiling, called);
                 deadline.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
             }
 
@@ -116,7 +115,9 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                     var message = Parse(buffer.Slice(5, length - 4), body => ParseMessage(type, body));
                     input.AdvanceTo(buffer.GetPosition(length + 1));
                     LastMessageStarted = started ?? timeProvider.GetTimestamp();
-                    return ceiling is { } limit && timeProvider.GetElapsedTime(called) >= Bound(limit, called, LastMessageStarted) ? new PgIncompleteExpired() : message;
+                    var late = timeProvider.GetElapsedTime(LastMessageStarted) >= PostgresLimits.MessageBudget(seen)
+                        || (ceiling is { } limit && timeProvider.GetElapsedTime(called) >= Bound(limit, called, LastMessageStarted));
+                    return late ? new PgIncompleteExpired() : message;
                 }
             }
 
@@ -136,6 +137,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             if (read.IsCanceled)
             {
                 input.AdvanceTo(buffer.Start, buffer.End);
+                _interruptedStart = buffer.IsEmpty ? null : started;
                 return new PgReadInterrupted();
             }
 
@@ -147,6 +149,12 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
             input.AdvanceTo(buffer.Start, buffer.End);
         }
+    }
+
+    private TimeSpan Remaining(long first, long seen, PgReadDeadline? ceiling, long called)
+    {
+        var remaining = PostgresLimits.MessageBudget(seen) - timeProvider.GetElapsedTime(first);
+        return ceiling is { } limit && Bound(limit, called, first) - timeProvider.GetElapsedTime(called) is var left && left < remaining ? left : remaining;
     }
 
     private TimeSpan Bound(PgReadDeadline ceiling, long called, long started) =>
