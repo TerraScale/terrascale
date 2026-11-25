@@ -30,6 +30,7 @@ internal static class FeatureRegistrations
             services.AddSingleton<CallerTokens>();
             services.AddSingleton<CallerAdmission>();
             services.AddSingleton<CallerAuthentication>();
+            services.AddSingleton<AuthenticationGate>();
             services.AddSingleton<TokenVerifier>();
             services.AddSingleton<ApiKeyExchange>();
             services.AddSingleton<ControlSnapshots>();

@@ -19,6 +19,12 @@ test('service caller grants and transition counters', async () => {
   expect(stdout).toContain('empty kid alone: 401');
   expect(stdout).toContain('expired registry entry skipped; expired=1; soonest live expiry matches registry');
   expect(stdout).toContain('catalog caller: HTTP/2 200 counted once');
+  for (const path of ['/v1/admin/node/pressure', '/v1/backup']) {
+    expect(stdout).toContain(`node operator route ${path} unauthenticated: 401`);
+    expect(stdout).toContain(`node operator route ${path} customer user: 403`);
+    expect(stdout).toContain(`node operator route ${path} service caller without admin grant: 403`);
+    expect(stdout).toContain(`node operator route ${path} peer: admitted`);
+  }
   expect(stdout).toContain('terrabase_internal_authentication_requests_total{credential="caller_rejected"}: increased');
   console.log(stdout);
 });

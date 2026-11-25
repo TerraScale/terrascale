@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraBase.Features.Callers;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -8,7 +9,9 @@ namespace TerraBase.Features.Pressure;
 [JsonSerializable(typeof(PressureBody))]
 internal sealed partial class PressureJsonContext : JsonSerializerContext;
 
-internal sealed class PressureEndpoint(PressureSignals pressure) : EndpointWithoutRequest<PressureBody>
+internal readonly union PressureResponse(PressureBody, CallerForbidden);
+
+internal sealed class PressureEndpoint(PressureSignals pressure) : EndpointWithoutRequest<PressureResponse>
 {
     public override void Configure()
     {
@@ -20,7 +23,10 @@ internal sealed class PressureEndpoint(PressureSignals pressure) : EndpointWitho
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override ValueTask<PressureBody> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(pressure.Sample());
+    public override ValueTask<PressureResponse> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult<PressureResponse>(
+        CallerAuthenticationExtensions.OperatesNode(HttpContext.Caller)
+            ? pressure.Sample()
+            : new CallerForbidden("node pressure needs the peer credential or an operator admin grant", "forbidden_caller"));
 }
 
 internal static class PressureExtensions

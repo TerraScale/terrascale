@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Net.WebSockets;
 using System.Text.Json;
+using System.Threading.Channels;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Qos;
@@ -14,7 +15,7 @@ internal readonly union SocketAnswerOutcome(SocketAnswer, SqlRefusal);
 
 internal sealed record SocketAnswer(IReadOnlyList<SqlResultSet> Results);
 
-internal sealed record SocketMessage(byte[] Payload, long Started);
+internal sealed record SocketMessage(byte[] Payload, long Started, long Completed);
 
 internal sealed record SocketServices(
     SqlRunner Runner,
@@ -31,12 +32,34 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private const string TransactionExpired = "the transaction expired: it was open for more than 5 seconds and was rolled back";
 
+    private const int MaxAuthFrameBytes = 32 * 1024;
+
+    private const int MaxPendingFrames = 512;
+
+    private const long MaxPendingBytes = 4L * 1024 * 1024;
+
+    private static readonly TimeSpan PartialDrainBudget = TimeSpan.FromSeconds(2);
+
+    private static readonly TimeSpan CloseBudget = TimeSpan.FromSeconds(2);
+
+    private static readonly TimeSpan PumpSettleBudget = TimeSpan.FromSeconds(3);
+
     private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(5);
 
     private readonly SqlRunner runner = services.Runner;
     private readonly DatabaseAccess access = services.Access;
     private readonly IClusterCoordinator coordinator = services.Coordinator;
     private readonly TimeProvider time = services.Time;
+    private readonly long _accepted = services.Time.GetTimestamp();
+    private readonly CancellationTokenSource _pumpStop = new();
+    private readonly Lock _progress = new();
+    private Channel<SocketMessage>? _inbox;
+    private Task _pump = Task.CompletedTask;
+    private ReceiveDeadline? _waiting;
+    private ReceiveDeadline? _inFlight;
+    private (long Started, int Bytes, long Sequence)? _partial;
+    private long _pendingBytes;
+    private int _terminal;
 
     private ResolvedDatabase? _target;
     private ISqlDatabaseSession? _session;
@@ -50,16 +73,21 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private bool InTransaction => _transaction is not null || _failed;
 
-    public async Task RunAsync(ResolvedDatabase? target, SqlCausality causality, CancellationToken cancellationToken)
+    private bool ExpiredBeforeDispatch(SocketMessage message) =>
+        time.GetElapsedTime(_transactionStarted, message.Started) > QosPolicy.MaxTransaction
+        || (time.GetElapsedTime(_transactionStarted) > QosPolicy.MaxTransaction
+            && time.GetElapsedTime(_transactionStarted, message.Completed) <= QosPolicy.MaxTransaction);
+
+    public async Task RunAsync(ResolvedDatabase? target, IDisposable? preauthentication, SqlCausality causality, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(causality);
         _bookmark = causality.After;
         _mode = causality.Mode ?? target?.Database.DefaultConsistency ?? ConsistencyMode.Fast;
         if (target is null)
         {
-            _preauthentication = services.Sessions.BeginPreauthentication();
+            _preauthentication = preauthentication;
         }
-        else if (await AdmitAsync(null, target, causality, cancellationToken) is { } refused)
+        else if (await AdmitAsync(null, target, causality, inBand: false, cancellationToken) is { } refused)
         {
             await RefuseAsync(null, refused, cancellationToken);
             return;
@@ -67,7 +95,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var message = await ReceiveAsync(cancellationToken);
+            var message = _target is null ? await ReceiveAsync(cancellationToken) : await NextAsync(Inbox(), cancellationToken);
             if (message is null)
             {
                 return;
@@ -82,6 +110,14 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     public async ValueTask DisposeAsync()
     {
+        using (var settle = new CancellationTokenSource(PumpSettleBudget, time))
+        {
+            await _pump.WaitAsync(settle.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        await _pumpStop.CancelAsync();
+        await _pump;
+        _pumpStop.Dispose();
         if (_transaction is { } transaction)
         {
             _transaction = null;
@@ -117,7 +153,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             _bookmark = _bookmark.Merge(bookmark);
         }
 
-        if (_transaction is not null && time.GetElapsedTime(_transactionStarted, message.Started) > QosPolicy.MaxTransaction)
+        if (_transaction is not null && ExpiredBeforeDispatch(message))
         {
             await ExpireTransactionAsync(frame.Id);
             return false;
@@ -149,22 +185,18 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return false;
         }
 
-        var resolvedOutcome = await services.Authentication.AuthenticateBearerAsync(token, cancellationToken);
-        var resolved = resolvedOutcome switch
+        var remaining = AuthTimeout - time.GetElapsedTime(_accepted);
+        using var deadline = new CancellationTokenSource(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var resolving = ResolveAsync(frame.Id, token, causality, linked.Token).AsTask();
+        await ((Task)resolving).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (resolving.IsCanceled && deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            Caller caller => await access.DataAsync(caller, project, database, cancellationToken) switch
-            {
-                ResolvedDatabase target => await AdmitAsync(frame.Id, target, causality, cancellationToken),
-                InvalidInput invalid => new SqlRefusal(invalid.Code, invalid.Message, "22023", 0, StatusCodes.Status400BadRequest),
-                CredentialRejected unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
-                CallerForbidden forbidden => new SqlRefusal("forbidden_scope", forbidden.Message, "42501", 0, StatusCodes.Status403Forbidden),
-                ResourceNotFound missing => new SqlRefusal(missing.Code, missing.Message ?? "the database does not exist", "3D000", 0, StatusCodes.Status404NotFound),
-                BackendUnavailable unavailable => SqlRefusal.From(unavailable),
-            },
-            CredentialRejected unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
-            BackendUnavailable unavailable => SqlRefusal.From(unavailable),
-        };
-        if (resolved is { } refusal)
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, "authenticate within 5 seconds");
+            return false;
+        }
+
+        if (await resolving is { } refusal)
         {
             await RefuseAsync(frame.Id, refusal, cancellationToken);
             return false;
@@ -174,9 +206,34 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         return true;
     }
 
-    private async ValueTask<SqlRefusal?> AdmitAsync(long? id, ResolvedDatabase target, SqlCausality causality, CancellationToken cancellationToken)
+    private async ValueTask<SqlRefusal?> ResolveAsync(long? id, string token, SqlCausality causality, CancellationToken cancellationToken)
+    {
+        var resolvedOutcome = await services.Authentication.AuthenticateBearerAsync(token, cancellationToken);
+        return resolvedOutcome switch
+        {
+            Caller caller => await access.DataAsync(caller, project, database, cancellationToken) switch
+            {
+                ResolvedDatabase target => await AdmitAsync(id, target, causality, inBand: true, cancellationToken),
+                InvalidInput invalid => new SqlRefusal(invalid.Code, invalid.Message, "22023", 0, StatusCodes.Status400BadRequest),
+                CredentialRejected unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
+                CallerForbidden forbidden => new SqlRefusal("forbidden_scope", forbidden.Message, "42501", 0, StatusCodes.Status403Forbidden),
+                ResourceNotFound missing => new SqlRefusal(missing.Code, missing.Message ?? "the database does not exist", "3D000", 0, StatusCodes.Status404NotFound),
+                BackendUnavailable unavailable => SqlRefusal.From(unavailable),
+            },
+            CredentialRejected unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
+            BackendUnavailable unavailable => SqlRefusal.From(unavailable),
+        };
+    }
+
+    private async ValueTask<SqlRefusal?> AdmitAsync(long? id, ResolvedDatabase target, SqlCausality causality, bool inBand, CancellationToken cancellationToken)
     {
         var tenant = await services.Tenants.ForAsync(target.Project, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (inBand && time.GetElapsedTime(_accepted) >= AuthTimeout)
+        {
+            return new SqlRefusal("unauthorized", "authenticate within 5 seconds", "28000", 0, StatusCodes.Status401Unauthorized);
+        }
+
         var admitted = tenant switch
         {
             Tenant known => services.Sessions.TryOpen(known) switch
@@ -442,7 +499,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     }
 
     private TimeSpan IdleBudget() =>
-        _target is null ? AuthTimeout
+        _target is null ? AuthTimeout - time.GetElapsedTime(_accepted)
         : _transaction is not null ? QosPolicy.MaxTransaction - time.GetElapsedTime(_transactionStarted)
         : QosPolicy.IdleTimeout;
 
@@ -451,50 +508,222 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
         using var deadline = new ReceiveDeadline(time, IdleBudget(), ExpireAsync);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        input.Progress = deadline.Progress;
+        try
+        {
+            if (await ReadMessageAsync(buffer, MaxAuthFrameBytes, "the auth frame is at most 32 KiB", linked.Token) is not { } payload)
+            {
+                return null;
+            }
+
+            var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp(), 0);
+            return deadline.Complete() ? new SocketMessage(payload, arrived.Started, arrived.Completed) : null;
+        }
+        finally
+        {
+            deadline.Complete();
+            await deadline.Expiry;
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private ChannelReader<SocketMessage> Inbox()
+    {
+        if (_inbox is { } existing)
+        {
+            return existing.Reader;
+        }
+
+        var inbox = Channel.CreateBounded<SocketMessage>(new BoundedChannelOptions(MaxPendingFrames)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true,
+        });
+        _inbox = inbox;
+        input.Failed = MarkTerminal;
+        input.Progress = Progressed;
+        _pump = PumpAsync(inbox.Writer, _pumpStop.Token);
+        return inbox.Reader;
+    }
+
+    private void Progressed(long started, int bytes, long sequence)
+    {
+        lock (_progress)
+        {
+            _partial = (started, bytes, sequence);
+            _inFlight ??= new ReceiveDeadline(time, QosPolicy.MessageBudget(bytes) - time.GetElapsedTime(started), ExpirePartialAsync);
+            _inFlight.Progress(started, bytes);
+            _waiting?.Progress(started, bytes);
+        }
+    }
+
+    private async Task ExpirePartialAsync(bool partial)
+    {
+        MarkTerminal();
+        await CloseAsync(WebSocketCloseStatus.PolicyViolation, "incomplete message timeout exceeded");
+        _pumpStop.CancelAfter(PartialDrainBudget);
+    }
+
+    private async Task<bool> ArrivedOnTimeAsync()
+    {
+        ReceiveDeadline? inFlight;
+        lock (_progress)
+        {
+            inFlight = _inFlight;
+            _inFlight = null;
+        }
+
+        if (inFlight is null)
+        {
+            return true;
+        }
+
+        var onTime = inFlight.Complete();
+        await inFlight.Expiry;
+        inFlight.Dispose();
+        return onTime;
+    }
+
+    private async Task PumpAsync(ChannelWriter<SocketMessage> inbox, CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            while (await ReadMessageAsync(buffer, MaxFrameBytes, "frames are at most 1 MiB", cancellationToken) is { } payload)
+            {
+                if (!await ArrivedOnTimeAsync())
+                {
+                    return;
+                }
+
+                var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp(), 0);
+                var message = new SocketMessage(payload, arrived.Started, arrived.Completed);
+
+                bool published;
+                lock (_progress)
+                {
+                    published = Interlocked.Add(ref _pendingBytes, message.Payload.Length) <= MaxPendingBytes && inbox.TryWrite(message);
+                    if (published && _partial is { } partial && partial.Sequence == arrived.Sequence)
+                    {
+                        _partial = null;
+                    }
+                }
+
+                if (!published)
+                {
+                    MarkTerminal();
+                    await CloseAsync(WebSocketCloseStatus.PolicyViolation, "too many frames are waiting; wait for answers before sending more");
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            MarkTerminal();
+            input.Progress = null;
+            input.Failed = null;
+            inbox.TryComplete();
+            await ArrivedOnTimeAsync();
+            lock (_progress)
+            {
+                _partial = null;
+            }
+
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private async Task<SocketMessage?> NextAsync(ChannelReader<SocketMessage> inbox, CancellationToken cancellationToken)
+    {
+        ReceiveDeadline armed;
+        lock (_progress)
+        {
+            if (inbox.TryRead(out var ready))
+            {
+                Interlocked.Add(ref _pendingBytes, -ready.Payload.Length);
+                return Volatile.Read(ref _terminal) == 0 ? ready : null;
+            }
+
+            armed = new ReceiveDeadline(time, IdleBudget(), ExpireAsync, _partial is { } partial ? (partial.Started, partial.Bytes) : null);
+            _waiting = armed;
+        }
+
+        using var deadline = armed;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        try
+        {
+            if (!await inbox.WaitToReadAsync(linked.Token) || !inbox.TryRead(out var message))
+            {
+                return null;
+            }
+
+            Interlocked.Add(ref _pendingBytes, -message.Payload.Length);
+            return deadline.Complete() && Volatile.Read(ref _terminal) == 0 ? message : null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            lock (_progress)
+            {
+                _waiting = null;
+            }
+
+            deadline.Complete();
+            await deadline.Expiry;
+        }
+    }
+
+    private async Task<byte[]?> ReadMessageAsync(byte[] buffer, int limit, string limitReason, CancellationToken cancellationToken)
+    {
         try
         {
             using var message = new MemoryStream();
             while (true)
             {
-                var read = await socket.ReceiveAsync(buffer.AsMemory(), linked.Token);
+                var read = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
+                    MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.NormalClosure, "closed");
                     return null;
                 }
 
                 if (read.MessageType == WebSocketMessageType.Binary)
                 {
+                    MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.InvalidMessageType, "frames are JSON text");
                     return null;
                 }
 
-                if (message.Length + read.Count > MaxFrameBytes)
+                if (message.Length + read.Count > limit)
                 {
-                    await CloseAsync(WebSocketCloseStatus.MessageTooBig, "frames are at most 1 MiB");
+                    MarkTerminal();
+                    await CloseAsync(WebSocketCloseStatus.MessageTooBig, limitReason);
                     return null;
                 }
 
                 message.Write(buffer, 0, read.Count);
                 if (read.EndOfMessage)
                 {
-                    var started = input.Complete() ?? time.GetTimestamp();
-                    return deadline.Complete() ? new SocketMessage(message.ToArray(), started) : null;
+                    return message.ToArray();
                 }
             }
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)
         {
+            MarkTerminal();
             return null;
         }
-        finally
-        {
-            input.Progress = null;
-            deadline.Complete();
-            await deadline.Expiry;
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
+    }
+
+    private void MarkTerminal()
+    {
+        Volatile.Write(ref _terminal, 1);
+        _inbox?.Writer.TryComplete();
     }
 
     private async Task ExpireAsync(bool partial)
@@ -531,11 +760,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return;
         }
 
+        using var bounded = new CancellationTokenSource(CloseBudget, time);
         try
         {
-            await socket.CloseOutputAsync(status, reason, CancellationToken.None);
+            await socket.CloseOutputAsync(status, reason, bounded.Token);
         }
-        catch (WebSocketException)
+        catch (Exception error) when (error is WebSocketException || (error is OperationCanceledException && bounded.IsCancellationRequested))
         {
         }
     }

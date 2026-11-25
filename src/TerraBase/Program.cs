@@ -59,8 +59,10 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     });
     builder.Logging.AddTerraScaleLogging("terrabase");
 
-    builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = TimeSpan.FromSeconds(25));
+    builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = ApplicationRunCompletion.ShutdownBudget);
     builder.Services.AddSingleton(TimeProvider.System);
+    var faults = new HostFaults();
+    builder.Services.AddSingleton(faults);
     builder.Services.AddSingleton(options);
     builder.Services.AddSingleton(prepared.Credential);
     builder.Services.AddSingleton(prepared.Callers);
@@ -109,5 +111,10 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     app.MapTerraBaseMetrics();
     var bootstrap = app.Services.GetRequiredService<SystemBootstrap>();
     await ApplicationRunCompletion.RunAsync(app);
-    return bootstrap.Failure is { } failure ? await FailAsync(failure.Message) : 0;
+    if (bootstrap.Failure is { } failure)
+    {
+        return await FailAsync(failure.Message);
+    }
+
+    return faults.Faulted is { } source ? await FailAsync(string.Concat(source, " faulted")) : 0;
 }
