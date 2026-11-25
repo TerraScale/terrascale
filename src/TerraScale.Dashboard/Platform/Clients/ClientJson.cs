@@ -27,6 +27,7 @@ namespace TerraScale.Dashboard.Platform.Clients;
 [JsonSerializable(typeof(TerraBaseUsageBody))]
 [JsonSerializable(typeof(TerraBaseProjectUsage))]
 [JsonSerializable(typeof(TerraBaseDatabaseUsage))]
+[JsonSerializable(typeof(TerraBaseOrganizationUsage))]
 [JsonSerializable(typeof(TerraBaseLogsBody))]
 [JsonSerializable(typeof(TerraBaseRequestLogPage))]
 [JsonSerializable(typeof(TerraBasePlanBody))]

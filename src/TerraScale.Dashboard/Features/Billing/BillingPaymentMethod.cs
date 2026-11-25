@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var subscriptionRead = binding.SubscriptionId is { Length: > 0 } ? client.V1.Subscriptions.GetAsync(binding.SubscriptionId,
                 new() { Expand = ["default_payment_method"] }, cancellationToken: cancellationToken) : null;
             var customer = await customerRead;
-            if (customer.Id != binding.CustomerId || customer.Deleted == true || customer.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
+            if (customer.Id != binding.CustomerId || customer.Deleted == true || !Owns(customer.Metadata, context.Organization.Id, [binding.RequestId]))
             {
                 return new DashboardUnavailable("Payment method customer ownership does not match.");
             }
@@ -58,8 +58,7 @@ namespace TerraScale.Dashboard.Features.Billing
             if (subscriptionRead is not null)
             {
                 var subscription = await subscriptionRead;
-                if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId ||
-                    subscription.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
+                if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId || !OwnedBy(subscription, binding))
                 {
                     return new DashboardUnavailable("Payment method subscription ownership does not match.");
                 }

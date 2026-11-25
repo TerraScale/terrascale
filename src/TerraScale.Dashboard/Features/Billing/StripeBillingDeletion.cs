@@ -1,9 +1,19 @@
+using Dapper;
 using Stripe;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed partial class StripeBilling
     {
+        private const string DraftsOfOrganization = "SELECT request_id FROM stripe_checkouts WHERE organization_id = @OrganizationId";
+
+        private async Task<IReadOnlyCollection<string>> DraftIdsAsync(string organizationId, CancellationToken cancellationToken)
+        {
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            return [.. (await connection.QueryAsync<string>(DraftsOfOrganization, new { OrganizationId = organizationId })).Where(TerraScaleIds.IsValid).Distinct(StringComparer.Ordinal)];
+        }
+
         internal async Task EndCustomersForDeletionAsync(string organizationId, IReadOnlyList<string> retainedCustomers, CancellationToken cancellationToken)
         {
             if (!TerraScaleIds.IsValid(organizationId))
@@ -12,6 +22,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var client = await ClientAsync(cancellationToken);
+            var drafts = await DraftIdsAsync(organizationId, cancellationToken);
             var customers = new HashSet<string>(retainedCustomers, StringComparer.Ordinal);
             if (await storage.BindingRowAsync(organizationId, cancellationToken) is { ErasureId: null } row)
             {
@@ -49,7 +60,7 @@ namespace TerraScale.Dashboard.Features.Billing
             } while (page is not null);
             foreach (var customer in customers)
             {
-                await EndCustomerAsync(client, organizationId, customer, cancellationToken);
+                await EndCustomerAsync(client, organizationId, drafts, customer, cancellationToken);
             }
         }
 
@@ -91,7 +102,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
         }
 
-        private static async Task EndCustomerAsync(StripeClient client, string organizationId, string customerId, CancellationToken cancellationToken)
+        private static async Task EndCustomerAsync(StripeClient client, string organizationId, IReadOnlyCollection<string> drafts, string customerId, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(customerId))
             {
@@ -109,7 +120,7 @@ namespace TerraScale.Dashboard.Features.Billing
                         throw new IOException("Checkout customer identity changed.");
                     }
 
-                    if (item.Metadata.GetValueOrDefault("organization_id") != organizationId)
+                    if (!Owns(item.Metadata, organizationId, drafts))
                     {
                         continue;
                     }
@@ -120,7 +131,7 @@ namespace TerraScale.Dashboard.Features.Billing
                         checkout = await client.V1.Checkout.Sessions.ExpireAsync(checkout.Id, new(), Idempotent("delete-checkout-" + checkout.Id), cancellationToken);
                     }
 
-                    if (checkout.Id != item.Id || checkout.CustomerId != customerId || checkout.Metadata.GetValueOrDefault("organization_id") != organizationId)
+                    if (checkout.Id != item.Id || checkout.CustomerId != customerId || !Owns(checkout.Metadata, organizationId, drafts))
                     {
                         throw new IOException("Checkout deletion scope changed.");
                     }
@@ -132,7 +143,7 @@ namespace TerraScale.Dashboard.Features.Billing
                             throw new IOException("Completed checkout subscription is unavailable.");
                         }
 
-                        await CancelOwnedSubscriptionAsync(client, organizationId, customerId, checkout.SubscriptionId, cancellationToken);
+                        await CancelOwnedSubscriptionAsync(client, organizationId, drafts, customerId, checkout.SubscriptionId, cancellationToken);
                     }
                     else if (checkout.Status != "expired" && !(checkout.Status == "complete" && checkout.Mode == "setup"))
                     {
@@ -158,9 +169,9 @@ namespace TerraScale.Dashboard.Features.Billing
                         throw new IOException("Subscription customer identity changed.");
                     }
 
-                    if (subscription.Metadata.GetValueOrDefault("organization_id") == organizationId)
+                    if (Owns(subscription.Metadata, organizationId, drafts))
                     {
-                        await CancelOwnedSubscriptionAsync(client, organizationId, customerId, subscription.Id, cancellationToken);
+                        await CancelOwnedSubscriptionAsync(client, organizationId, drafts, customerId, subscription.Id, cancellationToken);
                     }
                 }
                 var next = page.HasMore ? page.Data.LastOrDefault()?.Id : null;
@@ -173,10 +184,11 @@ namespace TerraScale.Dashboard.Features.Billing
             } while (after is not null);
         }
 
-        private static async Task CancelOwnedSubscriptionAsync(StripeClient client, string organizationId, string customerId, string subscriptionId, CancellationToken cancellationToken)
+        private static async Task CancelOwnedSubscriptionAsync(StripeClient client, string organizationId, IReadOnlyCollection<string> drafts, string customerId, string subscriptionId,
+            CancellationToken cancellationToken)
         {
             var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken);
-            if (subscription.Id != subscriptionId || subscription.CustomerId != customerId || subscription.Metadata.GetValueOrDefault("organization_id") != organizationId)
+            if (subscription.Id != subscriptionId || subscription.CustomerId != customerId || !Owns(subscription.Metadata, organizationId, drafts))
             {
                 throw new IOException("Subscription ownership does not match.");
             }
@@ -187,7 +199,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             subscription = await client.V1.Subscriptions.CancelAsync(subscription.Id, cancellationToken: cancellationToken);
-            if (subscription.Id != subscriptionId || subscription.CustomerId != customerId || subscription.Metadata.GetValueOrDefault("organization_id") != organizationId || subscription.Status is not ("canceled" or "incomplete_expired"))
+            if (subscription.Id != subscriptionId || subscription.CustomerId != customerId || !Owns(subscription.Metadata, organizationId, drafts) || subscription.Status is not ("canceled" or "incomplete_expired"))
             {
                 throw new IOException("Subscription cancellation is incomplete.");
             }

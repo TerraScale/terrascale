@@ -2,6 +2,8 @@ using TerraScale.Dashboard.Platform.Persistence;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Net;
 using Stripe;
 using TerraScale.Dashboard.Platform.Clients;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
@@ -96,69 +98,49 @@ namespace TerraScale.Dashboard.Features.Billing
                 try
                 {
                     ValidateChange(snapshot.State);
-                    if (snapshot.Subscription.ScheduleId is { Length: > 0 })
+                    if (snapshot.Subscription.ScheduleId is { Length: > 0 } orphan)
                     {
-                        throw Conflict("The subscription changed in Stripe. Reload billing before retrying.");
+                        await ReleaseOrphanScheduleAsync(snapshot.Client, orphan, cancellationToken);
+                        snapshot = await PlanSnapshotAsync(context, cancellationToken) ?? throw Conflict("The subscription changed. Reload billing.");
+                        await ValidateSourceAsync(context.Organization.Id, receipt, snapshot);
+                        if (snapshot.Subscription.ScheduleId is { Length: > 0 })
+                        {
+                            throw Conflict("The subscription changed in Stripe. Reload billing before retrying.");
+                        }
                     }
                 }
-                catch (AccountAccessException) { await AbandonReservationAsync(context.Organization.Id, receipt); throw; }
+                catch (AccountAccessException) { await AbandonChangeAsync(context.Organization.Id, receipt); throw; }
             }
             var nextPrice = key == "free" ? null : await TargetPriceAsync(context, receipt, snapshot.Client, cancellationToken);
+            var upgrade = key != "free" && Rank(key) > Rank(snapshot.State.PlanKey);
+            if (upgrade && snapshot.Subscription.ScheduleId is { Length: > 0 })
+            {
+                await AbandonChangeAsync(context.Organization.Id, receipt);
+                throw Conflict("Undo the scheduled change first.");
+            }
+
             await BeginChangeAsync(context.Organization.Id, receipt, cancellationToken);
             var request = Idempotent("plan-" + receipt.RequestId);
-            if (key == "free")
+            await MutateAsync(context.Organization.Id, receipt, async () =>
             {
-                await snapshot.Client.V1.Subscriptions.UpdateAsync(snapshot.Subscription.Id, new() { CancelAtPeriodEnd = true }, request, cancellationToken);
-            }
-            else if (Rank(key) > Rank(snapshot.State.PlanKey))
-            {
-                if (snapshot.Subscription.ScheduleId is { Length: > 0 })
+                if (key == "free")
                 {
-                    throw Conflict("Undo the scheduled change first.");
+                    await snapshot.Client.V1.Subscriptions.UpdateAsync(snapshot.Subscription.Id, new() { CancelAtPeriodEnd = true }, request, cancellationToken);
                 }
-
-                await snapshot.Client.V1.Subscriptions.UpdateAsync(snapshot.Subscription.Id, new()
+                else if (upgrade)
                 {
-                    Items = [new() { Id = snapshot.Item.Id, Price = nextPrice!.Id, Quantity = 1 }],
-                    ProrationBehavior = "always_invoice",
-                    PaymentBehavior = "pending_if_incomplete"
-                }, request, cancellationToken);
-            }
-            else
-            {
-                var schedules = snapshot.Client.V1.SubscriptionSchedules;
-                var schedule = snapshot.Subscription.ScheduleId is { Length: > 0 } scheduleId ? await schedules.GetAsync(scheduleId, cancellationToken: cancellationToken) : null;
-                if (schedule?.Metadata.GetValueOrDefault("dashboard_change_key") != receipt.RequestId)
-                {
-                    SubscriptionSchedule created;
-                    try { created = await schedules.CreateAsync(new() { FromSubscription = snapshot.Subscription.Id }, Idempotent("plan-" + receipt.RequestId + "-schedule"), cancellationToken); }
-                    catch (StripeException) when (schedule is not null) { throw Conflict("The subscription schedule does not belong to this change."); }
-                    if (schedule is not null && created.Id != schedule.Id)
+                    await snapshot.Client.V1.Subscriptions.UpdateAsync(snapshot.Subscription.Id, new()
                     {
-                        throw Conflict("The subscription schedule does not belong to this change.");
-                    }
-
-                    schedule ??= created;
+                        Items = [new() { Id = snapshot.Item.Id, Price = nextPrice?.Id, Quantity = 1 }],
+                        ProrationBehavior = "always_invoice",
+                        PaymentBehavior = "pending_if_incomplete"
+                    }, request, cancellationToken);
                 }
-                if (schedule.SubscriptionId != snapshot.Subscription.Id || schedule.CustomerId != snapshot.Binding.CustomerId || schedule.CurrentPhase is null ||
-                    schedule.CurrentPhase.StartDate >= snapshot.Item.CurrentPeriodEnd)
+                else
                 {
-                    throw Conflict("The subscription schedule does not belong to this change.");
+                    await ScheduleDowngradeAsync(context.Organization.Id, receipt, snapshot, nextPrice, interval, cancellationToken);
                 }
-
-                await schedules.UpdateAsync(schedule.Id, new()
-                {
-                    EndBehavior = "release",
-                    ProrationBehavior = "none",
-                    Metadata = new() { ["dashboard_change_key"] = receipt.RequestId },
-                    Phases = [
-                        new() { StartDate = schedule.CurrentPhase.StartDate, EndDate = snapshot.Item.CurrentPeriodEnd, Items = [new() { Price = snapshot.Item.Price.Id, Quantity = 1 }],
-                            TrialEnd = snapshot.Subscription.Status == "trialing" ? snapshot.Subscription.TrialEnd : null },
-                        new() { Duration = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
-                            Items = [new() { Price = nextPrice!.Id, Quantity = 1 }], Metadata = new() { ["organization_id"] = context.Organization!.Id, ["plan"] = key, ["interval"] = interval } }
-                    ]
-                }, Idempotent("plan-" + receipt.RequestId + "-update"), cancellationToken);
-            }
+            });
             await SettleChangeAsync(context, receipt);
             return Rank(key) > Rank(receipt.SourcePlanKey) ? "pending" : "scheduled";
         }
@@ -179,22 +161,27 @@ namespace TerraScale.Dashboard.Features.Billing
             await ValidateSourceAsync(context.Organization!.Id, receipt, snapshot);
             if (snapshot.State.ScheduledPlanKey != receipt.Plan || snapshot.State.ScheduledInterval != receipt.Interval)
             {
-                await AbandonReservationAsync(context.Organization.Id, receipt);
+                await AbandonChangeAsync(context.Organization.Id, receipt);
                 throw Conflict("The scheduled change changed in Stripe.");
             }
+            if (receipt.Plan != "free" && snapshot.Subscription.ScheduleId is not { Length: > 0 })
+            {
+                await AbandonChangeAsync(context.Organization.Id, receipt);
+                throw Conflict("The scheduled change changed in Stripe.");
+            }
+
             await BeginChangeAsync(context.Organization.Id, receipt, cancellationToken);
-            if (receipt.Plan == "free")
+            await MutateAsync(context.Organization.Id, receipt, async () =>
             {
-                await snapshot.Client.V1.Subscriptions.UpdateAsync(snapshot.Subscription.Id, new() { CancelAtPeriodEnd = false }, Idempotent("plan-" + receipt.RequestId), cancellationToken);
-            }
-            else if (snapshot.Subscription.ScheduleId is { Length: > 0 } scheduleId)
-            {
-                await snapshot.Client.V1.SubscriptionSchedules.ReleaseAsync(scheduleId, new(), Idempotent("plan-" + receipt.RequestId), cancellationToken);
-            }
-            else
-            {
-                throw Conflict("The scheduled change changed in Stripe.");
-            }
+                if (receipt.Plan == "free")
+                {
+                    await snapshot.Client.V1.Subscriptions.UpdateAsync(snapshot.Subscription.Id, new() { CancelAtPeriodEnd = false }, Idempotent("plan-" + receipt.RequestId), cancellationToken);
+                }
+                else
+                {
+                    await snapshot.Client.V1.SubscriptionSchedules.ReleaseAsync(snapshot.Subscription.ScheduleId, new(), Idempotent("plan-" + receipt.RequestId), cancellationToken);
+                }
+            });
 
             await SettleChangeAsync(context, receipt);
             return "undone";
@@ -268,9 +255,12 @@ namespace TerraScale.Dashboard.Features.Billing
             return Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri.AbsolutePath, query);
         }
 
-        private async Task<PlanSnapshot?> PlanSnapshotAsync(AccountContext context, CancellationToken cancellationToken)
+        private Task<PlanSnapshot?> PlanSnapshotAsync(AccountContext context, CancellationToken cancellationToken) =>
+            context.Organization is { } organization ? PlanSnapshotAsync(organization, cancellationToken) : throw new UnreachableException("Billing needs an organization context.");
+
+        private async Task<PlanSnapshot?> PlanSnapshotAsync(OrganizationRecord organization, CancellationToken cancellationToken)
         {
-            var binding = await ReadAsync(context.Organization!.Id, cancellationToken);
+            var binding = await ReadAsync(organization.Id, cancellationToken);
             if (binding?.SubscriptionId is not { Length: > 0 })
             {
                 return null;
@@ -279,7 +269,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var client = await ClientAsync(cancellationToken);
             var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId,
                 new() { Expand = ["items.data.price.product", "pending_update.subscription_items.price.product", "latest_invoice"] }, cancellationToken: cancellationToken);
-            if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != context.Organization.Id)
+            if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId || !OwnedBy(subscription, binding))
             {
                 throw new IOException("Subscription ownership does not match.");
             }
@@ -298,7 +288,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
             var (plan, interval) = mapped.Value;
             var scheduledKey = ""; var scheduledInterval = ""; DateTimeOffset? scheduledAt = null;
-            if (subscription.CancelAtPeriodEnd && context.Organization.Kind == "personal") { scheduledKey = "free"; scheduledAt = item.CurrentPeriodEnd; }
+            if (subscription.CancelAtPeriodEnd && organization.Kind == "personal") { scheduledKey = "free"; scheduledAt = item.CurrentPeriodEnd; }
             if (subscription.ScheduleId is { Length: > 0 } scheduleId)
             {
                 var schedule = await client.V1.SubscriptionSchedules.GetAsync(scheduleId, new() { Expand = ["phases.items.price.product"] }, cancellationToken: cancellationToken);
@@ -364,7 +354,8 @@ namespace TerraScale.Dashboard.Features.Billing
                     SourceInterval = snapshot.State.Interval,
                     SourcePriceId = snapshot.Item.Price.Id,
                     PeriodEnd = snapshot.Item.CurrentPeriodEnd,
-                    Revision = checked((previous?.Revision ?? 0) + 1)
+                    Revision = checked((previous?.Revision ?? 0) + 1),
+                    StatusChangedAt = time.GetUtcNow()
                 };
                 if (previous is null ? await storage.InsertAsync(receipt, cancellationToken) : await storage.ReplaceAsync(receipt, cancellationToken))
                 {
@@ -386,13 +377,25 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw new IOException("Billing change price binding is unavailable.");
             }
 
-            if (current.Status == "applying") { receipt.Status = "applying"; return; }
+            if (current.Status == "applying")
+            {
+                current.StatusChangedAt = time.GetUtcNow();
+                if (!await storage.ReplaceAsync(current, cancellationToken) &&
+                    (await storage.ChangeRowAsync(orgId, cancellationToken) is not { Status: "applying" } resumed || resumed.RequestId != receipt.RequestId))
+                {
+                    throw Conflict("Billing changed concurrently. Reload billing.");
+                }
+
+                receipt.Status = "applying";
+                return;
+            }
             if (current.Status != "reserved")
             {
                 throw Conflict("Billing changed concurrently. Reload billing.");
             }
 
             current.Status = "applying";
+            current.StatusChangedAt = time.GetUtcNow();
             if (!await storage.ReplaceAsync(current, cancellationToken) &&
                 (await storage.ChangeRowAsync(orgId, cancellationToken) is not { Status: "applying" } applying || applying.RequestId != receipt.RequestId))
             {
@@ -439,17 +442,89 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             throw Conflict("Billing changed concurrently. Retry the change.");
         }
-        private async Task AbandonReservationAsync(string orgId, BillingChangeReceipt receipt)
+        private async Task<bool> AbandonChangeAsync(string orgId, BillingChangeReceipt receipt)
         {
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var current = await storage.ChangeRowAsync(orgId, cleanup.Token);
-            if (current is null || current.OrganizationId != orgId || current.RequestId != receipt.RequestId || current.Status != "reserved")
+            if (current is null || current.OrganizationId != orgId || current.RequestId != receipt.RequestId || current.Status is not ("reserved" or "applying"))
             {
-                return;
+                return false;
             }
 
             current.Status = "abandoned";
-            await storage.ReplaceAsync(current, cleanup.Token);
+            current.StatusChangedAt = time.GetUtcNow();
+            return await storage.ReplaceAsync(current, cleanup.Token);
+        }
+
+        private async Task MutateAsync(string orgId, BillingChangeReceipt receipt, Func<Task> mutation)
+        {
+            try
+            {
+                await mutation();
+            }
+            catch (AccountAccessException)
+            {
+                await AbandonChangeAsync(orgId, receipt);
+                throw;
+            }
+            catch (StripeException error) when (Refused(error))
+            {
+                await AbandonChangeAsync(orgId, receipt);
+                throw;
+            }
+        }
+
+        private static bool Refused(StripeException error) =>
+            error.HttpStatusCode is HttpStatusCode.BadRequest or HttpStatusCode.PaymentRequired or HttpStatusCode.NotFound
+            && error.StripeError?.Type is not "idempotency_error";
+
+        private static async Task ReleaseOrphanScheduleAsync(StripeClient client, string scheduleId, CancellationToken cancellationToken)
+        {
+            var schedule = await client.V1.SubscriptionSchedules.GetAsync(scheduleId, cancellationToken: cancellationToken);
+            if (schedule.CurrentPhase is null || schedule.Phases?.Any(phase => phase.StartDate >= schedule.CurrentPhase.EndDate) == true)
+            {
+                throw Conflict("The subscription changed in Stripe. Reload billing before retrying.");
+            }
+
+            await client.V1.SubscriptionSchedules.ReleaseAsync(scheduleId, new(), Idempotent("plan-orphan-" + scheduleId), cancellationToken);
+        }
+
+        private static async Task ScheduleDowngradeAsync(string orgId, BillingChangeReceipt receipt, PlanSnapshot snapshot, Price? nextPrice, string interval,
+            CancellationToken cancellationToken)
+        {
+            var schedules = snapshot.Client.V1.SubscriptionSchedules;
+            var schedule = snapshot.Subscription.ScheduleId is { Length: > 0 } scheduleId ? await schedules.GetAsync(scheduleId, cancellationToken: cancellationToken) : null;
+            if (schedule?.Metadata.GetValueOrDefault("dashboard_change_key") != receipt.RequestId)
+            {
+                SubscriptionSchedule created;
+                try { created = await schedules.CreateAsync(new() { FromSubscription = snapshot.Subscription.Id }, Idempotent("plan-" + receipt.RequestId + "-schedule"), cancellationToken); }
+                catch (StripeException) when (schedule is not null) { throw Conflict("The subscription schedule does not belong to this change."); }
+                if (schedule is not null && created.Id != schedule.Id)
+                {
+                    throw Conflict("The subscription schedule does not belong to this change.");
+                }
+
+                schedule ??= created;
+            }
+
+            if (schedule.SubscriptionId != snapshot.Subscription.Id || schedule.CustomerId != snapshot.Binding.CustomerId || schedule.CurrentPhase is null ||
+                schedule.CurrentPhase.StartDate >= snapshot.Item.CurrentPeriodEnd || nextPrice is null)
+            {
+                throw Conflict("The subscription schedule does not belong to this change.");
+            }
+
+            await schedules.UpdateAsync(schedule.Id, new()
+            {
+                EndBehavior = "release",
+                ProrationBehavior = "none",
+                Metadata = new() { ["dashboard_change_key"] = receipt.RequestId },
+                Phases = [
+                    new() { StartDate = schedule.CurrentPhase.StartDate, EndDate = snapshot.Item.CurrentPeriodEnd, Items = [new() { Price = snapshot.Item.Price.Id, Quantity = 1 }],
+                        TrialEnd = snapshot.Subscription.Status == "trialing" ? snapshot.Subscription.TrialEnd : null },
+                    new() { Duration = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
+                        Items = [new() { Price = nextPrice.Id, Quantity = 1 }], Metadata = new() { ["organization_id"] = orgId, ["plan"] = receipt.Plan, ["interval"] = interval } }
+                ]
+            }, Idempotent("plan-" + receipt.RequestId + "-update"), cancellationToken);
         }
         private async Task SettleChangeAsync(AccountContext context, BillingChangeReceipt receipt)
         {
@@ -483,6 +558,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             current.Status = "applied";
+            current.StatusChangedAt = time.GetUtcNow();
             if (!await storage.ReplaceAsync(current, cancellationToken) &&
                 (await storage.ChangeRowAsync(orgId, cancellationToken) is not { Status: "applied" } applied || applied.RequestId != receipt.RequestId))
             {
@@ -505,7 +581,7 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             if (!SourceMatches(receipt, snapshot))
             {
-                await AbandonReservationAsync(orgId, receipt);
+                await AbandonChangeAsync(orgId, receipt);
                 throw Conflict("The subscription changed in Stripe. Reload billing before retrying.");
             }
         }

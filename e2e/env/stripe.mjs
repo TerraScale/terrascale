@@ -13,7 +13,7 @@ const deliveredEvents = new Map();
 const authFailures = new Set();
 const refundStatuses = new Map();
 const subscriptionTaxUpdates = new Map();
-const log = { calls: [], events: [], cancels: [], refunds: [], unexpected: [] };
+const log = { calls: [], events: [], cancels: [], refunds: [], releases: [], unexpected: [] };
 const holds = new Map();
 let billingClock = null;
 
@@ -127,6 +127,16 @@ const api = [
     log.cancels.push({ subscription: subscription.id, customer: subscription.customer, organization: subscription.metadata.organization_id });
     return Object.assign(subscription, { status: 'canceled' });
   }],
+  ['GET', /^\/v1\/subscription_schedules\/(sched_\w+)$/, (query, [schedule]) => find('sched', schedule), {}, {}, ['expand']],
+  ['POST', /^\/v1\/subscription_schedules\/(sched_\w+)\/release$/, (form, [key]) => {
+    const schedule = find('sched', key);
+    if (!schedule) return undefined;
+    if (schedule.status !== 'active') return { refused: 'You cannot release a subscription schedule that is no longer active.' };
+    const subscription = find('sub', schedule.subscription);
+    if (subscription?.schedule === schedule.id) subscription.schedule = null;
+    log.releases.push({ schedule: schedule.id, subscription: schedule.subscription });
+    return Object.assign(schedule, { status: 'released', released_subscription: schedule.subscription, subscription: null });
+  }, {}, {}, []],
   ['GET', /^\/v1\/invoices$/, (query) => list(owned('in', query.get('customer')).filter((invoice) => (!query.has('subscription') || invoice.parent.subscription_details.subscription === query.get('subscription')) && (!query.has('status') || invoice.status === query.get('status')))), { customer: customerId }, {}, ['customer', 'subscription', 'status', 'limit', 'starting_after']],
   ['GET', /^\/v1\/invoice_payments$/, (query) => list([...objects.values()].filter((payment) => payment.id.startsWith('inpay_') && payment.invoice === query.get('invoice') && payment.status === query.get('status'))), { invoice: /^in_\w+$/, status: /^paid$/ }, {}, ['invoice', 'status', 'limit']],
   ['GET', /^\/v1\/refunds$/, (query) => list([...objects.values()].filter((refund) => refund.id.startsWith('re_') && refund.payment_intent === query.get('payment_intent'))), { payment_intent: /^pi_\w+$/ }, {}, ['payment_intent', 'charge', 'limit']],
@@ -220,6 +230,35 @@ async function handle(request, response, body) {
     complete(session, Math.floor(new Date(start).getTime() / 1000));
     const subscription = find('sub', session.subscription);
     return reply(response, 200, { customer: customer.id, subscription: subscription.id });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-draft') {
+    const { draft, owner, name, price: selected = 'price_starter_month', paid } = JSON.parse(body);
+    const price = find('price', selected);
+    const metadata = { draft_id: draft, owner_user_id: owner, name, plan: price.product.replace(/^prod_/, ''), interval: 'monthly', request_id: draft };
+    const customer = store({ id: id('cus'), metadata: { draft_id: draft, owner_user_id: owner } });
+    const session = store({
+      object: 'checkout.session', id: id('cs_test'), client_reference_id: draft, customer: customer.id, metadata, mode: 'subscription',
+      status: paid ? 'open' : 'expired', payment_status: 'unpaid', url: null, automatic_tax: { enabled: true },
+    });
+    checkouts.set(session.id, { price, metadata: { ...metadata, terrascale_tax: 'automatic' } });
+    if (paid) complete(session);
+    return reply(response, 200, { checkout: session.id, customer: customer.id, subscription: session.subscription ?? null, session });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-orphan-schedule') {
+    const subscription = find('sub', JSON.parse(body).subscription);
+    if (!subscription) return reply(response, 404, {});
+    const [item] = subscription.items.data;
+    const phase = { start_date: item.current_period_start, end_date: item.current_period_end };
+    const schedule = store({
+      object: 'subscription_schedule', id: id('sched'), subscription: subscription.id, customer: subscription.customer, status: 'active', metadata: {}, end_behavior: 'release',
+      current_phase: phase, phases: [{ ...phase, items: [{ price: item.price.id, quantity: 1 }] }],
+    });
+    subscription.schedule = schedule.id;
+    return reply(response, 200, { schedule: schedule.id });
+  }
+  if (url.hostname === '127.0.0.1' && request.method === 'GET' && url.pathname === '/billing-object') {
+    const found = objects.get(url.searchParams.get('id') ?? '');
+    return found ? reply(response, 200, found) : reply(response, 404, {});
   }
   if (url.hostname === '127.0.0.1' && request.method === 'POST' && url.pathname === '/billing-plan-change') {
     const { subscription: key, price, at } = JSON.parse(body);

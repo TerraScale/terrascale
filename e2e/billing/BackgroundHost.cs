@@ -32,6 +32,7 @@ internal static class BackgroundHost
         builder.Services.AddSingleton<ServiceSloTelemetry>();
         builder.Services.AddSingleton<ILogDrainSource, LogDrainSource>();
         builder.Services.AddSingleton<LogDrains>();
+        builder.Services.AddSingleton<OrganizationUsage>();
         builder.Services.AddSingleton<IAlertSource, AlertSource>();
         builder.Services.AddSingleton<AlertRules>();
         builder.Services.AddSingleton<IAllowanceNotificationBackend, AllowanceNotificationBackend>();

@@ -31,6 +31,20 @@ internal static class JourneySql
 
     public const string InsertReceipt = "INSERT INTO stripe_event_receipts (id, completed_at, event_created, event_type, invoice_id, organization_id, processing_until, received_at, subscription_id, version) VALUES (@Id, @CompletedAt, @EventCreated, @EventType, @InvoiceId, @OrganizationId, @ProcessingUntil, @ReceivedAt, @SubscriptionId, @Version)";
 
+    public const string InsertRetryingReceipt = "INSERT INTO stripe_event_receipts (id, attempts, completed_at, event_created, event_type, invoice_id, organization_id, processing_until, received_at, subscription_id, version) VALUES (@Id, @Attempts, @CompletedAt, @EventCreated, @EventType, @InvoiceId, @OrganizationId, @ProcessingUntil, @ReceivedAt, @SubscriptionId, @Version)";
+
+    public const string Receipt = "SELECT id, attempts, completed_at, dead_lettered_at, event_created, event_type, invoice_id, organization_id, processing_until, received_at, subscription_id, version FROM stripe_event_receipts WHERE id = @Id";
+
+    public const string InsertDraft = "INSERT INTO pending_organization_checkouts (draft_id, checkout_id, created_at, customer_id, interval, name, organization_id, paid_at, plan, plan_id, refund_notice_at, refund_status, refusal_reason, renewal_at, state, subscription_id, subscription_status, user_id, version) VALUES (@DraftId, @CheckoutId, @CreatedAt, @CustomerId, @Interval, @Name, @OrganizationId, @PaidAt, @Plan, @PlanId, @RefundNoticeAt, @RefundStatus, @RefusalReason, @RenewalAt, @State, @SubscriptionId, @SubscriptionStatus, @UserId, @Version)";
+
+    public const string Draft = "SELECT draft_id, checkout_id, created_at, customer_id, interval, name, organization_id, paid_at, plan, plan_id, refund_notice_at, refund_status, refusal_reason, renewal_at, state, subscription_id, subscription_status, user_id, version FROM pending_organization_checkouts WHERE draft_id = @DraftId";
+
+    public const string InsertChange = "INSERT INTO billing_changes (id, action, interval, organization_id, period_end, plan, request_id, revision, source_interval, source_plan_key, source_price_id, status, status_changed_at, subscription_id, target_price_id, version) VALUES (@Id, @Action, @Interval, @OrganizationId, @PeriodEnd, @Plan, @RequestId, @Revision, @SourceInterval, @SourcePlanKey, @SourcePriceId, @Status, @StatusChangedAt, @SubscriptionId, @TargetPriceId, @Version)";
+
+    public const string ChangeStatus = "SELECT status FROM billing_changes WHERE organization_id = @OrganizationId";
+
+    public const string OwnerStamped = "SELECT count(*) FROM stripe_owner_stamps WHERE organization_id = @OrganizationId AND subscription_id = @SubscriptionId";
+
     private const string DatabaseNow = "SELECT strftime('%Y-%m-%d %H:%M:%f', 'now')";
 
     public static async Task<DateTime> NowAsync(DashboardDb storage, CancellationToken cancellationToken) =>

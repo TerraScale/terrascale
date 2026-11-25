@@ -174,8 +174,10 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
         transport.SendAsync<JsonElement, TerraBaseJsonOutcome>(ServiceCaller.Operator, HttpMethod.Get, string.Concat("/v1/usage/projects/", Segment(projectId), "/analytics"), Wire.JsonElement,
             cancellationToken);
 
-    public Task<TerraBaseJsonOutcome> ListAllowancesAsync(CancellationToken cancellationToken) =>
-        transport.SendAsync<JsonElement, TerraBaseJsonOutcome>(ServiceCaller.Operator, HttpMethod.Get, "/v1/usage/allowances", Wire.JsonElement, cancellationToken);
+    public Task<TerraBaseOrganizationUsageOutcome> GetOrganizationUsageAsync(string organizationId, DateTimeOffset month, CancellationToken cancellationToken) =>
+        transport.SendAsync<TerraBaseOrganizationUsage, TerraBaseOrganizationUsageOutcome>(ServiceCaller.Operator, HttpMethod.Get,
+            string.Concat("/v1/usage/organizations/", Segment(organizationId), Query(("month", month.ToString("yyyy-MM", CultureInfo.InvariantCulture)))),
+            Wire.TerraBaseOrganizationUsage, cancellationToken);
 
     private static string BackupDestination(string projectId) => string.Concat("/v1/projects/", Segment(projectId), "/backup-destination");
 

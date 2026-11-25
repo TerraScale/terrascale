@@ -33,6 +33,11 @@ namespace TerraScale.Dashboard.Platform.Observability
         private long mismatchedOverageCharges;
         private long unrecordedTerms;
         private long waitingOverageMonths;
+        private long waitingUsageMonths;
+        private long openOverageBindings;
+        private long deadLetteredStripeEvents;
+        private long abandonedDraftCheckouts;
+        private long reconciledStaleChanges;
         private long oldestWaitingOverageMonth;
         private long lateOverageObservations;
         private long deferredGraceExpiries;
@@ -47,9 +52,15 @@ namespace TerraScale.Dashboard.Platform.Observability
         public void ReportMismatchedOverage() => Interlocked.Increment(ref mismatchedOverageCharges);
         public void ReportUnrecordedTerms() => Interlocked.Increment(ref unrecordedTerms);
 
-        public void ReportWaitingOverageMonths(long count, DateTimeOffset? oldest)
+        public void ReportDeadLetteredStripeEvent() => Interlocked.Increment(ref deadLetteredStripeEvents);
+        public void ReportAbandonedDraftCheckout() => Interlocked.Increment(ref abandonedDraftCheckouts);
+        public void ReportReconciledStaleChange() => Interlocked.Increment(ref reconciledStaleChanges);
+
+        public void ReportWaitingOverageMonths(long terms, long usage, long open, DateTimeOffset? oldest)
         {
-            Interlocked.Exchange(ref waitingOverageMonths, count);
+            Interlocked.Exchange(ref waitingOverageMonths, terms);
+            Interlocked.Exchange(ref waitingUsageMonths, usage);
+            Interlocked.Exchange(ref openOverageBindings, open);
             Interlocked.Exchange(ref oldestWaitingOverageMonth, oldest?.ToUnixTimeSeconds() ?? 0);
         }
 
@@ -185,6 +196,16 @@ namespace TerraScale.Dashboard.Platform.Observability
                 "terrascale_billing_terms_unrecorded_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref unrecordedTerms).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_billing_overage_months_waiting_for_terms gauge\n" +
                 "terrascale_billing_overage_months_waiting_for_terms{service=\"ts-dashboard\"} " + Interlocked.Read(ref waitingOverageMonths).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_months_waiting_for_usage gauge\n" +
+                "terrascale_billing_overage_months_waiting_for_usage{service=\"ts-dashboard\"} " + Interlocked.Read(ref waitingUsageMonths).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_overage_open_bindings gauge\n" +
+                "terrascale_billing_overage_open_bindings{service=\"ts-dashboard\"} " + Interlocked.Read(ref openOverageBindings).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_stripe_events_dead_lettered_total counter\n" +
+                "terrascale_billing_stripe_events_dead_lettered_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref deadLetteredStripeEvents).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_organization_checkout_abandoned_total counter\n" +
+                "terrascale_organization_checkout_abandoned_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref abandonedDraftCheckouts).ToString(CultureInfo.InvariantCulture) + "\n" +
+                "# TYPE terrascale_billing_stale_changes_reconciled_total counter\n" +
+                "terrascale_billing_stale_changes_reconciled_total{service=\"ts-dashboard\"} " + Interlocked.Read(ref reconciledStaleChanges).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_billing_overage_oldest_waiting_month_seconds gauge\n" +
                 "terrascale_billing_overage_oldest_waiting_month_seconds{service=\"ts-dashboard\"} " + Interlocked.Read(ref oldestWaitingOverageMonth).ToString(CultureInfo.InvariantCulture) + "\n" +
                 "# TYPE terrascale_deletion_cleanup_failing_entries gauge\n" +

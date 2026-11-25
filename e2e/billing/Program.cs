@@ -428,6 +428,250 @@ try
     await EventAsync(binding, eventId);
     if ((await BindingAsync(binding.OrganizationId)).Version != version) { throw new InvalidOperationException("A replayed event changed billing state."); }
     Console.WriteLine("billing webhook journey: replayed provider event -> acknowledged, no billing write");
+
+    using var recoveryHost = BackgroundHost.Build();
+    var recovery = recoveryHost.Services.GetRequiredService<StripeBilling>();
+    var realNow = TimeProvider.System.GetUtcNow();
+
+    var deadOwner = await CreateAsync();
+    var deadEvent = "evt_dead_" + AccountService.NewId();
+    await InsertReceiptAsync(deadOwner, deadEvent, StripeBilling.MaxReceiptAttempts - 1);
+    await ControlAsync("/failure", new FailureInput("GET", "/v1/subscriptions/" + deadOwner.SubscriptionId, 404, 1, false));
+    await recovery.RecoverEventReceiptsAsync(cancellationToken);
+    await EventuallyAsync(async () => await ReceiptAsync(deadEvent) is { DeadLetteredAt: not null, CompletedAt: not null, Attempts: StripeBilling.MaxReceiptAttempts },
+        "A receipt failing its last attempt must be dead-lettered and never retried.");
+    Console.WriteLine("billing webhook journey: receipt failing its twelfth attempt -> dead-lettered, completed, no further retry");
+
+    var retryOwner = await CreateAsync();
+    var retryEvent = "evt_retry_" + AccountService.NewId();
+    await InsertReceiptAsync(retryOwner, retryEvent, 0);
+    await ControlAsync("/failure", new FailureInput("GET", "/v1/subscriptions/" + retryOwner.SubscriptionId, 404, 1, false));
+    await recovery.RecoverEventReceiptsAsync(cancellationToken);
+    await EventuallyAsync(async () => await ReceiptAsync(retryEvent) is { Attempts: 1, CompletedAt: null, DeadLetteredAt: null } retrying && retrying.ProcessingUntil > TimeProvider.System.GetUtcNow(),
+        "A failed receipt must back off with one recorded attempt.");
+    Require(await SignedAsync(recovery, SubscriptionEvent(retryEvent, retryOwner)) == "deferred", "A redelivery while the receipt backs off must answer 503.");
+    await storage.ReadAsync(connection => connection.ExecuteAsync("UPDATE stripe_event_receipts SET processing_until = @Due WHERE id = @Id",
+        new { Due = TimeProvider.System.GetUtcNow().AddMinutes(-1), Id = retryEvent }), cancellationToken);
+    Require(await SignedAsync(recovery, SubscriptionEvent(retryEvent, retryOwner)) == "applied", "A redelivery of a due failed receipt must reprocess it.");
+    Require(await ReceiptAsync(retryEvent) is { CompletedAt: not null, DeadLetteredAt: null }, "The reprocessed receipt must complete.");
+    Console.WriteLine("billing webhook journey: failed receipt -> one attempt with backoff, redelivery answers 503 while backing off, due redelivery reprocesses and completes");
+
+    var paidDraft = await DraftAsync(true);
+    Require(await SignedAsync(recovery, DraftEvent(paidDraft.Session)) == "applied", "A paid draft checkout event must be acknowledged.");
+    Require(await DraftRowAsync(paidDraft.DraftId) is { PaidAt: not null }, "A paid checkout event for an unknown customer must record payment on its draft by draft_id.");
+    var unpaidDraft = await DraftAsync(false);
+    await storage.ReadAsync(connection => connection.ExecuteAsync("UPDATE pending_organization_checkouts SET created_at = @At WHERE draft_id IN (@Paid, @Unpaid)",
+        new { At = realNow.AddHours(-25).UtcDateTime, Paid = paidDraft.DraftId, Unpaid = unpaidDraft.DraftId }), cancellationToken);
+    await recovery.ReconcileAbandonedDraftsAsync(cancellationToken);
+    await EventuallyAsync(async () => await DraftRowAsync(paidDraft.DraftId) is null && await DraftRowAsync(unpaidDraft.DraftId) is null,
+        "Drafts left for 24 hours must be canceled.");
+    var draftLog = await StripeLogAsync();
+    Require(draftLog.Cancels.Any(entry => entry.Subscription == paidDraft.Subscription) && draftLog.Refunds.Any(entry => entry.Subscription == paidDraft.Subscription),
+        "An abandoned paid draft must have its subscription canceled and its payment refunded.");
+    Console.WriteLine("billing draft journey: paid event for an unknown customer -> recorded on its draft; drafts left 24 hours -> canceled, paid one canceled and refunded");
+
+    var stampDraft = await DraftAsync(true);
+    var stampSubscription = stampDraft.Subscription is { Length: > 0 } stampSubscriptionId ? stampSubscriptionId : throw new IOException("The paid draft has no subscription.");
+    var stampOrganization = AccountService.NewId();
+    created.Add(stampOrganization);
+    await storage.ReadAsync(connection => connection.ExecuteAsync("DELETE FROM pending_organization_checkouts WHERE draft_id = @DraftId", new { stampDraft.DraftId }), cancellationToken);
+    await storage.WriteAsync(async (connection, transaction) => await connection.ExecuteAsync(JourneySql.InsertBilling, new BillingBinding
+    {
+        OrganizationId = stampOrganization,
+        Version = AccountService.NewId(),
+        RequestId = stampDraft.DraftId,
+        State = "active",
+        CustomerId = stampDraft.Customer,
+        CheckoutId = stampDraft.Checkout,
+        SubscriptionId = stampSubscription,
+        StartedAt = realNow,
+        EffectivePlan = "starter",
+        EffectiveInterval = "monthly",
+        Status = "active",
+        Plan = "starter",
+        Interval = "monthly",
+        OverageStartsAt = OrganizationUsage.MonthOf(realNow)
+    }, transaction), cancellationToken);
+    await ControlAsync("/failure", new FailureInput("POST", "/v1/subscriptions/" + stampSubscription, 404, 1, false));
+    await recovery.StampDraftOwnersAsync(cancellationToken);
+    await EventuallyAsync(async () =>
+    {
+        await recovery.StampDraftOwnersAsync(cancellationToken);
+        return await storage.ReadAsync(connection => connection.ExecuteScalarAsync<long>(JourneySql.OwnerStamped,
+            new { OrganizationId = stampOrganization, SubscriptionId = stampSubscription }), cancellationToken) == 1;
+    }, "The background owner stamp must retry after a contained failure.");
+    var stampLog = await StripeLogAsync();
+    Require(stampLog.Calls.Any(call => call.Path == "/v1/subscriptions/" + stampSubscription && call.Status == 404), "The injected owner stamp failure must have been met.");
+    var stamped = await ObjectAsync(stampSubscription);
+    var stampedMetadata = stamped.GetProperty("metadata");
+    Require(stampedMetadata.GetProperty("organization_id").GetString() == stampOrganization && stampedMetadata.GetProperty("terrascale_tax").GetString() == "automatic"
+        && stampedMetadata.GetProperty("draft_id").GetString() == stampDraft.DraftId, "The owner stamp must add organization_id and keep the other metadata.");
+    Console.WriteLine("billing draft journey: owner stamp failure contained in the background; retry stamps organization_id and keeps existing metadata");
+
+    var realized = await CreateAsync();
+    var orphaned = await CreateAsync();
+    var recent = await CreateAsync();
+    await ControlAsync("/billing-plan-change", new PlanChangeInput(realized.SubscriptionId, "price_pro_month", clock.Now.ToString("O", CultureInfo.InvariantCulture)));
+    var schedule = await ScheduleAsync(orphaned.SubscriptionId);
+    await InsertChangeAsync(realized, realNow.AddMinutes(-20));
+    await InsertChangeAsync(orphaned, realNow.AddMinutes(-20));
+    await InsertChangeAsync(recent, realNow);
+    await recovery.ReconcileStaleChangesAsync(cancellationToken);
+    await EventuallyAsync(async () => await ChangeStatusAsync(realized) == "applied" && await ChangeStatusAsync(orphaned) == "abandoned",
+        "Stale applying changes must complete when Stripe applied them and be abandoned otherwise.");
+    Require(await ChangeStatusAsync(recent) == "applying", "A change applying for less than 15 minutes must be left alone.");
+    Require((await StripeLogAsync()).Releases.Any(entry => entry.Schedule == schedule), "Abandoning a stale change must release its orphan schedule.");
+    Console.WriteLine("billing plan journey: stale applying changes -> applied when Stripe has them, abandoned with orphan schedule released otherwise; recent change untouched");
+
+    var previousMonth = OrganizationUsage.MonthOf(realNow).AddMonths(-1);
+    var unavailableOrganization = new string('u', 26);
+    var partialOrganization = AccountService.NewId();
+    created.Add(unavailableOrganization);
+    created.Add(partialOrganization);
+    foreach (var organizationId in new[] { unavailableOrganization, partialOrganization })
+    {
+        await storage.WriteAsync(async (connection, transaction) => await connection.ExecuteAsync(JourneySql.InsertBilling, new BillingBinding
+        {
+            OrganizationId = organizationId,
+            Version = AccountService.NewId(),
+            RequestId = AccountService.NewId(),
+            State = "active",
+            StartedAt = previousMonth,
+            EffectivePlan = "starter",
+            EffectiveInterval = "monthly",
+            Status = "active",
+            Plan = "starter",
+            Interval = "monthly",
+            OverageStartsAt = previousMonth
+        }, transaction), cancellationToken);
+    }
+    await JourneySql.DeleteJobAsync(storage, "usage-settlement", cancellationToken);
+    Require(await ActivatorUtilities.CreateInstance<UsageOverageReporter>(recoveryHost.Services).RunOnceAsync(cancellationToken), "The settlement pass must run.");
+    foreach (var organizationId in new[] { unavailableOrganization, partialOrganization })
+    {
+        var open = await BindingAsync(organizationId);
+        var charges = await storage.ReadAsync(connection => connection.ExecuteScalarAsync<long>(
+            "SELECT (SELECT count(*) FROM billing_overage_charges WHERE organization_id = @Id) + (SELECT count(*) FROM billing_skipped_meters WHERE organization_id = @Id)",
+            new { Id = organizationId }), cancellationToken);
+        Require(open.OverageStartsAt == previousMonth && charges == 0, "A month whose usage is unavailable or incomplete must stay open with nothing frozen.");
+    }
+    Console.WriteLine("billing usage journey: usage refused or reported incomplete -> month stays open, nothing frozen, charged or skipped");
+
+    async Task InsertReceiptAsync(BillingBinding owner, string id, int attempts) =>
+        await storage.WriteAsync(async (connection, transaction) => await connection.ExecuteAsync(JourneySql.InsertRetryingReceipt, new StripeEventReceipt
+        {
+            Id = id,
+            Version = AccountService.NewId(),
+            OrganizationId = owner.OrganizationId,
+            SubscriptionId = owner.SubscriptionId,
+            InvoiceId = "",
+            EventType = "customer.subscription.updated",
+            ReceivedAt = realNow,
+            EventCreated = realNow,
+            ProcessingUntil = realNow.AddMinutes(-1),
+            Attempts = attempts
+        }, transaction), cancellationToken);
+
+    async Task<StripeEventReceipt?> ReceiptAsync(string id) =>
+        await storage.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<StripeEventReceipt>(JourneySql.Receipt, new { Id = id }), cancellationToken);
+
+    async Task<PendingOrganizationCheckout?> DraftRowAsync(string draftId) =>
+        await storage.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<PendingOrganizationCheckout>(JourneySql.Draft, new { DraftId = draftId }), cancellationToken);
+
+    async Task<string> ChangeStatusAsync(BillingBinding owner) =>
+        await storage.ReadAsync(connection => connection.QuerySingleAsync<string>(JourneySql.ChangeStatus, new { owner.OrganizationId }), cancellationToken);
+
+    async Task InsertChangeAsync(BillingBinding owner, DateTimeOffset changedAt) =>
+        await storage.WriteAsync(async (connection, transaction) => await connection.ExecuteAsync(JourneySql.InsertChange, new BillingChangeReceipt
+        {
+            Id = AccountService.NewId(),
+            Version = AccountService.NewId(),
+            OrganizationId = owner.OrganizationId,
+            SubscriptionId = owner.SubscriptionId,
+            RequestId = Guid.CreateVersion7().ToString(),
+            Action = "change",
+            Plan = "pro",
+            Interval = "monthly",
+            SourcePlanKey = "starter",
+            SourceInterval = "monthly",
+            SourcePriceId = "price_starter_month",
+            TargetPriceId = "price_pro_month",
+            PeriodEnd = clock.Now.AddMonths(1),
+            Revision = 1,
+            Status = "applying",
+            StatusChangedAt = changedAt
+        }, transaction), cancellationToken);
+
+    async Task<DraftCheckout> DraftAsync(bool paid)
+    {
+        var draftId = AccountService.NewId();
+        var owner = AccountService.NewId();
+        using var response = await control.PostAsJsonAsync("/billing-draft", new DraftInput(draftId, owner, "Recovery " + draftId, "price_starter_month", paid), BillingJson.Default.DraftInput, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var answer = await response.Content.ReadFromJsonAsync(BillingJson.Default.DraftAnswer, cancellationToken) ?? throw new IOException("Draft checkout is unavailable.");
+        await storage.WriteAsync(async (connection, transaction) => await connection.ExecuteAsync(JourneySql.InsertDraft, new PendingOrganizationCheckout
+        {
+            UserId = owner,
+            DraftId = draftId,
+            Name = "Recovery " + draftId,
+            Plan = "starter",
+            Interval = "monthly",
+            CheckoutId = answer.Checkout,
+            CreatedAt = realNow.UtcDateTime,
+            Version = AccountService.NewId()
+        }, transaction), cancellationToken);
+        if (paid != answer.Subscription is { Length: > 0 })
+        {
+            throw new IOException("A paid draft checkout must have a subscription and an unpaid one none.");
+        }
+
+        return new(draftId, answer.Checkout, answer.Customer, answer.Subscription, answer.Session);
+    }
+
+    async Task<string> ScheduleAsync(string subscription)
+    {
+        using var response = await control.PostAsJsonAsync("/billing-orphan-schedule", new OrphanScheduleInput(subscription), BillingJson.Default.OrphanScheduleInput, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync(BillingJson.Default.ScheduleAnswer, cancellationToken) ?? throw new IOException("Schedule is unavailable.")).Schedule;
+    }
+
+    async Task<StripeLog> StripeLogAsync() =>
+        await control.GetFromJsonAsync("/log", BillingJson.Default.StripeLog, cancellationToken) ?? throw new IOException("Stripe log is unavailable.");
+
+    async Task<JsonElement> ObjectAsync(string id) =>
+        await control.GetFromJsonAsync("/billing-object?id=" + Uri.EscapeDataString(id), BillingJson.Default.JsonElement, cancellationToken);
+
+    string SubscriptionEvent(string id, BillingBinding owner) =>
+        JsonSerializer.Serialize(new EventInput(id, "2026-09-30.endive", new(new("subscription", owner.SubscriptionId, owner.CustomerId)), false, "customer.subscription.updated",
+            clock.Now.ToUnixTimeSeconds()), BillingJson.Default.EventInput);
+
+    string DraftEvent(JsonElement session) =>
+        JsonSerializer.Serialize(new DraftEventInput("evt_draft_" + AccountService.NewId(), "2026-09-30.endive", new(session), false, "checkout.session.completed",
+            TimeProvider.System.GetUtcNow().ToUnixTimeSeconds()), BillingJson.Default.DraftEventInput);
+
+    async Task<string> SignedAsync(StripeBilling target, string body)
+    {
+        var timestamp = TimeProvider.System.GetUtcNow().ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+        var signature = Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secrets[7]), Encoding.UTF8.GetBytes(timestamp + "." + body)));
+        var outcome = await target.HandleWebhookAsync(body, "t=" + timestamp + ",v1=" + signature, cancellationToken);
+        return outcome switch
+        {
+            Done => "applied",
+            Rejected => "rejected",
+            Deferred => "deferred",
+            null => "missing",
+        };
+    }
+
+    async Task EventuallyAsync(Func<Task<bool>> condition, string message)
+    {
+        var deadline = TimeProvider.System.GetUtcNow().AddSeconds(45);
+        while (!await condition())
+        {
+            if (TimeProvider.System.GetUtcNow() > deadline) { throw new InvalidOperationException(message); }
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        }
+    }
 }
 
 finally
@@ -471,7 +715,26 @@ internal sealed record HoldInput(string Method, string Path, string Customer);
 [JsonSerializable(typeof(CancelInput))]
 [JsonSerializable(typeof(PlanChangeInput))]
 [JsonSerializable(typeof(HoldInput))]
+[JsonSerializable(typeof(DraftInput))]
+[JsonSerializable(typeof(DraftAnswer))]
+[JsonSerializable(typeof(OrphanScheduleInput))]
+[JsonSerializable(typeof(ScheduleAnswer))]
+[JsonSerializable(typeof(StripeLog))]
+[JsonSerializable(typeof(DraftEventInput))]
 internal sealed partial class BillingJson : JsonSerializerContext;
+
+internal sealed record DraftInput(string Draft, string Owner, string Name, string Price, bool Paid);
+internal sealed record DraftAnswer(string Checkout, string Customer, string? Subscription, JsonElement Session);
+internal sealed record DraftCheckout(string DraftId, string Checkout, string Customer, string? Subscription, JsonElement Session);
+internal sealed record OrphanScheduleInput(string Subscription);
+internal sealed record ScheduleAnswer(string Schedule);
+internal sealed record StripeLog(IReadOnlyList<StripeCall> Calls, IReadOnlyList<StripeCancel> Cancels, IReadOnlyList<StripeRefund> Refunds, IReadOnlyList<StripeRelease> Releases);
+internal sealed record StripeCall(string Method, string Path, int Status);
+internal sealed record StripeCancel(string Subscription);
+internal sealed record StripeRefund(string Subscription);
+internal sealed record StripeRelease(string Schedule);
+internal sealed record DraftEventInput(string Id, [property: JsonPropertyName("api_version")] string ApiVersion, DraftEventData Data, bool Livemode, string Type, long Created);
+internal sealed record DraftEventData(JsonElement Object);
 
 internal sealed record EmptyInput;
 internal sealed record FailureInput(string Method, string Path, int Status, int? Remaining, bool Transport);

@@ -57,4 +57,6 @@ public sealed record StripeEventReceipt : IBillingRow
     public required DateTimeOffset EventCreated { get; init; }
     public DateTimeOffset ProcessingUntil { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public int Attempts { get; set; }
+    public DateTimeOffset? DeadLetteredAt { get; set; }
 }

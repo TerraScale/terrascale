@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using Dapper;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -7,8 +10,11 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AlertSource(IHttpClientFactory http, IDashboardIdentity identity, IAllowanceNotificationBackend allowances, TerraBaseHttpClient terraBase) : IAlertSource
+    public sealed class AlertSource(IHttpClientFactory http, IDashboardIdentity identity, DashboardDb storage, OrganizationUsage usage, TerraBaseHttpClient terraBase,
+        TimeProvider clock) : IAlertSource
     {
+        private const string UnitRuleOrganizations = "SELECT DISTINCT organization_id FROM alert_rules WHERE metric = 'operation_units_percent' ORDER BY organization_id";
+
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
         public async Task<AlertAnalytics> ReadAnalyticsAsync(string projectId, CancellationToken cancellationToken)
@@ -37,30 +43,23 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         public async Task<IReadOnlyDictionary<string, long>> ReadOperationUnitsAsync(CancellationToken cancellationToken)
         {
-            var units = new Dictionary<string, long>(StringComparer.Ordinal);
-            string? after = null;
-            do
+            List<string> organizationIds;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                if (await allowances.ReadAsync(after, null, cancellationToken) is not { } page)
-                {
-                    return units;
-                }
+                organizationIds = (await connection.QueryAsync<string>(UnitRuleOrganizations)).AsList();
+            }
 
-                if (page.OperationsContract != AllowanceNotifications.OperationsContract)
+            var month = OrganizationUsage.MonthOf(clock.GetUtcNow());
+            var units = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
+            await Parallel.ForEachAsync(organizationIds, new ParallelOptions { MaxDegreeOfParallelism = OrganizationUsage.Concurrency, CancellationToken = cancellationToken },
+                async (organizationId, token) =>
                 {
-                    throw new IOException("Operation units are not authoritative.");
-                }
-
-                foreach (var item in page.Items)
-                {
-                    if (item.Operations is { } used)
+                    var read = await usage.ReadAsync(organizationId, month, token);
+                    if (read switch { MeasuredUsage measured => measured.OperationUnits, PartialUsage { OperationsComplete: true } partial => partial.OperationUnits, PartialUsage or UsageUnavailable => (long?)null } is { } used)
                     {
-                        units[item.OrganizationId] = used;
+                        units[organizationId] = used;
                     }
-                }
-
-                after = page.Next is { } next && string.CompareOrdinal(next, after) > 0 ? next : null;
-            } while (after is not null);
+                });
             return units;
         }
 
