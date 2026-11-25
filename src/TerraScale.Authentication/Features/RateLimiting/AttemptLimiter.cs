@@ -23,6 +23,8 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
 
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
 
+    private const int DurableShare = 1;
+
     private readonly int regionIndex = Array.IndexOf(Regions, region) is var index && index >= 0
         ? index : throw new ArgumentException("The auth region must be gru, sjc or fra.", nameof(region));
 
@@ -40,11 +42,19 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
 
     private readonly byte[] foldKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth rate-limit folds"u8.ToArray());
 
+    private readonly byte[] subjectKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth rate-limit subjects"u8.ToArray());
+
     public string Fold(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
         var digest = HMACSHA256.HashData(this.foldKey, Encoding.UTF8.GetBytes(text));
         return $"fold-{System.Buffers.Binary.BinaryPrimitives.ReadUInt16BigEndian(digest)}";
+    }
+
+    public string Digest(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return Convert.ToHexStringLower(HMACSHA256.HashData(this.subjectKey, Encoding.UTF8.GetBytes(text)));
     }
 
     public Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, CancellationToken cancellationToken) =>
@@ -66,7 +76,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         (await this.AcquireAsync(instanceId, purpose, subject, 1, interval, cooldown: true, cancellationToken))?.RetryAfter;
 
     public Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken) =>
-        this.WithFallbackAsync(source => this.AcquireTokenAsync(source, instanceId, purpose, subject, burst, interval, cancellationToken), purpose, cancellationToken);
+        this.WithFallbackAsync((source, share) => this.AcquireTokenAsync(source, instanceId, purpose, subject, Share(burst, share), interval, cancellationToken), purpose, cancellationToken);
 
     private async Task<TimeSpan?> AcquireTokenAsync(IAttemptStore source, string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
     {
@@ -167,12 +177,12 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         (await this.AcquireAsync(store, instanceId, purpose, subject, maximum, window, false, true, cancellationToken)).Rejection?.RetryAfter;
 
     public async Task<AttemptRejection?> CheckAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
-        (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, false, cancellationToken), purpose, cancellationToken)).Rejection;
+        (await this.WithFallbackAsync((source, share) => this.AcquireAsync(source, instanceId, purpose, subject, Share(maximum, share), window, false, false, cancellationToken), purpose, cancellationToken)).Rejection;
 
     public async Task<(Reservation? Reservation, AttemptRejection? Rejection)> ReserveAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken)
     {
-        var (admission, source) = await this.WithFallbackAsync(async source =>
-            (await this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, true, cancellationToken), source), purpose, cancellationToken);
+        var (admission, source) = await this.WithFallbackAsync(async (source, share) =>
+            (await this.AcquireAsync(source, instanceId, purpose, subject, Share(maximum, share), window, false, true, cancellationToken), source), purpose, cancellationToken);
         return admission.Rejection is { } rejection ? (null, rejection) : (new Reservation(this, source, instanceId, purpose, admission), null);
     }
 
@@ -239,13 +249,15 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     }
 
     private async Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken) =>
-        (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, true, cancellationToken), purpose, cancellationToken)).Rejection;
+        (await this.WithFallbackAsync((source, share) => this.AcquireAsync(source, instanceId, purpose, subject, Share(maximum, share), window, cooldown, true, cancellationToken), purpose, cancellationToken)).Rejection;
 
-    private async Task<T> WithFallbackAsync<T>(Func<IAttemptStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
+    private static int Share(int maximum, int share) => Math.Max(1, maximum / share);
+
+    private async Task<T> WithFallbackAsync<T>(Func<IAttemptStore, int, Task<T>> check, string purpose, CancellationToken cancellationToken)
     {
         try
         {
-            return await check(store);
+            return await check(store, DurableShare);
         }
         catch (ApiException failure) when (failure.Status == StatusCodes.Status503ServiceUnavailable && !cancellationToken.IsCancellationRequested
             && Transient(failure.InnerException))
@@ -256,10 +268,10 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             if ((last == long.MinValue || clock.GetElapsedTime(last, now) >= TimeSpan.FromMinutes(1))
                 && Interlocked.CompareExchange(ref this.warnedAt, now, last) == last)
             {
-                logger?.ZLogWarning(failure.InnerException ?? failure, $"Rate-limit storage failed; {purpose:@Purpose} and other budgets run on this replica's memory");
+                logger?.ZLogError(failure.InnerException ?? failure, $"Rate-limit storage failed; {purpose:@Purpose} and other budgets run on this replica's bounded memory at 1/{Regions.Length} of their limits until storage recovers");
             }
 
-            return await check(this.local);
+            return await check(this.local, Regions.Length);
         }
     }
 

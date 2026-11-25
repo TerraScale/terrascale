@@ -1,4 +1,5 @@
 using OpenIddict.Abstractions;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -7,7 +8,7 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
 public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenIddictApplicationManager applications, PlatformAuthentication authentication,
-    ProjectAuthSettings settings, StepUpProofs proofs) : ProjectTenantEndpoint(tenants, authentication)
+    ProjectAuthSettings settings, StepUpProofs proofs, AuthOptions options) : ProjectTenantEndpoint(tenants, authentication)
 {
     protected override bool PersonOnly => true;
 
@@ -69,7 +70,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             await applications.PopulateAsync(descriptor, application, cancellationToken);
             if (policy is not null)
             {
-                MachineClients.Configure(descriptor, MachineClients.Validate(request.AllowedScopes ?? policy.AllowedScopes,
+                MachineClients.Configure(descriptor, MachineClients.Validate(options, request.AllowedScopes ?? policy.AllowedScopes,
                     request.AllowedAudiences ?? policy.AllowedAudiences, request.TokenLifetimeMinutes ?? policy.TokenLifetimeMinutes));
             }
 

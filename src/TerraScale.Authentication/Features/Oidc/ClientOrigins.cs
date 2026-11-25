@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 using Dapper;
 using Microsoft.Net.Http.Headers;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Oidc;
@@ -85,5 +88,41 @@ public static class ClientOrigins
         var registered = await data.ReadAsync(connection => connection.QueryAsync<string>(
             "SELECT allowed_origins FROM oidc_applications WHERE instance_id = @tenant", new { tenant }), cancellationToken);
         return registered.Any(origins => JsonSerializer.Deserialize(origins, StorageJson.Default.IReadOnlyListString) is { } allowed && allowed.Contains(origin, StringComparer.Ordinal));
+    }
+}
+
+public static class AnonymousTenantReads
+{
+    private static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(1);
+
+    private static readonly PartitionedRateLimiter<string> Addresses = PartitionedRateLimiter.Create<string, string>(address =>
+        RateLimitPartition.GetTokenBucketLimiter(address, _ => new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 600,
+            TokensPerPeriod = 100,
+            ReplenishmentPeriod = RetryAfter,
+            QueueLimit = 0,
+            AutoReplenishment = true,
+        }));
+
+    public static bool Admit(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (HostedAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) is not { } address)
+        {
+            return false;
+        }
+
+        using var lease = Addresses.AttemptAcquire(address);
+        return lease.IsAcquired;
+    }
+
+    public static Task RefuseAsync(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        context.Response.Headers.RetryAfter = ((int)RetryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        context.Response.Headers.CacheControl = "no-store";
+        return Task.CompletedTask;
     }
 }

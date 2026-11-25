@@ -431,6 +431,8 @@ test('SSO links identities once and completes required MFA without blocking enro
     await admin.locator('#passkey-sign-in').click();
     await expect(admin.locator('#mfa-code')).toHaveCount(0);
     await expect.poll(async () => (await owner.cookies()).some(cookie => cookie.name === 'tsauth_session')).toBe(true);
+    const reconfirmed = await owner.request.get(root + '/members', { headers });
+    expect(reconfirmed.status(), 're-confirming the already linked identity after an SSO reconfiguration keeps the bearer').toBe(200);
     expect((await members()).some(item => item.email === ownerEmail)).toBe(true);
     await expect(admin).toHaveURL(auth + security);
     await expect(admin.locator('input[name=name][value="SSO journey"]')).toBeVisible();
@@ -447,6 +449,9 @@ test('SSO links identities once and completes required MFA without blocking enro
     await expect(admin.locator('input[name=name][value="SSO journey"]')).toBeVisible();
     await expect.poll(async () => (await owner.cookies()).some(cookie => cookie.name === 'tsauth_session')).toBe(true);
     await adminAudit.check('A complete ordinary passkey sign-in links the pending SSO identity');
+    const preRelink = await owner.request.get(root + '/members', { headers });
+    expect(preRelink.status(), 'linking a new SSO identity revokes the bearer issued before it').toBe(401);
+    headers = { Authorization: 'Bearer ' + await token(owner) };
     await owner.clearCookies();
     const passkeyLinked = await owner.request.get(ui + '/sso', { params: { email: ownerEmail } });
     expect(passkeyLinked.status()).toBe(200);

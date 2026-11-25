@@ -177,8 +177,11 @@ function passkeyDecode(text) {
     button.classList.add('is-loading');
     button.setAttribute('aria-busy', 'true');
     var next = button.form && button.form.querySelector('input[name="next"]');
+    var factor = button.form && button.form.querySelector('input[name="challenge"]');
+    var request = new URLSearchParams({ email: address });
+    if (factor && factor.value) request.set('challenge', factor.value);
     var sealed = null;
-    fetch(button.dataset.options, { method: 'POST', headers: { 'Accept': 'application/json' }, body: new URLSearchParams({ email: address }) })
+    fetch(button.dataset.options, { method: 'POST', headers: { 'Accept': 'application/json' }, body: request })
       .then(json)
       .then(function (body) {
         sealed = body.challenge;

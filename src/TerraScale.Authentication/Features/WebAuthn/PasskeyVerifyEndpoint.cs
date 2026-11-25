@@ -29,7 +29,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
             AuthenticatorAttestationRawResponse raw => await passkeys.VerifyAsync(caller, body.Challenge, raw,
                 body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken) switch
             {
-                PasskeyCredentialEntry entry => TypedResults.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
+                PasskeyEnrolled { Entry: var entry } => TypedResults.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
                     WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created),
                 AuthForbidden error => ErrorResults.ToResult(error),
             },

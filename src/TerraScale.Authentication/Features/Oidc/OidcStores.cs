@@ -49,7 +49,7 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
     public async ValueTask UpdateAsync(OidcApplication application, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(application);
-        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
+        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, StoredId(application)));
         if (!await data.SaveAsync(Change.Update(application), cancellationToken))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
@@ -59,12 +59,15 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
     public async ValueTask DeleteAsync(OidcApplication application, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(application);
-        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
+        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, StoredId(application)));
         if (!await data.SaveAsync(Change.Delete(application), cancellationToken))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
         }
     }
+
+    private static string StoredId(OidcApplication application) =>
+        application.Id is { } id ? id : throw new InvalidOperationException("A stored client has no id.");
 
     public async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
     {
@@ -104,6 +107,11 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
             "SELECT * FROM oidc_applications WHERE instance_id = @tenant AND id = @identifier", new { tenant, identifier }), cancellationToken);
         if (application is null)
         {
+            if (tenant != OidcIssuer.InstanceId)
+            {
+                return null;
+            }
+
             var keys = services.GetRequiredService<Platform.ApiKeys>();
             return await keys.FindAsync(identifier, cancellationToken) is { } key ? Platform.ApiKeyClients.Describe(key, keys.Digests(key)) : null;
         }
@@ -224,6 +232,8 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
 
 public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictAuthorizationStore<OidcAuthorization>
 {
+    private const int RevokeRounds = 3;
+
     private string Tenant => Tenancy.Current(http.HttpContext);
 
     public async ValueTask CreateAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
@@ -366,24 +376,52 @@ public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor h
         long revoked = 0;
         await foreach (var authorization in authorizations)
         {
-            if (authorization.Status != Statuses.Revoked && await data.SaveAsync(Change.Update(Revoked(authorization)), cancellationToken))
+            if (await this.RevokeOneAsync(authorization, cancellationToken))
             {
                 revoked++;
             }
         }
 
         return revoked;
+    }
 
-        static OidcAuthorization Revoked(OidcAuthorization authorization)
+    private async Task<bool> RevokeOneAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
+    {
+        if (authorization.Id is not { } id)
         {
-            authorization.Status = Statuses.Revoked;
-            return authorization;
+            throw new InvalidOperationException("A stored authorization has no id.");
         }
+
+        var current = authorization;
+        for (var round = 0; round < RevokeRounds; round++)
+        {
+            if (current.Status == Statuses.Revoked)
+            {
+                return false;
+            }
+
+            current.Status = Statuses.Revoked;
+            if (await data.SaveAsync(Change.Update(current), cancellationToken))
+            {
+                return true;
+            }
+
+            if (await this.FindByIdAsync(id, cancellationToken) is not { } reread)
+            {
+                return false;
+            }
+
+            current = reread;
+        }
+
+        throw ApiException.Unavailable();
     }
 }
 
 public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictTokenStore<OidcToken>
 {
+    private const int RevokeRounds = 3;
+
     private string Tenant => Tenancy.Current(http.HttpContext);
 
     public async ValueTask CreateAsync(OidcToken token, CancellationToken cancellationToken)
@@ -588,21 +626,13 @@ public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpen
         var deleted = await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
             "DELETE FROM oidc_tokens WHERE id IN (SELECT id FROM oidc_tokens WHERE expiration_date <= @now ORDER BY expiration_date LIMIT @batchSize)",
             new { now, batchSize }), cancellationToken);
-        var revoked = await data.ReadAsync(connection => connection.QueryAsync<string>(
+        return deleted + await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
             """
-            SELECT a.id FROM oidc_authorizations a
-            WHERE a.status = @revokedStatus AND EXISTS (SELECT 1 FROM oidc_tokens t WHERE t.authorization_id = a.id AND t.type = @refresh)
-            """, new { revokedStatus, refresh }), cancellationToken);
-        foreach (var authorizationId in revoked)
-        {
-            deleted += await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
-                """
-                DELETE FROM oidc_tokens WHERE id IN (
-                    SELECT id FROM oidc_tokens WHERE authorization_id = @authorizationId AND type = @refresh ORDER BY creation_date LIMIT @batchSize)
-                """, new { authorizationId, refresh, batchSize }), cancellationToken);
-        }
-
-        return deleted;
+            DELETE FROM oidc_tokens WHERE id IN (
+                SELECT t.id FROM oidc_tokens t
+                WHERE t.type = @refresh AND t.authorization_id IN (SELECT a.id FROM oidc_authorizations a WHERE a.status = @revokedStatus)
+                LIMIT @batchSize)
+            """, new { revokedStatus, refresh, batchSize }), cancellationToken);
     }
 
     private async IAsyncEnumerable<OidcToken> FindAsync(string? subject, string? client, string? authorization, string? status, string? type,
@@ -641,19 +671,45 @@ public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpen
         long revoked = 0;
         await foreach (var token in tokens)
         {
-            if (token.Status is Statuses.Revoked)
-            {
-                continue;
-            }
-
-            token.Status = Statuses.Revoked;
-            if (await data.SaveAsync(Change.Update(token), cancellationToken))
+            if (await this.RevokeOneAsync(token, cancellationToken))
             {
                 revoked++;
             }
         }
 
         return revoked;
+    }
+
+    private async Task<bool> RevokeOneAsync(OidcToken token, CancellationToken cancellationToken)
+    {
+        if (token.Id is not { } id)
+        {
+            throw new InvalidOperationException("A stored token has no id.");
+        }
+
+        var current = token;
+        for (var round = 0; round < RevokeRounds; round++)
+        {
+            if (current.Status is Statuses.Revoked)
+            {
+                return false;
+            }
+
+            current.Status = Statuses.Revoked;
+            if (await data.SaveAsync(Change.Update(current), cancellationToken))
+            {
+                return true;
+            }
+
+            if (await this.ReadAsync(id, cancellationToken) is not { } reread)
+            {
+                return false;
+            }
+
+            current = reread;
+        }
+
+        throw ApiException.Unavailable();
     }
 }
 
