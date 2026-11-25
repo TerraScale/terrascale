@@ -36,12 +36,9 @@ func schemaTokens(source string) ([]schemaToken, error) {
 			}
 			i += n + 4
 			continue
-		case strings.ContainsRune("'\"`[", rune(source[i])):
+		case sqlQuoteEnd(source[i]) != 0:
 			quote := source[i]
-			close := quote
-			if close == '[' {
-				close = ']'
-			}
+			close := sqlQuoteEnd(quote)
 			i++
 			var value strings.Builder
 			closed := false
@@ -68,9 +65,9 @@ func schemaTokens(source string) ([]schemaToken, error) {
 			}
 			out = append(out, schemaToken{source[start:i], key, start, i})
 			continue
-		case source[i] == '_' || source[i] >= 128 || source[i] >= 'a' && source[i] <= 'z' || source[i] >= 'A' && source[i] <= 'Z' || source[i] >= '0' && source[i] <= '9':
+		case sqlWordStart(source[i]):
 			i++
-			for i < len(source) && (source[i] == '_' || source[i] == '$' || source[i] >= 128 || source[i] >= 'a' && source[i] <= 'z' || source[i] >= 'A' && source[i] <= 'Z' || source[i] >= '0' && source[i] <= '9') {
+			for i < len(source) && sqlWordPart(source[i]) {
 				i++
 			}
 		default:

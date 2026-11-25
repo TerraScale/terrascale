@@ -150,8 +150,7 @@ func (u *User) DeleteProjectOrganization(ctx context.Context, project string, or
 	if err != nil {
 		return err
 	}
-	_, err = call[struct{}](ctx, scoped, http.MethodDelete, []string{"organizations", org}, nil, nil)
-	return err
+	return scoped.none(ctx, http.MethodDelete, []string{"organizations", org}, nil, nil)
 }
 
 // AddProjectOrganizationMember calls POST /v1/{project}/organizations/{org}/memberships.
@@ -194,8 +193,7 @@ func (u *User) DeleteProjectOrganizationMember(ctx context.Context, project stri
 	if err != nil {
 		return err
 	}
-	_, err = call[struct{}](ctx, scoped, http.MethodDelete, []string{"organizations", org, "memberships", user}, nil, nil)
-	return err
+	return scoped.none(ctx, http.MethodDelete, []string{"organizations", org, "memberships", user}, nil, nil)
 }
 
 // CreateProjectOrganizationInvitation calls POST /v1/{project}/organizations/{org}/invitations.
@@ -229,8 +227,7 @@ func (u *User) RevokeProjectOrganizationInvitation(ctx context.Context, project 
 	if err != nil {
 		return err
 	}
-	_, err = call[struct{}](ctx, scoped, http.MethodDelete, []string{"organizations", org, "invitations", invitation}, nil, nil)
-	return err
+	return scoped.none(ctx, http.MethodDelete, []string{"organizations", org, "invitations", invitation}, nil, nil)
 }
 
 // AddProjectOrganizationDomain calls POST /v1/{project}/organizations/{org}/domains.
@@ -266,6 +263,5 @@ func (u *User) DeleteProjectOrganizationDomain(ctx context.Context, project stri
 	if err != nil {
 		return err
 	}
-	_, err = call[struct{}](ctx, scoped, http.MethodDelete, []string{"organizations", org, "domains", domain}, nil, nil)
-	return err
+	return scoped.none(ctx, http.MethodDelete, []string{"organizations", org, "domains", domain}, nil, nil)
 }

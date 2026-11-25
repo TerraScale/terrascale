@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -149,7 +150,7 @@ func migrateUp(ctx context.Context, db *v1.Database, out io.Writer) error {
 			}
 			continue
 		}
-		statements, err := splitSQL(m.sql)
+		statements, err := splitSQL(ctx, m.sql)
 		if err != nil {
 			return fmt.Errorf("%s: %w", m.name, err)
 		}
@@ -379,37 +380,17 @@ func schemaDiff(base, branch string, from, to map[string]string) string {
 	return fmt.Sprintf("--- %s\n+++ %s\n", base, branch) + b.String()
 }
 
-func splitSQL(script string) ([]string, error) {
-	tokens, err := schemaTokens(script)
-	if err != nil {
-		return nil, err
-	}
+func splitSQL(ctx context.Context, script string) ([]string, error) {
+	reader := sqlStatementReader{input: bufio.NewReader(strings.NewReader(script))}
 	var statements []string
-	for len(tokens) > 0 {
-		if tokens[0].raw == ";" {
-			tokens = tokens[1:]
-			continue
+	for {
+		statement, err := reader.next(ctx)
+		if errors.Is(err, io.EOF) {
+			return statements, nil
 		}
-		trigger := len(tokens) > 1 && strings.EqualFold(tokens[0].raw, "CREATE") &&
-			(strings.EqualFold(tokens[1].raw, "TRIGGER") || len(tokens) > 2 &&
-				(strings.EqualFold(tokens[1].raw, "TEMP") || strings.EqualFold(tokens[1].raw, "TEMPORARY")) && strings.EqualFold(tokens[2].raw, "TRIGGER"))
-		depth, end := 0, len(tokens)
-		for i, token := range tokens {
-			if trigger {
-				switch strings.ToUpper(token.raw) {
-				case "BEGIN", "CASE":
-					depth++
-				case "END":
-					depth--
-				}
-			}
-			if token.raw == ";" && depth == 0 {
-				end = i + 1
-				break
-			}
+		if err != nil {
+			return nil, err
 		}
-		statements = append(statements, strings.TrimSuffix(strings.TrimSpace(script[tokens[0].start:tokens[end-1].end]), ";"))
-		tokens = tokens[end:]
+		statements = append(statements, statement)
 	}
-	return statements, nil
 }

@@ -103,14 +103,23 @@ func initEnvLines(project, database, region, key string) string {
 
 func writeInitEnv(dir, lines string, out io.Writer) error {
 	path := filepath.Join(dir, ".env")
-	if _, err := os.Stat(path); err == nil {
-		_, err := fmt.Fprintf(out, ".env already exists; add these lines yourself:\n%s", lines)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", path)
+		}
+		_, err = fmt.Fprintf(out, ".env already exists; add these lines yourself:\n%s", lines)
 		return err
 	}
-	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
+	if err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600)
+	_, err = io.WriteString(file, lines)
+	return errors.Join(err, file.Close())
 }
 
 func warnUnignoredEnv(dir string, prompt io.Writer) {

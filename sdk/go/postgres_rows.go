@@ -2,23 +2,25 @@ package sdk
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type PostgresRows struct {
-	client   *PostgresClient
-	ctx      context.Context
-	rows     pgx.Rows
-	columns  []PostgresColumn
-	current  []PostgresValue
-	rawSize  int
-	err      error
-	tag      pgconn.CommandTag
-	released bool
-	finish   func()
-	onError  func(error)
+	client     *PostgresClient
+	ctx        context.Context
+	rows       pgx.Rows
+	columns    []PostgresColumn
+	autocommit bool
+	current    []PostgresValue
+	rawSize    int
+	err        error
+	tag        pgconn.CommandTag
+	released   bool
+	finish     func()
+	onError    func(error)
 }
 
 func (r *PostgresRows) Next() bool {
@@ -64,20 +66,20 @@ func (r *PostgresRows) CommandTag() string {
 }
 
 func (r *PostgresRows) Close() error {
-	if !r.released && r.err == nil {
-		if err := r.rows.Err(); err != nil {
-			r.fail(postgresFailure(err))
-			return r.err
-		}
-		r.tag = r.rows.CommandTag()
+	if !r.released {
+		r.rows.Close()
+		r.complete()
 	}
-	r.releaseOnce()
 	return r.err
 }
 
 func (r *PostgresRows) complete() {
 	if err := r.rows.Err(); err != nil {
-		r.fail(postgresFailure(err))
+		if r.autocommit && !pgconn.SafeToRetry(err) {
+			r.fail(postgresCommitFailure(err))
+		} else {
+			r.fail(postgresFailure(err))
+		}
 		return
 	}
 	r.tag = r.rows.CommandTag()
@@ -85,7 +87,7 @@ func (r *PostgresRows) complete() {
 }
 
 func (r *PostgresRows) fail(err error) {
-	if ctxErr := r.ctx.Err(); ctxErr != nil {
+	if ctxErr := r.ctx.Err(); ctxErr != nil && !errors.Is(err, ErrCommitUncertain) {
 		err = postgresFailure(ctxErr)
 	}
 	r.abort(err)
@@ -122,10 +124,11 @@ func (client *PostgresClient) QueryRows(ctx context.Context, query PostgresQuery
 		<-client.gate
 		return nil, err
 	}
-	rows, columns, err := client.openRows(ctx, query)
+	rows, err := client.openRows(ctx, query, true)
 	if err != nil {
 		<-client.gate
 		return nil, err
 	}
-	return &PostgresRows{client: client, ctx: ctx, rows: rows, columns: columns, finish: func() { <-client.gate }}, nil
+	rows.finish = func() { <-client.gate }
+	return rows, nil
 }

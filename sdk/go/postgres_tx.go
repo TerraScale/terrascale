@@ -44,7 +44,7 @@ func (client *PostgresClient) Begin(ctx context.Context) (*PostgresTx, error) {
 	case ConsistencyFast:
 		statement = "BEGIN ISOLATION LEVEL READ COMMITTED"
 	}
-	if _, err := client.run(ctx, PostgresQuery{Statement: statement}); err != nil {
+	if _, err := client.run(ctx, PostgresQuery{Statement: statement}, false); err != nil {
 		<-client.gate
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (tx *PostgresTx) finish() {
 }
 
 func (tx *PostgresTx) discard(ctx context.Context) {
-	if _, err := tx.client.run(ctx, PostgresQuery{Statement: "ROLLBACK"}); err != nil {
+	if _, err := tx.client.run(ctx, PostgresQuery{Statement: "ROLLBACK"}, false); err != nil {
 		tx.client.abort(ctx)
 	}
 }
@@ -101,7 +101,7 @@ func (tx *PostgresTx) Query(ctx context.Context, query PostgresQuery) (PostgresR
 		return PostgresResult{}, err
 	}
 	defer tx.exit()
-	result, err := tx.client.run(ctx, query)
+	result, err := tx.client.run(ctx, query, false)
 	if err != nil {
 		tx.failWith(err)
 		return PostgresResult{}, err
@@ -113,16 +113,14 @@ func (tx *PostgresTx) QueryRows(ctx context.Context, query PostgresQuery) (*Post
 	if err := tx.enter(true); err != nil {
 		return nil, err
 	}
-	rows, columns, err := tx.client.openRows(ctx, query)
+	rows, err := tx.client.openRows(ctx, query, false)
 	if err != nil {
 		tx.failWith(err)
 		tx.exit()
 		return nil, err
 	}
-	return &PostgresRows{
-		client: tx.client, ctx: ctx, rows: rows, columns: columns,
-		finish: tx.exit, onError: tx.failWith,
-	}, nil
+	rows.finish, rows.onError = tx.exit, tx.failWith
+	return rows, nil
 }
 
 func (tx *PostgresTx) Exec(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
@@ -144,18 +142,23 @@ func (tx *PostgresTx) Commit(ctx context.Context) error {
 	if err := tx.enter(false); err != nil {
 		return err
 	}
+	defer tx.finish()
 	if tx.failed != nil {
 		tx.discard(ctx)
-		tx.finish()
 		return tx.failed
 	}
-	if _, err := tx.client.run(ctx, PostgresQuery{Statement: "COMMIT"}); err != nil {
+	if tx.client.driver.IsClosed() {
+		return &PostgresError{Kind: "connection"}
+	}
+	if err := ctx.Err(); err != nil {
 		tx.client.abort(ctx)
-		tx.finish()
 		return postgresFailure(err)
 	}
-	tx.finish()
-	return nil
+	if _, err := tx.client.driver.Exec(ctx, "COMMIT"); err != nil {
+		tx.client.abort(ctx)
+		return postgresCommitFailure(err)
+	}
+	return tx.client.observe()
 }
 
 func (tx *PostgresTx) Rollback(ctx context.Context) error {
@@ -167,7 +170,7 @@ func (tx *PostgresTx) Rollback(ctx context.Context) error {
 		tx.finish()
 		return nil
 	}
-	if _, err := tx.client.run(ctx, PostgresQuery{Statement: "ROLLBACK"}); err != nil {
+	if _, err := tx.client.run(ctx, PostgresQuery{Statement: "ROLLBACK"}, false); err != nil {
 		tx.client.abort(ctx)
 		tx.finish()
 		return postgresFailure(err)

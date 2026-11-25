@@ -116,12 +116,12 @@ func (e *SQLError) Unwrap() error {
 }
 
 func (e *SQLError) Is(target error) bool {
-	return target == e.Code || target == ErrCommitUncertain && e.Code == ErrWriteOutcomeUnknown ||
-		target == ErrSerializationConflict && e.SQLState == serializationFailureState
+	return target == e.Code || target == ErrCommitUncertain && e.Code.commitUncertain() ||
+		target == ErrSerializationConflict && !e.Code.commitUncertain() && e.SQLState == serializationFailureState
 }
 
 func (e *SQLError) IsTransient() bool {
-	return errors.Is(e, ErrSerializationConflict) || e.Code == ErrSchemaMismatch || e.Code == ErrTenantBusy
+	return !errors.Is(e, ErrCommitUncertain) && (errors.Is(e, ErrSerializationConflict) || e.Code == ErrSchemaMismatch || e.Code == ErrTenantBusy)
 }
 
 func (e *SQLError) IsSerializationConflict() bool { return errors.Is(e, ErrSerializationConflict) }
@@ -220,7 +220,7 @@ func (d *Database) Batch(ctx context.Context, statements []Statement) ([]Result,
 	for attempt := 0; ; attempt++ {
 		out, err := d.batchOnce(ctx, p, body, header, len(statements))
 		var sqlErr *SQLError
-		if errors.As(err, &sqlErr) && (sqlErr.IsSerializationConflict() || sqlErr.IsSchemaMismatch()) && attempt < maxSQLResends {
+		if !errors.Is(err, ErrCommitUncertain) && errors.As(err, &sqlErr) && sqlErr.IsSerializationConflict() && attempt < maxSQLResends {
 			if err := httpx.Wait(ctx, backoff(attempt)); err != nil {
 				return nil, err
 			}
@@ -374,7 +374,7 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 
 func sqlCell(v any) (any, error) {
 	switch v := v.(type) {
-	case nil, string:
+	case nil, string, bool:
 		return v, nil
 	case json.Number:
 		if i, err := v.Int64(); err == nil {

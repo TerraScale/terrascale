@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"regexp"
@@ -19,7 +20,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"terrascale.tech/sdk/internal/causal"
+	"terrascale.tech/sdk/v1"
 )
+
+const ErrCommitUncertain = v1.ErrCommitUncertain
 
 const (
 	postgresMaxBytes       = 1024*1024 - 64
@@ -46,6 +50,9 @@ func (PostgresConfig) String() string {
 	return "terrascale PostgreSQL configuration (credentials redacted)"
 }
 func (config PostgresConfig) GoString() string { return config.String() }
+func (config PostgresConfig) LogValue() slog.Value {
+	return slog.StringValue(config.String())
+}
 
 type PostgresError struct {
 	Kind     string
@@ -63,14 +70,15 @@ func (err *PostgresError) Error() string {
 func (err *PostgresError) Unwrap() error { return err.cause }
 
 func (err *PostgresError) Is(target error) bool {
-	return target == ErrSerializationConflict && err.SQLState == postgresSerialization
+	return target == ErrSerializationConflict && err.IsSerializationConflict() ||
+		target == ErrCommitUncertain && err.Kind == "commit_uncertain"
 }
 
 func (err *PostgresError) IsSerializationConflict() bool {
-	return err.SQLState == postgresSerialization
+	return err.Kind != "commit_uncertain" && err.SQLState == postgresSerialization
 }
 
-func postgresFailure(err error) error {
+func postgresFailure(err error) *PostgresError {
 	if errors.Is(err, context.Canceled) {
 		return &PostgresError{Kind: "canceled", cause: context.Canceled}
 	}
@@ -79,9 +87,27 @@ func postgresFailure(err error) error {
 	}
 	var database *pgconn.PgError
 	if errors.As(err, &database) {
-		return &PostgresError{Kind: "database", SQLState: database.Code}
+		failure := &PostgresError{Kind: "database", SQLState: database.Code}
+		switch database.Detail {
+		case string(v1.ErrCommitUncertain), string(v1.ErrWriteOutcomeUnknown), string(v1.ErrInRegionQuorumUnconfirmed):
+			failure.Kind = "commit_uncertain"
+		}
+		switch database.Code {
+		case "08007", "40003":
+			failure.Kind = "commit_uncertain"
+		}
+		return failure
 	}
 	return &PostgresError{Kind: "connection"}
+}
+
+func postgresCommitFailure(err error) *PostgresError {
+	failure := postgresFailure(err)
+	switch failure.SQLState {
+	case "", "08006", "57P01", "57P02":
+		failure.Kind = "commit_uncertain"
+	}
+	return failure
 }
 
 type PostgresValue struct {
@@ -238,7 +264,7 @@ func ConnectPostgres(ctx context.Context, config PostgresConfig) (*PostgresClien
 		return nil, &PostgresError{Kind: "configuration"}
 	}
 	if config.Consistency != "" {
-		if _, err := client.run(ctx, PostgresQuery{Statement: "SET " + postgresConsistency + " = '" + string(config.Consistency) + "'"}); err != nil {
+		if _, err := client.run(ctx, PostgresQuery{Statement: "SET " + postgresConsistency + " = '" + string(config.Consistency) + "'"}, false); err != nil {
 			connection.Close(ctx)
 			return nil, err
 		}
@@ -256,7 +282,7 @@ func (client *PostgresClient) sync(ctx context.Context) error {
 	if outgoing == "" || outgoing == client.synced {
 		return nil
 	}
-	if _, err := client.run(ctx, PostgresQuery{Statement: "SET " + postgresBookmark + " = '" + outgoing + "'"}); err != nil {
+	if _, err := client.run(ctx, PostgresQuery{Statement: "SET " + postgresBookmark + " = '" + outgoing + "'"}, false); err != nil {
 		return err
 	}
 	client.synced = outgoing
@@ -351,16 +377,16 @@ func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (P
 	if err := client.sync(ctx); err != nil {
 		return PostgresResult{}, err
 	}
-	return client.run(ctx, query)
+	return client.run(ctx, query, true)
 }
 
-func (client *PostgresClient) openRows(ctx context.Context, query PostgresQuery) (pgx.Rows, []PostgresColumn, error) {
+func (client *PostgresClient) openRows(ctx context.Context, query PostgresQuery, autocommit bool) (*PostgresRows, error) {
 	values, err := postgresParameters(query)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if client.driver == nil || client.driver.IsClosed() {
-		return nil, nil, &PostgresError{Kind: "connection"}
+		return nil, &PostgresError{Kind: "connection"}
 	}
 	for _, oid := range []uint32{1700, 1082, 1114, 1184} {
 		typ, _ := client.driver.TypeMap().TypeForOID(oid)
@@ -373,24 +399,23 @@ func (client *PostgresClient) openRows(ctx context.Context, query PostgresQuery)
 	arguments := append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, values...)
 	rows, err := client.driver.Query(ctx, query.Statement, arguments...)
 	if err != nil {
-		return nil, nil, postgresFailure(err)
+		return nil, postgresFailure(err)
 	}
 	columns := make([]PostgresColumn, len(rows.FieldDescriptions()))
 	for index, field := range rows.FieldDescriptions() {
 		columns[index] = PostgresColumn{Name: field.Name, OID: field.DataTypeOID}
 	}
-	return rows, columns, nil
+	return &PostgresRows{client: client, ctx: ctx, rows: rows, columns: columns, autocommit: autocommit}, nil
 }
 
-func (client *PostgresClient) run(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
-	rows, columns, err := client.openRows(ctx, query)
+func (client *PostgresClient) run(ctx context.Context, query PostgresQuery, autocommit bool) (PostgresResult, error) {
+	stream, err := client.openRows(ctx, query, autocommit)
 	if err != nil {
 		return PostgresResult{}, err
 	}
-	stream := &PostgresRows{client: client, ctx: ctx, rows: rows, columns: columns}
-	result := PostgresResult{Columns: columns, Rows: [][]PostgresValue{}}
+	result := PostgresResult{Columns: stream.columns, Rows: [][]PostgresValue{}}
 	budget := postgresResultBytes
-	for _, column := range columns {
+	for _, column := range stream.columns {
 		budget -= len(column.Name) + 64
 	}
 	for stream.Next() {

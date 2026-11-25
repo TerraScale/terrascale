@@ -251,7 +251,7 @@ func enrollAgent(ctx context.Context, project, name string, scopes []string, sel
 	}
 }
 
-func dispatchAgentCommand(ctx context.Context, args []string, out, prompt io.Writer) (bool, error) {
+func dispatchAgentCommand(ctx context.Context, args []string, out io.Writer, input commandInput) (bool, error) {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project id")
@@ -261,6 +261,7 @@ func dispatchAgentCommand(ctx context.Context, args []string, out, prompt io.Wri
 	subject := fs.String("subject", "owner", "owner or agent")
 	after := fs.String("after", "", "agent list: next page cursor")
 	limit := fs.Int("limit", 50, "agent list: page size 1 to 100")
+	yes := fs.Bool("yes", false, "consent to agent revocation or a policy change")
 	scopes := []string{}
 	fs.Func("scope", "scope (repeatable)", func(s string) error { scopes = append(scopes, s); return nil })
 	operands, err := parseOptions(fs, args)
@@ -274,7 +275,7 @@ func dispatchAgentCommand(ctx context.Context, args []string, out, prompt io.Wri
 			allowed := f.Name == "project" || command == "list" && (f.Name == "after" || f.Name == "limit") ||
 				command == "enroll" && (f.Name == "name" || f.Name == "scope" || f.Name == "allow-self-subject") ||
 				command == "token" && (f.Name == "agent" || f.Name == "scope" || f.Name == "subject") ||
-				command == "revoke" && f.Name == "agent" || command == "policy set" && f.Name == "scope"
+				command == "revoke" && (f.Name == "agent" || f.Name == "yes") || command == "policy set" && (f.Name == "scope" || f.Name == "yes")
 			validFlags = validFlags && allowed
 		})
 		if !validFlags || *limit < 1 || *limit > 100 || len(*after) > 8192 {
@@ -291,7 +292,7 @@ func dispatchAgentCommand(ctx context.Context, args []string, out, prompt io.Wri
 			if *name == "" || len(scopes) == 0 || *agent != "" {
 				return errUsage
 			}
-			return enrollAgent(ctx, *project, *name, scopes, *self, out, prompt)
+			return enrollAgent(ctx, *project, *name, scopes, *self, out, input.prompt)
 		case "token":
 			if *agent == "" {
 				return errUsage
@@ -346,10 +347,20 @@ func dispatchAgentCommand(ctx context.Context, args []string, out, prompt io.Wri
 				return errors.New("Could not write agent token")
 			}
 			return nil
-		case "list", "revoke", "policy get", "policy set":
-			if command == "revoke" && *agent == "" {
+		case "revoke":
+			if *agent == "" {
 				return errUsage
 			}
+			message := fmt.Sprintf("Revoke agent %q in project %q.", *agent, *project)
+			if err := confirmNamedOperation(*agent, message, "agent revoke", *yes, input.in, input.prompt, input.tty); err != nil {
+				return err
+			}
+		case "policy set":
+			message := fmt.Sprintf("Replace the agent policy for project %q with scopes %q.", *project, scopes)
+			if err := confirmNamedOperation(*project, message, "agent policy set", *yes, input.in, input.prompt, input.tty); err != nil {
+				return err
+			}
+		case "list", "policy get":
 		default:
 			return errUsage
 		}

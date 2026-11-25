@@ -5,12 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 func dbExport(ctx context.Context, s *session, database, outputFile string, force bool, out io.Writer) error {
+	if outputFile != "" {
+		if info, err := os.Lstat(outputFile); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("%s is not a regular file", outputFile)
+			}
+			if !force {
+				return exportExists(outputFile)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	body, err := s.tb.ExportDatabase(ctx, s.project, database)
 	if err != nil {
 		return err
@@ -22,21 +34,13 @@ func dbExport(ctx context.Context, s *session, database, outputFile string, forc
 		}
 		return nil
 	}
-	if !force {
-		if _, err := os.Stat(outputFile); err == nil {
-			return fmt.Errorf("%s already exists: pass -force to overwrite: %w", outputFile, errUsage)
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-	}
-	partial := outputFile + ".partial"
-	file, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	file, err := os.CreateTemp(filepath.Dir(outputFile), ".terrascale-export-*")
 	if err != nil {
 		return err
 	}
+	defer os.Remove(file.Name())
+	defer file.Close()
 	interrupted := func(cause error) error {
-		file.Close()
-		os.Remove(partial)
 		return fmt.Errorf("export was interrupted and no file was written: %w", cause)
 	}
 	if _, err := io.Copy(file, body); err != nil {
@@ -45,7 +49,7 @@ func dbExport(ctx context.Context, s *session, database, outputFile string, forc
 	if err := file.Sync(); err != nil {
 		return interrupted(err)
 	}
-	committed, err := exportEndsCommitted(partial)
+	committed, err := exportEndsCommitted(file)
 	if err != nil {
 		return interrupted(err)
 	}
@@ -53,22 +57,23 @@ func dbExport(ctx context.Context, s *session, database, outputFile string, forc
 		return interrupted(errors.New("dump ends without COMMIT;"))
 	}
 	if err := file.Close(); err != nil {
-		os.Remove(partial)
 		return err
 	}
-	if err := os.Rename(partial, outputFile); err != nil {
-		os.Remove(partial)
+	if force {
+		return os.Rename(file.Name(), outputFile)
+	}
+	if err := os.Link(file.Name(), outputFile); errors.Is(err, os.ErrExist) {
+		return exportExists(outputFile)
+	} else {
 		return err
 	}
-	return nil
 }
 
-func exportEndsCommitted(path string) (bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer file.Close()
+func exportExists(path string) error {
+	return fmt.Errorf("%s already exists: pass -force to overwrite: %w", path, errUsage)
+}
+
+func exportEndsCommitted(file *os.File) (bool, error) {
 	info, err := file.Stat()
 	if err != nil {
 		return false, err

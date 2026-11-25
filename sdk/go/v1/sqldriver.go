@@ -146,7 +146,9 @@ func (t dbTx) Commit() error {
 	if s == nil {
 		return errors.New("terrascale: transaction already finished")
 	}
-	err := s.Commit(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), OperationTimeout)
+	defer cancel()
+	err := s.Commit(ctx)
 	_ = s.Close()
 	return err
 }
@@ -157,7 +159,9 @@ func (t dbTx) Rollback() error {
 	if s == nil {
 		return errors.New("terrascale: transaction already finished")
 	}
-	err := s.Rollback(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), OperationTimeout)
+	defer cancel()
+	err := s.Rollback(ctx)
 	_ = s.Close()
 	return err
 }
