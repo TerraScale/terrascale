@@ -77,7 +77,10 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         }
         finally
         {
-            tracked.EndSync(timeProvider.GetUtcNow(), progressed);
+            if (tracked.EndSync(timeProvider.GetUtcNow(), progressed))
+            {
+                _ = databases.RequestCatchUp(databaseId);
+            }
         }
     }
 
