@@ -38,7 +38,7 @@ public sealed class TerraBaseDbTransaction : DbTransaction
         {
             await RollbackAsync(bound.Token).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is TerraBaseException or WebSocketException or TimeoutException or OperationCanceledException)
+        catch (Exception error) when (error is TerraBaseException or WebSocketException or TimeoutException or OperationCanceledException or ObjectDisposedException)
         {
         }
     }

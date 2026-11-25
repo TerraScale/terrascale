@@ -19,6 +19,8 @@ public class TerraBaseException : HttpRequestException
 
     public int? OperationIndex { get; }
 
+    public bool OutcomeUncertain => TerraBaseSqlErrorCodes.OutcomeUncertain(ErrorCode);
+
     public string? Region { get; internal set; }
 
     public string? RequestId { get; private set; }
@@ -121,8 +123,11 @@ public class TerraBaseException : HttpRequestException
     internal void CaptureResponse(HttpResponseMessage response)
     {
         RequestId = ResponseRequestId.Read(response);
-        ResponseHeaders = response.Headers.ToDictionary(header => header.Key,
-            header => (IReadOnlyList<string>)Array.AsReadOnly(header.Value.ToArray()), StringComparer.OrdinalIgnoreCase).AsReadOnly();
+        ResponseHeaders = response.Headers.Concat(response.Content.Headers)
+            .GroupBy(static header => header.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => (IReadOnlyList<string>)Array.AsReadOnly(group.SelectMany(static header => header.Value).ToArray()),
+                StringComparer.OrdinalIgnoreCase)
+            .AsReadOnly();
         Region = RegionHeader(response, "X-TerraBase-Region");
         RetryAfter = response.Headers.RetryAfter?.Delta
             ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);

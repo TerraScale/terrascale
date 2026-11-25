@@ -76,7 +76,7 @@ public sealed class TerraBaseManagementClient
         ArgumentException.ThrowIfNullOrEmpty(authorityOrganizationId);
         ArgumentException.ThrowIfNullOrEmpty(closureId);
         var body = TerraBaseConnection.Json(new RequestBody { Version = version, ClosureId = closureId, AuthorityOrganizationId = authorityOrganizationId }, Json.RequestBody);
-        var (closure, status) = await connection.SendAsync(HttpMethod.Put, "/admin/projects/" + TerraBaseConnection.Segment(projectId, nameof(projectId)) + "/closure",
+        var (closure, status) = await connection.SendAsync(HttpMethod.Put, "/admin/projects/" + TerraScalePaths.Segment(projectId, nameof(projectId)) + "/closure",
             body, Json.TerraBaseProjectClosure, null, cancellationToken).ConfigureAwait(false);
         return closure.ClosureId == closureId && (status, closure.Status) is (System.Net.HttpStatusCode.OK, "accepted") or (System.Net.HttpStatusCode.Accepted, "pending")
             ? closure
@@ -122,8 +122,8 @@ public sealed class TerraBaseManagementClient
     private static string Page(string? after, int? limit) =>
         TerraBaseConnection.Query(("after", after), ("limit", TerraBaseConnection.Number(limit)));
 
-    private static string Organization(string organizationId) => $"{Root}/organizations/{TerraBaseConnection.Segment(organizationId, nameof(organizationId))}";
+    private static string Organization(string organizationId) => $"{Root}/organizations/{TerraScalePaths.Segment(organizationId, nameof(organizationId))}";
 
     private static string Project(string organizationId, string projectId) =>
-        $"{Organization(organizationId)}/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}";
+        $"{Organization(organizationId)}/projects/{TerraScalePaths.Segment(projectId, nameof(projectId))}";
 }

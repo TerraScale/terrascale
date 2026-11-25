@@ -47,24 +47,25 @@ public sealed record TerraBaseRestoreOperation(string Id, string OperationId, st
 internal static class TerraBaseRestore
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan FirstPoll = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan MaxPoll = TimeSpan.FromSeconds(2);
 
     internal static async Task<T> CompleteAsync<T>(TerraBaseConnection connection, string databasePath, string projectPath,
         TerraBaseRestoreOperation operation, JsonTypeInfo<T> database, CancellationToken cancellationToken)
     {
         var time = connection.TimeProvider;
         var start = time.GetTimestamp();
-        while (operation.Status == "running")
+        for (var poll = FirstPoll; operation.Status == "running"; poll = poll * 2 < MaxPoll ? poll * 2 : MaxPoll)
         {
             if (time.GetElapsedTime(start) >= Deadline)
                 throw new TerraBaseException(HttpStatusCode.GatewayTimeout, "The restore operation did not finish within ten minutes.", "restore_timeout", null);
-            await Task.Delay(Interval, time, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(poll * (0.5 + Random.Shared.NextDouble() / 2), time, cancellationToken).ConfigureAwait(false);
             operation = await ReadAsync(connection, databasePath, operation.Id, cancellationToken).ConfigureAwait(false);
         }
         if (operation.Status != "completed")
             throw new TerraBaseException(HttpStatusCode.OK, operation.ErrorMessage ?? "The restore operation failed.", operation.ErrorCode ?? "restore_failed", null);
         return (await connection.SendAsync(HttpMethod.Get,
-            projectPath + "/databases/" + TerraBaseConnection.Segment(operation.Database, "database"), null, database, null, cancellationToken).ConfigureAwait(false)).Value;
+            projectPath + "/databases/" + TerraScalePaths.Segment(operation.Database, "database"), null, database, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
     internal static async Task<TerraBaseRestoreOperation> ReadAsync(TerraBaseConnection connection, string databasePath,

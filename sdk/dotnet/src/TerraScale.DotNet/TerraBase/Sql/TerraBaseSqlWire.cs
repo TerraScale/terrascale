@@ -11,11 +11,6 @@ internal sealed record TerraBaseSqlExecuteRequest(IReadOnlyList<TerraBaseSqlStat
 internal sealed record TerraBaseSqlExecuteResponse(IReadOnlyList<TerraBaseSqlStatementBody> Results, string? Bookmark = null, string? Consistency = null) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Results);
-
-    public IReadOnlyList<TerraBaseSqlStatementResult> ToResults(int expected, HttpStatusCode? status) =>
-        Results.Count == expected
-            ? [.. Results.Select(result => result.ToResult())]
-            : throw new TerraBaseException(status, "TerraBase returned a result count that does not match the statements.", "invalid_response", null);
 }
 
 internal sealed record TerraBaseSqlColumnBody(string Name, string? Decltype = null, string? Type = null);

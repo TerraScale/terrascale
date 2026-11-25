@@ -50,21 +50,25 @@ public sealed partial class TerraBaseSqlClient
         var baseAddress = options.AuthAddress is null
             ? TerraBaseRegion.OriginOrPublic(options.BaseAddress, options.EndpointResolver)
             : options.BaseAddress;
-        TerraBaseConnection Connect(Func<CancellationToken, ValueTask<string>> provider) => new(httpClient, baseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
-            TerraBaseConnection.DefaultMaxResponseBytes, provider, region: options.Region);
-        _ = Connect(static _ => throw new InvalidOperationException("The connection has no project credential."));
+        TerraBaseConnection Connect(Func<CancellationToken, ValueTask<string>> provider, Action<string>? reject) => new(httpClient, baseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
+            TerraBaseConnection.DefaultMaxResponseBytes, provider, region: options.Region, rejectAccessToken: reject);
+        _ = Connect(static _ => throw new InvalidOperationException("The connection has no project credential."), null);
         projectApiKey = new(new TerraScaleApiKeyTokens(httpClient, AuthOrigin(options), options.ApiKey, nameof(options.ApiKey), TimeProvider.System), Connect);
     }
 
     internal TerraBaseSqlClient(TerraBaseConnection sharedConnection) => connection = sharedConnection;
 
-    private sealed class ProjectApiKey(TerraScaleApiKeyTokens tokens, Func<Func<CancellationToken, ValueTask<string>>, TerraBaseConnection> connect)
+    private sealed class ProjectApiKey(TerraScaleApiKeyTokens tokens, Func<Func<CancellationToken, ValueTask<string>>, Action<string>?, TerraBaseConnection> connect)
     {
         private readonly ConcurrentDictionary<string, TerraBaseConnection> connections = new(StringComparer.Ordinal);
 
         internal TerraScaleApiKeyTokens Tokens { get; } = tokens;
 
-        internal TerraBaseConnection For(string project) => connections.GetOrAdd(project, id => connect(Tokens.For(id)));
+        internal TerraBaseConnection For(string project) => connections.GetOrAdd(project, id =>
+        {
+            var token = Tokens.For(id);
+            return connect(token.GetAsync, token.Reject);
+        });
     }
 
     private static Uri AuthOrigin(TerraBaseSqlClientOptions options) => options switch
@@ -94,7 +98,7 @@ public sealed partial class TerraBaseSqlClient
 
     public TerraBaseSqlDatabase Database(string projectId, string database)
     {
-        var path = $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(database, nameof(database))}";
+        var path = $"/v1/projects/{TerraScalePaths.Segment(projectId, nameof(projectId))}/databases/{TerraScalePaths.Segment(database, nameof(database))}";
         return new(ProjectConnection(projectId), path, bookmarks.GetOrAdd(path, static _ => new TerraBaseBookmarkTracker()), consistency);
     }
 }
@@ -164,8 +168,12 @@ public sealed class TerraBaseSqlDatabase
     public Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, CancellationToken cancellationToken = default) =>
         BatchAsync(statements, NoOptions, cancellationToken);
 
-    public async Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, TerraBaseSqlRequestOptions options,
-        CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, TerraBaseSqlRequestOptions options,
+        CancellationToken cancellationToken = default) =>
+        BatchAsync(statements, options, null, cancellationToken);
+
+    internal async Task<IReadOnlyList<TerraBaseSqlStatementResult>> BatchAsync(IReadOnlyList<TerraBaseSqlStatement> statements, TerraBaseSqlRequestOptions options,
+        TimeSpan? requestTimeout, CancellationToken cancellationToken)
     {
         TerraBaseSqlStatement.Validate(statements);
         ArgumentNullException.ThrowIfNull(options);
@@ -179,9 +187,9 @@ public sealed class TerraBaseSqlDatabase
                 if (bookmark.Length > 0) headers.Add(TerraBaseConsistency.BookmarkHeader, bookmark);
                 if (mode is not null) headers.Add(TerraBaseConsistency.ConsistencyHeader, mode);
             },
-            cancellationToken, observe: bookmarks.ObserveResponse).ConfigureAwait(false);
+            cancellationToken, requestTimeout, bookmarks.ObserveResponse).ConfigureAwait(false);
         bookmarks.ObserveAnswer(response.Bookmark, status);
-        return response.ToResults(statements.Count, status);
+        return TerraBaseSqlScript.Frame(statements).Results(response.Results, statements.Count, status);
     }
 
     public Task<Stream> ExportDatabaseAsync(CancellationToken cancellationToken = default) =>

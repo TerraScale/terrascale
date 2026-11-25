@@ -34,11 +34,7 @@ internal sealed partial class TerraScaleApiKeyTokens
         basic = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{id}:{key}")));
     }
 
-    internal Func<CancellationToken, ValueTask<string>> For(string project)
-    {
-        var cache = new ProjectToken(this, project);
-        return cache.GetAsync;
-    }
+    internal ProjectToken For(string project) => new(this, project);
 
     internal async Task<TerraBaseScopedKey> CreateScopedKeyAsync(TerraBaseScopedKeyRequest body, CancellationToken cancellationToken)
     {
@@ -104,7 +100,7 @@ internal sealed partial class TerraScaleApiKeyTokens
         return (accessToken, TimeSpan.FromSeconds(seconds));
     }
 
-    private sealed class ProjectToken(TerraScaleApiKeyTokens owner, string project)
+    internal sealed class ProjectToken(TerraScaleApiKeyTokens owner, string project)
     {
         private readonly Lock gate = new();
         private Cached? cached;
@@ -133,6 +129,14 @@ internal sealed partial class TerraScaleApiKeyTokens
             }
 
             return await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        public void Reject(string token)
+        {
+            lock (gate)
+            {
+                if (cached is { } entry && entry.Token == token) cached = null;
+            }
         }
 
         private async Task RefreshAsync(TaskCompletionSource<string> completion)

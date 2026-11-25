@@ -15,6 +15,7 @@ public sealed partial class LiveShape
     private readonly string? where;
     private readonly string? columns;
     private const string Protocol = "terrascale.shape.v1";
+    private static readonly TimeSpan MaxPause = TimeSpan.FromSeconds(30);
 
     internal LiveShape(TerraBaseConnection connection, string databasePath, string table, ShapeOptions options)
     {
@@ -234,7 +235,9 @@ public sealed partial class LiveShape
                 _ => HttpStatusCode.ServiceUnavailable,
             })
             { Content = new StringContent("{\"error\":" + frame.GetRawText() + "}") };
-            if (frame.TryGetProperty("retry_after", out var retry)) response.Headers.RetryAfter = new(TimeSpan.FromSeconds(retry.GetDouble()));
+            if (frame.TryGetProperty("retry_after", out var retry) && retry.ValueKind == JsonValueKind.Number && retry.TryGetDouble(out var seconds)
+                && double.IsFinite(seconds) && seconds >= 0)
+                response.Headers.RetryAfter = new(TimeSpan.FromSeconds(Math.Min(seconds, MaxPause.TotalSeconds)));
             throw await TerraBaseException.FromResponseAsync(response, null, cancellationToken).ConfigureAwait(false);
         }
         return frame;
@@ -266,8 +269,8 @@ public sealed partial class LiveShape
         _ => false,
     };
 
-    private static TimeSpan Pause(Exception error, int attempt) => error is TerraBaseException { RetryAfter: { } retry } ? retry
-        : TimeSpan.FromMilliseconds(Math.Min(30000, 250 * Math.Pow(2, Math.Min(attempt, 8))) * (0.5 + Random.Shared.NextDouble() / 2));
+    private static TimeSpan Pause(Exception error, int attempt) => error is TerraBaseException { RetryAfter: { } retry } ? (retry < MaxPause ? retry : MaxPause)
+        : TimeSpan.FromMilliseconds(Math.Min(MaxPause.TotalMilliseconds, 250 * Math.Pow(2, Math.Min(attempt, 8))) * (0.5 + Random.Shared.NextDouble() / 2));
     private static string? Header(HttpResponseMessage response, string name) => response.Headers.TryGetValues(name, out var values) ? values.Single() : null;
     private static TerraBaseException InvalidResponse() => new(HttpStatusCode.OK, "TerraBase returned an invalid shape response.", "invalid_response", null);
 

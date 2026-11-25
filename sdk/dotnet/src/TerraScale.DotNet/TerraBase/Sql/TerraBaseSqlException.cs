@@ -32,8 +32,6 @@ public static class TerraBaseSqlErrorCodes
 
     public const string SerializationConflict = "serialization_conflict";
 
-    public const string SchemaMismatch = "schema_mismatch";
-
     public const string InvalidBookmark = "invalid_bookmark";
 
     public const string InvalidConsistency = "invalid_consistency";
@@ -43,6 +41,12 @@ public static class TerraBaseSqlErrorCodes
     public const string TooLarge = "too_large";
 
     public const string QueryCanceled = "query_canceled";
+
+    public const string WriteOutcomeUnknown = "write_outcome_unknown";
+
+    public const string CommitUncertain = "commit_uncertain";
+
+    public const string InRegionQuorumUnconfirmed = "in_region_quorum_unconfirmed";
 
     public const string TransactionRolledBack = "transaction_rolled_back";
 
@@ -66,10 +70,12 @@ public static class TerraBaseSqlErrorCodes
 
     internal static string? ConsistencySqlState(string code) => code switch
     {
-        SerializationConflict or SchemaMismatch => "40001",
+        SerializationConflict => "40001",
         InvalidBookmark or InvalidConsistency => "22023",
         _ => null,
     };
+
+    internal static bool OutcomeUncertain(string? code) => code is WriteOutcomeUnknown or CommitUncertain or InRegionQuorumUnconfirmed;
 }
 
 public sealed class TerraBaseSqlException : TerraBaseException
@@ -88,5 +94,5 @@ public sealed class TerraBaseSqlException : TerraBaseException
 
     public string Sqlstate { get; }
 
-    public bool IsTransient => Code is TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.SchemaMismatch or TerraBaseSqlErrorCodes.TenantBusy;
+    public bool IsTransient => Code is TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy;
 }

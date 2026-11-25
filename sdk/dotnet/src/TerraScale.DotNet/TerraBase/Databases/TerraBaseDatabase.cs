@@ -29,11 +29,11 @@ public sealed class TerraBaseDatabaseClient
     internal TerraBaseDatabaseClient(TerraBaseConnection connection) => this.connection = connection;
 
     public TerraBaseProjectClient Project(string projectId) =>
-        new(connection, $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}");
+        new(connection, $"/v1/projects/{TerraScalePaths.Segment(projectId, nameof(projectId))}");
 
     public TerraBaseDatabase Database(string projectId, string databaseName) =>
-        new(connection, $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(databaseName, nameof(databaseName))}",
-            $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}");
+        new(connection, $"/v1/projects/{TerraScalePaths.Segment(projectId, nameof(projectId))}/databases/{TerraScalePaths.Segment(databaseName, nameof(databaseName))}",
+            $"/v1/projects/{TerraScalePaths.Segment(projectId, nameof(projectId))}");
 }
 
 public sealed record TerraBaseDatabaseInfo(string Id, string ProjectId, string Name)

@@ -6,6 +6,8 @@ namespace TerraScale.DotNet.TerraBase;
 
 public sealed class TerraBaseDbCommand : DbCommand
 {
+    private const int DefaultCommandTimeout = 30;
+
     private readonly TerraBaseDbParameterCollection parameters = [];
     private TerraBaseDbConnection? connection;
 
@@ -31,7 +33,7 @@ public sealed class TerraBaseDbCommand : DbCommand
             ArgumentOutOfRangeException.ThrowIfNegative(value);
             field = value;
         }
-    }
+    } = DefaultCommandTimeout;
 
     public override CommandType CommandType
     {
@@ -103,13 +105,15 @@ public sealed class TerraBaseDbCommand : DbCommand
                 : "The connection has an open transaction; set the command's Transaction property to it.");
         }
 
+        var limit = CommandTimeout > 0 ? TimeSpan.FromSeconds(CommandTimeout) : Timeout.InfiniteTimeSpan;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (CommandTimeout > 0) deadline.CancelAfter(TimeSpan.FromSeconds(CommandTimeout));
+        deadline.CancelAfter(limit);
         try
         {
             return open is { } transaction
                 ? await transaction.Session.BatchAsync(statements, deadline.Token).ConfigureAwait(false)
-                : await connection.SqlDatabase.BatchAsync(statements, new TerraBaseSqlRequestOptions { Consistency = connection.Consistency }, deadline.Token).ConfigureAwait(false);
+                : await connection.SqlDatabase.BatchAsync(statements, new TerraBaseSqlRequestOptions { Consistency = connection.Consistency },
+                    CommandTimeout > 0 && limit < TerraBaseConnection.MaxRequestTimeout ? limit : TerraBaseConnection.MaxRequestTimeout, deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
         {

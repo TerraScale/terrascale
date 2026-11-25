@@ -20,12 +20,13 @@ internal sealed class TerraBaseConnection
     private const int MinResponseBytes = 64 * 1024;
     private const int MaxResponseBytesLimit = 1024 * 1024 * 1024;
     private const int MaxSecretLength = 4096;
-    private static readonly TimeSpan MaxRequestTimeout = TimeSpan.FromMinutes(10);
+    internal static readonly TimeSpan MaxRequestTimeout = TimeSpan.FromMinutes(10);
 
     private readonly HttpClient http;
     private readonly ITerraBaseEndpointResolver endpointResolver;
     private readonly AuthenticationHeaderValue? authorization;
     private readonly Func<CancellationToken, ValueTask<string>>? accessTokenProvider;
+    private readonly Action<string>? rejectToken;
     private readonly bool anonymous;
     private readonly bool publicAnonymous;
     private readonly TimeSpan timeout;
@@ -38,7 +39,8 @@ internal sealed class TerraBaseConnection
     internal int MaxResponseBytes => maxResponseBytes;
 
     public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
-        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null, TimeProvider? timeProvider = null, bool publicAnonymous = false)
+        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null, TimeProvider? timeProvider = null, bool publicAnonymous = false,
+        Action<string>? rejectAccessToken = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         this.http = http;
@@ -81,17 +83,10 @@ internal sealed class TerraBaseConnection
 
         authorization = secret is null ? null : new AuthenticationHeaderValue("Bearer", secret);
         this.accessTokenProvider = accessTokenProvider;
+        rejectToken = rejectAccessToken;
         this.timeout = timeout;
         this.timeProvider = timeProvider ?? TimeProvider.System;
         this.maxResponseBytes = maxResponseBytes;
-    }
-
-    public static string Segment(string value, string name)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(value, name);
-        return value is "." or ".."
-            ? throw new ArgumentException($"{name} cannot be \".\" or \"..\".", name)
-            : Uri.EscapeDataString(value);
     }
 
     public static string Query(params (string Name, string? Value)[] parameters)
@@ -273,9 +268,11 @@ internal sealed class TerraBaseConnection
                 throw new InvalidOperationException("Anonymous TerraBase requests require an HttpClient without default Authorization or Cookie headers; use a separate credential-free HttpClient with TerraBaseHttp.CreateHandler().");
             var started = timeProvider.GetTimestamp();
             var read = method == HttpMethod.Get || method == HttpMethod.Head;
+            var reauthorized = false;
             for (var attempt = 0; ; attempt++)
             {
                 TerraBaseException? refusal = null;
+                var reauthorize = false;
                 ExceptionDispatchInfo? lost = null;
                 try
                 {
@@ -289,9 +286,11 @@ internal sealed class TerraBaseConnection
                 {
                     if (!throwOnError || response.IsSuccessStatusCode) break;
                     refusal = await TerraBaseException.FromResponseAsync(response, null, deadline.Token).ConfigureAwait(false);
-                    if (attempt >= MaxRetries || !Retryable(method, request.Content, refusal)) throw refusal;
+                    reauthorize = !reauthorized && request.Content is null or ByteArrayContent && Reject(request.Headers.Authorization?.Parameter, refusal);
+                    reauthorized |= reauthorize;
+                    if (!reauthorize && (attempt >= MaxRetries || !Retryable(method, request.Content, refusal))) throw refusal;
                 }
-                var delay = RetryDelay(refusal?.RetryAfter, attempt);
+                var delay = reauthorize ? TimeSpan.Zero : RetryDelay(refusal?.RetryAfter, attempt);
                 if (delay >= timeout - timeProvider.GetElapsedTime(started))
                 {
                     lost?.Throw();
@@ -341,12 +340,13 @@ internal sealed class TerraBaseConnection
     }
 
     internal async Task<ClientWebSocket> ConnectWebSocketAsync(string path, string subprotocol, CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, string>? requestHeaders = null)
+        IReadOnlyDictionary<string, string>? requestHeaders = null, TimeSpan? keepAliveTimeout = null)
     {
         using var expiry = new CancellationTokenSource(timeout, timeProvider);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
         var started = timeProvider.GetTimestamp();
         var socket = new ClientWebSocket();
+        var reauthorized = false;
         try
         {
             for (var attempt = 1; ; attempt++)
@@ -356,6 +356,11 @@ internal sealed class TerraBaseConnection
                     throw new InvalidOperationException("A client without a credential reaches only a private plain-HTTP TerraBase listener.");
                 socket.Options.CollectHttpResponseDetails = true;
                 socket.Options.AddSubProtocol(subprotocol);
+                if (keepAliveTimeout is { } pongDeadline)
+                {
+                    socket.Options.KeepAliveInterval = pongDeadline / 2;
+                    socket.Options.KeepAliveTimeout = pongDeadline;
+                }
                 if (anonymous)
                 {
                     socket.Options.HttpVersion = HttpVersion.Version20;
@@ -373,22 +378,28 @@ internal sealed class TerraBaseConnection
                 if (regionPin is not null) socket.Options.SetRequestHeader(TerraBaseRegion.PinHeader, regionPin);
                 foreach (var (name, value) in requestHeaders ?? FrozenDictionary<string, string>.Empty) socket.Options.SetRequestHeader(name, value);
                 var target = new UriBuilder(new Uri(origin, path)) { Scheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
+                var upgrade = new SentFromOrigin(http, target);
                 try
                 {
-                    using var invoker = new HttpMessageInvoker(new SentFromOrigin(http, target));
+                    using var invoker = new HttpMessageInvoker(upgrade);
                     await socket.ConnectAsync(target, invoker, deadline.Token).ConfigureAwait(false);
                 }
-                catch (WebSocketException upgrade) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
+                catch (Exception error) when (error is WebSocketException or TerraBaseException && upgrade.Refusal is not null)
                 {
-                    using var refused = new HttpResponseMessage(socket.HttpStatusCode) { Content = new ByteArrayContent([]) };
-                    foreach (var (name, values) in socket.HttpResponseHeaders ?? new Dictionary<string, IEnumerable<string>>())
-                        refused.Headers.TryAddWithoutValidation(name, values);
-                    var refusal = await TerraBaseException.FromResponseAsync(refused, upgrade, deadline.Token).ConfigureAwait(false);
+                    var refusal = upgrade.Refusal;
                     socket.Dispose();
+                    if (!reauthorized && Reject(bearer, refusal))
+                    {
+                        reauthorized = true;
+                        socket = new ClientWebSocket();
+                        continue;
+                    }
+
                     await SqlConnectRetry.WaitAsync(refusal, attempt, timeout - timeProvider.GetElapsedTime(started), timeProvider, deadline.Token).ConfigureAwait(false);
                     socket = new ClientWebSocket();
                     continue;
                 }
+
 
                 return socket.SubProtocol == subprotocol
                     ? socket
@@ -416,10 +427,18 @@ internal sealed class TerraBaseConnection
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
+    private bool Reject(string? token, TerraBaseException refusal)
+    {
+        if (rejectToken is null || token is null || refusal is not TerraBaseAuthenticationException || refusal is TerraBaseKeyRevokedException or TerraBaseKeyExpiredException)
+            return false;
+        rejectToken(token);
+        return true;
+    }
+
     private static bool Retryable(HttpMethod method, HttpContent? content, TerraBaseException error)
     {
         var read = method == HttpMethod.Get || method == HttpMethod.Head;
-        return (int)(error.StatusCode ?? 0) switch
+        return !error.OutcomeUncertain && (int)(error.StatusCode ?? 0) switch
         {
             503 => error.ErrorCode switch
             {
@@ -428,7 +447,6 @@ internal sealed class TerraBaseConnection
             },
             429 => read && error.ErrorCode == "tenant_busy",
             409 => error is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SerializationConflict } && content is ByteArrayContent,
-            412 => error is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SchemaMismatch } && content is ByteArrayContent,
             502 or 504 => read,
             _ => false,
         };
@@ -494,8 +512,30 @@ internal sealed class TerraBaseConnection
 
     private sealed class SentFromOrigin(HttpClient http, Uri origin) : HttpMessageHandler
     {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), origin);
+        public TerraBaseException? Refusal { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), origin);
+            var upgraded = response.Version.Major >= 2
+                ? response.StatusCode == HttpStatusCode.OK
+                : response.StatusCode == HttpStatusCode.SwitchingProtocols;
+            if (upgraded)
+            {
+                return response;
+            }
+
+            using (response)
+            {
+                var refusal = response.IsSuccessStatusCode
+                    ? new TerraBaseException(response.StatusCode,
+                        $"TerraBase answered the WebSocket upgrade with HTTP {(int)response.StatusCode} over HTTP/{response.Version}.", "invalid_response", null)
+                    : await TerraBaseException.FromResponseAsync(response, null, cancellationToken).ConfigureAwait(false);
+                refusal.CaptureResponse(response);
+                Refusal = refusal;
+                throw refusal;
+            }
+        }
     }
 
     private static void ValidateSecret(string? secret, string secretName)
