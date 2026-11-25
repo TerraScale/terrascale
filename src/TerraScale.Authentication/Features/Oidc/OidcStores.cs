@@ -384,6 +384,11 @@ public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor h
 
     private async Task<bool> RevokeOneAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
     {
+        if (authorization.Id is not { } id)
+        {
+            throw new InvalidOperationException("A stored authorization has no id.");
+        }
+
         var current = authorization;
         for (var round = 0; round < RevokeRounds; round++)
         {
@@ -398,7 +403,7 @@ public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor h
                 return true;
             }
 
-            if (await this.FindByIdAsync(authorization.Id!, cancellationToken) is not { } reread)
+            if (await this.FindByIdAsync(id, cancellationToken) is not { } reread)
             {
                 return false;
             }
@@ -674,6 +679,11 @@ public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpen
 
     private async Task<bool> RevokeOneAsync(OidcToken token, CancellationToken cancellationToken)
     {
+        if (token.Id is not { } id)
+        {
+            throw new InvalidOperationException("A stored token has no id.");
+        }
+
         var current = token;
         for (var round = 0; round < RevokeRounds; round++)
         {
@@ -688,7 +698,7 @@ public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpen
                 return true;
             }
 
-            if (await this.ReadAsync(token.Id!, cancellationToken) is not { } reread)
+            if (await this.ReadAsync(id, cancellationToken) is not { } reread)
             {
                 return false;
             }

@@ -201,7 +201,7 @@ async function expectStoredSubjectKeyed(tenant: string, email: string): Promise<
   expect(answer.error?.message ?? '').toBe('');
   const subjects = (answer.results?.[0]?.rows ?? []).map(row => String(row[0]));
   expect(subjects, 'the lock counter row exists').toHaveLength(1);
-  expect(subjects[0], 'the stored counter key is the keyed fold, not the plain SHA-256 hex of the email')
-    .toMatch(/^fold-\d+$/);
+  expect(subjects[0], 'the stored counter key is a full keyed HMAC, not the plain SHA-256 hex of the email')
+    .toMatch(/^[0-9a-f]{64}$/);
   expect(subjects[0]).not.toBe(createHash('sha256').update(email).digest('hex'));
 }

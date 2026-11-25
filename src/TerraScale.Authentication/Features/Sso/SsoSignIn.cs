@@ -359,7 +359,7 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             return session;
         }
 
-        logger.ZLogInformation($"Audit: user {proof.UserId:@UserId} linked a new SSO identity; every earlier session and token was revoked");
+        logger.ZLogInformation($"Audit: user {proof.UserId:@UserId} linked a new SSO identity; every earlier session and refresh token was revoked");
         await sessions.RevokeAsync(session.Session.InstanceId, session.Token, cancellationToken);
         return await SignInFlow.OpenSessionAsync(sessions,
             Users.BindAuthenticationState(advanced) with { MultiFactor = session.Session.Mfa, MfaMethod = session.Session.MfaMethod }, cancellationToken);
@@ -395,7 +395,7 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             return null;
         }
 
-        var advanced = linked is null ? user with { AuthEpoch = checked(user.AuthEpoch + 1), AuthStamp = AuthIds.New() } : null;
+        var advanced = linked is null ? user with { AuthEpoch = checked(user.AuthEpoch + 1) } : null;
         var userChange = advanced is null ? Change.Assert(user) : Change.Update(advanced);
         changes.Add(userChange);
         changes.Add(Change.Assert(found));

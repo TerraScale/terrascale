@@ -30,8 +30,9 @@ internal static class MachineClients
         && scopes.All(scope => scope is { Length: >= 1 and <= 128 } && scope.All(character => character is >= (char)0x21 and <= (char)0x7e and not '"' and not '\\')
             && scope is not (Scopes.OpenId or Scopes.OfflineAccess));
 
-    public static MachineClientPolicy Validate(IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences, int? minutes)
+    public static MachineClientPolicy Validate(AuthOptions options, IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences, int? minutes)
     {
+        ArgumentNullException.ThrowIfNull(options);
         audiences ??= [];
         if (scopes is null || !ValidScopes(scopes) || minutes is < 5 or > 60 || audiences.Count > 64
             || audiences.Distinct(StringComparer.Ordinal).Count() != audiences.Count
@@ -46,7 +47,7 @@ internal static class MachineClients
             throw new ApiException(400, "invalid_request", "allowed_audiences cannot name a project data audience; a machine needing data uses a project API key.");
         }
 
-        if (audiences.Any(audience => Platform(new Uri(audience), [AuthOptions.TerraBaseAudience, AuthOptions.DashboardOrigin])))
+        if (audiences.Any(audience => Platform(options, new Uri(audience))))
         {
             throw new ApiException(400, "invalid_request", "allowed_audiences cannot name a TerraScale platform origin.");
         }
@@ -54,9 +55,10 @@ internal static class MachineClients
         return new(scopes, audiences, minutes ?? 15);
     }
 
-    private static bool Platform(Uri audience, IReadOnlyList<string> platformOrigins) =>
-        platformOrigins.Any(origin => Uri.TryCreate(origin, UriKind.Absolute, out var platform)
-            && Uri.Compare(audience, platform, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0);
+    private static bool Platform(AuthOptions options, Uri audience) =>
+        ((IReadOnlyList<string>)[.. options.AccessTokenAudiences, AuthOptions.TerraBaseAudience, AuthOptions.DashboardOrigin, OidcIssuer.Issuer(options).AbsoluteUri])
+            .Any(origin => Uri.TryCreate(origin, UriKind.Absolute, out var platform)
+                && Uri.Compare(audience, platform, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0);
 
     public static void Configure(OpenIddictApplicationDescriptor descriptor, MachineClientPolicy policy)
     {
@@ -90,8 +92,7 @@ internal static class MachineClients
 
         var options = context.RequestServices.GetRequiredService<AuthOptions>();
         if (resources.Length > 1 || resources.Except(policy.AllowedAudiences, StringComparer.Ordinal).Any()
-            || resources.Any(resource => !Uri.TryCreate(resource, UriKind.Absolute, out var uri)
-                || Platform(uri, [.. options.AccessTokenAudiences, AuthOptions.DashboardOrigin, OidcIssuer.Issuer(options).GetLeftPart(UriPartial.Authority)])))
+            || resources.Any(resource => !Uri.TryCreate(resource, UriKind.Absolute, out var uri) || Platform(options, uri)))
         {
             return OidcResults.Forbid("invalid_target", "The resource must be one of the app's allowed audiences.");
         }

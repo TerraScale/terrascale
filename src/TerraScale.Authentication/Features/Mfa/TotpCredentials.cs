@@ -112,6 +112,10 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             || (Tenancy.IsProject(user.InstanceId) || viaSso) && policy.AllowPasskey && await this.HasPasskeyAsync(user.InstanceId, user.Id, cancellationToken);
     }
 
+    internal async Task<bool> HasEnrolledFactorAsync(UserRecord user, bool viaSso, CancellationToken cancellationToken) =>
+        (await this.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled
+        || (Tenancy.IsProject(user.InstanceId) || viaSso) && await this.HasPasskeyAsync(user.InstanceId, user.Id, cancellationToken);
+
     public Task<bool> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(challenged);
@@ -136,7 +140,8 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             var enrolled = policy is null || !policy.RequireMfa || policy.AllowTotp && enabled || passkey;
             var allowed = policy is null || multiFactorMethod is null || multiFactorMethod == "totp" && policy.AllowTotp
                 || multiFactorMethod == "passkey" && policy.AllowPasskey || multiFactorMethod == "recovery" && enabled && (policy.AllowTotp || passkey);
-            return enrolled && allowed && (!(policy?.RequireMfa == true || enabled) || multiFactorMethod is not null)
+            var held = enabled || policy is not null && await this.HasPasskeyAsync(instanceId, userId, cancellationToken);
+            return enrolled && allowed && (!(policy?.RequireMfa == true || held) || multiFactorMethod is not null)
                 && await users.GetAsync(instanceId, userId, cancellationToken) is { Disabled: false } user
                 && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
                     ? user with { MultiFactor = multiFactorMethod is not null, MfaMethod = multiFactorMethod }
@@ -450,7 +455,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         var result = await proof();
         if (succeeded(result))
         {
-            await reservation.ReturnAsync(cancellationToken);
+            await reservation.ReturnAsync(CancellationToken.None);
         }
 
         return result;

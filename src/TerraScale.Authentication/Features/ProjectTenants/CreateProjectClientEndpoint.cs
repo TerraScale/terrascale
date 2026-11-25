@@ -1,4 +1,5 @@
 using OpenIddict.Abstractions;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.Oidc;
@@ -7,7 +8,7 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
 public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenIddictApplicationManager applications, PlatformAuthentication authentication,
-    ProjectAuthSettings settings, StepUpProofs proofs) : ProjectTenantEndpoint(tenants, authentication)
+    ProjectAuthSettings settings, StepUpProofs proofs, AuthOptions options) : ProjectTenantEndpoint(tenants, authentication)
 {
     protected override bool PersonOnly => true;
 
@@ -25,7 +26,7 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
         var type = request.Type is ClientTypes.Public or ClientTypes.Confidential or "machine" ? request.Type : throw Invalid("type must be public, confidential or machine.");
         List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
-        var policy = type == "machine" ? MachineClients.Validate(request.AllowedScopes, request.AllowedAudiences, request.TokenLifetimeMinutes) : null;
+        var policy = type == "machine" ? MachineClients.Validate(options, request.AllowedScopes, request.AllowedAudiences, request.TokenLifetimeMinutes) : null;
         if (policy is null && (request.AllowedScopes is not null || request.AllowedAudiences is not null || request.TokenLifetimeMinutes is not null))
         {
             throw Invalid("Machine policies require type machine.");

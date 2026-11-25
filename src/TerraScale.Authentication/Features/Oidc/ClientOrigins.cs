@@ -47,12 +47,6 @@ public static class ClientOrigins
             return;
         }
 
-        if (!AnonymousTenantReads.Admit(context))
-        {
-            await AnonymousTenantReads.RefuseAsync(context);
-            return;
-        }
-
         var allowed = await AllowsAsync(context.RequestServices.GetRequiredService<AuthData>(), tenant, origin, context.RequestAborted);
         if (HttpMethods.IsOptions(context.Request.Method) && context.Request.Headers.ContainsKey(HeaderNames.AccessControlRequestMethod))
         {

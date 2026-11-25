@@ -58,17 +58,23 @@ public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcode
 
     private Task<int> PruneClaimsAsync(int batchSize, CancellationToken cancellationToken)
     {
-        var (cutoff, replayCutoff, replay, credential) = (this.Before(ClaimRetention), this.Before(ReplayRetention), GitHubActionsGrant.TokenIdKind, "credential:%");
+        var (cutoff, replayCutoff, replay, credential, platform) =
+            (this.Before(ClaimRetention), this.Before(ReplayRetention), GitHubActionsGrant.TokenIdKind, "credential:%", OidcIssuer.InstanceId);
         return data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
             """
             DELETE FROM credential_claims WHERE (instance_id, kind, "key") IN (
                 SELECT c.instance_id, c.kind, c."key" FROM credential_claims c
                 WHERE c.kind = @replay AND c.version < @replayCutoff
                     OR c.kind LIKE @credential AND c.version < @cutoff
-                        AND NOT EXISTS (SELECT 1 FROM oidc_applications a WHERE instr(a.secret_bindings, c."key") > 0)
-                        AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE instr(k.secret_bindings, c."key") > 0 OR instr(k.previous_secret_bindings, c."key") > 0)
+                        AND (c.instance_id <> @platform OR NOT EXISTS (
+                            SELECT 1 FROM oidc_applications a
+                            WHERE instr(a.secret_bindings, '{"kind":"' || c.kind || '","key":"' || c."key" || '","ownerId":"' || c.owner_id || '"}') > 0
+                            UNION ALL
+                            SELECT 1 FROM api_keys k
+                            WHERE instr(k.secret_bindings, '{"kind":"' || c.kind || '","key":"' || c."key" || '","ownerId":"' || c.owner_id || '"}') > 0
+                                OR instr(k.previous_secret_bindings, '{"kind":"' || c.kind || '","key":"' || c."key" || '","ownerId":"' || c.owner_id || '"}') > 0))
                 LIMIT @batchSize)
-            """, new { replay, replayCutoff, credential, cutoff, batchSize }), cancellationToken);
+            """, new { replay, replayCutoff, credential, cutoff, platform, batchSize }), cancellationToken);
     }
 
     private Task<int> PruneRateLimitsAsync(int batchSize, CancellationToken cancellationToken)
@@ -110,19 +116,21 @@ public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcode
 
     private Task<int> PruneInvitationsAsync(int batchSize, CancellationToken cancellationToken)
     {
-        var (cutoff, now) = (this.Before(InvitationRetention), clock.GetUtcNow());
+        var (cutoff, expired) = (this.Before(InvitationRetention), clock.GetUtcNow() - InvitationRetention);
         return data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
             """
             DELETE FROM project_invitations WHERE id IN (
-                SELECT id FROM project_invitations WHERE id < @cutoff AND (status <> 'pending' OR expires_at <= @now) ORDER BY id LIMIT @batchSize)
-            """, new { cutoff, now, batchSize }), cancellationToken);
+                SELECT id FROM project_invitations
+                WHERE status <> 'pending' AND version < @cutoff OR status = 'pending' AND expires_at <= @expired
+                LIMIT @batchSize)
+            """, new { cutoff, expired, batchSize }), cancellationToken);
     }
 
     private Task<int> PruneWaitlistAsync(int batchSize, CancellationToken cancellationToken)
     {
         var cutoff = this.Before(InvitationRetention);
         return data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
-            "DELETE FROM project_waitlist WHERE id IN (SELECT id FROM project_waitlist WHERE id < @cutoff AND status = 'approved' ORDER BY id LIMIT @batchSize)",
+            "DELETE FROM project_waitlist WHERE id IN (SELECT id FROM project_waitlist WHERE status = 'approved' AND version < @cutoff LIMIT @batchSize)",
             new { cutoff, batchSize }), cancellationToken);
     }
 

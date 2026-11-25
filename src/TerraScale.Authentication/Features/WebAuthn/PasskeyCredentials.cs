@@ -182,12 +182,13 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         return entry;
     }
 
-    public (AssertionOptions Options, string Challenge) SignInOptions(string instanceId)
+    public async Task<(AssertionOptions Options, string Challenge)> SignInOptionsAsync(string instanceId, UserRecord? identified, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        var entries = identified is null ? [] : await this.ReadAsync(instanceId, identified.Id, cancellationToken);
         var assertion = fido2.GetAssertionOptions(new GetAssertionOptionsParams
         {
-            AllowedCredentials = [],
+            AllowedCredentials = [.. entries.Select(entry => new Fido2NetLib.Objects.PublicKeyCredentialDescriptor(Base64UrlDecode(entry.Value.CredentialId)))],
             UserVerification = Fido2NetLib.Objects.UserVerificationRequirement.Required,
         });
         var challenge = new PasskeySignInChallenge(AuthIds.New(), clock.GetUtcNow() + ChallengeLifetime, assertion.ToJson());

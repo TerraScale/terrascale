@@ -762,13 +762,13 @@ internal static class SignInFlow
         }
 
         var enrolled = await mfa.HasAllowedFactorAsync(user, ssoProof is not null, cancellationToken);
-        var totpEnabled = (await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled;
-        if (!policy.RequireMfa && !ssoRequired && !(ssoProof is not null && enrolled) && !totpEnabled)
+        var held = await mfa.HasEnrolledFactorAsync(user, ssoProof is not null, cancellationToken);
+        if (!policy.RequireMfa && !ssoRequired && !(ssoProof is not null && enrolled) && !held)
         {
             return null;
         }
 
-        if (totpEnabled && !enrolled)
+        if (held && !enrolled)
         {
             AuthMetrics.SignIn("hosted_mfa", "refused");
             return Refused(context);

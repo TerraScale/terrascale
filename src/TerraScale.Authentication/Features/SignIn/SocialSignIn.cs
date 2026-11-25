@@ -140,7 +140,7 @@ public sealed partial class SocialSignIn(IHttpClientFactory clients, AuthOptions
 
         var configuration = await this.ConfigurationAsync(provider, cancellationToken);
         if (!Uri.TryCreate(configuration.TokenEndpoint, UriKind.Absolute, out var tokenEndpoint)
-            || !(tokenEndpoint.Scheme == Uri.UriSchemeHttps || tokenEndpoint.Scheme == Uri.UriSchemeHttp && tokenEndpoint.IsLoopback)
+            || tokenEndpoint.Scheme != Uri.UriSchemeHttps
             || tokenEndpoint.UserInfo.Length > 0)
         {
             return null;
