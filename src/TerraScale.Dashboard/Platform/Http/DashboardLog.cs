@@ -21,6 +21,9 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Dashboard request on {Route} lost a concurrent write race; answered 409")]
         internal static partial void DashboardRequestConflicted(this ILogger logger, object? route);
 
+        [LoggerMessage(EventId = 104, Level = LogLevel.Warning, Message = "Dashboard request on {Route} was refused by TerraBase storage ({Code}); answered {Status}")]
+        internal static partial void DashboardStorageRefused(this ILogger logger, string route, string code, int status);
+
         [LoggerMessage(EventId = 7, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
         internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, LogLevel level, object? table, object? errorType, object? status, object? errorCode);
 
@@ -51,6 +54,12 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 101, Level = LogLevel.Information, Message = "Dashboard schema script {Script} applied on TerraBase strong mode.")]
         internal static partial void DashboardSchemaScriptApplied(this ILogger logger, string script);
 
+        [LoggerMessage(EventId = 105, Level = LogLevel.Information, Message = "Dashboard schema script {Script} had no recorded checksum; recorded the released SHA-256.")]
+        internal static partial void DashboardSchemaChecksumRecorded(this ILogger logger, string script);
+
+        [LoggerMessage(EventId = 106, Level = LogLevel.Critical, Message = "Dashboard schema script {Script} was applied with SHA-256 {Applied} but the released script is {Released}.")]
+        internal static partial void DashboardSchemaChecksumMismatch(this ILogger logger, string script, string applied, string released);
+
         [LoggerMessage(EventId = 16, Level = LogLevel.Warning, Message = "Readiness: ts-auth answered {StatusCode}")]
         internal static partial void ReadinessTsAuthAnswered(this ILogger logger, object? statusCode);
 
@@ -60,11 +69,7 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 18, Level = LogLevel.Warning, Message = "Readiness: TerraBase state unavailable ({ErrorType})")]
         internal static partial void ReadinessTerraBaseStateUnavailable(this ILogger logger, object? errorType);
 
-        [LoggerMessage(EventId = 102, Level = LogLevel.Warning, Message = "Readiness: ts-platform answered {StatusCode}")]
-        internal static partial void ReadinessTsPlatformAnswered(this ILogger logger, object? statusCode);
 
-        [LoggerMessage(EventId = 103, Level = LogLevel.Warning, Message = "Readiness: ts-platform unreachable ({ErrorType})")]
-        internal static partial void ReadinessTsPlatformUnreachable(this ILogger logger, object? errorType);
 
         [LoggerMessage(EventId = 19, Level = LogLevel.Warning, Message = "TerraBase refused plan {Plan} for organization {Organization}: {Status}")]
         internal static partial void TerraBaseRefusedPlanForOrganization(this ILogger logger, object? plan, object? organization, object? status);
@@ -128,6 +133,12 @@ namespace TerraScale.Dashboard.Platform.Http
 
         [LoggerMessage(EventId = 39, Level = LogLevel.Warning, Message = "An allowance notification for organization {OrganizationId} could not be processed ({ErrorType}); other organizations continue.")]
         internal static partial void AnAllowanceNotificationForOrganizationCould(this ILogger logger, object? organizationId, object? errorType);
+
+        [LoggerMessage(EventId = 107, Level = LogLevel.Warning, Message = "Project creation in ts-auth could not be confirmed ({ErrorType}); answered reload-first and kept the reserved slot until it is bound or expires")]
+        internal static partial void ProjectCreationUnconfirmed(this ILogger logger, string errorType);
+
+        [LoggerMessage(EventId = 108, Level = LogLevel.Warning, Message = "Project {ProjectId} was created but could not become the active project ({Reason})")]
+        internal static partial void ActiveProjectNotSelected(this ILogger logger, string projectId, string reason);
 
         [LoggerMessage(EventId = 40, Level = LogLevel.Warning, Message = "Revoke dashboard sessions after committed member removal for {UserId} ({ErrorType})")]
         internal static partial void RevokeDashboardSessionsAfterCommittedMember(this ILogger logger, object? userId, object? errorType);

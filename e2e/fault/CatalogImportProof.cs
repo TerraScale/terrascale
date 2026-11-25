@@ -61,16 +61,19 @@ internal static class CatalogImportProof
             BackendUnavailable unavailable => unavailable.Code,
         } is null, "the database was not recorded");
         var beforeDelete = Sequence(session.CurrentBookmark, origin);
-        var databaseDeleted = await catalog.DeleteDatabaseAsync(database, cancellationToken);
+        var databaseDeleted = await catalog.DeleteDatabaseAsync(database, now, cancellationToken);
         Require(databaseDeleted switch
         {
-            Completed => null,
+            DatabaseTombstoned => null,
+            ResourceNotFound missing => missing.Code,
+            StateConflict conflict => conflict.Code,
             BackendUnavailable unavailable => unavailable.Code,
         } is null, "the database deletion was not recorded");
-        var databasePurged = await catalog.PurgeDatabaseAsync(database.Id, cancellationToken);
+        var databasePurged = await catalog.PurgeDatabaseAsync(database, now, cancellationToken);
         Require(databasePurged switch
         {
-            Completed => null,
+            TombstonePurged => null,
+            ResourceNotFound missing => missing.Code,
             BackendUnavailable unavailable => unavailable.Code,
         } is null, "the database purge was not recorded");
         var afterDelete = Sequence(session.CurrentBookmark, origin);

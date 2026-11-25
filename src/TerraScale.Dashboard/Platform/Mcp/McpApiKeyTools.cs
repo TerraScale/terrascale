@@ -30,29 +30,72 @@ namespace TerraScale.Dashboard.Platform.Mcp
             "delete_project", "delete_saved_query", "delete_function", "delete_file_bucket", "delete_file"
         };
 
-        internal async Task<Credential?> AuthenticateAsync(string key, string? project, CancellationToken ct)
+        internal async Task<McpApiKeyAuthentication> AuthenticateAsync(string key, string? project, CancellationToken ct)
         {
             var presented = key.StartsWith("sk_", StringComparison.Ordinal) ? key[3..] : key;
-            if (presented.Length != 79 || presented[26] != '_' || !TerraScaleIds.IsValid(presented[..26]) || key.Any(char.IsWhiteSpace)) return null;
+            if (presented.Length != 79 || presented[26] != '_' || !TerraScaleIds.IsValid(presented[..26]) || key.Any(char.IsWhiteSpace))
+            {
+                return new McpBearerRejected();
+            }
+
+            TsAuthTokenResponse result;
             try
             {
-                var client = new TsAuthClient(http.CreateClient("platform"));
-                var result = await client.Oidc.ExchangeApiKeyAsync(key, project, ct);
-                var pieces = result.AccessToken.Split('.');
-                if (result.TokenType != "Bearer" || result.ExpiresIn <= 0 || pieces.Length != 3) return null;
-                using var body = JsonDocument.Parse(WebEncoders.Base64UrlDecode(pieces[1]));
-                var claims = body.RootElement;
-                var organizationId = claims.GetProperty("org_id").GetString()!;
-                var projectId = claims.GetProperty("project_id").GetString()!;
-                if (!TerraScaleIds.IsValid(organizationId) || !TerraScaleIds.IsValid(projectId) || project is { Length: > 0 } && project != projectId) return null;
-                var databaseId = claims.TryGetProperty("database", out var narrowed) ? narrowed.GetString() : null;
-                if (databaseId is not null && !TerraScaleIds.IsValid(databaseId)) return null;
-                return new(key, new("", result.AccessToken, organizationId, "", projectId, "") { IsApiKey = true },
-                    databaseId, (claims.GetProperty("scope").GetString() ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                result = await new TsAuthClient(http.CreateClient("platform")).Oidc.ExchangeApiKeyAsync(key, project, ct);
             }
-            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) { return null; }
-            catch (Exception error) when (error is JsonException or FormatException or KeyNotFoundException) { return null; }
+            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ||
+                                                error.StatusCode is HttpStatusCode.BadRequest && error.ErrorCode is "invalid_grant" or "invalid_client" or "unauthorized_client" or "invalid_scope" or "invalid_target")
+            {
+                return new McpBearerRejected();
+            }
+            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest)
+            {
+                return new McpBearerUnverified();
+            }
+
+            var pieces = result.AccessToken.Split('.');
+            if (result.TokenType != "Bearer" || result.ExpiresIn <= 0 || pieces.Length != 3 || ExchangedClaims(pieces[1]) is not { } claims)
+            {
+                return new McpBearerUnverified();
+            }
+
+            var narrowsDatabase = claims.TryGetProperty("database", out _);
+            var narrowed = Text(claims, "database");
+            if (Text(claims, "org_id") is not { } organizationId || Text(claims, "project_id") is not { } projectId ||
+                !TerraScaleIds.IsValid(organizationId) || !TerraScaleIds.IsValid(projectId) || Text(claims, "scope") is not { } scope ||
+                narrowsDatabase && (narrowed is null || !TerraScaleIds.IsValid(narrowed)))
+            {
+                return new McpBearerUnverified();
+            }
+
+            if (project is { Length: > 0 } && project != projectId)
+            {
+                return new McpBearerRejected();
+            }
+
+            return new Credential(key, new("", result.AccessToken, organizationId, "", projectId, "") { IsApiKey = true },
+                narrowed, scope.Split(' ', StringSplitOptions.RemoveEmptyEntries));
         }
+
+        private static JsonElement? ExchangedClaims(string payload)
+        {
+            try
+            {
+                using var body = JsonDocument.Parse(WebEncoders.Base64UrlDecode(payload));
+                return body.RootElement.ValueKind == JsonValueKind.Object ? body.RootElement.Clone() : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
+        }
+
+        private static string? Text(JsonElement claims, string name) =>
+            claims.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
         internal async Task<CallToolResult> InvokeAsync(Credential credential, string tool, IDictionary<string, JsonElement>? arguments, CancellationToken ct)
         {

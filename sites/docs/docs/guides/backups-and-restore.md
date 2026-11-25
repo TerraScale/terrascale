@@ -60,7 +60,7 @@ PUT /v1/projects/{project}/databases/{database}/backup-policy
 {"fullBackupCron":"0 2 * * *","retentionDays":7}
 ```
 
-`fullBackupCron` is a standard 5-field cron expression evaluated in UTC, or null or empty for no scheduled backups. `retentionDays` (1 to 35) applies to manual and scheduled backups. Set `fullBackupCron` to null to stop scheduled backups. The saved policy is returned with its `updatedAt`:
+`fullBackupCron` is a standard 5-field cron expression evaluated in UTC, or null or empty for no scheduled backups. `retentionDays` applies to manual and scheduled backups and is at most the plan's backup retention (1 day on Free, 3 on Starter, 7 on Pro, 14 on Team, 30 on Enterprise); a longer value answers `400` with `invalid_retention`. Set `fullBackupCron` to null to stop scheduled backups. The saved policy is returned with its `updatedAt`:
 
 ```json
 {"fullBackupCron":"0 2 * * *","retentionDays":7,"updatedAt":"2026-10-07T12:00:00Z"}

@@ -5,8 +5,11 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
@@ -37,7 +40,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             await EndAsync(context);
         }
 
-        record = record with { SessionExpiresAt = time.GetUtcNow().AddHours(12), RefreshLease = "", RefreshLeaseUntil = null, Device = DeviceLabel.Parse(context.Request.Headers.UserAgent) };
+        record = record with { SessionExpiresAt = record.Actor is null ? time.GetUtcNow().AddHours(12) : record.ExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = DeviceLabel.Parse(context.Request.Headers.UserAgent) };
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         var credentials = await identity.ReadAsync(context.RequestAborted);
         var now = time.GetUtcNow().UtcDateTime;
@@ -53,14 +56,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
         await AccountEnrollment.ThrowIfErasedAsync(storage, record.UserId, context.RequestAborted);
         Csrf.Bind(context, token);
-        context.Response.Cookies.Append(Cookie, token, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = context.Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
-            Path = "/",
-            Expires = record.SessionExpiresAt
-        });
+        context.Response.Cookies.Append(Cookie, token, DashboardCookies.Private(context, SameSiteMode.Lax, record.SessionExpiresAt));
     }
 
     public async Task<SessionRecord?> ReadAsync(HttpContext context)
@@ -83,30 +79,6 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             return null;
         }
         return (record, await work!);
-    }
-
-    public async Task<SessionRecord?> ReadForPrivilegeAsync(HttpContext context)
-    {
-        if (BrowserToken(context) is not { } token)
-        {
-            return null;
-        }
-
-        var lookup = Lookup.Browser(Key(token));
-        var current = await ResolveAsync(lookup, context.RequestAborted);
-        if (current is null) { Clear(context); return null; }
-        var record = await ResolveAsync(lookup, context.RequestAborted, forceRefresh: true, initialAccessToken: current.AccessToken);
-        if (record is not null && (record.UserId != current.UserId || record.Email != current.Email))
-        {
-            throw new IOException("Privileged session identity changed.");
-        }
-
-        if (record is null)
-        {
-            Clear(context);
-        }
-
-        return record;
     }
 
     public async Task<string> CreateCredentialAsync(SessionRecord record, DateTimeOffset expiresAt, CancellationToken cancellationToken)
@@ -188,12 +160,10 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             .OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal)];
     }
 
-    private async Task<SessionRecord?> ResolveAsync(Lookup lookup, CancellationToken cancellationToken, bool forceRefresh = false, string? initialAccessToken = null,
-        Func<SessionRecord, Task>? alongside = null)
+    private async Task<SessionRecord?> ResolveAsync(Lookup lookup, CancellationToken cancellationToken, Func<SessionRecord, Task>? alongside = null)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
         var waitDeadline = Stopwatch.StartNew();
-        var accessOnEntry = initialAccessToken;
         var renewBefore = RenewBeforeExpiry;
         while (true)
         {
@@ -204,7 +174,6 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             }
 
             var record = Open(row, credentials.SessionEncryptionKey);
-            accessOnEntry ??= record.AccessToken;
             var now = time.GetUtcNow();
             if ((record.SessionExpiresAt ?? record.ExpiresAt) <= now)
             {
@@ -216,18 +185,15 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 return null;
             }
 
-            if (record.ExpiresAt <= now + renewBefore || forceRefresh && record.AccessToken == accessOnEntry)
+            var refreshable = !string.IsNullOrWhiteSpace(record.RefreshToken);
+            if (!refreshable && record.ExpiresAt <= now)
             {
-                if (string.IsNullOrWhiteSpace(record.RefreshToken))
-                {
-                    if (forceRefresh && record.ExpiresAt > now)
-                    {
-                        throw new IOException("Fresh platform authorization is unavailable.");
-                    }
+                await RemoveAsync(row, "no refresh token", cancellationToken);
+                return null;
+            }
 
-                    await RemoveAsync(row, "no refresh token", cancellationToken);
-                    return null;
-                }
+            if (refreshable && record.ExpiresAt <= now + renewBefore)
+            {
                 var leaseEnded = record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now;
                 if (record.RefreshLease.Length != 0 && !(leaseEnded && lookup.Kind == SessionRow.Credential))
                 {
@@ -274,7 +240,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                         await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, cancellationToken);
                     }
 
-                    if (forceRefresh || record.ExpiresAt <= time.GetUtcNow())
+                    if (record.ExpiresAt <= time.GetUtcNow())
                     {
                         throw;
                     }
@@ -289,8 +255,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                     throw;
                 }
 
-                if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||
-                    forceRefresh && refreshed.AccessToken == accessOnEntry)
+                if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now)
                 {
                     throw new IOException("Refreshed session identity is invalid.");
                 }
@@ -298,9 +263,16 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = record.Device };
                 for (var attempt = 0; ; attempt++)
                 {
-                    try
+                    SessionRow? latest = null;
+                    var unreadable = await storage.TryReadAsync(async connection => latest = await FindAsync(connection, lookup), rotating);
+                    var conflicted = false;
+                    string unsaved;
+                    if (unreadable is { } failure)
                     {
-                        var latest = await FindAsync(lookup, rotating);
+                        unsaved = failure.Failure;
+                    }
+                    else
+                    {
                         if (latest is null)
                         {
                             return null;
@@ -317,23 +289,34 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                             throw new IOException("Session refresh ownership changed.");
                         }
 
-                        if (await ReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, rotating) is null)
+                        var saved = await TryReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, rotating);
+                        (bool Saved, bool Conflicted, string Reason) outcome = saved switch
                         {
-                            if (attempt is 0 or >= 5)
-                            {
-                                return null;
-                            }
-
-                            continue;
+                            StorageWritten => (true, false, ""),
+                            StorageConflicted => (false, true, "concurrent session change"),
+                            StorageDuplicate => (false, true, "duplicate session record"),
+                            StorageFailed failed => (false, false, failed.Failure),
+                        };
+                        if (outcome.Saved)
+                        {
+                            break;
                         }
-                        break;
+
+                        conflicted = outcome.Conflicted;
+                        unsaved = outcome.Reason;
                     }
-                    catch (Exception error) when (attempt < 5 && (error is TimeoutException or HttpRequestException { StatusCode: null or >= HttpStatusCode.InternalServerError or HttpStatusCode.TooManyRequests } ||
-                                                                  error is OperationCanceledException && !rotating.IsCancellationRequested))
+
+                    if (attempt >= 5)
                     {
-                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, error.GetType().Name);
-                        await Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), rotating);
+                        throw conflicted
+                            ? new DBConcurrencyException("The refreshed session could not be saved: " + unsaved + ".")
+                            : new IOException("The refreshed session could not be saved: " + unsaved + ".");
                     }
+
+                    logger.SavingARefreshedTsAuthGrant(lookup.Kind, unsaved);
+                    await (conflicted
+                        ? DashboardDb.ConflictBackoffAsync(attempt, time, rotating)
+                        : Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), time, rotating));
                 }
                 record = refreshed;
             }
@@ -462,7 +445,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
     {
         if (!context.Response.HasStarted)
         {
-            context.Response.Cookies.Delete(Cookie);
+            context.Response.Cookies.Delete(Cookie, DashboardCookies.Private(context, SameSiteMode.Lax));
         }
 
         Csrf.Bind(context, null);
@@ -471,9 +454,21 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
     private async Task<SessionRow?> FindAsync(Lookup lookup, CancellationToken cancellationToken)
     {
         await using var connection = await storage.OpenAsync(cancellationToken);
+        return await FindAsync(connection, lookup);
+    }
+
+    private static async Task<SessionRow?> FindAsync(TerraBaseDbConnection connection, Lookup lookup)
+    {
         return lookup.Kind == SessionRow.Browser
             ? await connection.QuerySingleOrDefaultAsync<SessionRow>(ByToken, new { TokenHash = lookup.Key, SessionRow.Browser })
             : await connection.QuerySingleOrDefaultAsync<SessionRow>(ById, new { Id = lookup.Key, SessionRow.Credential });
+    }
+
+    private Task<StorageWrite> TryReplaceAsync(SessionRow row, SessionRecord record, string key, CancellationToken cancellationToken)
+    {
+        var (nonce, ciphertext, tag) = Seal(record, key);
+        var next = Copy(row) with { OriginalVersion = row.Version, Version = AccountService.NewId(), Nonce = nonce, Ciphertext = ciphertext, Tag = tag };
+        return storage.TryWriteAsync(async (connection, transaction) => await connection.ExecuteAsync(DashboardSql.Sessions.Update, next, transaction) == 1, cancellationToken);
     }
 
     private async Task<SessionRow?> ReplaceAsync(SessionRow row, SessionRecord record, string key, CancellationToken cancellationToken)
@@ -580,8 +575,11 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
 public sealed record SessionRecord(string UserId, string Name, string Email, string AccessToken, string? RefreshToken, DateTimeOffset ExpiresAt,
     DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null, string? IdToken = null,
-    string? Device = null, bool OrganizationPicker = false)
+    string? Device = null, bool OrganizationPicker = false, string? Actor = null)
 {
+    [JsonIgnore]
+    public McpAgent? Agent { get; init; }
+
     public override string ToString()
     {
         return "Dashboard session [REDACTED]";

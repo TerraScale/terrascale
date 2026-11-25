@@ -45,6 +45,15 @@ public static class Plans
         "team" => 100,
         _ => 1000,
     };
+
+    public static int BackupRetentionDays(string plan) => plan switch
+    {
+        "hobby" => 1,
+        "starter" => 3,
+        "pro" => 7,
+        "team" => 14,
+        _ => 30,
+    };
 }
 
 public static class DatabaseNames

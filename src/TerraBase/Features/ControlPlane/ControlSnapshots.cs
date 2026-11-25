@@ -11,6 +11,8 @@ namespace TerraBase.Features.ControlPlane;
 
 internal readonly union SnapshotAcceptance(AcceptedSnapshot, InvalidInput, CredentialRejected, StateConflict, BackendUnavailable);
 
+internal readonly union SnapshotCommit(Completed, StateConflict);
+
 internal sealed record AcceptedSnapshot(ControlSnapshot Snapshot, bool Changed);
 
 internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider time)
@@ -50,6 +52,18 @@ internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider ti
             return new InvalidInput("the control snapshot is incomplete", "invalid_snapshot");
         }
 
+        if (snapshot.Organizations.Contains(null) || snapshot.Projects.Contains(null) || snapshot.Databases.Contains(null)
+            || snapshot.ApiKeys.Contains(null) || snapshot.Regions.Contains(null)
+            || snapshot.Databases.Any(static database => database.Regions is null || database.Regions.Any(static region => region is null)))
+        {
+            return new InvalidInput("the control snapshot contains an empty entry", "invalid_snapshot");
+        }
+
+        if (snapshot.Databases.DistinctBy(static database => database.Id).Count() != snapshot.Databases.Count)
+        {
+            return new InvalidInput("the control snapshot lists a database more than once", "invalid_snapshot");
+        }
+
         if (snapshot.IssuedAtUtc - time.GetUtcNow() > MaxSkew)
         {
             return new InvalidInput("the control snapshot is issued in the future", "invalid_snapshot");
@@ -67,9 +81,22 @@ internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider ti
                 return new StateConflict("a newer control snapshot is already applied", "stale_snapshot");
             }
 
-            var changed = _index.Snapshot?.Version != snapshot.Version;
+            return new AcceptedSnapshot(snapshot, _index.Snapshot?.Version != snapshot.Version);
+        }
+    }
+
+    public SnapshotCommit Commit(ControlSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        lock (_gate)
+        {
+            if (_index.Snapshot is { } current && current.Version > snapshot.Version)
+            {
+                return new StateConflict("a newer control snapshot is already applied", "stale_snapshot");
+            }
+
             Volatile.Write(ref _index, Index.Of(snapshot));
-            return new AcceptedSnapshot(snapshot, changed);
+            return new Completed();
         }
     }
 

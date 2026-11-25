@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal readonly union CreateOrganizationResponse(Created<OrganizationBody>, InvalidInput, CredentialRejected, StateConflict, BackendUnavailable);
+internal readonly union CreateOrganizationResponse(Created<OrganizationBody>, InvalidInput, CredentialRejected, CallerForbidden, StateConflict, BackendUnavailable);
 
 internal sealed class CreateOrganizationEndpoint(ManagementService management)
     : Endpoint<NameInput, CreateOrganizationResponse>
@@ -30,6 +30,7 @@ internal sealed class CreateOrganizationEndpoint(ManagementService management)
             OrganizationRecord created => new Created<OrganizationBody>(string.Concat(ManagementRoute.Organizations, "/", created.Id.ToString()), OrganizationBody.From(created)),
             InvalidInput invalid => invalid,
             CredentialRejected unauthorized => unauthorized,
+            CallerForbidden forbidden => forbidden,
             StateConflict conflict => conflict,
             BackendUnavailable unavailable => unavailable,
         };

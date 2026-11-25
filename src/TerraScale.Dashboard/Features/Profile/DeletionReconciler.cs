@@ -289,7 +289,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     await (stored is null ? organizations.CreateAsync(org, cancellationToken) : organizations.ReplaceAsync(stored, cancellationToken));
                     return;
                 }
-                catch (DBConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { await DashboardDb.ConflictBackoffAsync(attempt, clock, cancellationToken); }
             }
         }
 

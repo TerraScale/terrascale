@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Dashboard.Features.Profile;
@@ -49,7 +50,7 @@ namespace TerraScale.Dashboard.Platform.Identity
             var nonce = context.Request.Cookies[Cookie];
             var token = form["_csrf"].ToString();
             return Hex(nonce) && Hex(token) &&
-                CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Sign(context, nonce!)), Encoding.ASCII.GetBytes(token));
+                CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Sign(context, nonce)), Encoding.ASCII.GetBytes(token));
         }
 
         internal static void Bind(HttpContext context, string? session)
@@ -61,14 +62,14 @@ namespace TerraScale.Dashboard.Platform.Identity
         {
             var session = context.Items[BindingKey] as string ?? context.Request.Cookies[DashboardSessions.Cookie];
             var deletion = context.Request.Cookies[AccountDeletion.Cookie];
-            var binding = Hex(session) ? session! : Hex(deletion) ? deletion! : "";
-            var credentials = context.RequestServices.GetRequiredService<IDashboardIdentity>().ReadAsync(context.RequestAborted).GetAwaiter().GetResult();
+            var binding = Hex(session) ? session : Hex(deletion) ? deletion : "";
+            var credentials = context.RequestServices.GetRequiredService<IDashboardIdentity>().Current;
             var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, Convert.FromBase64String(credentials.SessionEncryptionKey), 32, info: "ts-dashboard/csrf"u8.ToArray());
             try { return Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.ASCII.GetBytes(binding + "." + nonce))); }
             finally { CryptographicOperations.ZeroMemory(key); }
         }
 
-        private static bool Hex(string? value)
+        private static bool Hex([NotNullWhen(true)] string? value)
         {
             return value is { Length: 64 } && value.All(char.IsAsciiHexDigitLower);
         }

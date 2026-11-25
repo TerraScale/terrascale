@@ -2,8 +2,12 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraBase.Features.Sql;
 
+internal readonly record struct ArrivedMessage(long Started, long Completed, long Sequence);
+
 internal sealed class SocketInput(TimeProvider time)
 {
+    private static readonly TimeSpan ProtocolErrorCloseBudget = TimeSpan.FromSeconds(2);
+
     private const int MaxQueuedMessages = 256;
 
     private static readonly byte[] ProtocolErrorClose = [0x88, 0x02, 0x03, 0xEA];
@@ -21,8 +25,10 @@ internal sealed class SocketInput(TimeProvider time)
     private bool _final;
     private bool _control;
     private bool _invalid;
+    private long _arrivedAt;
+    private long _sequence;
 
-    public Action<long, int>? Progress
+    public Action<long, int, long>? Progress
     {
         get;
         set
@@ -32,7 +38,7 @@ internal sealed class SocketInput(TimeProvider time)
                 field = value;
                 if (_messages.TryPeek(out var first))
                 {
-                    field?.Invoke(first.Started, first.Received);
+                    field?.Invoke(first.Started, first.Received, first.Sequence);
                 }
             }
         }
@@ -61,19 +67,34 @@ internal sealed class SocketInput(TimeProvider time)
         }
     }
 
-    public long? Complete()
+    public Action? Failed { get; set; }
+
+    private TimeProvider Clock => time;
+
+    public ArrivedMessage? Complete()
     {
         lock (_gate)
         {
-            return _messages.TryDequeue(out var message) ? message.Started : null;
+            if (!_messages.TryDequeue(out var message))
+            {
+                return null;
+            }
+
+            if (_messages.TryPeek(out var next))
+            {
+                Progress?.Invoke(next.Started, next.Received, next.Sequence);
+            }
+
+            return new ArrivedMessage(message.Started, message.Completed ?? time.GetTimestamp(), message.Sequence);
         }
     }
 
-    private bool Inspect(ReadOnlySpan<byte> bytes)
+    private bool Inspect(ReadOnlySpan<byte> bytes, long arrivedAt)
     {
         lock (_gate)
         {
             var valid = !_invalid;
+            _arrivedAt = arrivedAt;
             InspectLocked(bytes);
             return valid && _invalid;
         }
@@ -95,7 +116,7 @@ internal sealed class SocketInput(TimeProvider time)
                         return;
                     }
 
-                    _current = new Message(time.GetTimestamp());
+                    _current = new Message(_arrivedAt, ++_sequence);
                     _messages.Enqueue(_current);
                     _message = true;
                 }
@@ -174,7 +195,7 @@ internal sealed class SocketInput(TimeProvider time)
         current.Received += bytes;
         if (_messages.TryPeek(out var first) && ReferenceEquals(first, current))
         {
-            Progress?.Invoke(current.Started, current.Received);
+            Progress?.Invoke(current.Started, current.Received, current.Sequence);
         }
     }
 
@@ -183,16 +204,21 @@ internal sealed class SocketInput(TimeProvider time)
         _header = 0;
         if (!_control && _final)
         {
+            _current?.Completed = _arrivedAt;
             _message = false;
             _current = null;
         }
     }
 
-    private sealed class Message(long started)
+    private sealed class Message(long started, long sequence)
     {
         public long Started { get; } = started;
 
+        public long Sequence { get; } = sequence;
+
         public int Received { get; set; }
+
+        public long? Completed { get; set; }
     }
 
     private sealed class Upgrade(IHttpUpgradeFeature inner, SocketInput input) : IHttpUpgradeFeature
@@ -230,14 +256,27 @@ internal sealed class SocketInput(TimeProvider time)
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             var read = await inner.ReadAsync(buffer, cancellationToken);
-            if (input.Inspect(buffer.Span[..read]))
+            if (input.Inspect(buffer.Span[..read], input.Clock.GetTimestamp()))
             {
-                await WriteAsync(ProtocolErrorClose, CancellationToken.None);
-                await inner.FlushAsync(CancellationToken.None);
+                input.Failed?.Invoke();
+                await CloseAsync();
                 await DrainPeerCloseAsync(cancellationToken);
             }
 
             return read;
+        }
+
+        private async ValueTask CloseAsync()
+        {
+            using var bounded = new CancellationTokenSource(ProtocolErrorCloseBudget, input.Clock);
+            try
+            {
+                await WriteAsync(ProtocolErrorClose, bounded.Token);
+                await inner.FlushAsync(bounded.Token);
+            }
+            catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+            }
         }
 
         private async ValueTask DrainPeerCloseAsync(CancellationToken cancellationToken)

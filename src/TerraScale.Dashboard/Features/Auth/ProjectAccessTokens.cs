@@ -96,7 +96,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
                 var now = time.GetUtcNow();
                 var claims = AuthJwtClaims.Read(response.AccessToken, issuer, TerraBaseAudience,
-                    await keysRead, now, "at+jwt");
+                    await SigningKeysAsync(client, response.AccessToken, cancellationToken), now, "at+jwt");
                 if (claims.GetProperty("sub").GetString() != session.UserId ||
                     claims.GetProperty("client_id").GetString() != credentials.AuthClientId ||
                     claims.GetProperty("org_id").GetString() != organizationId || claims.GetProperty("project_id").GetString() != projectId ||

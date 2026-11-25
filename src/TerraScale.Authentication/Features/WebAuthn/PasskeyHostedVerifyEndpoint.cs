@@ -7,6 +7,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
@@ -14,14 +15,14 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
 
-public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCredentials passkeys, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCredentials passkeys, ProjectAuthSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
         Post("/ui/{slug}/security/passkeys/verify");
         Name("ui_security_passkey_verify");
         Summary("Finish passkey enrollment from the security page");
-        Description("Same-origin JSON fetch from the hosted security page's live session, opened within the last 10 minutes, with the browser's WebAuthn registration answer; verifies exactly like create_passkey_verify and stores the passkey. An older session must sign in again before a passkey can be added. A refused ceremony, a cross-origin post or a missing session answers 403 passkey_denied.");
+        Description("Same-origin JSON fetch from the hosted security page's live session, opened within the last 10 minutes, with the browser's WebAuthn registration answer; verifies exactly like create_passkey_verify and stores the passkey. An older session must sign in again before a passkey can be added. A refused ceremony, a cross-origin post, a missing session or a project that disallows passkeys answers 403 passkey_denied.");
         Tags("Security");
         Produces<PasskeyEnrolledBody>(StatusCodes.Status201Created, "application/json");
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
@@ -60,7 +61,16 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
             return ErrorResults.ToResult(new AuthForbidden("Sign in again before enrolling a passkey.", "passkey_denied"));
         }
 
-        var caller = pending?.User ?? live!.Value.User;
+        if ((pending?.User ?? live?.User) is not { } caller)
+        {
+            return ErrorResults.ToResult(new AuthForbidden("Sign in again before enrolling a passkey.", "passkey_denied"));
+        }
+
+        if (pending is null && Tenancy.IsProject(caller.InstanceId)
+            && !((await settings.GetAsync(caller.InstanceId, cancellationToken)).Configuration ?? ConfigurationBody.Default).AllowPasskey)
+        {
+            return ErrorResults.ToResult(new AuthForbidden("This project does not allow passkeys.", "passkey_denied"));
+        }
 
         PasskeyVerifyRequest body;
         try
@@ -89,7 +99,7 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
         {
             return await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken) switch
             {
-                PasskeyCredentialEntry entry => await Enrolled(this.HttpContext, sessions, caller, entry, pending is not null, cancellationToken),
+                PasskeyEnrolled enrolled => await Enrolled(this.HttpContext, sessions, enrolled.User, enrolled.Entry, pending is not null, cancellationToken),
                 AuthForbidden error => ErrorResults.ToResult(error),
             };
         }

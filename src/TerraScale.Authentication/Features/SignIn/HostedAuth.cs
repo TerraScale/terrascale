@@ -138,7 +138,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         if (normalized is not null && (!Tenancy.IsProject(this.Tenant) || !(await context.RequestServices.GetRequiredService<ProjectAuthSettings>()
             .GetAsync(this.Tenant, cancellationToken)).AttackProtection.AccountLockout))
         {
-            var admission = await limiter.ReserveAsync(this.Tenant, "headless-password-email", limiter.Fold(normalized), PasswordPerEmail, PasswordWindow, cancellationToken);
+            var admission = await limiter.ReserveAsync(this.Tenant, "headless-password-email", limiter.Digest(normalized), PasswordPerEmail, PasswordWindow, cancellationToken);
             if (admission.Rejection is { } rejection)
             {
                 return (null, this.Refused(normalized, "headless-password-email", rejection, notify: true, locale), null);
@@ -203,13 +203,13 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
             return null;
         }
 
-        if (await limiter.AcquireCooldownAsync(this.Tenant, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
+        if (await limiter.AcquireCooldownAsync(this.Tenant, "headless-mail-email", limiter.Digest(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
         {
             logger.ZLogWarning($"Audit: hosted request rate-limited by the {"headless-mail-email":@Purpose} budget");
             return new MailRefusal(cooldownWait, BudgetExhausted: false);
         }
 
-        if (await limiter.AcquireWithDeadlineAsync(this.Tenant, "code-mail-email", limiter.Fold(normalized), Passcodes.MaxIssuesPerWindow, Passcodes.IssueWindow, cancellationToken)
+        if (await limiter.AcquireWithDeadlineAsync(this.Tenant, "code-mail-email", limiter.Digest(normalized), Passcodes.MaxIssuesPerWindow, Passcodes.IssueWindow, cancellationToken)
             is { } rejection)
         {
             logger.ZLogWarning($"Audit: hosted request rate-limited by the {"code-mail-email":@Purpose} budget");
@@ -278,7 +278,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
         CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
         if (Users.NormalizeEmail(email) is not { } normalized
-            || await limiter.AcquireWithDeadlineAsync(this.Tenant, purpose, limiter.Fold(normalized), maximum, window, cancellationToken) is not { } rejection)
+            || await limiter.AcquireWithDeadlineAsync(this.Tenant, purpose, limiter.Digest(normalized), maximum, window, cancellationToken) is not { } rejection)
         {
             return null;
         }

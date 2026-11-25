@@ -18,9 +18,22 @@ using TerraScale.Dashboard.Features.Functions;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.Validation;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
+    public sealed record McpBearerAccepted;
+
+    public sealed record McpBearerRejected;
+
+    public sealed record McpBearerUnverified;
+
+    public readonly union McpBearerOutcome(McpBearerAccepted, McpBearerRejected, McpBearerUnverified);
+
+    public readonly union McpApiKeyAuthentication(McpApiKeyTools.Credential, McpBearerRejected, McpBearerUnverified);
+
+    public readonly union McpAgentSignIn(AccountContext, McpBearerRejected, McpBearerUnverified);
+
     public static class DashboardMcp
     {
         internal const string ContextKey = "TerraScale.Dashboard/mcp-context";
@@ -145,7 +158,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 .AddCallToolFilter(next => async (request, cancellationToken) =>
                 {
                     var http = request.Services?.GetService<IHttpContextAccessor>()?.HttpContext;
-                    if (http?.Items[McpAgents.ContextKey] is McpAgent agent)
+                    if (http?.Items[ContextKey] is AccountContext { Agent: { } agent })
                     {
                         var name = request.Params?.Name;
                         var refusal = McpAgents.Refuse(agent, name is not null && Catalog.Value.Access.TryGetValue(name, out var access) ? access : null);
@@ -174,6 +187,17 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         }
 
                         return result;
+                    }
+                    catch (Exception error) when (DashboardStorageOutcomes.Find(error) is { } storage)
+                    {
+                        var refusal = DashboardStorageOutcomes.Classify(storage);
+                        if (refusal.Status >= StatusCodes.Status500InternalServerError)
+                        {
+                            ServiceSloTelemetry.MarkBad(http);
+                        }
+
+                        Log(request.Services).MCPToolFailedUpstreamWithCode(LoggedTool(request.Params?.Name), refusal.Status, "sql", storage.Code);
+                        return Failure(refusal.Message);
                     }
                     catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
                     {
@@ -294,55 +318,123 @@ namespace TerraScale.Dashboard.Platform.Mcp
                      !string.Equals(origin.GetLeftPart(UriPartial.Authority), context.Request.Scheme + "://" + context.Request.Host, StringComparison.OrdinalIgnoreCase)))
                 { context.Response.StatusCode = 403; return; }
                 if (context.Request.Headers["Sec-Fetch-Site"] == "cross-site") { context.Response.StatusCode = 403; return; }
-                if (!AuthenticationHeaderValue.TryParse(context.Request.Headers.Authorization, out var header) ||
-                    !header.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(header.Parameter))
+                var limits = context.RequestServices.GetRequiredService<EntryRateLimits>();
+                if (limits.AdmitMcp(context) is not { } admission)
                 {
-                    context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\"" +
-                        (context.Request.Headers.Authorization.Count == 0 ? "" : ", error=\"invalid_token\"");
-                    context.Response.StatusCode = 401;
+                    await EntryRateLimits.Refuse(context).ExecuteAsync(context);
                     return;
                 }
-                if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
+
+                var proceed = false;
+                var charged = false;
+                try
                 {
-                    bodyLimit.MaxRequestBodySize = 6 * 1024 * 1024 + 16 * 1024;
+                    if (!AuthenticationHeaderValue.TryParse(context.Request.Headers.Authorization, out var header) ||
+                        !header.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(header.Parameter))
+                    {
+                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\"" +
+                            (context.Request.Headers.Authorization.Count == 0 ? "" : ", error=\"invalid_token\"");
+                        context.Response.StatusCode = 401;
+                        return;
+                    }
+                    if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
+                    {
+                        bodyLimit.MaxRequestBodySize = 6 * 1024 * 1024 + 16 * 1024;
+                    }
+
+                    var bearer = header.Parameter;
+                    var project = context.Request.Headers["X-TerraScale-Project"].ToString();
+                    var rejected = context.RequestServices.GetRequiredService<McpRejectedBearers>();
+                    var remembered = rejected.Contains(bearer, project);
+                    var outcome = remembered ? new McpBearerOutcome(new McpBearerRejected()) : await AuthenticateAsync(context, bearer, project);
+                    var status = outcome switch
+                    {
+                        McpBearerAccepted => StatusCodes.Status200OK,
+                        McpBearerRejected => StatusCodes.Status401Unauthorized,
+                        McpBearerUnverified => StatusCodes.Status503ServiceUnavailable,
+                    };
+                    if (status == StatusCodes.Status401Unauthorized)
+                    {
+                        if (!remembered)
+                        {
+                            rejected.Remember(bearer, project);
+                        }
+
+                        charged = true;
+                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
+                        context.Response.StatusCode = status;
+                        return;
+                    }
+
+                    if (status == StatusCodes.Status503ServiceUnavailable)
+                    {
+                        context.Response.Headers.RetryAfter = "1";
+                        context.Response.StatusCode = status;
+                        return;
+                    }
+
+                    proceed = true;
+                }
+                finally
+                {
+                    if (!charged)
+                    {
+                        admission.Refund();
+                    }
                 }
 
-                if (header.Parameter.StartsWith("tspat_", StringComparison.Ordinal))
+                if (proceed)
                 {
-                    if (await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(header.Parameter, context.RequestAborted) is not { } principal)
-                    {
-                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
-                        context.Response.StatusCode = 401;
-                        return;
-                    }
-                    context.Items[ContextKey] = principal;
+                    await next(context);
                 }
-                else if (McpAgents.IsAgentToken(header.Parameter))
-                {
-                    if (await context.RequestServices.GetRequiredService<McpAgents>().SignInAsync(header.Parameter, context.RequestAborted) is not ({ } agent, { } owner))
-                    {
-                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
-                        context.Response.StatusCode = 401;
-                        return;
-                    }
-                    context.Items[ContextKey] = owner;
-                    context.Items[McpAgents.ContextKey] = agent;
-                }
-                else
-                {
-                    var project = context.Request.Headers["X-TerraScale-Project"].ToString();
-                    if (await context.RequestServices.GetRequiredService<McpApiKeyTools>().AuthenticateAsync(header.Parameter, project, context.RequestAborted) is not { } key)
-                    {
-                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
-                        context.Response.StatusCode = 401;
-                        return;
-                    }
-                    context.Items[McpApiKeyTools.ContextKey] = key;
-                }
-                await next(context);
             });
             app.MapMcp("/mcp");
             app.MapMcp("/").RequireHost("mcp.terrascale.tech");
+        }
+
+        private static async Task<McpBearerOutcome> AuthenticateAsync(HttpContext context, string bearer, string project)
+        {
+            if (bearer.StartsWith("tspat_", StringComparison.Ordinal))
+            {
+                if (await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(bearer, context.RequestAborted) is not { } principal)
+                {
+                    return new McpBearerRejected();
+                }
+
+                context.Items[ContextKey] = principal;
+                return new McpBearerAccepted();
+            }
+
+            if (McpAgents.IsAgentToken(bearer))
+            {
+                var signIn = await context.RequestServices.GetRequiredService<McpAgents>().SignInAsync(bearer, context.RequestAborted);
+                return signIn switch
+                {
+                    AccountContext agent => Accept(context, agent),
+                    McpBearerRejected rejected => rejected,
+                    McpBearerUnverified unverified => unverified,
+                };
+            }
+
+            var authentication = await context.RequestServices.GetRequiredService<McpApiKeyTools>().AuthenticateAsync(bearer, project, context.RequestAborted);
+            return authentication switch
+            {
+                McpApiKeyTools.Credential key => Accept(context, key),
+                McpBearerRejected rejected => rejected,
+                McpBearerUnverified unverified => unverified,
+            };
+        }
+
+        private static McpBearerOutcome Accept(HttpContext context, AccountContext agent)
+        {
+            context.Items[ContextKey] = agent;
+            return new McpBearerAccepted();
+        }
+
+        private static McpBearerOutcome Accept(HttpContext context, McpApiKeyTools.Credential key)
+        {
+            context.Items[McpApiKeyTools.ContextKey] = key;
+            return new McpBearerAccepted();
         }
 
         internal static IResult UnsupportedStatelessMethod(HttpContext http)

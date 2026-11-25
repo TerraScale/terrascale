@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Features.Auth
             try
             {
                 var user = await SessionUserInfoAsync(client, session, cancellationToken);
-                return user.Subject == session.UserId && user.EmailVerified == true &&
+                return user.Subject == session.UserId && user.EmailVerified == true && Acceptable(user) && user.Actor?.Subject == session.Actor &&
                     string.Equals(user.Email?.Trim(), session.Email.Trim(), StringComparison.OrdinalIgnoreCase);
             }
             catch (SignInRejectedException)
@@ -37,15 +37,44 @@ namespace TerraScale.Dashboard.Features.Auth
             return authClient;
         }
 
+        private static readonly TimeSpan DiscoveryReuse = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan KeysReuse = TimeSpan.FromMinutes(5);
+        private readonly SharedRead<TsAuthOidcDiscovery> discovery = new();
+        private readonly SharedRead<TsAuthJwkSet> signingKeys = new();
+
         private Task<TsAuthOidcDiscovery> MetadataAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
-            return ServerTiming.PublicReadAsync((this, "oidc-metadata"), () => client.Oidc.GetDiscoveryDocumentAsync(cancellationToken));
+            return discovery.Get(time, DiscoveryReuse, false, () => client.Oidc.GetDiscoveryDocumentAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
         private Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
-            return ServerTiming.PublicReadAsync((this, "oidc-keys"), () => client.Oidc.GetJwksAsync(cancellationToken));
+            return signingKeys.Get(time, KeysReuse, false, () => UsableKeysAsync(client)).WaitAsync(cancellationToken);
         }
+
+        private Task<(TsAuthJwkSet Keys, bool Fetched)> TrackedKeysAsync(TsAuthClient client, bool refresh, CancellationToken cancellationToken)
+        {
+            return signingKeys.ReadAsync(time, KeysReuse, refresh, () => UsableKeysAsync(client)).WaitAsync(cancellationToken);
+        }
+
+        private static async Task<TsAuthJwkSet> UsableKeysAsync(TsAuthClient client)
+        {
+            var published = await client.Oidc.GetJwksAsync(CancellationToken.None);
+            return AuthJwtClaims.KeySet(published) ?? throw new HttpRequestException("ts-auth published an unusable JSON Web Key Set.");
+        }
+
+        private async Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, string? token, CancellationToken cancellationToken)
+        {
+            var keys = await SigningKeysAsync(client, cancellationToken);
+            if (AuthJwtClaims.KeyId(token) is not { } kid || keys.Keys.Any(key => key.KeyId == kid))
+            {
+                return keys;
+            }
+
+            return await signingKeys.Get(time, KeysReuse, true, () => UsableKeysAsync(client)).WaitAsync(cancellationToken);
+        }
+
+
 
         private Task<TsAuthUserInfo> SessionUserInfoAsync(TsAuthClient client, SessionRecord session, CancellationToken cancellationToken)
         {

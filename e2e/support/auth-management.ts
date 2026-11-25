@@ -513,6 +513,9 @@ export async function checkMachineClient(page: Page, ownerToken: string, project
   const dataClient = await machineClient(['https://invoices.example', dataAudience]);
   expect(dataClient.status(), 'a machine client naming the data audience').toBe(400);
   expect((await dataClient.json()).error.code).toBe('invalid_request');
+  const platformClient = await machineClient(['https://invoices.example', 'https://api.terrascale.tech']);
+  expect(platformClient.status(), 'a machine client naming a platform origin').toBe(400);
+  expect((await platformClient.json()).error.code).toBe('invalid_request');
   const created = await machineClient(['https://invoices.example']);
   expect(created.status()).toBe(201);
   const client = await created.json();

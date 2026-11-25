@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(session.UserId);
             var waited = Stopwatch.StartNew();
-            while (true)
+            for (var conflicts = 0; ;)
             {
                 var stored = await accountStore.FindAsync(session.UserId, cancellationToken);
                 var now = time.GetUtcNow();
@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 {
                     var created = new AccountRecord { Id = NewId(), UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = now, PersonalClaimUntil = now.AddMinutes(1) };
                     try { await accountStore.CreateAsync(created, cancellationToken); }
-                    catch (DBConcurrencyException) { continue; }
+                    catch (DBConcurrencyException) { await DashboardDb.ConflictBackoffAsync(conflicts++, time, cancellationToken); continue; }
                 }
                 else
                 {
@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     }
                     account.PersonalClaimUntil = now.AddMinutes(1);
                     try { await accountStore.ReplaceAsync(stored, cancellationToken); }
-                    catch (DBConcurrencyException) { continue; }
+                    catch (DBConcurrencyException) { await DashboardDb.ConflictBackoffAsync(conflicts++, time, cancellationToken); continue; }
                 }
                 OrganizationRecord personal;
                 try { personal = await CreatePersonalAsync(session, cancellationToken); }
@@ -299,7 +299,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 }
 
                 var selectedContext = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], selected, selectedProject);
-                await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, selectedContext, cancellationToken);
+                await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, time, selectedContext, cancellationToken);
                 return selectedContext with { Loaded = loadedAt };
             }
             var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
@@ -333,7 +333,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             }
 
             var context = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], active, project);
-            await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, context, cancellationToken);
+            await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, accountStore, time, context, cancellationToken);
             return context with { Loaded = loadedAt };
         }
 
@@ -450,15 +450,24 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             var members = access.Members;
             var saved = org.Members;
-            org.Members = members.ToDictionary(member => member.UserId, member => new MemberRecord
+            var current = new Dictionary<string, MemberRecord>(members.Count, StringComparer.Ordinal);
+            foreach (var member in members)
             {
-                UserId = member.UserId,
-                Email = member.Email,
-                Role = member.Role,
-                CreatedAt = member.JoinedAt,
-                Name = saved.GetValueOrDefault(member.UserId)?.Name is { Length: > 0 } name ? name : member.UserId == session.UserId ? session.Name : member.Email,
-                JoinedOn = saved.GetValueOrDefault(member.UserId)?.JoinedOn
-            });
+                if (member.UserId is not { Length: > 0 } userId || !current.TryAdd(userId, new MemberRecord
+                {
+                    UserId = userId,
+                    Email = member.Email,
+                    Role = member.Role,
+                    CreatedAt = member.JoinedAt,
+                    Name = saved.GetValueOrDefault(userId)?.Name is { Length: > 0 } name ? name : userId == session.UserId ? session.Name : member.Email,
+                    JoinedOn = saved.GetValueOrDefault(userId)?.JoinedOn
+                }))
+                {
+                    throw new JsonException("ts-auth returned an organization member without a unique user id.");
+                }
+            }
+
+            org.Members = current;
             var owners = members.Where(member => member.Role == "owner").Select(member => member.UserId).Order(StringComparer.Ordinal).ToArray();
             org.OwnerUserId = owners.Contains(session.UserId) ? session.UserId : owners.FirstOrDefault() ?? "";
             org.PendingOwnerUserId = access.Transfer?.ToUserId ?? "";
@@ -511,7 +520,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await accountStore.ReplaceAsync(stored, cancellationToken);
                     return account;
                 }
-                catch (DBConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken); }
             }
         }
 
@@ -523,6 +532,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public async Task UpdateOrganizationAsync(AccountContext context, Func<OrganizationRecord, Task> update, CancellationToken cancellationToken)
         {
             var id = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
+            context.DemandWrite();
             for (var attempt = 0; attempt < 4; attempt++)
             {
                 var live = (await platform.ListOrganizationsAsync(context.Session, cancellationToken)).FirstOrDefault(org => org.Id == id);
@@ -556,10 +566,8 @@ namespace TerraScale.Dashboard.Common.Accounts
 
                 for (var index = recorded; index < org.AuditEvents.Count; index++)
                 {
-                    if (org.AuditEvents[index].Ip is null)
-                    {
-                        org.AuditEvents[index] = org.AuditEvents[index] with { Ip = ClientIp };
-                    }
+                    var item = org.AuditEvents[index];
+                    org.AuditEvents[index] = item with { Ip = item.Ip ?? ClientIp, Source = context.AuditSource(item.Source) };
                 }
 
                 if (org.Id != id)
@@ -572,7 +580,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await organizationStore.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (DBConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken); }
             }
         }
 

@@ -18,6 +18,7 @@ using TerraBase.Features.Rules;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Postgres.Hosting;
+using TerraScale.QuicRpc;
 
 namespace TerraBase.Hosting;
 
@@ -30,6 +31,7 @@ internal static class FeatureRegistrations
             services.AddSingleton<CallerTokens>();
             services.AddSingleton<CallerAdmission>();
             services.AddSingleton<CallerAuthentication>();
+            services.AddSingleton<AuthenticationGate>();
             services.AddSingleton<TokenVerifier>();
             services.AddSingleton<ApiKeyExchange>();
             services.AddSingleton<ControlSnapshots>();
@@ -61,6 +63,14 @@ internal static class FeatureRegistrations
             services.AddHostedService(static provider => provider.GetRequiredService<AtlasPublisher>());
             services.AddSingleton<UsageMeter>();
             services.AddHostedService(static provider => provider.GetRequiredService<UsageMeter>());
+            services.AddSingleton<StorageOwnership>();
+            services.AddSingleton<StorageLedger>();
+            services.AddSingleton<StorageFiles>();
+            services.AddSingleton<StorageMeasure>();
+            services.AddSingleton<IQuicEndpoints, StorageFileProbeQuicEndpoint>();
+            services.AddSingleton<UsageCommits>();
+            services.AddSingleton<StorageSampler>();
+            services.AddHostedService(static provider => provider.GetRequiredService<StorageSampler>());
             services.AddSingleton<RequestLogRecorder>();
             services.AddHostedService(static provider => provider.GetRequiredService<RequestLogRecorder>());
             services.AddHostedService<DatabaseExpiry>();

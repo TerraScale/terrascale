@@ -28,6 +28,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             .AddSingleton<OrganizationSsoService>()
             .AddSingleton<OrganizationLifecycleService>()
             .AddSingleton<OrganizationOperations>()
+            .AddSingleton<ProjectReservations>()
             .AddSingleton<Projects.ProjectGrantService>()
             .AddSingleton<Projects.ProjectInvitationService>();
         }
@@ -95,10 +96,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             if (wizard == "project" && (context.Organization?.Kind != "business" || context.Role != "owner"))
             {
                 wizard = "organization";
-            }
-            if (error.Length == 0 && http.Request.Query["error"].ToString() is { Length: > 0 and <= 500 } queryError)
-            {
-                error = queryError;
             }
             var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
                 ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
@@ -325,7 +322,18 @@ namespace TerraScale.Dashboard.Features.Organizations
 
                 if (operation == "projects")
                 {
-                    await operations.CreateProjectAsync(context, name, regions, http.RequestAborted);
+                    var created = await operations.CreateProjectAsync(context, name, regions, http.RequestAborted);
+                    var refusal = created switch
+                    {
+                        ProjectRecord => null,
+                        ProjectCreationUnconfirmed unconfirmed => RequestError.Response(http, StatusCodes.Status503ServiceUnavailable, unconfirmed.Message),
+                        ProjectCreationConflicted conflicted => await ProjectRefusedAsync(http, context, placement, operation, form, conflicted.Message,
+                            StatusCodes.Status409Conflict),
+                    };
+                    if (refusal is { } refused)
+                    {
+                        return refused;
+                    }
                 }
                 else
                 {

@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
@@ -32,7 +33,15 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
 
     private const int MaxCachedTokens = 4096;
 
+    private const int MaxRefusedKeys = 4096;
+
     private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(30);
+
+    private static readonly TimeSpan RefusalLifetime = TimeSpan.FromSeconds(10);
+
+    private static readonly TimeSpan TrustLifetime = TimeSpan.FromDays(1);
+
+    private const string UnknownKeys = "unknown";
 
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("0123456789abcdefghjkmnpqrstvwxyz");
 
@@ -41,6 +50,29 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
     private static readonly BackendUnavailable Busy = new("ts-auth could not exchange the API key; retry", "key_exchange_unavailable");
 
     private readonly MemoryCache _tokens = new(new MemoryCacheOptions { SizeLimit = MaxCachedTokens });
+
+    private readonly MemoryCache _refused = new(new MemoryCacheOptions { SizeLimit = MaxRefusedKeys });
+
+    private readonly MemoryCache _trusted = new(new MemoryCacheOptions { SizeLimit = MaxCachedTokens });
+
+    private readonly PartitionedRateLimiter<string> _exchanges = PartitionedRateLimiter.Create<string, string>(static partition =>
+        RateLimitPartition.GetTokenBucketLimiter(partition, static key => key == UnknownKeys
+            ? new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 200,
+                TokensPerPeriod = 50,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }
+            : new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 20,
+                TokensPerPeriod = 5,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
 
     public static bool IsKey(string secret)
     {
@@ -64,25 +96,50 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
             return new CredentialRejected("send an API key and connect to <project id>/<database>", "invalid_key");
         }
 
-        var cacheKey = string.Concat(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))), "/", project);
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+        var cacheKey = string.Concat(fingerprint, "/", project);
         if (_tokens.TryGetValue(cacheKey, out string? cached) && cached is { } token)
         {
             return token;
         }
 
+        if (_refused.TryGetValue(cacheKey, out _))
+        {
+            return Refused;
+        }
+
+        using var permit = _exchanges.AttemptAcquire(_trusted.TryGetValue(fingerprint, out _) ? fingerprint : UnknownKeys);
+        if (!permit.IsAcquired)
+        {
+            return Busy;
+        }
+
         var outcome = await RequestAsync(issuer, secret, project, cancellationToken);
         return outcome switch
         {
-            IssuedToken issued => Remember(cacheKey, issued),
-            CredentialRejected refused => refused,
+            IssuedToken issued => Remember(cacheKey, fingerprint, issued),
+            CredentialRejected refused => Forget(cacheKey, refused),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public void Dispose() => _tokens.Dispose();
-
-    private string Remember(string cacheKey, IssuedToken issued)
+    public void Dispose()
     {
+        _tokens.Dispose();
+        _refused.Dispose();
+        _trusted.Dispose();
+        _exchanges.Dispose();
+    }
+
+    private CredentialRejected Forget(string cacheKey, CredentialRejected refused)
+    {
+        _refused.Set(cacheKey, true, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = time.GetUtcNow() + RefusalLifetime });
+        return refused;
+    }
+
+    private string Remember(string cacheKey, string fingerprint, IssuedToken issued)
+    {
+        _trusted.Set(fingerprint, true, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = TrustLifetime });
         if (issued.Lifetime > RenewBefore)
         {
             _tokens.Set(cacheKey, issued.Token, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = time.GetUtcNow() + issued.Lifetime - RenewBefore });

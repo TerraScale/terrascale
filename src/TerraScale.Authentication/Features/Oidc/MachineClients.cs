@@ -30,8 +30,9 @@ internal static class MachineClients
         && scopes.All(scope => scope is { Length: >= 1 and <= 128 } && scope.All(character => character is >= (char)0x21 and <= (char)0x7e and not '"' and not '\\')
             && scope is not (Scopes.OpenId or Scopes.OfflineAccess));
 
-    public static MachineClientPolicy Validate(IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences, int? minutes)
+    public static MachineClientPolicy Validate(AuthOptions options, IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences, int? minutes)
     {
+        ArgumentNullException.ThrowIfNull(options);
         audiences ??= [];
         if (scopes is null || !ValidScopes(scopes) || minutes is < 5 or > 60 || audiences.Count > 64
             || audiences.Distinct(StringComparer.Ordinal).Count() != audiences.Count
@@ -46,8 +47,18 @@ internal static class MachineClients
             throw new ApiException(400, "invalid_request", "allowed_audiences cannot name a project data audience; a machine needing data uses a project API key.");
         }
 
+        if (audiences.Any(audience => Platform(options, new Uri(audience))))
+        {
+            throw new ApiException(400, "invalid_request", "allowed_audiences cannot name a TerraScale platform origin.");
+        }
+
         return new(scopes, audiences, minutes ?? 15);
     }
+
+    private static bool Platform(AuthOptions options, Uri audience) =>
+        ((IReadOnlyList<string>)[.. options.AccessTokenAudiences, AuthOptions.TerraBaseAudience, AuthOptions.DashboardOrigin, OidcIssuer.Issuer(options).AbsoluteUri])
+            .Any(origin => Uri.TryCreate(origin, UriKind.Absolute, out var platform)
+                && Uri.Compare(audience, platform, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0);
 
     public static void Configure(OpenIddictApplicationDescriptor descriptor, MachineClientPolicy policy)
     {
@@ -61,12 +72,13 @@ internal static class MachineClients
 
     public static async Task<IResult> GrantAsync(HttpContext context, OpenIddictRequest request, OidcApplication application, CancellationToken cancellationToken)
     {
-        if (Policy(application) is not { } policy || application.ClientType != ClientTypes.Confidential)
+        if (Policy(application) is not { } policy || application.ClientType != ClientTypes.Confidential
+            || application is not { InstanceId: { } instanceId, ClientId: { } clientId })
         {
             return OidcResults.Forbid(OidcErrors.UnauthorizedClient, "Only a machine app can use client_credentials.");
         }
 
-        if (await context.RequestServices.GetRequiredService<AttemptLimiter>().AcquireAsync(application.InstanceId!, "machine-token-client", application.ClientId!,
+        if (await context.RequestServices.GetRequiredService<AttemptLimiter>().AcquireAsync(instanceId, "machine-token-client", clientId,
             1000, TimeSpan.FromMinutes(1), cancellationToken) is { } wait)
         {
             return HostedAuth.TooMany(wait);
@@ -79,7 +91,9 @@ internal static class MachineClients
             return OidcResults.Forbid(OidcErrors.InvalidScope, "Request one or more of the app's allowed scopes.");
         }
 
-        if (resources.Length > 1 || resources.Except(policy.AllowedAudiences, StringComparer.Ordinal).Any())
+        var options = context.RequestServices.GetRequiredService<AuthOptions>();
+        if (resources.Length > 1 || resources.Except(policy.AllowedAudiences, StringComparer.Ordinal).Any()
+            || resources.Any(resource => !Uri.TryCreate(resource, UriKind.Absolute, out var uri) || Platform(options, uri)))
         {
             return OidcResults.Forbid("invalid_target", "The resource must be one of the app's allowed audiences.");
         }
@@ -109,7 +123,7 @@ internal sealed class MachineTokenResources(IOpenIddictApplicationManager applic
             return;
         }
 
-        var application = await applications.FindByClientIdAsync(context.ClientId!, context.CancellationToken) as OidcApplication;
+        var application = context.ClientId is { } clientId ? await applications.FindByClientIdAsync(clientId, context.CancellationToken) as OidcApplication : null;
         var resources = context.Request.GetResources();
         if (application is null || MachineClients.Policy(application) is not { } policy
             || resources.Length > 1 || resources.Except(policy.AllowedAudiences, StringComparer.Ordinal).Any())

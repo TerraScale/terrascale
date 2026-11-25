@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TerraBase.Engine;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
 using TerraScale.Contracts.ControlPlane;
 
@@ -37,10 +38,32 @@ internal readonly union DatabaseInsertOutcome(DatabaseRecord, StateConflict, Bac
 
 internal readonly union DatabaseUpdateOutcome(DatabaseRecord, ResourceNotFound, StateConflict, BackendUnavailable);
 
+internal sealed record DatabaseTombstoned(bool NameReused);
+
+internal sealed record TombstonePurged;
+
+internal sealed record TombstoneKept;
+
+internal readonly union DatabaseExpiryOutcome(DatabaseTombstoned, StateConflict, BackendUnavailable);
+
+internal readonly union DatabaseDeleteOutcome(DatabaseTombstoned, ResourceNotFound, StateConflict, BackendUnavailable);
+
+internal readonly union TombstonePurgeOutcome(TombstonePurged, ResourceNotFound, BackendUnavailable);
+
+internal readonly union DatabaseUpsertOutcome(Completed, TombstoneKept, StateConflict, BackendUnavailable);
+
+internal readonly union DatabaseForgetOutcome(Completed, ResourceNotFound, StateConflict, BackendUnavailable);
+
+internal readonly union DatabaseRowOutcome(bool, BackendUnavailable);
+
 internal sealed class CatalogStore(SystemDatabase system)
 {
     private const string DatabaseColumns =
         "id, project_id, name, regions, all_regions, default_consistency, strict, state, key_id, branched_from, previous_name, created_at, expires_at, version, storage_limit";
+
+    private const int CleanupChunk = 256;
+
+    public static readonly TimeSpan TombstoneRetention = TimeSpan.FromDays(7);
 
     public async ValueTask<OrganizationCreateOutcome> CreateOrganizationAsync(OrganizationRecord organization, CancellationToken cancellationToken) =>
         await system.WriteAsync(SqlBuild.Statement(
@@ -267,7 +290,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public async ValueTask<DatabaseListOutcome> ExpiredDatabasesAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE state <> 'deleted' AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at LIMIT ?"),
+            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE state IN ('active', 'suspended') AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at LIMIT ?"),
             SqlBuild.Time(now), SqlBuild.Integer(limit)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Records(rows),
@@ -295,59 +318,264 @@ internal sealed class CatalogStore(SystemDatabase system)
             BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<CatalogWriteOutcome> UpsertDatabaseAsync(
+    public async ValueTask<DatabaseUpsertOutcome> UpsertDatabaseAsync(
         DatabaseRecord database,
+        DatabaseRecord? existing,
         CancellationToken cancellationToken,
-        ConsistencyMode mode = ConsistencyMode.Strong) =>
-        await system.WriteAsync(
-        [
-            SqlBuild.Statement("DELETE FROM database_names WHERE database_id = ?", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("INSERT INTO database_names (project_id, name, database_id) VALUES (?, ?, ?) ON CONFLICT (project_id, name) DO UPDATE SET database_id = excluded.database_id",
-                SqlBuild.Id(database.ProjectId), SqlBuild.Text(database.Name), SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("DELETE FROM databases WHERE id = ?", SqlBuild.Id(database.Id)),
-            Insert(database),
-        ], mode, cancellationToken) switch
+        ConsistencyMode mode = ConsistencyMode.Strong)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        var moved = existing is null || existing.ProjectId != database.ProjectId || !string.Equals(existing.Name, database.Name, StringComparison.Ordinal);
+        List<SqlStatement> statements = [existing is null ? Insert(database, "INSERT OR IGNORE") : Replace(database, existing)];
+        if (moved)
         {
-            SqlWriteResult => new Completed(),
-            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+            statements.Add(SqlBuild.Statement(
+                "INSERT INTO database_names (project_id, name, database_id) SELECT project_id, name, id FROM databases WHERE id = ? AND version = ? AND project_id = ? AND name = ? AND state <> 'deleted'",
+                SqlBuild.Id(database.Id), SqlBuild.Integer(database.Version), SqlBuild.Id(database.ProjectId), SqlBuild.Text(database.Name)));
+        }
+
+        if (moved && existing is not null)
+        {
+            statements.Add(SqlBuild.Statement(
+                "DELETE FROM database_names WHERE project_id = ? AND name = ? AND database_id = ? "
+                + "AND EXISTS (SELECT 1 FROM databases WHERE id = ? AND project_id = ? AND name = ? AND version = ? AND state <> 'deleted')",
+                SqlBuild.Id(existing.ProjectId), SqlBuild.Text(existing.Name), SqlBuild.Id(database.Id), SqlBuild.Id(database.Id), SqlBuild.Id(database.ProjectId),
+                SqlBuild.Text(database.Name), SqlBuild.Integer(database.Version)));
+        }
+
+        var outcome = await system.WriteAsync(statements, mode, cancellationToken);
+        return outcome switch
+        {
+            SqlWriteResult { ResultSets: [{ RowsAffected: > 0 }, ..] } => new Completed(),
+            SqlWriteResult => await UnappliedAsync(database.Id, cancellationToken),
+            StateConflict conflict => new StateConflict(conflict.Message, conflict.Code),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<DatabaseUpsertOutcome> UnappliedAsync(Ulid id, CancellationToken cancellationToken)
+    {
+        var row = await HasDatabaseRowAsync(id, cancellationToken);
+        return row switch
+        {
+            bool present when present => await GetDatabaseAsync(id, cancellationToken) switch
+            {
+                DatabaseRecord => new StateConflict("the database changed concurrently; retry", "database_changed"),
+                ResourceNotFound => new TombstoneKept(),
+                BackendUnavailable unavailable => unavailable,
+            },
+            bool => new StateConflict("the database was removed concurrently; retry", "database_changed"),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private static SqlStatement Replace(DatabaseRecord database, DatabaseRecord existing) => SqlBuild.Statement(
+        "UPDATE databases SET project_id = ?, name = ?, regions = ?, all_regions = ?, default_consistency = ?, strict = ?, state = ?, key_id = ?, branched_from = ?, previous_name = ?, "
+        + "created_at = ?, expires_at = ?, version = ?, storage_limit = ? WHERE id = ? AND version = ? AND name = ? AND state <> 'deleted'",
+        SqlBuild.Id(database.ProjectId), SqlBuild.Text(database.Name), SqlBuild.Text(string.Join(',', database.Regions)), SqlBuild.Bool(database.AllRegions),
+        SqlBuild.Text(ConsistencyHeaders.Format(database.DefaultConsistency)), SqlBuild.Bool(database.Strict), SqlBuild.Text(State(database.State)), SqlBuild.Text(database.KeyId),
+        database.BranchedFrom is { } source ? SqlBuild.Id(source) : SqlValue.Null, SqlBuild.OptionalText(database.PreviousName), SqlBuild.Time(database.CreatedAt),
+        SqlBuild.OptionalTime(database.ExpiresAt), SqlBuild.Integer(database.Version), SqlBuild.Integer(database.StorageLimit),
+        SqlBuild.Id(existing.Id), SqlBuild.Integer(existing.Version), SqlBuild.Text(existing.Name));
+
+    public async ValueTask<DatabaseRowOutcome> HasDatabaseRowAsync(Ulid id, CancellationToken cancellationToken) =>
+        await system.QueryAsync(SqlBuild.Statement("SELECT 1 FROM databases WHERE id = ?", SqlBuild.Id(id)), cancellationToken) switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => rows.Count > 0,
             BackendUnavailable unavailable => unavailable,
         };
 
     public async ValueTask<DatabaseUpdateOutcome> UpdateDatabaseAsync(DatabaseRecord current, DatabaseRecord updated, CancellationToken cancellationToken)
     {
+        var renamed = !string.Equals(current.Name, updated.Name, StringComparison.Ordinal);
         List<SqlStatement> statements = [];
-        if (!string.Equals(current.Name, updated.Name, StringComparison.Ordinal))
+        if (renamed)
         {
-            statements.Add(SqlBuild.Statement("DELETE FROM database_names WHERE project_id = ? AND name = ?", SqlBuild.Id(current.ProjectId), SqlBuild.Text(current.Name)));
-            statements.Add(SqlBuild.Statement("INSERT INTO database_names (project_id, name, database_id) VALUES (?, ?, ?)", SqlBuild.Id(updated.ProjectId), SqlBuild.Text(updated.Name), SqlBuild.Id(updated.Id)));
+            statements.Add(SqlBuild.Statement(
+                "INSERT INTO database_names (project_id, name, database_id) SELECT project_id, ?, id FROM databases WHERE id = ? AND version = ? AND name = ? AND state <> 'deleted'",
+                SqlBuild.Text(updated.Name), SqlBuild.Id(current.Id), SqlBuild.Integer(current.Version), SqlBuild.Text(current.Name)));
         }
 
         statements.Add(SqlBuild.Statement(
-            "UPDATE databases SET name = ?, regions = ?, all_regions = ?, default_consistency = ?, state = ?, previous_name = ?, expires_at = ?, version = ? WHERE id = ? AND version = ? AND state <> 'deleted'",
+            "UPDATE databases SET name = ?, regions = ?, all_regions = ?, default_consistency = ?, state = ?, previous_name = ?, expires_at = ?, version = ? WHERE id = ? AND version = ? AND name = ? AND state <> 'deleted'",
             SqlBuild.Text(updated.Name), SqlBuild.Text(string.Join(',', updated.Regions)), SqlBuild.Bool(updated.AllRegions), SqlBuild.Text(ConsistencyHeaders.Format(updated.DefaultConsistency)),
             SqlBuild.Text(State(updated.State)), SqlBuild.OptionalText(updated.PreviousName), SqlBuild.OptionalTime(updated.ExpiresAt), SqlBuild.Integer(updated.Version),
-            SqlBuild.Id(updated.Id), SqlBuild.Integer(current.Version)));
+            SqlBuild.Id(updated.Id), SqlBuild.Integer(current.Version), SqlBuild.Text(current.Name)));
+        if (renamed)
+        {
+            statements.Add(SqlBuild.Statement(
+                "DELETE FROM database_names WHERE project_id = ? AND name = ? AND database_id = ? AND EXISTS (SELECT 1 FROM databases WHERE id = ? AND name = ? AND version = ? AND state <> 'deleted')",
+                SqlBuild.Id(current.ProjectId), SqlBuild.Text(current.Name), SqlBuild.Id(current.Id), SqlBuild.Id(current.Id), SqlBuild.Text(updated.Name), SqlBuild.Integer(updated.Version)));
+        }
+
+        var updateIndex = renamed ? 1 : 0;
         var outcome = await system.WriteAsync(statements, ConsistencyMode.Strong, cancellationToken);
         return outcome switch
         {
-            SqlWriteResult { ResultSets: [.., { RowsAffected: > 0 }] } => updated,
+            SqlWriteResult written when written.ResultSets.Count > updateIndex && written.ResultSets[updateIndex].RowsAffected > 0 => updated,
             SqlWriteResult => new StateConflict("the database changed concurrently; retry", "database_changed"),
+            StateConflict { Code: "serialization_conflict" } => new StateConflict("the database changed concurrently; retry", "database_changed"),
             StateConflict => new StateConflict("a database with that name already exists in the project", "database_exists"),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<DatabaseListOutcome> DeletedDatabasesAsync(int limit, CancellationToken cancellationToken) =>
+    public async ValueTask<DatabasePageOutcome> DeletedDatabasesAsync(string? after, int limit, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE state = 'deleted' ORDER BY id LIMIT ?"), SqlBuild.Integer(limit)), cancellationToken) switch
+            string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE state = 'deleted' AND (?1 IS NULL OR id > ?1) ORDER BY id LIMIT ?2"),
+            SqlBuild.OptionalText(after), SqlBuild.Integer(limit + 1)), cancellationToken) switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> rows => Records(rows),
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => Page(rows, limit, Database, static item => item.Id.ToString()),
             BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<CatalogWriteOutcome> PurgeDatabaseAsync(Ulid id, CancellationToken cancellationToken)
+    public async ValueTask<DatabaseForgetOutcome> ForgetDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
-        var outcome = await system.WriteAsync(SqlBuild.Statement("DELETE FROM databases WHERE id = ? AND state = 'deleted'", SqlBuild.Id(id)), ConsistencyMode.Strong, cancellationToken);
+        ArgumentNullException.ThrowIfNull(database);
+        var outcome = await system.WriteAsync(
+        [
+            SqlBuild.Statement("DELETE FROM databases WHERE id = ? AND version = ? AND name = ? AND state <> 'deleted'",
+                SqlBuild.Id(database.Id), SqlBuild.Integer(database.Version), SqlBuild.Text(database.Name)),
+            SqlBuild.Statement("DELETE FROM database_names WHERE project_id = ? AND name = ? AND database_id = ? AND NOT EXISTS (SELECT 1 FROM databases WHERE id = ?)",
+                SqlBuild.Id(database.ProjectId), SqlBuild.Text(database.Name), SqlBuild.Id(database.Id), SqlBuild.Id(database.Id)),
+        ], ConsistencyMode.Strong, cancellationToken);
+        return outcome switch
+        {
+            SqlWriteResult { ResultSets: [{ RowsAffected: > 0 }, ..] } => new Completed(),
+            SqlWriteResult => await GetDatabaseAsync(database.Id, cancellationToken) switch
+            {
+                DatabaseRecord => new StateConflict("the database changed concurrently; retry", "database_changed"),
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
+            },
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    public async ValueTask<TombstonePurgeOutcome> PurgeDatabaseAsync(DatabaseRecord database, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        var outcome = await system.WriteAsync(
+            SqlBuild.Statement("DELETE FROM databases WHERE id = ? AND state = 'deleted' AND (expires_at IS NULL OR expires_at <= ?)", SqlBuild.Id(database.Id), SqlBuild.Time(now)),
+            ConsistencyMode.Strong, cancellationToken);
+        return outcome switch
+        {
+            SqlWriteResult { ResultSets: [{ RowsAffected: > 0 }, ..] } => new TombstonePurged(),
+            SqlWriteResult => new ResourceNotFound("the tombstone was already purged or is not due", "unknown_database"),
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    public async ValueTask<DatabaseDeleteOutcome> DeleteDatabaseAsync(DatabaseRecord database, DateTimeOffset purgeAfter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        var outcome = await system.WriteAsync(
+        [
+            SqlBuild.Statement("UPDATE databases SET state = 'deleted', expires_at = ? WHERE id = ? AND version = ? AND name = ? AND state <> 'deleted'",
+                SqlBuild.Time(purgeAfter), SqlBuild.Id(database.Id), SqlBuild.Integer(database.Version), SqlBuild.Text(database.Name)),
+            ReleaseName(database),
+        ], ConsistencyMode.Strong, cancellationToken);
+        return outcome switch
+        {
+            SqlWriteResult { ResultSets: [{ RowsAffected: > 0 }, var names, ..] } => new DatabaseTombstoned(names.RowsAffected == 0),
+            SqlWriteResult => await GetDatabaseAsync(database.Id, cancellationToken) switch
+            {
+                DatabaseRecord => new StateConflict("the database changed concurrently; retry", "database_changed"),
+                ResourceNotFound missing => missing,
+                BackendUnavailable unavailable => unavailable,
+            },
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    public async ValueTask<DatabaseExpiryOutcome> ExpireDatabaseAsync(DatabaseRecord database, DateTimeOffset now, DateTimeOffset purgeAfter, CancellationToken cancellationToken) =>
+        await system.WriteAsync(
+        [
+            SqlBuild.Statement(
+                "UPDATE databases SET state = 'deleted', expires_at = ? WHERE id = ? AND version = ? AND name = ? AND state IN ('active', 'suspended') AND expires_at IS NOT NULL AND expires_at <= ?",
+                SqlBuild.Time(purgeAfter), SqlBuild.Id(database.Id), SqlBuild.Integer(database.Version), SqlBuild.Text(database.Name), SqlBuild.Time(now)),
+            ReleaseName(database),
+        ], ConsistencyMode.Strong, cancellationToken) switch
+        {
+            SqlWriteResult { ResultSets: [{ RowsAffected: > 0 }, var names, ..] } => new DatabaseTombstoned(names.RowsAffected == 0),
+            SqlWriteResult => new StateConflict("the database's expiry changed concurrently", "database_changed"),
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+            BackendUnavailable unavailable => unavailable,
+        };
+
+    public async ValueTask<CatalogWriteOutcome> CleanupDatabaseAsync(Ulid id, bool purged, CancellationToken cancellationToken)
+    {
+        var versions = await system.QueryAsync(SqlBuild.Statement("SELECT version FROM rules_versions WHERE database_id = ?", SqlBuild.Id(id)), cancellationToken);
+        return versions switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => await CleanupKeysAsync(id, rows, purged, cancellationToken),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<CatalogWriteOutcome> CleanupKeysAsync(Ulid id, IReadOnlyList<IReadOnlyList<SqlValue>> versions, bool purged, CancellationToken cancellationToken)
+    {
+        var keys = await system.QueryAsync(SqlBuild.Statement("SELECT id FROM api_keys WHERE database_id = ?", SqlBuild.Id(id)), cancellationToken);
+        return keys switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => await CleanupHashesAsync(id, versions, rows, purged, cancellationToken),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<CatalogWriteOutcome> CleanupHashesAsync(
+        Ulid id, IReadOnlyList<IReadOnlyList<SqlValue>> versions, IReadOnlyList<IReadOnlyList<SqlValue>> keys, bool purged, CancellationToken cancellationToken)
+    {
+        var hashes = await system.QueryAsync(SqlBuild.Statement(
+            "SELECT hash FROM api_key_hashes WHERE key_id IN (SELECT id FROM api_keys WHERE database_id = ?)", SqlBuild.Id(id)), cancellationToken);
+        return hashes switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => await CleanupOwnedAsync(id, versions, keys, rows, purged, cancellationToken),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<CatalogWriteOutcome> CleanupOwnedAsync(
+        Ulid id, IReadOnlyList<IReadOnlyList<SqlValue>> versions, IReadOnlyList<IReadOnlyList<SqlValue>> keys, IReadOnlyList<IReadOnlyList<SqlValue>> hashes,
+        bool purged, CancellationToken cancellationToken)
+    {
+        List<SqlStatement> statements =
+        [
+            SqlBuild.Statement("DELETE FROM rules_current WHERE database_id = ?", SqlBuild.Id(id)),
+            SqlBuild.Statement("DELETE FROM backup_policies WHERE database_id = ?", SqlBuild.Id(id)),
+            .. versions.Select(row => SqlBuild.Statement("DELETE FROM rules_versions WHERE database_id = ? AND version = ?", SqlBuild.Id(id), SqlBuild.Text(row.TextAt(0)))),
+            .. hashes.Select(static row => SqlBuild.Statement("DELETE FROM api_key_hashes WHERE hash = ?", SqlBuild.Text(row.TextAt(0)))),
+            .. keys.Select(static row => SqlBuild.Statement("DELETE FROM api_keys WHERE id = ?", SqlBuild.Text(row.TextAt(0)))),
+        ];
+        foreach (var chunk in statements.Chunk(CleanupChunk))
+        {
+            var owned = await system.WriteAsync(chunk, ConsistencyMode.Strong, cancellationToken);
+            if (owned switch
+            {
+                SqlWriteResult => null,
+                StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+                BackendUnavailable unavailable => unavailable,
+            } is { } failure)
+            {
+                return failure;
+            }
+        }
+
+        return await CleanupTelemetryAsync(id, purged, cancellationToken);
+    }
+
+    private async ValueTask<CatalogWriteOutcome> CleanupTelemetryAsync(Ulid id, bool purged, CancellationToken cancellationToken)
+    {
+        List<SqlStatement> statements = [SqlBuild.Statement("DELETE FROM request_logs WHERE database_id = ?", SqlBuild.Id(id))];
+        if (purged)
+        {
+            statements.Add(SqlBuild.Statement("DELETE FROM usage_counters WHERE scope = ?", SqlBuild.Text(UsageMeter.DatabaseScope(id))));
+        }
+
+        var outcome = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {
             SqlWriteResult => new Completed(),
@@ -356,22 +584,9 @@ internal sealed class CatalogStore(SystemDatabase system)
         };
     }
 
-    public async ValueTask<CatalogWriteOutcome> DeleteDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken) =>
-        await system.WriteAsync(
-        [
-            SqlBuild.Statement("DELETE FROM database_names WHERE database_id = ?", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("UPDATE databases SET state = 'deleted', expires_at = NULL WHERE id = ?", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("DELETE FROM rules_current WHERE database_id = ?", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("DELETE FROM rules_versions WHERE database_id = ?", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("DELETE FROM backup_policies WHERE database_id = ?", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("DELETE FROM api_key_hashes WHERE key_id IN (SELECT id FROM api_keys WHERE database_id = ?)", SqlBuild.Id(database.Id)),
-            SqlBuild.Statement("DELETE FROM api_keys WHERE database_id = ?", SqlBuild.Id(database.Id)),
-        ], ConsistencyMode.Strong, cancellationToken) switch
-        {
-            SqlWriteResult => new Completed(),
-            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
-            BackendUnavailable unavailable => unavailable,
-        };
+    private static SqlStatement ReleaseName(DatabaseRecord database) => SqlBuild.Statement(
+        "DELETE FROM database_names WHERE project_id = ? AND name = ? AND database_id = ? AND EXISTS (SELECT 1 FROM databases WHERE id = ? AND state = 'deleted')",
+        SqlBuild.Id(database.ProjectId), SqlBuild.Text(database.Name), SqlBuild.Id(database.Id), SqlBuild.Id(database.Id));
 
     public static string State(ControlDatabaseState state) => state switch
     {
@@ -388,8 +603,8 @@ internal sealed class CatalogStore(SystemDatabase system)
         _ => ControlDatabaseState.Active,
     };
 
-    private static SqlStatement Insert(DatabaseRecord database) => SqlBuild.Statement(
-        string.Concat("INSERT INTO databases (", DatabaseColumns, ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+    private static SqlStatement Insert(DatabaseRecord database, string verb = "INSERT") => SqlBuild.Statement(
+        string.Concat(verb, " INTO databases (", DatabaseColumns, ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
         SqlBuild.Id(database.Id), SqlBuild.Id(database.ProjectId), SqlBuild.Text(database.Name), SqlBuild.Text(string.Join(',', database.Regions)), SqlBuild.Bool(database.AllRegions),
         SqlBuild.Text(ConsistencyHeaders.Format(database.DefaultConsistency)), SqlBuild.Bool(database.Strict), SqlBuild.Text(State(database.State)), SqlBuild.Text(database.KeyId),
         database.BranchedFrom is { } source ? SqlBuild.Id(source) : SqlValue.Null, SqlBuild.OptionalText(database.PreviousName), SqlBuild.Time(database.CreatedAt),

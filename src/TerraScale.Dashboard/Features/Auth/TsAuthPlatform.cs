@@ -16,6 +16,7 @@ namespace TerraScale.Dashboard.Features.Auth
         Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task<TsAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
+        Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, TimeSpan budget, CancellationToken cancellationToken);
         Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken);
         Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
@@ -39,6 +40,12 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken);
         Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken);
     }
+
+    public sealed record ProjectCreationRefused(string Message, int StatusCode, string Code);
+
+    public sealed record ProjectCreationUnknown(string Failure);
+
+    public readonly union ProjectCreation(TsAuthPlatformProject, ProjectCreationRefused, ProjectCreationUnknown);
 
     public sealed partial class TsAuthGateway : ITsAuthPlatform
     {
@@ -111,6 +118,25 @@ namespace TerraScale.Dashboard.Features.Auth
             }
         }
 
+        public async Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, TimeSpan budget, CancellationToken cancellationToken)
+        {
+            using var deadline = new CancellationTokenSource(budget, time);
+            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+            try
+            {
+                return await CreateProjectAsync(session, organizationId, name, bounded.Token);
+            }
+            catch (AccountAccessException refused)
+            {
+                return new ProjectCreationRefused(refused.Message, refused.StatusCode, refused.Code);
+            }
+            catch (Exception error) when (error is HttpRequestException or IOException or System.Text.Json.JsonException or TimeoutException ||
+                                          error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                return new ProjectCreationUnknown(error.GetType().Name);
+            }
+        }
+
         public async Task<TsAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
         {
             var project = await PlatformAsync(() => Client().Platform.CreateProjectAsync(Bearer(session), Id(organizationId), new(name), cancellationToken));
@@ -147,7 +173,7 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             var created = await PlatformAsync(() => Client().Platform.CreateInvitationAsync(Bearer(session), Id(organizationId), new(email, role, projectId is null ? null : Id(projectId)), cancellationToken));
             if (created.Invitation is null || !TerraScaleIds.IsValid(created.Invitation.Id) || created.Token is not { Length: > 0 and <= 4096 } ||
-                !created.Invitation.Email.Equals(email, StringComparison.OrdinalIgnoreCase) || created.Invitation.ProjectId != projectId || created.Invitation.Role != role)
+                created.Invitation.Email is not { } invited || !invited.Equals(email, StringComparison.OrdinalIgnoreCase) || created.Invitation.ProjectId != projectId || created.Invitation.Role != role)
             {
                 throw new IOException("ts-auth returned an invalid invitation.");
             }

@@ -227,8 +227,9 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private static bool DependencyFailure(Exception error, HttpContext context)
         {
-            return error is HttpRequestException or IOException or System.Text.Json.JsonException or TimeoutException ||
-            error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested;
+            return error is not TerraScale.DotNet.TerraBase.TerraBaseSqlException &&
+                (error is HttpRequestException or IOException or System.Text.Json.JsonException or TimeoutException ||
+                 error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested);
         }
     }
 }

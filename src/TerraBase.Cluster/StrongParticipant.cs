@@ -30,7 +30,7 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
                 : await WaitLocalCatchUpAsync(session, payload.DatabaseId, originBookmark, cancellationToken);
             if (behind)
             {
-                _ = databases.RequestCatchUp(payload.DatabaseId);
+                _ = databases.RequestCatchUp(payload.DatabaseId, originBookmark);
                 return new ClusterUnavailable("participant has not applied the origin's causal history yet", "participant_behind");
             }
         }
@@ -62,7 +62,7 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
 
     private async ValueTask<bool> WaitLocalCatchUpAsync(ISqlDatabaseSession session, Ulid databaseId, CausalBookmark originBookmark, CancellationToken cancellationToken)
     {
-        _ = databases.RequestCatchUp(databaseId);
+        _ = databases.RequestCatchUp(databaseId, originBookmark);
         var caughtUp = await session.WaitForBookmarkAsync(originBookmark, options.StrongPrepareTimeout / 2, cancellationToken);
         return caughtUp switch
         {

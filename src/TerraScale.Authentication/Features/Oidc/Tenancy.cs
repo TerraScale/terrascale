@@ -17,7 +17,14 @@ public static class Tenancy
 
     public static void UseTenancy(this WebApplication app) => app.Use(async (HttpContext context, RequestDelegate next) =>
     {
-        if (await ResolveAsync(context.RequestServices.GetRequiredService<AuthData>(), context.Request.Path, context.RequestAborted) is { } tenant)
+        var resolution = await ResolveAsync(context, context.RequestAborted);
+        if (resolution.Throttled)
+        {
+            await AnonymousTenantReads.RefuseAsync(context);
+            return;
+        }
+
+        if (resolution.Tenant is { } tenant)
         {
             context.Items[ItemKey] = tenant;
         }
@@ -34,9 +41,11 @@ public static class Tenancy
     public static string SessionCookie(string tenant) =>
         IsProject(tenant) ? SecuritySchemes.SessionCookieName + "_" + tenant : SecuritySchemes.SessionCookieName;
 
-    private static async Task<string?> ResolveAsync(AuthData data, PathString path, CancellationToken cancellationToken)
+    private readonly record struct Resolution(string? Tenant, bool Throttled = false);
+
+    private static async Task<Resolution> ResolveAsync(HttpContext context, CancellationToken cancellationToken)
     {
-        var segments = (path.Value ?? string.Empty).Split('/', 4);
+        var segments = (context.Request.Path.Value ?? string.Empty).Split('/', 4);
         var (tenant, rest) = segments switch
         {
             [_, "v1", var project, "step-up"] => (project, "step-up"),
@@ -48,26 +57,31 @@ public static class Tenancy
         };
         if (string.Equals(tenant, OidcIssuer.Slug, StringComparison.OrdinalIgnoreCase))
         {
-            return OidcIssuer.Slug;
+            return new(OidcIssuer.Slug);
         }
 
         if (string.Equals(tenant, AgentIdIssuer.Slug, StringComparison.OrdinalIgnoreCase))
         {
-            return AgentIdIssuer.Routes.Contains(rest?.TrimEnd('/'), StringComparer.OrdinalIgnoreCase) ? AgentIdIssuer.Slug : null;
+            return new(AgentIdIssuer.Routes.Contains(rest?.TrimEnd('/'), StringComparer.OrdinalIgnoreCase) ? AgentIdIssuer.Slug : null);
         }
 
         var page = segments is [_, "ui", ..];
         if (!TerraScaleIds.IsValid(tenant) || !page && !ProjectRoutes.Contains(rest?.TrimEnd('/'), StringComparer.Ordinal))
         {
-            return null;
+            return new(null);
+        }
+
+        if (!AnonymousTenantReads.Admit(context))
+        {
+            return new(null, Throttled: true);
         }
 
         try
         {
-            var platform = OidcIssuer.InstanceId;
-            return await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectRecord>(
+            var (data, platform) = (context.RequestServices.GetRequiredService<AuthData>(), OidcIssuer.InstanceId);
+            return new(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectRecord>(
                 "SELECT * FROM projects WHERE id = @tenant AND instance_id = @platform", new { tenant, platform }), cancellationToken) is { } project
-                && PlatformTenant.IsCustomerProject(project) ? tenant : null;
+                && PlatformTenant.IsCustomerProject(project) ? tenant : null);
         }
         catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
         {

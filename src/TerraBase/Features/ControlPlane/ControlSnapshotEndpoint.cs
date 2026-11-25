@@ -53,12 +53,30 @@ internal sealed class ControlSnapshotEndpoint(ControlSnapshots snapshots, Contro
         SignedSnapshot request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        await sync.Serialized.WaitAsync(cancellationToken);
+        try
+        {
+            return await ApplyAsync(request, cancellationToken);
+        }
+        finally
+        {
+            _ = sync.Serialized.Release();
+        }
+    }
+
+    private async ValueTask<ControlSnapshotResponse> ApplyAsync(SignedSnapshot request, CancellationToken cancellationToken)
+    {
         return snapshots.Accept(request.Snapshot, request.Body) switch
         {
             AcceptedSnapshot { Changed: false } accepted => Ack(accepted.Snapshot),
             AcceptedSnapshot accepted => await sync.ApplyAsync(accepted.Snapshot, cancellationToken) switch
             {
-                Completed => Ack(accepted.Snapshot),
+                Completed => snapshots.Commit(accepted.Snapshot) switch
+                {
+                    Completed => Ack(accepted.Snapshot),
+                    StateConflict conflict => conflict,
+                },
+                SnapshotKeyRefused refused => new StateConflict(refused.Message, refused.Code),
                 BackendUnavailable unavailable => unavailable,
             },
             InvalidInput invalid => invalid,

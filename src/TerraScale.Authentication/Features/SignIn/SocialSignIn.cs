@@ -139,7 +139,14 @@ public sealed partial class SocialSignIn(IHttpClientFactory clients, AuthOptions
         }
 
         var configuration = await this.ConfigurationAsync(provider, cancellationToken);
-        using var request = new HttpRequestMessage(HttpMethod.Post, configuration.TokenEndpoint) { Content = new FormUrlEncodedContent(form) };
+        if (!Uri.TryCreate(configuration.TokenEndpoint, UriKind.Absolute, out var tokenEndpoint)
+            || tokenEndpoint.Scheme != Uri.UriSchemeHttps
+            || tokenEndpoint.UserInfo.Length > 0)
+        {
+            return null;
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint) { Content = new FormUrlEncodedContent(form) };
         using var response = await client.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode || await ReadAsync(response, cancellationToken) is not { } body
             || !body.TryGetProperty("id_token", out var idToken) || idToken.ValueKind != JsonValueKind.String)

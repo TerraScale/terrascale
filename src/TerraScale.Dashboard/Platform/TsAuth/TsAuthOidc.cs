@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Platform.TsAuth
@@ -13,11 +14,11 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             cancellationToken);
         }
 
-        public Task<TsAuthJwkSet> GetJwksAsync(CancellationToken cancellationToken = default)
+        public Task<JsonElement> GetJwksAsync(CancellationToken cancellationToken = default)
         {
             return client.GetMetadataAsync(
             InstanceRoute("/.well-known/jwks.json"),
-                TsAuthJsonContext.Default.TsAuthJwkSet,
+                TsAuthJsonContext.Default.JsonElement,
             cancellationToken);
         }
 
@@ -201,5 +202,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("sub")] string Subject,
         [property: JsonPropertyName("email")] string? Email,
         [property: JsonPropertyName("email_verified")] bool? EmailVerified,
-        [property: JsonPropertyName("name")] string? Name);
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("act")] TsAuthActor? Actor = null,
+        [property: JsonPropertyName("is_anonymous")] bool? IsAnonymous = null);
+
+    public sealed record TsAuthActor([property: JsonPropertyName("sub")] string Subject);
 }

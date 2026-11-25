@@ -5,9 +5,13 @@ namespace TerraBase.Features.Qos;
 
 internal readonly union TenantSessionOutcome(TenantSessions.TenantSession, TenantBusy);
 
+internal readonly union PreauthenticationOutcome(TenantSessions.PreauthenticationSession, TenantBusy);
+
 internal sealed class TenantSessions
 {
     public const string LimitMessage = "organization session limit exceeded";
+
+    public const int MaxPreauthentication = 1024;
 
     private readonly Lock _gate = new();
 
@@ -28,10 +32,16 @@ internal sealed class TenantSessions
         _ = meter.CreateObservableGauge("terrabase.qos.preauthentication.sessions", () => Volatile.Read(ref _preauthentication));
     }
 
-    public PreauthenticationSession BeginPreauthentication()
+    public PreauthenticationOutcome BeginPreauthentication()
     {
-        _ = Interlocked.Increment(ref _preauthentication);
-        return new PreauthenticationSession(this);
+        if (Interlocked.Increment(ref _preauthentication) <= MaxPreauthentication)
+        {
+            return new PreauthenticationSession(this);
+        }
+
+        _ = Interlocked.Decrement(ref _preauthentication);
+        _refusals.Add(1, new KeyValuePair<string, object?>("kind", "preauthentication_cap"));
+        return new TenantBusy("preauthentication", TimeSpan.FromSeconds(1));
     }
 
     public TenantSessionOutcome TryOpen(Tenant tenant)

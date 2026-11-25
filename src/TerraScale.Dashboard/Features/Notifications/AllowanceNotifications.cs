@@ -175,8 +175,9 @@ namespace TerraScale.Dashboard.Features.Notifications
                     }, cancellationToken);
                     break;
                 }
-                catch (Exception error) when (attempt < 2 && (error is DBConcurrencyException || DashboardDb.IsDuplicate(error)))
+                catch (Exception error) when (attempt < 2 && (DashboardDb.IsConflict(error) || DashboardDb.IsDuplicate(error)))
                 {
+                    await DashboardDb.ConflictBackoffAsync(attempt, clock, cancellationToken);
                 }
             }
 
@@ -241,7 +242,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     {
         private const string Ordered = DashboardSql.AllowanceAlerts.Select + " WHERE organization_id = @OrganizationId ORDER BY id";
 
-        public static async Task HydrateAsync(DashboardDb storage, AccountStore accounts, AccountContext context, CancellationToken cancellationToken)
+        public static async Task HydrateAsync(DashboardDb storage, AccountStore accounts, TimeProvider clock, AccountContext context, CancellationToken cancellationToken)
         {
             if (context.Organization is not { } organization || organization.RoleFor(context.UserId) != "owner")
             {
@@ -278,7 +279,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     context.Account.Notifications = account.Notifications;
                     return;
                 }
-                catch (DBConcurrencyException) when (attempt < 7) { }
+                catch (DBConcurrencyException) when (attempt < 7) { await DashboardDb.ConflictBackoffAsync(attempt, clock, cancellationToken); }
             }
         }
     }

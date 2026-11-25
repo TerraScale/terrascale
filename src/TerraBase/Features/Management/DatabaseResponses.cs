@@ -11,4 +11,4 @@ public readonly union BranchDatabaseResponse(Created<DatabaseBody>, Accepted<Res
 
 public readonly union UpdateDatabaseResponse(DatabaseBody, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, StateConflict, BackendUnavailable);
 
-public readonly union DeleteDatabaseResponse(Completed, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, DatabaseIdMismatch, BackendUnavailable);
+public readonly union DeleteDatabaseResponse(Completed, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, StateConflict, DatabaseIdMismatch, BackendUnavailable);
