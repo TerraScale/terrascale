@@ -150,7 +150,7 @@ internal sealed partial class DatabaseSession
             return AsResult(readTransaction);
         }
 
-        var transaction = new WriteTransaction(options, Ulid.NewUlid(_context.Time.GetUtcNow()));
+        var transaction = new WriteTransaction(this, options, Ulid.NewUlid(_context.Time.GetUtcNow()));
         if (!await EnqueueAsync(new TransactionRequest(transaction), cancellationToken))
         {
             return Closing();

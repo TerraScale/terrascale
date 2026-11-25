@@ -113,7 +113,7 @@ internal sealed class TerraBaseDatabaseExecutor(
             }
         }
 
-        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, cancellationToken, session);
+        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, cancellationToken, RulesEnforcer.Catalog(session));
         return enforced switch
         {
             EnforcedSql ready => request with { Statements = ready.Statements },
@@ -152,6 +152,9 @@ internal sealed class RulesTransaction(ISqlTransaction inner, Ulid databaseId, R
         };
     }
 
+    public ValueTask<SqlReadOutcome> ReadCatalogAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken) =>
+        Inner.ReadCatalogAsync(statements, cancellationToken);
+
     public ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken) => Inner.CommitLocalAsync(cancellationToken);
 
     public ValueTask<TransactionStageResult> StageAsync(CancellationToken cancellationToken) => Inner.StageAsync(cancellationToken);
@@ -162,7 +165,7 @@ internal sealed class RulesTransaction(ISqlTransaction inner, Ulid databaseId, R
 
     private async ValueTask<TransactionExecuteResult> ExecutePlannedAsync(PlannedStatement planned, CancellationToken cancellationToken)
     {
-        var enforced = await rules.ApplyAsync(databaseId, auth, [planned], cancellationToken);
+        var enforced = await rules.ApplyAsync(databaseId, auth, [planned], cancellationToken, RulesEnforcer.Catalog(Inner));
         return enforced switch
         {
             EnforcedSql { Statements: [var rewritten] } => await Inner.ExecuteAsync(rewritten, cancellationToken),

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
@@ -147,16 +148,15 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return SqliteStatus.Success;
         }
 
-        int result;
-        var rc = SqliteNative.DbConfigFlag(Handle, SqliteNative.ConfigEnableTrigger, applying ? 0 : 1, &result);
-        if (rc == SqliteNative.Ok)
+        var status = SetFlag(SqliteNative.ConfigEnableTrigger, applying ? 0 : 1);
+        if (status.IsOk)
         {
-            rc = SqliteNative.DbConfigFlag(Handle, SqliteNative.ConfigDefensive, applying ? 0 : 1, &result);
+            status = SetFlag(SqliteNative.ConfigDefensive, applying ? 0 : 1);
         }
 
-        if (rc != SqliteNative.Ok)
+        if (!status.IsOk)
         {
-            return Status(rc);
+            return status;
         }
 
         _applyMode = applying;
@@ -196,22 +196,28 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        status = Bind(statement, parameters);
-        while (status.IsOk)
+        try
         {
-            var rc = SqliteNative.Step(statement);
-            if (rc == SqliteNative.Done)
+            status = Bind(statement, parameters);
+            while (status.IsOk)
             {
-                break;
-            }
+                var rc = SqliteNative.Step(statement);
+                if (rc == SqliteNative.Done)
+                {
+                    break;
+                }
 
-            if (rc != SqliteNative.Row)
-            {
-                status = Status(rc);
+                if (rc != SqliteNative.Row)
+                {
+                    status = Status(rc);
+                }
             }
         }
+        finally
+        {
+            Return(statement, cached);
+        }
 
-        Return(statement, cached);
         return status;
     }
 
@@ -223,25 +229,31 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        status = Bind(statement, parameters);
-        while (status.IsOk)
+        try
         {
-            var rc = SqliteNative.Step(statement);
-            if (rc == SqliteNative.Done)
+            status = Bind(statement, parameters);
+            while (status.IsOk)
             {
-                break;
-            }
+                var rc = SqliteNative.Step(statement);
+                if (rc == SqliteNative.Done)
+                {
+                    break;
+                }
 
-            if (rc != SqliteNative.Row)
-            {
-                status = Status(rc);
-                break;
-            }
+                if (rc != SqliteNative.Row)
+                {
+                    status = Status(rc);
+                    break;
+                }
 
-            rows.Add(ReadRow(statement));
+                rows.Add(ReadRow(statement));
+            }
+        }
+        finally
+        {
+            Return(statement, cached);
         }
 
-        Return(statement, cached);
         return status;
     }
 
@@ -254,40 +266,62 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        status = Bind(statement, parameters);
-        if (status.IsOk)
+        try
         {
-            var rc = SqliteNative.Step(statement);
-            if (rc == SqliteNative.Row)
+            status = Bind(statement, parameters);
+            if (status.IsOk)
             {
-                row = ReadRow(statement);
-            }
-            else if (rc != SqliteNative.Done)
-            {
-                status = Status(rc);
+                var rc = SqliteNative.Step(statement);
+                if (rc == SqliteNative.Row)
+                {
+                    row = ReadRow(statement);
+                }
+                else if (rc != SqliteNative.Done)
+                {
+                    status = Status(rc);
+                }
             }
         }
+        finally
+        {
+            Return(statement, cached);
+        }
 
-        Return(statement, cached);
         return status;
     }
 
-    public SqliteStatus PrepareUser(ReadOnlySpan<byte> sql, StatementInfo info, out nint statement, out int consumed)
+    public SqliteStatus PrepareUser(ReadOnlySpan<byte> sql, SqlRuleScope? scope, StatementInfo info, out nint statement, out int consumed)
     {
         info.Reset();
+        if (scope is not null)
+        {
+            var scoped = BindScope(scope, info);
+            if (!scoped.IsOk)
+            {
+                statement = 0;
+                consumed = sql.Length;
+                return scoped;
+            }
+        }
+
         nint handle = 0;
         byte* tail = null;
         int rc;
         _collecting = info;
         _userMode = true;
-        fixed (byte* sqlPointer = sql)
+        try
         {
-            rc = SqliteNative.PrepareV3(Handle, sqlPointer, sql.Length, 0, &handle, &tail);
-            consumed = tail is null ? sql.Length : (int)(tail - sqlPointer);
+            fixed (byte* sqlPointer = sql)
+            {
+                rc = SqliteNative.PrepareV3(Handle, sqlPointer, sql.Length, 0, &handle, &tail);
+                consumed = tail is null ? sql.Length : (int)(tail - sqlPointer);
+            }
         }
-
-        _userMode = false;
-        _collecting = null;
+        finally
+        {
+            _userMode = false;
+            _collecting = null;
+        }
         var status = rc == SqliteNative.Ok ? SqliteStatus.Success : UserStatus(Status(rc), info);
         if (handle != 0 || !status.IsOk)
         {
@@ -306,6 +340,51 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
         statement = handle;
         return status;
+    }
+
+    private SqliteStatus BindScope(SqlRuleScope scope, StatementInfo info)
+    {
+        if (scope.SchemaVersion is { } checkedVersion)
+        {
+            var version = QueryFirst("PRAGMA schema_version", out var current);
+            if (!version.IsOk)
+            {
+                return version;
+            }
+
+            if (current is not [var value] || !value.TryGetIntegral(out var live) || live != checkedVersion)
+            {
+                return new SqliteStatus(SqliteNative.Schema, "the schema changed after the rules were checked; retry the statement");
+            }
+        }
+
+        List<SqlValue[]> rows = [];
+        var status = Query("SELECT type, name FROM main.sqlite_schema WHERE type IN ('view', 'trigger')", rows);
+        if (!status.IsOk)
+        {
+            return status;
+        }
+
+        HashSet<string> views = new(AsciiIgnoreCaseComparer.Instance);
+        HashSet<string> triggers = new(AsciiIgnoreCaseComparer.Instance);
+        foreach (var row in rows)
+        {
+            if (row is [var type, var name] && type.TryGetText(out var kind) && name.TryGetText(out var text) && text is not null)
+            {
+                _ = (kind == "view" ? views : triggers).Add(text);
+            }
+        }
+
+        if (triggers.Overlaps(scope.Ctes) || scope.Guards.Keys.Any(triggers.Contains))
+        {
+            return new SqliteStatus(SqliteNative.Auth, "a common table expression name matches a trigger; rename it");
+        }
+
+        views.IntersectWith(scope.Tables.Keys);
+        views.ExceptWith(triggers);
+        info.Scope = scope;
+        info.Views = views.ToFrozenSet(AsciiIgnoreCaseComparer.Instance);
+        return SqliteStatus.Success;
     }
 
     public SqliteStatus BindUser(nint statement, SqlStatement source)
@@ -368,6 +447,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             _userMode = false;
             _collecting = null;
             _workCancellation = default;
+            info.Scope = null;
         }
 
         result = new SqlResultSet(columns, rows, readOnly ? 0 : SqliteNative.Changes64(_db), SqliteNative.LastInsertRowId(_db));
@@ -631,9 +711,12 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             return status;
         }
 
-        int ignored;
-        _ = SqliteNative.DbConfigFlag(_db, SqliteNative.ConfigDefensive, 1, &ignored);
-        _ = SqliteNative.SetAuthorizer(_db, &OnAuthorize, GCHandle<SqliteConnection>.ToIntPtr(_self));
+        status = Harden();
+        if (!status.IsOk)
+        {
+            return status;
+        }
+
         var pragmas = _options.ReadOnly
             ? string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA cache_size = -{_options.CacheSizeKib}; PRAGMA query_only = 1;")
             : string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -{_options.CacheSizeKib};");
@@ -644,6 +727,42 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         }
 
         return QueryFirst("SELECT count(*) FROM sqlite_schema", out _);
+    }
+
+    private SqliteStatus Harden()
+    {
+        var status = SetFlag(SqliteNative.ConfigDefensive, 1);
+        if (status.IsOk)
+        {
+            status = SetFlag(SqliteNative.ConfigTrustedSchema, 0);
+        }
+
+        if (status.IsOk)
+        {
+            status = SetFlag(SqliteNative.ConfigEnableLoadExtension, 0);
+        }
+
+        if (!status.IsOk)
+        {
+            return status;
+        }
+
+        var rc = SqliteNative.SetAuthorizer(_db, &OnAuthorize, GCHandle<SqliteConnection>.ToIntPtr(_self));
+        return rc == SqliteNative.Ok ? SqliteStatus.Success : Status(rc);
+    }
+
+    private SqliteStatus SetFlag(int option, int value)
+    {
+        var applied = -1;
+        var rc = SqliteNative.DbConfigFlag(Handle, option, value, &applied);
+        if (rc != SqliteNative.Ok)
+        {
+            return Status(rc);
+        }
+
+        return applied == value
+            ? SqliteStatus.Success
+            : new SqliteStatus(SqliteNative.Error, string.Concat("sqlite configuration option ", option.ToString(CultureInfo.InvariantCulture), " was not applied"));
     }
 
     private SqliteStatus ApplyKey(ReadOnlySpan<byte> rawKey)
@@ -788,12 +907,12 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     private static int ParameterIndex(nint statement, string name)
     {
-        if (name.Length > 0 && name[0] is ':' or '@' or '$' or '?')
+        if (name.Length > 0 && name[0] is ':' or '@' or '$' or '#' or '?')
         {
             return ParameterIndexExact(statement, name);
         }
 
-        foreach (var prefix in ":@$")
+        foreach (var prefix in ":@$#")
         {
             var index = ParameterIndexExact(statement, string.Concat(prefix.ToString(), name));
             if (index != 0)

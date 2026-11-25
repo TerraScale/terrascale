@@ -22,6 +22,7 @@ internal static unsafe partial class SqliteNative
     public const int Constraint = 19;
     public const int Mismatch = 20;
     public const int Misuse = 21;
+    public const int Schema = 17;
     public const int Auth = 23;
     public const int Range = 25;
     public const int NotADatabase = 26;
@@ -54,6 +55,7 @@ internal static unsafe partial class SqliteNative
 
     public const int AuthOk = 0;
     public const int AuthDeny = 1;
+    public const int AuthIgnore = 2;
 
     public const int ActionCreateIndex = 1;
     public const int ActionCreateTable = 2;
@@ -88,7 +90,9 @@ internal static unsafe partial class SqliteNative
     public const int ActionSavepoint = 32;
 
     public const int ConfigEnableTrigger = 1003;
+    public const int ConfigEnableLoadExtension = 1005;
     public const int ConfigDefensive = 1010;
+    public const int ConfigTrustedSchema = 1017;
     public const int Utf8 = 1;
 
     public static readonly nint Transient = -1;

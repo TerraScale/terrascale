@@ -13,6 +13,10 @@ internal sealed class StatementInfo
 
     public string? CreatedTable { get; set; }
 
+    public SqlRuleScope? Scope { get; set; }
+
+    public IReadOnlySet<string> Views { get; set; } = FrozenSet<string>.Empty;
+
     public HashSet<string> WrittenTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public HashSet<string> ReadTables { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -22,6 +26,8 @@ internal sealed class StatementInfo
         IsDdl = false;
         Denied = null;
         CreatedTable = null;
+        Scope = null;
+        Views = FrozenSet<string>.Empty;
         WrittenTables.Clear();
         ReadTables.Clear();
     }
@@ -67,7 +73,9 @@ internal sealed unsafe partial class SqliteConnection
     private static readonly FrozenSet<string> DeniedFunctions = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
         "load_extension", "readfile", "writefile");
 
-    private int Authorize(int action, string? first, string? second, string? database)
+    private static readonly FrozenSet<string> ScopedTableFunctions = FrozenSet.Create(AsciiIgnoreCaseComparer.Instance, "json_each", "json_tree");
+
+    private int Authorize(int action, string? first, string? second, string? database, string? inner)
     {
         if (!_userMode)
         {
@@ -76,6 +84,11 @@ internal sealed unsafe partial class SqliteConnection
 
         var info = _collecting;
         var main = database is null or "main";
+        if (info?.Scope is { } scope && Scoped(info, scope, action, first, second, database, inner) is { } scoped)
+        {
+            return scoped;
+        }
+
         switch (action)
         {
             case SqliteNative.ActionTransaction:
@@ -94,7 +107,7 @@ internal sealed unsafe partial class SqliteConnection
             case SqliteNative.ActionSavepoint:
                 return IsInternal(second) ? Deny(info, "reserved savepoint name") : SqliteNative.AuthOk;
             case SqliteNative.ActionPragma:
-                return first is not null && (ReadPragmas.Contains(first) || (second is null && QueryOnlyPragmas.Contains(first)))
+                return first is not null && !IsInternal(second) && (ReadPragmas.Contains(first) || (second is null && QueryOnlyPragmas.Contains(first)))
                     ? SqliteNative.AuthOk
                     : Deny(info, string.Concat("PRAGMA ", first, " is not permitted"));
             case SqliteNative.ActionRead:
@@ -161,6 +174,75 @@ internal sealed unsafe partial class SqliteConnection
         }
     }
 
+    private static int? Scoped(StatementInfo info, SqlRuleScope scope, int action, string? first, string? second, string? database, string? inner)
+    {
+        var direct = inner is null || scope.Ctes.Contains(inner);
+        if (action == SqliteNative.ActionPragma)
+        {
+            return Deny(info, "end users cannot run PRAGMA statements");
+        }
+
+        if (action == SqliteNative.ActionUpdate)
+        {
+            return direct && scope.Target is { WritableColumns: { } writable } written && AsciiIgnoreCaseComparer.Instance.Equals(written.Table, first)
+                && second is { } column && !writable.Contains(column)
+                ? Deny(info, string.Concat(column, " is not a writable column of ", first))
+                : null;
+        }
+
+        if (action != SqliteNative.ActionRead || first is null || DeniedTables.Contains(first))
+        {
+            return null;
+        }
+
+        if (database is null && (scope.Ctes.Contains(first) || scope.Guards.ContainsKey(first)))
+        {
+            return SqliteNative.AuthOk;
+        }
+
+        if (IsInternal(first) || ScopedTableFunctions.Contains(first))
+        {
+            return null;
+        }
+
+        if (database is not (null or "main"))
+        {
+            return Deny(info, "end users read only tables of the main database");
+        }
+
+        if (inner is not null && scope.Guards.TryGetValue(inner, out var guarded))
+        {
+            if (!AsciiIgnoreCaseComparer.Instance.Equals(guarded, first))
+            {
+                return Deny(info, string.Concat("the read rule of ", guarded, " cannot read ", first));
+            }
+
+            return scope.Tables.TryGetValue(first, out var table) && Hidden(table.VisibleColumns, second) ? SqliteNative.AuthIgnore : null;
+        }
+
+        if (inner is not null && !direct && info.Views.Contains(inner))
+        {
+            return null;
+        }
+
+        if (scope.Target is { } target && AsciiIgnoreCaseComparer.Instance.Equals(target.Table, first))
+        {
+            return Hidden(direct ? target.VisibleColumns : target.ReadableColumns, second)
+                ? Deny(info, string.Concat(second, " of ", first, " is not readable"))
+                : null;
+        }
+
+        if (direct && second is { Length: 0 } && scope.Tables.ContainsKey(first))
+        {
+            return null;
+        }
+
+        return Deny(info, string.Concat("the rules do not allow reading ", first, " outside its read rule"));
+    }
+
+    private static bool Hidden(IReadOnlySet<string>? visible, string? column) =>
+        visible is not null && column is { Length: > 0 } name && !visible.Contains(name);
+
     private static SqliteStatus ValidatePreparedSql(ReadOnlySpan<byte> sql)
     {
         var tokens = SqlTokenizer.Tokenize(Encoding.UTF8.GetString(sql));
@@ -170,8 +252,46 @@ internal sealed unsafe partial class SqliteConnection
             return new SqliteStatus(SqliteNative.Auth, string.Concat(tokens[start].Text, " is not permitted"));
         }
 
+        if (start >= 0 && tokens[start].Is("ALTER") && AlterNamesInternal(tokens, start))
+        {
+            return new SqliteStatus(SqliteNative.Auth, "reserved table name");
+        }
+
+        for (var index = 0; index + 2 < tokens.Count; index++)
+        {
+            if (tokens[index].Kind == TokenKind.Word && tokens[index].Text.StartsWith("pragma_", StringComparison.OrdinalIgnoreCase)
+                && tokens[index + 1].IsSymbol("(") && IsInternal(Unquoted(tokens[index + 2])))
+            {
+                return new SqliteStatus(SqliteNative.Auth, "internal TerraBase tables are not accessible");
+            }
+        }
+
         return SqliteStatus.Success;
     }
+
+    private static bool AlterNamesInternal(List<SqlToken> tokens, int start)
+    {
+        for (var index = start; index < tokens.Count; index++)
+        {
+            if (tokens[index].IsIdentifier && IsInternal(tokens[index].Text))
+            {
+                return true;
+            }
+
+            if (tokens[index].Is("RENAME") && index + 1 < tokens.Count && tokens[index + 1].Is("TO")
+                && (index + 2 >= tokens.Count || !(tokens[index + 2].IsIdentifier || tokens[index + 2].Kind == TokenKind.Literal) || IsInternal(Unquoted(tokens[index + 2]))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string Unquoted(SqlToken token) =>
+        token.Kind == TokenKind.Literal && token.Text is ['\'', .., '\'']
+            ? token.Text[1..^1].Replace("''", "'", StringComparison.Ordinal)
+            : token.Text;
 
     private static SqliteStatus UserStatus(SqliteStatus status, StatementInfo info)
     {
@@ -224,7 +344,8 @@ internal sealed unsafe partial class SqliteConnection
         try
         {
             var connection = GCHandle<SqliteConnection>.FromIntPtr(context).Target;
-            return connection.Authorize(action, SqliteNative.ReadOptionalUtf8(first), SqliteNative.ReadOptionalUtf8(second), SqliteNative.ReadOptionalUtf8(database));
+            return connection.Authorize(action, SqliteNative.ReadOptionalUtf8(first), SqliteNative.ReadOptionalUtf8(second), SqliteNative.ReadOptionalUtf8(database),
+                SqliteNative.ReadOptionalUtf8(trigger));
         }
         catch (Exception error)
         {

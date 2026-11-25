@@ -239,6 +239,9 @@ public sealed class UpgradingTransaction(ISqlDatabaseSession session, ISqlTransa
         };
     }
 
+    public ValueTask<SqlReadOutcome> ReadCatalogAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken) =>
+        _inner.ReadCatalogAsync(statements, cancellationToken);
+
     public ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken) =>
         _inner.CommitLocalAsync(cancellationToken);
 

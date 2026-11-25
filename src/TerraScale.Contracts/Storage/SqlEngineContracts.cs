@@ -119,7 +119,71 @@ public enum SqlAccess
     Write,
 }
 
-public sealed record SqlStatement(string Sql, IReadOnlyList<SqlValue> Positional, IReadOnlyDictionary<string, SqlValue> Named);
+public sealed record SqlStatement(string Sql, IReadOnlyList<SqlValue> Positional, IReadOnlyDictionary<string, SqlValue> Named)
+{
+    public SqlRuleScope? Scope { get; init; }
+}
+
+public sealed record SqlRuleScope(
+    IReadOnlyDictionary<string, SqlTableScope> Tables,
+    IReadOnlySet<string> Ctes,
+    IReadOnlyDictionary<string, string> Guards,
+    SqlTargetScope? Target,
+    long? SchemaVersion);
+
+public sealed record SqlTableScope(IReadOnlySet<string>? VisibleColumns);
+
+public sealed class AsciiIgnoreCaseComparer : IEqualityComparer<string>
+{
+    public static AsciiIgnoreCaseComparer Instance { get; } = new();
+
+    private AsciiIgnoreCaseComparer()
+    {
+    }
+
+    public bool Equals(string? x, string? y)
+    {
+        if (x is null || y is null)
+        {
+            return x is null && y is null;
+        }
+
+        if (x.Length != y.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < x.Length; index++)
+        {
+            if (Fold(x[index]) != Fold(y[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public int GetHashCode(string obj)
+    {
+        ArgumentNullException.ThrowIfNull(obj);
+        var hash = new HashCode();
+        foreach (var character in obj)
+        {
+            hash.Add(Fold(character));
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static char Fold(char character) => character is >= 'A' and <= 'Z' ? (char)(character + 32) : character;
+}
+
+public sealed record SqlTargetScope(
+    string Table,
+    IReadOnlySet<string>? VisibleColumns,
+    IReadOnlySet<string>? ReadableColumns,
+    IReadOnlySet<string>? WritableColumns);
 
 public sealed record SqlStatementRequest(
     Ulid DatabaseId,
@@ -308,6 +372,8 @@ public interface ISqlTransaction : IAsyncDisposable
     SqlTransactionOptions Options { get; }
 
     ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
+
+    ValueTask<SqlReadOutcome> ReadCatalogAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken);
 
     ValueTask<TransactionCommitLocalResult> CommitLocalAsync(CancellationToken cancellationToken);
 
