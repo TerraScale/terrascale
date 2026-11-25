@@ -29,6 +29,9 @@ internal static partial class QuicRpcLog
     [LoggerMessage(EventId = 8, Level = LogLevel.Warning, Message = "QUIC client could not connect to peer {NodeId} at {EndPoint}: {Reason}")]
     public static partial void ClientConnectFailed(ILogger logger, string nodeId, IPEndPoint endPoint, string reason);
 
+    [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "QUIC storage handshake refused peer {NodeId} in {Region}: {Reason}")]
+    public static partial void StorageHandshakeRejected(ILogger logger, string nodeId, string region, string reason);
+
     [LoggerMessage(EventId = 9, Level = LogLevel.Warning, Message = "QUIC mesh host failed to listen on {EndPoint}: {Reason}")]
     public static partial void ListenFailed(ILogger logger, IPEndPoint endPoint, string reason);
 }

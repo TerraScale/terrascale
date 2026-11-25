@@ -42,6 +42,10 @@ public sealed record QuicMeshOptions
 
     public required string Region { get; init; }
 
+    public string? StorageFormatId { get; init; }
+
+    public TimeSpan StorageFormatMismatchBackoff { get; init; } = TimeSpan.FromSeconds(1);
+
     public required IPEndPoint ListenEndPoint { get; init; }
 
     public required X509Certificate2 Certificate { get; init; }
@@ -61,6 +65,12 @@ public sealed record QuicMeshOptions
         ArgumentNullException.ThrowIfNull(Certificate);
         ArgumentNullException.ThrowIfNull(TrustedAuthorities);
         ArgumentNullException.ThrowIfNull(IntermediateCertificates);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(StorageFormatMismatchBackoff, TimeSpan.Zero);
+        if (StorageFormatId is { } storageFormatId)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(storageFormatId);
+        }
+
         ArgumentOutOfRangeException.ThrowIfZero(TrustedAuthorities.Count, nameof(TrustedAuthorities));
         if (!Certificate.HasPrivateKey)
         {

@@ -34,6 +34,7 @@ internal enum QuicErrorKind
     Deadline,
     Shutdown,
     PeerRejected,
+    StorageFormatMismatch,
     Protocol,
     HandlerFault,
     Unmapped,
@@ -108,6 +109,7 @@ public sealed class QuicMeshMetrics
         DeadlineExceeded => QuicErrorKind.Deadline,
         TransportShutdown => QuicErrorKind.Shutdown,
         PeerRejected => QuicErrorKind.PeerRejected,
+        StorageFormatMismatch => QuicErrorKind.StorageFormatMismatch,
         ProtocolFault => QuicErrorKind.Protocol,
         PeerUnknown => QuicErrorKind.PeerUnknown,
     });
@@ -152,6 +154,7 @@ public sealed class QuicMeshMetrics
         QuicErrorKind.Deadline => "deadline",
         QuicErrorKind.Shutdown => "shutdown",
         QuicErrorKind.PeerRejected => "peer_rejected",
+        QuicErrorKind.StorageFormatMismatch => QuicRemoteError.StorageFormatMismatch,
         QuicErrorKind.Protocol => "protocol",
         QuicErrorKind.HandlerFault => "handler_fault",
         QuicErrorKind.Unmapped => "unmapped",

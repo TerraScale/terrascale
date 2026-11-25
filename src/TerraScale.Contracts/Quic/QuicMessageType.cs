@@ -4,6 +4,7 @@ public static class QuicMessageType
 {
     public const ushort Ping = 0x0001;
     public const ushort Pong = 0x0002;
+    public const ushort StorageHello = 0x0003;
     public const ushort DeltaPush = 0x0100;
     public const ushort DeltaAck = 0x0101;
     public const ushort CatchUpRequest = 0x0102;

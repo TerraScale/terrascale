@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Quic;
 using System.Net.Security;
@@ -28,6 +29,7 @@ internal sealed class QuicRpcServerCore(
     private readonly InFlightTracker _connectionLoops = new();
     private readonly Lock _peerGate = new();
     private readonly Dictionary<string, List<PeerConnection>> _peerConnections = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<QuicPeerIdentity, StorageFormatMismatch> _storageRefusals = new();
     private readonly Lock _pushGate = new();
     private readonly HashSet<QuicStream> _pushStreams = [];
     private QuicListener? _listener;
@@ -41,7 +43,7 @@ internal sealed class QuicRpcServerCore(
             new QuicListenerOptions
             {
                 ListenEndPoint = options.ListenEndPoint,
-                ApplicationProtocols = [new SslApplicationProtocol(QuicProtocol.ApplicationProtocol)],
+                ApplicationProtocols = QuicStorageHandshake.Protocols(options.StorageFormatId),
                 ConnectionOptionsCallback = (_, _, _) => ValueTask.FromResult(ConnectionOptions()),
             },
             cancellationToken);
@@ -117,7 +119,7 @@ internal sealed class QuicRpcServerCore(
         MaxInboundUnidirectionalStreams = QuicMeshLimits.MaxInboundUnidirectionalStreams,
         ServerAuthenticationOptions = new SslServerAuthenticationOptions
         {
-            ApplicationProtocols = [new SslApplicationProtocol(QuicProtocol.ApplicationProtocol)],
+            ApplicationProtocols = QuicStorageHandshake.Protocols(options.StorageFormatId),
             ServerCertificateContext = _certificates.Current(),
             ClientCertificateRequired = true,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
@@ -238,6 +240,23 @@ internal sealed class QuicRpcServerCore(
         metrics.ConnectionOpened(QuicSide.Server, false);
         try
         {
+            if (options.StorageFormatId is { } localFormat
+                && connection.Transport.NegotiatedApplicationProtocol == QuicStorageHandshake.Protocol)
+            {
+                using var scope = new CallScope(QuicMeshLimits.HandshakeTimeout, timeProvider, _closing.Token, CancellationToken.None);
+                if (await QuicStorageHandshake.AcceptAsync(connection.Transport, localFormat, scope) is { } fault)
+                {
+                    metrics.Error(QuicSide.Server, fault);
+                    if (ShouldLogStorageRefusal(identity, fault))
+                    {
+                        QuicRpcLog.StorageHandshakeRejected(logger, identity.NodeId, identity.Region, fault.Message);
+                    }
+
+                    return;
+                }
+            }
+
+            _storageRefusals.TryRemove(identity, out _);
             QuicRpcLog.PeerConnected(logger, identity.NodeId, identity.Region, connection.Transport.RemoteEndPoint);
             await AcceptStreamsAsync(connection.Transport, identity);
         }
@@ -249,6 +268,14 @@ internal sealed class QuicRpcServerCore(
             _connectionLoops.Exit();
         }
     }
+
+    private bool ShouldLogStorageRefusal(QuicPeerIdentity identity, QuicFault fault) =>
+        fault is not StorageFormatMismatch mismatch
+        || ReferenceEquals(_storageRefusals.AddOrUpdate(
+            identity,
+            static (_, current) => current,
+            static (_, previous, current) => previous == current ? previous : current,
+            mismatch), mismatch);
 
     private async Task AcceptStreamsAsync(QuicConnection connection, QuicPeerIdentity identity)
     {
