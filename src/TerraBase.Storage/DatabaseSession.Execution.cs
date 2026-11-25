@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace TerraBase.Storage;
@@ -5,6 +6,8 @@ namespace TerraBase.Storage;
 internal readonly union StatementOutcome(SqlResultSet, SqlError, StrongRequired);
 
 internal readonly union ReaderStatementOutcome(SqlResultSet, SqlError);
+
+internal readonly record struct OpenSavepoint(string Name, int DdlCount, CaptureSavepoint Capture, SqliteStatus DdlFault);
 
 internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
 {
@@ -20,11 +23,23 @@ internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, Canc
 
     public List<string> Ddl { get; } = [];
 
+    public List<OpenSavepoint> Savepoints { get; } = [];
+
     public HashSet<string> ScannedTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public StrongRequiredReason? StrongReason { get; set; }
 
+    public SqliteStatus DdlFault { get; set; } = SqliteStatus.Success;
+
     public bool IsSchemaChange => Ddl.Count > 0;
+
+    public void RecordDdlFault(SqliteStatus status)
+    {
+        if (DdlFault.IsOk && !status.IsOk)
+        {
+            DdlFault = status;
+        }
+    }
 }
 
 internal sealed record StagedDescriptor(StagedWrite Staged, IReadOnlyList<ObservedRow> Observed, DateTimeOffset CreatedAt);
@@ -80,6 +95,14 @@ internal sealed partial class DatabaseSession
                 return SingleStatement.ToSqlError(index);
             }
 
+            var isExplain = SqliteConnection.IsExplain(handle);
+            var savepoint = isExplain ? null : info.Savepoint;
+            if (!context.DdlFault.IsOk && savepoint?.Operation != SavepointOperation.Rollback)
+            {
+                SqliteConnection.FinalizeStatement(handle);
+                return context.DdlFault.ToSqlError(index);
+            }
+
             if (context.Mode == ConsistencyMode.Fast && Gate(info) is { } reason)
             {
                 SqliteConnection.FinalizeStatement(handle);
@@ -100,7 +123,7 @@ internal sealed partial class DatabaseSession
                 tokens = SqlTokenizer.Tokenize(segment);
             }
 
-            var isDdl = info.IsDdl;
+            var isDdl = !isExplain && info.IsDdl;
             if (context.AnalyzeReads)
             {
                 CollectScannedTables(context, handle, segment);
@@ -129,6 +152,17 @@ internal sealed partial class DatabaseSession
                 }
             }
 
+            long cookieBefore = 0;
+            if (isDdl)
+            {
+                status = _writer.ReadSchemaCookie(out cookieBefore);
+                if (!status.IsOk)
+                {
+                    SqliteConnection.FinalizeStatement(handle);
+                    return status.ToSqlError(index);
+                }
+            }
+
             _capture.Annotation = SqlAnalyzer.Annotate(tokens, _capture.Resolve);
             if (!_capture.Fault.IsOk)
             {
@@ -147,17 +181,39 @@ internal sealed partial class DatabaseSession
 
             if (isDdl)
             {
-                context.Ddl.Add(segment.Trim().TrimEnd(';'));
-                if (populatedTable is not null)
+                status = _writer.ReadSchemaCookie(out var cookieAfter);
+                if (!status.IsOk)
                 {
-                    status = _writer.CheckCreatedTable(populatedTable, _capture);
-                    if (!status.IsOk)
+                    _writer.InvalidateSchemaCache();
+                    context.RecordDdlFault(status);
+                    return status.ToSqlError(index);
+                }
+
+                if (cookieAfter != cookieBefore)
+                {
+                    context.Ddl.Add(segment.Trim().TrimEnd(';'));
+                    if (populatedTable is not null)
                     {
-                        return status.ToSqlError(index);
+                        status = _writer.CheckCreatedTable(populatedTable, _capture);
+                        if (!status.IsOk)
+                        {
+                            _writer.InvalidateSchemaCache();
+                            context.RecordDdlFault(status);
+                            return status.ToSqlError(index);
+                        }
                     }
                 }
 
                 status = _writer.ValidateSchemaCache();
+                if (!status.IsOk)
+                {
+                    return status.ToSqlError(index);
+                }
+            }
+
+            if (savepoint is not null)
+            {
+                status = TrackSavepoint(context, savepoint);
                 if (!status.IsOk)
                 {
                     return status.ToSqlError(index);
@@ -170,6 +226,34 @@ internal sealed partial class DatabaseSession
         context.Results.Add(last);
         return last;
     }
+
+    private SqliteStatus TrackSavepoint(WriteContext context, UserSavepoint savepoint)
+    {
+        var savepoints = context.Savepoints;
+        switch (savepoint.Operation)
+        {
+            case SavepointOperation.Begin:
+                savepoints.Add(new OpenSavepoint(savepoint.Name, context.Ddl.Count, _capture.MarkSavepoint(), context.DdlFault));
+                return SqliteStatus.Success;
+            case SavepointOperation.Release when LastSavepoint(savepoints, savepoint.Name) is var released and >= 0:
+                savepoints.RemoveRange(released, savepoints.Count - released);
+                return SqliteStatus.Success;
+            case SavepointOperation.Rollback when LastSavepoint(savepoints, savepoint.Name) is var target and >= 0:
+                var open = savepoints[target];
+                context.Ddl.RemoveRange(open.DdlCount, context.Ddl.Count - open.DdlCount);
+                savepoints.RemoveRange(target + 1, savepoints.Count - target - 1);
+                _capture.RestoreSavepoint(open.Capture);
+                context.DdlFault = open.DdlFault;
+                return _writer.ValidateSchemaCache();
+            case SavepointOperation.Release or SavepointOperation.Rollback:
+                return SqliteStatus.Success;
+            default:
+                throw new UnreachableException();
+        }
+    }
+
+    private static int LastSavepoint(List<OpenSavepoint> savepoints, string name) =>
+        savepoints.FindLastIndex(entry => AsciiIgnoreCaseComparer.Instance.Equals(entry.Name, name));
 
     private static bool CreatesPopulatedTable(List<SqlToken> tokens)
     {
@@ -297,6 +381,12 @@ internal sealed partial class DatabaseSession
     private SqliteStatus FinishLocal(WriteContext context, ref long nextSequence, ref ulong epoch, out CommitMetadata? commit)
     {
         commit = null;
+        if (!context.DdlFault.IsOk)
+        {
+            _capture.End();
+            return context.DdlFault;
+        }
+
         List<NetChange> changes = [];
         var status = _capture.TakeNetChanges(changes);
         if (!status.IsOk)
@@ -333,6 +423,12 @@ internal sealed partial class DatabaseSession
     private SqliteStatus FinishStage(WriteContext context, out StagedDescriptor? descriptor)
     {
         descriptor = null;
+        if (!context.DdlFault.IsOk)
+        {
+            _capture.End();
+            return context.DdlFault;
+        }
+
         List<NetChange> changes = [];
         var status = _capture.TakeNetChanges(changes);
         if (!status.IsOk)

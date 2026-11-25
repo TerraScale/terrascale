@@ -16,6 +16,10 @@ internal sealed record NetChange(
     IReadOnlySet<string> AbsoluteColumns,
     bool Replaced);
 
+internal readonly record struct TouchedState(bool Replaced, IReadOnlySet<string>? Absolute);
+
+internal sealed record CaptureSavepoint(IReadOnlyList<TouchedState> Rows);
+
 internal sealed unsafe class PreupdateCapture : IDisposable
 {
     private readonly SqliteConnection _connection;
@@ -83,6 +87,25 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         _byKey.Clear();
         Annotation = null;
         _active = false;
+    }
+
+    public CaptureSavepoint MarkSavepoint() =>
+        new([.. _touched.Select(static row => new TouchedState(row.Replaced, Copy(row.Absolute)))]);
+
+    public void RestoreSavepoint(CaptureSavepoint mark)
+    {
+        var kept = mark.Rows.Count;
+        foreach (var row in _touched.Skip(kept))
+        {
+            _ = _byKey.Remove((row.Table, PrimaryKeyCodec.ToKeyString(row.EncodedKey)));
+        }
+
+        _touched.RemoveRange(kept, _touched.Count - kept);
+        for (var index = 0; index < kept; index++)
+        {
+            _touched[index].Replaced = mark.Rows[index].Replaced;
+            _touched[index].Absolute = Copy(mark.Rows[index].Absolute);
+        }
     }
 
     public SqliteStatus TakeNetChanges(List<NetChange> changes)
@@ -176,6 +199,9 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         End();
         _self.Dispose();
     }
+
+    private static HashSet<string>? Copy(IReadOnlySet<string>? columns) =>
+        columns is null ? null : new HashSet<string>(columns, StringComparer.OrdinalIgnoreCase);
 
     private static SqlValue[]? Align(TableSchema schema, TouchedRow row)
     {

@@ -26,8 +26,8 @@ internal static partial class ClusterLog
     [LoggerMessage(EventId = 2106, Level = LogLevel.Debug, Message = "Strong transaction {VictimTxId} wounded by higher-priority {WinnerTxId}")]
     public static partial void Wounded(ILogger logger, Ulid victimTxId, Ulid winnerTxId);
 
-    [LoggerMessage(EventId = 2107, Level = LogLevel.Debug, Message = "Strong transaction {TxId} on database {DatabaseId} aborted with {Prepared} of {Required} regions prepared (staged released: {Released})")]
-    public static partial void StrongAborted(ILogger logger, Ulid databaseId, Ulid txId, int prepared, int required, bool released);
+    [LoggerMessage(EventId = 2107, Message = "Strong transaction {TxId} on database {DatabaseId} aborted ({Reason}) with {Prepared} of {Required} regions prepared (staged released: {Released})")]
+    public static partial void StrongAborted(ILogger logger, LogLevel level, Ulid databaseId, Ulid txId, string reason, int prepared, int required, bool released);
 
     [LoggerMessage(EventId = 2108, Level = LogLevel.Warning, Message = "Strong commit {TxId} on database {DatabaseId} is decided but in-region quorum is unconfirmed: {Reason}")]
     public static partial void InRegionQuorumUnconfirmed(ILogger logger, Ulid databaseId, Ulid txId, string reason);
@@ -46,4 +46,7 @@ internal static partial class ClusterLog
 
     [LoggerMessage(EventId = 2113, Level = LogLevel.Error, Message = "Cluster background loop {Loop} failed and will restart after {Delay}")]
     public static partial void LoopFailed(ILogger logger, string loop, TimeSpan delay, Exception exception);
+
+    [LoggerMessage(EventId = 2115, Level = LogLevel.Warning, Message = "Anti-entropy could not apply {Fetched} commits for database {DatabaseId} from {NodeId}: {Reason}")]
+    public static partial void CatchUpApplyFailed(ILogger logger, Ulid databaseId, string nodeId, int fetched, string reason);
 }
