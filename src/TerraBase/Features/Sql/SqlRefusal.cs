@@ -51,7 +51,8 @@ public sealed record SqlRefusal(
 
     public static SqlRefusal From(SqlError error) => SqlWriteUncertainty.Matches(error.Code)
         ? Uncertain(error.Code, error.Message, error.StatementIndex)
-        : new(MapCode(error.Code, error.SqlState), error.Message, error.SqlState, error.StatementIndex, MapStatus(error.Code));
+        : new(MapCode(error.Code, error.SqlState), error.Message, error.SqlState, error.StatementIndex, MapStatus(error.Code),
+            error.Code == "storage_busy" ? TimeSpan.FromSeconds(1) : null);
 
     public static SqlRefusal From(SerializationConflict conflict) =>
         new("serialization_conflict", string.Concat("the transaction conflicted with a concurrent one and was rolled back (", conflict.Reason, "); retry it"),

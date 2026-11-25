@@ -10,6 +10,10 @@ namespace TerraBase.Storage;
 
 internal readonly union SessionOpenResult(DatabaseSession, StorageCorrupted, StorageBusy);
 
+internal sealed record SessionRecovered;
+
+internal readonly union RecoverOutcome(SessionRecovered, StorageCorrupted, StorageBusy);
+
 internal sealed record SessionContext(
     Ulid DatabaseId,
     string Directory,
@@ -51,6 +55,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private int _references = 1;
     private int _closed;
     private int _readerCount;
+    private bool _writeGroupBroken;
 
     private DatabaseSession(SessionContext context, SqliteConnection writer, PreupdateCapture capture, CommitLogCipher cipher, bool strict, Func<DatabaseSession, Task> release)
     {
@@ -127,38 +132,52 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         if (!setup.IsOk)
         {
             writer.Dispose();
-            return new StorageCorrupted(context.DatabaseId, setup.Message);
+            return OpenFailure(context, setup);
         }
 
         var capture = writer.AttachCapture();
         var cipher = new CommitLogCipher(context.RawKey, context.DatabaseId);
         var session = new DatabaseSession(context, writer, capture, cipher, (applicationId & 1) == 1, release);
-        if (session.Recover() is { } corrupted)
+        var recovered = session.Recover();
+        return recovered switch
         {
-            session.DisposeResources();
-            return corrupted;
-        }
+            SessionRecovered => session.OpenReaders(options with { ReadOnly = true, CacheSizeKib = context.Options.ReaderCacheSizeKib }),
+            StorageCorrupted corrupted => session.Abandon(corrupted),
+            StorageBusy busy => session.Abandon(busy),
+        };
+    }
 
-        var readerOptions = options with { ReadOnly = true, CacheSizeKib = context.Options.ReaderCacheSizeKib };
-        for (var index = 0; index < context.Options.ReaderCount; index++)
+    private SessionOpenResult OpenReaders(SqliteOpenOptions readerOptions)
+    {
+        for (var index = 0; index < Options.ReaderCount; index++)
         {
-            var reader = SqliteConnection.Open(readerOptions) switch
+            var opened = SqliteConnection.Open(readerOptions);
+            var failure = opened switch
             {
-                SqliteConnection connection => connection,
-                SqliteStatus => null,
+                SqliteConnection reader => AddReader(reader),
+                SqliteStatus status => status,
             };
-            if (reader is null)
+            if (!failure.IsOk)
             {
-                session.DisposeResources();
-                return new StorageCorrupted(context.DatabaseId, "reader connection could not be opened");
+                return Abandon(OpenFailure(_context, failure));
             }
-
-            _ = session._readers.Writer.TryWrite(reader);
-            session._readerCount++;
         }
 
-        session._lane = Task.Run(session.RunLaneAsync);
-        return session;
+        _lane = Task.Run(RunLaneAsync);
+        return this;
+    }
+
+    private SqliteStatus AddReader(SqliteConnection reader)
+    {
+        _ = _readers.Writer.TryWrite(reader);
+        _readerCount++;
+        return SqliteStatus.Success;
+    }
+
+    private SessionOpenResult Abandon(SessionOpenResult failure)
+    {
+        DisposeResources();
+        return failure;
     }
 
     public void AddReference() => Interlocked.Increment(ref _references);
@@ -713,6 +732,11 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             {
                 _readersDrained.TrySetResult();
             }
+        }
+
+        if (!closed && reader.InTransaction)
+        {
+            _ = reader.Exec("ROLLBACK;");
         }
 
         if (closed || !_readers.Writer.TryWrite(reader))

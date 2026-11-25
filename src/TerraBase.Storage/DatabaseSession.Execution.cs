@@ -92,7 +92,7 @@ internal sealed partial class DatabaseSession
             }
 
             var tokens = SqlTokenizer.Tokenize(segment);
-            if (SqlAnalyzer.RewriteSnowflakeInsert(segment, tokens, _writer.Schema) is { } rewritten)
+            if (SqlAnalyzer.RewriteSnowflakeInsert(segment, tokens, _capture.Resolve) is { } rewritten)
             {
                 SqliteConnection.FinalizeStatement(handle);
                 status = _writer.PrepareUser(Encoding.UTF8.GetBytes(rewritten), statement.Scope, info, out handle, out _);
@@ -147,7 +147,14 @@ internal sealed partial class DatabaseSession
                 }
             }
 
-            _capture.Annotation = SqlAnalyzer.Annotate(tokens, _writer.Schema);
+            _capture.Annotation = SqlAnalyzer.Annotate(tokens, _capture.Resolve);
+            if (!_capture.Fault.IsOk)
+            {
+                _capture.Annotation = null;
+                SqliteConnection.FinalizeStatement(handle);
+                return _capture.Fault.ToSqlError(index);
+            }
+
             status = _writer.StepUser(handle, info, out var result, limitResults: true, context.CancellationToken);
             _capture.Annotation = null;
             SqliteConnection.FinalizeStatement(handle);
@@ -177,12 +184,20 @@ internal sealed partial class DatabaseSession
                     }
                 }
 
-                _ = _writer.ValidateSchemaCache();
+                status = _writer.ValidateSchemaCache();
+                if (!status.IsOk)
+                {
+                    return status.ToSqlError(index);
+                }
             }
 
             if (savepoint is not null)
             {
-                TrackSavepoint(context, savepoint);
+                status = TrackSavepoint(context, savepoint);
+                if (!status.IsOk)
+                {
+                    return status.ToSqlError(index);
+                }
             }
 
             last = result;
@@ -192,26 +207,25 @@ internal sealed partial class DatabaseSession
         return last;
     }
 
-    private void TrackSavepoint(WriteContext context, UserSavepoint savepoint)
+    private SqliteStatus TrackSavepoint(WriteContext context, UserSavepoint savepoint)
     {
         var savepoints = context.Savepoints;
         switch (savepoint.Operation)
         {
             case SavepointOperation.Begin:
                 savepoints.Add(new OpenSavepoint(savepoint.Name, context.Ddl.Count, _capture.MarkSavepoint()));
-                break;
+                return SqliteStatus.Success;
             case SavepointOperation.Release when LastSavepoint(savepoints, savepoint.Name) is var released and >= 0:
                 savepoints.RemoveRange(released, savepoints.Count - released);
-                break;
+                return SqliteStatus.Success;
             case SavepointOperation.Rollback when LastSavepoint(savepoints, savepoint.Name) is var target and >= 0:
                 var open = savepoints[target];
                 context.Ddl.RemoveRange(open.DdlCount, context.Ddl.Count - open.DdlCount);
                 savepoints.RemoveRange(target + 1, savepoints.Count - target - 1);
                 _capture.RestoreSavepoint(open.Capture);
-                _ = _writer.ValidateSchemaCache();
-                break;
+                return _writer.ValidateSchemaCache();
             case SavepointOperation.Release or SavepointOperation.Rollback:
-                break;
+                return SqliteStatus.Success;
             default:
                 throw new UnreachableException();
         }
@@ -251,7 +265,7 @@ internal sealed partial class DatabaseSession
 
         foreach (var table in info.WrittenTables)
         {
-            if (_writer.Schema(table) is not { } schema)
+            if (_capture.Resolve(table) is not { } schema)
             {
                 continue;
             }
@@ -275,7 +289,7 @@ internal sealed partial class DatabaseSession
         var info = context.Info;
         foreach (var table in info.WrittenTables)
         {
-            if (_writer.Schema(table) is { HasSecondaryUnique: true })
+            if (_capture.Resolve(table) is { HasSecondaryUnique: true })
             {
                 context.ScannedTables.Add(table);
             }
@@ -319,7 +333,7 @@ internal sealed partial class DatabaseSession
         var parts = detail.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
         var open = detail.LastIndexOf('(');
         var close = detail.LastIndexOf(')');
-        if (parts.Length < 3 || open < 0 || close < open || _writer.Schema(parts[1]) is not { } schema)
+        if (parts.Length < 3 || open < 0 || close < open || _capture.Resolve(parts[1]) is not { } schema)
         {
             return false;
         }

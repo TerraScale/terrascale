@@ -68,12 +68,21 @@ These are the limits a request or a plan can hit. All SQL surfaces (HTTP, WebSoc
 | Limit | Value | Refusal |
 | --- | --- | --- |
 | Statements per request or \`execute\` frame | 1 to 256 | \`invalid_request\` (400) before anything runs |
-| Statement text | 16 KiB (16,384 UTF-8 bytes) | \`too_large\` (413) / SQLSTATE 54000 |
-| HTTP request body | 1 MiB | 413 \`payload_too_large\` |
+| Statement text | 16 KiB (16,384 UTF-8 bytes) | \`sql_error\` (400) / SQLSTATE 0A000 |
+| HTTP request body | 1 MiB | \`too_large\` (413) / 54000 |
 | WebSocket frame | 1 MiB (the first auth frame 16 KiB) | close 1009 |
-| Result size | 10,000 rows and 8 MiB | \`too_large\` (413) / 54000 |
-| Rows changed per transaction | 1,024 | \`too_large\` (413) / 54000 |
-| Database file growth per transaction | 8 MiB | \`too_large\` (413) / 54000 |
+| Result size | 10,000 rows and 4 MiB | \`too_large\` (400) / 54000 |
+| Rows changed per transaction | 1,024 | \`too_large\` (400) / 54000 |
+| Database file growth per transaction | 8 MiB | \`too_large\` (400) / 54000 |
+| Any value, string or row a statement builds | 16 MiB | \`too_large\` (400) / 54000 |
+| Expression nesting | 200 levels | \`sql_error\` (400) / 54001 |
+| Terms in a compound \`SELECT\` | 50 | \`sql_error\` (400) / 54001 |
+| \`LIKE\` or \`GLOB\` pattern | 1,000 bytes | \`sql_error\` (400) / 54001 |
+| Trigger and foreign-key cascade nesting | 32 levels | \`sql_error\` (400) / 54001 |
+| Function arguments | 127 | \`sql_error\` (400) / 54023 |
+| Bound parameter number | \`?8192\` | \`sql_error\` (400) / 54023 |
+
+A statement that needs more memory than the server can spare, including one that compiles to an oversized program, answers \`storage_busy\` (503) / 53200; retry it, and simplify it if it keeps failing.
 
 A query that stays inside result limits but scans or works past the plan's scan budget answers \`query_canceled\` (400) / 57014 with \`query too expensive: it exceeds the work budget\`; add indexes or a \`LIMIT\`, or narrow the query. A request whose statements together spend more than 5 s executing answers \`query_canceled\` (400) / 57014 with \`the request exceeded its 5 s time limit; split the batch or narrow the query\`. Only statement and commit execution counts toward the 5 s; time spent admitted, queued or waiting on the organization's limits does not.
 

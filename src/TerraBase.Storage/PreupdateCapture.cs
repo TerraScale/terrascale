@@ -56,6 +56,31 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         _active = true;
     }
 
+    public void Fail(SqliteStatus status)
+    {
+        if (Fault.IsOk && !status.IsOk)
+        {
+            Fault = status;
+        }
+    }
+
+    public TableSchema? Resolve(string table)
+    {
+        var lookup = _connection.Schema(table);
+        return lookup switch
+        {
+            TableSchema schema => schema,
+            TableNotFound => null,
+            SqliteStatus failure => Unresolved(failure),
+        };
+    }
+
+    private TableSchema? Unresolved(SqliteStatus failure)
+    {
+        Fail(failure);
+        return null;
+    }
+
     public void End()
     {
         _touched.Clear();
@@ -98,8 +123,14 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         Dictionary<TableSchema, TableSql> statements = [];
         foreach (var row in _touched)
         {
-            if (_connection.Schema(row.Table) is not { } schema)
+            if (Resolve(row.Table) is not { } schema)
             {
+                if (!Fault.IsOk)
+                {
+                    status = Fault;
+                    break;
+                }
+
                 continue;
             }
 
@@ -255,16 +286,16 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         }
 
         var name = SqliteNative.ReadUtf8(table);
-        var schema = _connection.Schema(name);
+        var schema = Resolve(name);
         if (schema is not null && SqliteNative.PreupdateCount(db) != schema.StorageColumnCount)
         {
             _connection.InvalidateSchemaCache();
-            schema = _connection.Schema(name);
+            schema = Resolve(name);
         }
 
         if (schema is null)
         {
-            Fault = SqliteStatus.Fail(string.Concat("capture could not resolve schema for table ", name));
+            Fail(SqliteStatus.Fail(string.Concat("capture could not resolve schema for table ", name)));
             return;
         }
 
@@ -277,7 +308,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         IReadOnlyList<int> sources = [.. schema.DataColumns.Select(static column => column.Index)];
         if (schema.IsShadow)
         {
-            if (schema.ContentOwner is not { } owner || _connection.Schema(owner) is not { IsVirtual: true } virtualTable)
+            if (schema.ContentOwner is not { } owner || Resolve(owner) is not { IsVirtual: true } virtualTable)
             {
                 return;
             }

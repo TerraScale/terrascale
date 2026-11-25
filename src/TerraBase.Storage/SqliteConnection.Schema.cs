@@ -1,5 +1,9 @@
 namespace TerraBase.Storage;
 
+internal sealed record TableNotFound(string Table);
+
+internal readonly union TableSchemaLookup(TableSchema, TableNotFound, SqliteStatus);
+
 internal sealed partial class SqliteConnection
 {
     public SqliteStatus ReadSchemaCookie(out long cookie)
@@ -28,9 +32,7 @@ internal sealed partial class SqliteConnection
             return SqliteStatus.Success;
         }
 
-        _schemaCookie = cookie;
-        _deltaVersion = deltaVersion;
-        _schemas.Clear();
+        InvalidateSchemaCache();
         List<SqlValue[]> tables = [];
         status = Query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_tb\\_%' ESCAPE '\\'", tables);
         if (!status.IsOk)
@@ -40,12 +42,27 @@ internal sealed partial class SqliteConnection
 
         foreach (var table in tables)
         {
-            if (table[0].TryGetText(out var name))
+            if (!table[0].TryGetText(out var name))
             {
-                _ = Schema(name);
+                continue;
+            }
+
+            var lookup = Schema(name);
+            status = lookup switch
+            {
+                TableSchema => SqliteStatus.Success,
+                TableNotFound => SqliteStatus.Success,
+                SqliteStatus failure => failure,
+            };
+            if (!status.IsOk)
+            {
+                InvalidateSchemaCache();
+                return status;
             }
         }
 
+        _schemaCookie = cookie;
+        _deltaVersion = deltaVersion;
         return SqliteStatus.Success;
     }
 
@@ -55,7 +72,7 @@ internal sealed partial class SqliteConnection
         _schemaCookie = -1;
     }
 
-    public TableSchema? Schema(string table)
+    public TableSchemaLookup Schema(string table)
     {
         if (_schemas.TryGetValue(table, out var cached))
         {
@@ -63,17 +80,27 @@ internal sealed partial class SqliteConnection
         }
 
         var status = QueryFirst("SELECT type, wr FROM pragma_table_list(?1) WHERE schema = 'main'", out var listing, SqlValue.FromText(table));
-        if (!status.IsOk || listing is null || !listing[0].TryGetText(out var type) || type is not ("table" or "virtual" or "shadow"))
+        if (!status.IsOk)
         {
-            return null;
+            return status;
+        }
+
+        if (listing is null || !listing[0].TryGetText(out var type) || type is not ("table" or "virtual" or "shadow"))
+        {
+            return new TableNotFound(table);
         }
 
         _ = listing[1].TryGetIntegral(out var withoutRowId);
         List<SqlValue[]> rows = [];
         status = Query("SELECT name, type, \"notnull\", pk, hidden FROM pragma_table_xinfo(?1, 'main')", rows, SqlValue.FromText(table));
-        if (!status.IsOk || rows.Count == 0)
+        if (!status.IsOk)
         {
-            return null;
+            return status;
+        }
+
+        if (rows.Count == 0)
+        {
+            return new TableNotFound(table);
         }
 
         List<TableColumn> columns = [];
@@ -103,7 +130,7 @@ internal sealed partial class SqliteConnection
         status = Query("SELECT name, \"unique\", origin FROM pragma_index_list(?1, 'main')", indexes, SqlValue.FromText(table));
         if (!status.IsOk)
         {
-            return null;
+            return status;
         }
 
         var secondaryUnique = false;
