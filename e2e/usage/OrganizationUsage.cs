@@ -9,6 +9,7 @@ using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
+using TerraBase.Storage;
 using TerraScale.Contracts.ControlPlane;
 
 internal static class OrganizationUsage
@@ -104,8 +105,9 @@ internal static class OrganizationUsage
         }
 
         var unwritten = await UsageJourney.UsageAsync(http, $"/v1/projects/{first.Project}/databases/{ghost.Id}/usage?month={Month}", cancellationToken);
-        UsageJourney.Require(unwritten[UsageMetrics.StorageByteHours] > 0,
-            "a home database without a local file is materialized and billed for the hour instead of making storage incomplete: " + unwritten);
+        var root = services.GetRequiredService<StorageEngineOptions>().RootDirectory;
+        UsageJourney.Require(unwritten[UsageMetrics.StorageByteHours] == 0 && !Directory.Exists(Path.Combine(root, ghost.Id.ToString())),
+            "a database no node holds a file for is billed zero bytes without creating it locally: " + unwritten);
         var skipped = await ReadAsync(peer, path, cancellationToken);
         UsageJourney.Require(!skipped.Complete && skipped.Gaps.SequenceEqual([UsageReports.StorageIncomplete]),
             "a missed earlier hour is incomplete even when a later hour brings the count up to the elapsed hours: " + skipped);

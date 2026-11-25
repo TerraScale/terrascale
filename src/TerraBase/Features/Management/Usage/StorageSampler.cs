@@ -1,10 +1,13 @@
 using System.Globalization;
 using TerraBase.Cluster;
 using TerraBase.Engine;
+using TerraBase.Features.Health;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using TerraBase.Storage;
+using TerraScale.Contracts.Quic;
+using TerraScale.QuicRpc;
 using ZLogger;
 
 namespace TerraBase.Features.Management.Usage;
@@ -13,7 +16,6 @@ internal readonly union StorageSampleOutcome(StorageSample, BackendUnavailable);
 
 internal readonly union StorageRecordOutcome(StorageRecorded, BackendUnavailable);
 
-internal readonly union StorageMeasureOutcome(long, BackendUnavailable);
 
 internal readonly union StorageExistingOutcome(IReadOnlySet<Ulid>, BackendUnavailable);
 
@@ -30,8 +32,10 @@ internal sealed record StorageRecorded(int Databases, long ByteHours);
 
 internal sealed record StoredDatabase(Ulid ProjectId, Ulid DatabaseId, long Bytes);
 
-internal sealed class StorageOwnership(RegionDirectory regions, ClusterOptions cluster)
+internal sealed class StorageOwnership(RegionDirectory regions, ClusterOptions cluster, NodeReadiness readiness)
 {
+    public bool Ready => readiness.Blocked is null;
+
     public string Region => cluster.Region;
 
     public int Rank => cluster.RegionPeers.Count(peer => string.CompareOrdinal(peer.NodeId, cluster.NodeId) < 0);
@@ -48,36 +52,53 @@ internal sealed class StorageOwnership(RegionDirectory regions, ClusterOptions c
         database.AllRegions ? everywhere : database.Regions is [var home, ..] ? home : null;
 }
 
-internal sealed class StorageMeasure(DatabaseAccess access, StorageEngineOptions storage)
+internal sealed class StorageFiles(StorageEngineOptions storage)
 {
-    public async ValueTask<StorageMeasureOutcome> BytesAsync(DatabaseRecord database, CancellationToken cancellationToken)
+    public long? Bytes(Ulid databaseId)
     {
-        if (File.Exists(DatabaseFile(database.Id)))
+        var file = Path.Combine(storage.RootDirectory, databaseId.ToString(), string.Concat(databaseId.ToString(), ".db"));
+        var info = new FileInfo(file);
+        if (!info.Exists)
         {
-            return Bytes(database.Id);
+            return null;
         }
 
-        var opened = await access.OpenAsync(database, cancellationToken);
-        return opened switch
+        var wal = new FileInfo(string.Concat(file, "-wal"));
+        return info.Length + (wal.Exists ? wal.Length : 0);
+    }
+}
+
+internal sealed class StorageMeasure(StorageFiles files, ClusterOptions cluster, QuicRpcClient quic)
+{
+    private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(5);
+
+    public long? Local(Ulid databaseId) => files.Bytes(databaseId);
+
+    public async ValueTask<IReadOnlyDictionary<Ulid, long?>> PeersAsync(IReadOnlyList<Ulid> databases, CancellationToken cancellationToken)
+    {
+        var request = new StorageFileProbeRequest(databases);
+        var replies = await Task.WhenAll(cluster.Peers.Select(peer => ProbeAsync(peer.NodeId, request, cancellationToken)));
+        var answered = replies.All(reply => reply is { } bytes && bytes.Count == databases.Count);
+        Dictionary<Ulid, long?> sizes = [];
+        for (var index = 0; index < databases.Count; index++)
         {
-            ISqlDatabaseSession => Bytes(database.Id),
-            BackendUnavailable unavailable => unavailable,
+            var position = index;
+            sizes[databases[index]] = answered
+                ? replies.Select(reply => reply is { } bytes ? bytes[position] : -1).Where(static bytes => bytes >= 0).DefaultIfEmpty(0).Max()
+                : null;
+        }
+
+        return sizes;
+    }
+
+    private async Task<IReadOnlyList<long>?> ProbeAsync(string nodeId, StorageFileProbeRequest request, CancellationToken cancellationToken)
+    {
+        var outcome = await quic.CallAsync<StorageFileProbeRequest, StorageFileProbeReply>(nodeId, QuicMessageType.StorageFileProbe, request, PeerTimeout, cancellationToken);
+        return outcome switch
+        {
+            StorageFileProbeReply reply => reply.Bytes,
+            QuicUnavailable or QuicTimeout or QuicRemoteError => null,
         };
-    }
-
-    private string DatabaseFile(Ulid databaseId) =>
-        Path.Combine(storage.RootDirectory, databaseId.ToString(), string.Concat(databaseId.ToString(), ".db"));
-
-    private long Bytes(Ulid databaseId)
-    {
-        var file = DatabaseFile(databaseId);
-        return Length(file) + Length(string.Concat(file, "-wal"));
-    }
-
-    private static long Length(string path)
-    {
-        var info = new FileInfo(path);
-        return info.Exists ? info.Length : 0;
     }
 }
 
@@ -182,6 +203,8 @@ internal sealed class StorageSampler(
 
     private static readonly TimeSpan RankDelay = TimeSpan.FromMinutes(5);
 
+    private static readonly TimeSpan ProbeBudget = TimeSpan.FromMinutes(10);
+
     public static DateTimeOffset NextBoundary(DateTimeOffset now) => new DateTimeOffset(now.UtcTicks - (now.UtcTicks % Slot.Ticks), TimeSpan.Zero).Add(Slot);
 
     public async ValueTask<StorageSampleOutcome> SampleAsync(DateTimeOffset boundary, CancellationToken cancellationToken)
@@ -189,6 +212,7 @@ internal sealed class StorageSampler(
         var ended = boundary.AddTicks(-1);
         var month = UsageMeter.Month(ended);
         var hour = StorageLedger.HourIndex(ended);
+        var probeUntil = time.GetUtcNow() + ProbeBudget;
         var databases = 0;
         var unmeasured = 0;
         long byteHours = 0;
@@ -218,17 +242,29 @@ internal sealed class StorageSampler(
                 return new BackendUnavailable("the usage store is unavailable; storage was not sampled", "usage_unavailable");
             }
 
+            List<DatabaseRecord> due = [.. homed.Where(database => !existing.Contains(database.Id))];
+            Dictionary<Ulid, long?> sizes = due.ToDictionary(static database => database.Id, database => measure.Local(database.Id));
+            List<Ulid> absent = [.. sizes.Where(static size => size.Value is null).Select(static size => size.Key)];
+            if (absent.Count > 0 && time.GetUtcNow() < probeUntil)
+            {
+                foreach (var (database, bytes) in await measure.PeersAsync(absent, cancellationToken))
+                {
+                    sizes[database] = bytes;
+                }
+            }
+
             List<StoredDatabase> measured = [];
             List<StoredDatabase> missing = [];
-            foreach (var database in homed.Where(database => !existing.Contains(database.Id)))
+            foreach (var database in due)
             {
-                var bytesOutcome = await measure.BytesAsync(database, cancellationToken);
-                var bytes = bytesOutcome switch
+                if (sizes[database.Id] is { } bytes)
                 {
-                    long length => length,
-                    BackendUnavailable => -1,
-                };
-                (bytes < 0 ? missing : measured).Add(new StoredDatabase(database.ProjectId, database.Id, checked(Math.Max(bytes, 0) * SlotHours)));
+                    measured.Add(new StoredDatabase(database.ProjectId, database.Id, checked(bytes * SlotHours)));
+                }
+                else
+                {
+                    missing.Add(new StoredDatabase(database.ProjectId, database.Id, 0));
+                }
             }
 
             unmeasured += missing.Count;
@@ -270,6 +306,12 @@ internal sealed class StorageSampler(
             if (wait > TimeSpan.Zero)
             {
                 await Task.Delay(wait, time, stoppingToken);
+            }
+
+            if (!ownership.Ready)
+            {
+                boundary = NextBoundary(time.GetUtcNow());
+                continue;
             }
 
             var sampled = await SampleAsync(boundary, stoppingToken);

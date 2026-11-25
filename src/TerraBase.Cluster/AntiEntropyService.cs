@@ -360,12 +360,6 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
                 var (origin, sequence) = lagging[index];
                 var from = message.Have.Get(origin) + 1;
                 var remainingBudget = budget - fetched;
-                if (remainingBudget <= 0)
-                {
-                    more = true;
-                    break;
-                }
-
                 var remainingOrigins = lagging.Length - index;
                 var share = Math.Max(1, remainingBudget / remainingOrigins);
                 var read = await session.ReadCommitLogAsync(origin, from, share, cancellationToken);
