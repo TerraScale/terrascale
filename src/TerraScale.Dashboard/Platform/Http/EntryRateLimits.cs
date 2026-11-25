@@ -7,10 +7,10 @@ namespace TerraScale.Dashboard.Platform.Http;
 
 public sealed class EntryRateLimits : IDisposable
 {
-    private readonly PartitionedRateLimiter<string> signIn = PerClient(20, 10);
-    private readonly PartitionedRateLimiter<string> registration = PerClient(10, 5);
+    private readonly PartitionedRateLimiter<string> signIn = PerClient(120, 60);
+    private readonly PartitionedRateLimiter<string> registration = PerClient(30, 10);
     private readonly PartitionedRateLimiter<string> mcp = PerClient(600, 300);
-    private readonly PartitionedRateLimiter<string> mcpRejections = PerClient(30, 15);
+    private readonly PartitionedRateLimiter<string> mcpRejections = PerClient(60, 30);
 
     public bool AdmitSignIn(HttpContext context) => Admit(signIn, context);
 

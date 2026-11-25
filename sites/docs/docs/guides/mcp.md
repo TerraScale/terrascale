@@ -46,6 +46,8 @@ An expired registration stops its associated tokens from authenticating, even if
 
 For custom MCP client integrations, use authorization-server discovery rather than constructing client IDs. Dynamic registration returns a canonical uppercase, 26-character ULID as `client_id`; keep it unchanged. Registration JSON is limited to 16 KiB, including whitespace and UTF-8 encoding. Oversized bodies return HTTP `413`; malformed or unsupported registration metadata returns an OAuth JSON error with HTTP `400`. Registration management endpoints are not advertised; knowing a public client ID does not authorize changing or deleting it.
 
+Each client address has a budget for MCP requests, dynamic registrations and rejected tokens. A rejected token is refused without another check for about a minute. Exceeding a budget returns HTTP `429` with `Retry-After`.
+
 ## 2. Or use a personal access token
 
 Use this for clients without MCP sign-in, or for automation.

@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Platform.TsAuth;
 namespace TerraScale.Dashboard.Features.Auth;
 
 public sealed record AgentDelegation(string AgentId, string OwnerId, string TokenId, bool Write, DateTimeOffset ExpiresAt);
-public sealed record AgentOwnerToken(string AccessToken, DateTimeOffset ExpiresAt);
+public sealed record AgentOwnerToken(string AccessToken, DateTimeOffset ExpiresAt, bool Write);
 
 public sealed partial class TsAuthGateway
 {
@@ -53,24 +53,18 @@ public sealed partial class TsAuthGateway
             throw new IOException("ts-auth returned an owner token for another agent or owner.");
         }
 
-        if (claims.TryGetProperty("ts_auth_mfa", out _) || claims.TryGetProperty("platform_role", out _) || !WithinAgentScope(claims, agent))
+        if (claims.TryGetProperty("ts_auth_mfa", out _) || claims.TryGetProperty("platform_role", out _) || claims.TryGetProperty("scope", out _) ||
+            AgentScopes(claims) is not { } granted || granted.Except(["mcp:read", "mcp:write"], StringComparer.Ordinal).Any() ||
+            granted.Contains("mcp:write") && !agent.Write || !granted.Contains("mcp:read") && !granted.Contains("mcp:write"))
         {
             throw new IOException("ts-auth returned an owner token beyond the agent's scope.");
         }
 
-        return new(tokens.AccessToken, DateTimeOffset.FromUnixTimeSeconds(claims.GetProperty("exp").GetInt64()));
+        return new(tokens.AccessToken, DateTimeOffset.FromUnixTimeSeconds(claims.GetProperty("exp").GetInt64()), granted.Contains("mcp:write"));
     }
 
-    private static bool WithinAgentScope(JsonElement claims, AgentDelegation agent)
-    {
-        if (!claims.TryGetProperty("scope", out var scope))
-        {
-            return true;
-        }
-
-        return scope.ValueKind == JsonValueKind.String && scope.GetString() is { } granted &&
-            granted.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(item => item == "mcp:read" || agent.Write && item == "mcp:write");
-    }
+    private static string[]? AgentScopes(JsonElement claims) =>
+        Text(claims, "agent_scope") is { } scope ? scope.Split(' ', StringSplitOptions.RemoveEmptyEntries) : null;
 
     private static string? Text(JsonElement claims, string name)
     {

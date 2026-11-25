@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(session.UserId);
             var waited = Stopwatch.StartNew();
-            for (var conflicts = 0; ; )
+            for (var conflicts = 0; ;)
             {
                 var stored = await accountStore.FindAsync(session.UserId, cancellationToken);
                 var now = time.GetUtcNow();

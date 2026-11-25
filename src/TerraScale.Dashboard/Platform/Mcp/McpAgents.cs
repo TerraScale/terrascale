@@ -49,7 +49,7 @@ public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, Accou
         var session = new SessionRecord(delegation.OwnerId, stored.Account.Name, stored.Account.Email, owner.AccessToken, null, owner.ExpiresAt);
         try
         {
-            return await accounts.GetContextAsync(session, cancellationToken) with { Agent = new(delegation.AgentId, delegation.OwnerId, delegation.Write) };
+            return await accounts.GetContextAsync(session, cancellationToken) with { Agent = new(delegation.AgentId, delegation.OwnerId, delegation.Write && owner.Write) };
         }
         catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status401Unauthorized)
         {
