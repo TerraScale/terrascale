@@ -111,12 +111,17 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             QuicTimeout => (false, true, false, 0L),
             PongMessage or QuicUnavailable or QuicRemoteError => (false, false, false, 0L),
         };
+        var (stale, restarted, previous, next, failures, outboundRecovered) = Record(state, success, timeProvider.GetElapsedTime(started), refused, remoteInstanceId, started);
+        if (stale)
+        {
+            return;
+        }
+
         if (timedOut)
         {
             client.ResetPeer(state.Info.NodeId);
         }
 
-        var (restarted, previous, next, failures, outboundRecovered) = Record(state, success, timeProvider.GetElapsedTime(started), refused, remoteInstanceId, started);
         if (restarted || outboundRecovered || (previous == PeerStatus.Unreachable && next == PeerStatus.Healthy))
         {
             databases.OnPeerRecovered();
@@ -128,7 +133,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         }
     }
 
-    private (bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(PeerState state, bool success, TimeSpan roundTrip, bool refused, long instanceId, long observedAt)
+    private (bool Stale, bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(PeerState state, bool success, TimeSpan roundTrip, bool refused, long instanceId, long observedAt)
     {
         var recorded = state.Record(success, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures, instanceId, observedAt);
         if (recorded.Previous != recorded.Next)
@@ -231,6 +236,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         private IPAddress? _resolvedAddress;
         private long _instanceId;
         private long _instanceObservedAt;
+        private long _instanceChangedAt;
         private int _failures;
         private bool _inboundPromoted;
 
@@ -263,15 +269,17 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
         }
 
-        public (bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(
+        public (bool Stale, bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(
             bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter, long instanceId, long observedAt)
         {
             lock (_gate)
             {
                 var previous = _health.Status;
-                if (instanceId != 0 && _instanceId != 0 && instanceId != _instanceId && observedAt < _instanceObservedAt)
+                if (observedAt > 0 && (success
+                    ? instanceId != 0 && _instanceId != 0 && instanceId != _instanceId && observedAt < _instanceObservedAt
+                    : observedAt < _instanceChangedAt))
                 {
-                    return (false, previous, previous, _failures, false);
+                    return (true, false, previous, previous, _failures, false);
                 }
 
                 var restarted = AcceptInstance(instanceId, observedAt);
@@ -282,7 +290,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
                 _health = success
                     ? new PeerHealth(Info, status, roundTrip, now)
                     : _health with { Status = status };
-                return (restarted, previous, status, _failures, outboundRecovered);
+                return (false, restarted, previous, status, _failures, outboundRecovered);
             }
         }
 
@@ -315,6 +323,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
 
             var restarted = _instanceId != 0 && _instanceId != instanceId;
+            _instanceChangedAt = _instanceId != instanceId ? observedAt : _instanceChangedAt;
             _instanceId = instanceId;
             _instanceObservedAt = observedAt;
             _inboundPromoted &= !restarted;
