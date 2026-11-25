@@ -110,8 +110,18 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
             return Refuse("invalid_token", "Present an access token issued for an API key.");
         }
 
+        var started = clock.GetTimestamp();
+        using var expiry = new CancellationTokenSource(WaitTimeout, clock);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
+        var lookup = ring.GetPublicAsync(OidcIssuer.InstanceId, Jwt.KeyId(token), bounded.Token);
+        if (!await WithinAsync(lookup, started, cancellationToken) || lookup.IsCanceled)
+        {
+            _ = DisposeWhenLoadedAsync(lookup);
+            return Busy("Signing keys did not load in time; retry.");
+        }
+
         IDictionary<string, object>? claims;
-        var signing = await ring.GetPublicAsync(OidcIssuer.InstanceId, Jwt.KeyId(token), cancellationToken);
+        var signing = await lookup;
         try
         {
             claims = await Jwt.ValidateAsync(token, signing, "at+jwt", OidcIssuer.Issuer(options).AbsoluteUri, AuthOptions.TerraBaseAudience);
@@ -138,7 +148,13 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
             return Busy("Too many distinct API key checks are in progress; retry.");
         }
 
-        var status = await check.Read.Value.WaitAsync(WaitTimeout, clock, cancellationToken);
+        var read = check.Read.Value;
+        if (!await WithinAsync(read, started, cancellationToken))
+        {
+            return Busy("API key checks are waiting on storage; retry.");
+        }
+
+        var status = await read;
         return status switch
         {
             KeyStatusBusy => Busy("API key checks are waiting on storage; retry."),
@@ -146,6 +162,32 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
             KeyStatusChecked { Refusal: "key_expired" } => Refuse("key_expired", "The API key has expired."),
             KeyStatusChecked { Refusal: { } refusal } => Refuse(refusal, "The API key was revoked, rotated, or its organization or project was deleted."),
         };
+    }
+
+    private async Task<bool> WithinAsync(Task work, long started, CancellationToken cancellationToken)
+    {
+        var remaining = WaitTimeout - clock.GetElapsedTime(started);
+        if (!work.IsCompleted && remaining > TimeSpan.Zero)
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            await Task.WhenAny(work, Task.Delay(remaining, clock, stop.Token));
+            await stop.CancelAsync();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return work.IsCompleted;
+    }
+
+    private static async Task DisposeWhenLoadedAsync(Task<IReadOnlyList<Es256Key>> lookup)
+    {
+        await Task.WhenAny(lookup);
+        if (lookup.IsCompletedSuccessfully)
+        {
+            foreach (var key in await lookup)
+            {
+                key.Dispose();
+            }
+        }
     }
 
     private SharedCheck? Share(string checkedKey, Func<CancellationToken, Task<string?>> refusal)
@@ -313,7 +355,7 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
     private JsonHttpResult<ErrorBody> Busy(string message)
     {
         HttpContext.Response.Headers.RetryAfter = "1";
-        return TypedResults.Json(new ErrorBody(new ErrorDetail("unavailable", message)), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+        return TypedResults.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", message)), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     private JsonHttpResult<ErrorBody> Refuse(string code, string message)

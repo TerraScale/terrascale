@@ -69,7 +69,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
     }
 
     private static ApiException Conflict(HttpContext context, Exception conflict) =>
-        TokenEndpointDeadline.IsTokenRequest(context.Request)
+        TokenEndpointDeadline.IsOAuthTokenRequest(context.Request)
             ? new(StatusCodes.Status503ServiceUnavailable, "temporarily_unavailable", "A concurrent change won; retry the request.", conflict) { RetryAfter = TimeSpan.FromSeconds(1) }
             : new(StatusCodes.Status409Conflict, "conflict", "A concurrent change won; retry the request.", conflict);
 
@@ -114,7 +114,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             context.Response.Headers.CacheControl = "no-store";
             ApplyRetryAfter(context.Response, retryAfter);
 
-            if (status >= 500 && TokenEndpointDeadline.IsTokenRequest(context.Request))
+            if (status >= 500 && TokenEndpointDeadline.IsOAuthTokenRequest(context.Request))
             {
                 return context.Response.WriteAsJsonAsync(new OAuthErrorBody(
                     status == StatusCodes.Status503ServiceUnavailable ? OpenIddictConstants.Errors.TemporarilyUnavailable : OpenIddictConstants.Errors.ServerError, message),
