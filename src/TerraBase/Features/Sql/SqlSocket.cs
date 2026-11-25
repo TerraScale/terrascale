@@ -15,7 +15,7 @@ internal readonly union SocketAnswerOutcome(SocketAnswer, SqlRefusal);
 
 internal sealed record SocketAnswer(IReadOnlyList<SqlResultSet> Results);
 
-internal sealed record SocketMessage(byte[] Payload, long Started);
+internal sealed record SocketMessage(byte[] Payload, long Started, long Completed);
 
 internal sealed record SocketServices(
     SqlRunner Runner,
@@ -39,6 +39,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private const long MaxPendingBytes = 4L * 1024 * 1024;
 
     private static readonly TimeSpan PartialDrainBudget = TimeSpan.FromSeconds(2);
+
+    private static readonly TimeSpan CloseBudget = TimeSpan.FromSeconds(2);
 
     private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(5);
 
@@ -68,6 +70,11 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private CausalBookmark _bookmark = CausalBookmark.Empty;
 
     private bool InTransaction => _transaction is not null || _failed;
+
+    private bool ExpiredBeforeDispatch(SocketMessage message) =>
+        time.GetElapsedTime(_transactionStarted, message.Started) > QosPolicy.MaxTransaction
+        || (time.GetElapsedTime(_transactionStarted) > QosPolicy.MaxTransaction
+            && time.GetElapsedTime(_transactionStarted, message.Completed) <= QosPolicy.MaxTransaction);
 
     public async Task RunAsync(ResolvedDatabase? target, IDisposable? preauthentication, SqlCausality causality, CancellationToken cancellationToken)
     {
@@ -139,7 +146,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             _bookmark = _bookmark.Merge(bookmark);
         }
 
-        if (_transaction is not null && time.GetElapsedTime(_transactionStarted, message.Started) > QosPolicy.MaxTransaction)
+        if (_transaction is not null && ExpiredBeforeDispatch(message))
         {
             await ExpireTransactionAsync(frame.Id);
             return false;
@@ -504,8 +511,9 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                 return null;
             }
 
-            var started = input.Complete() ?? time.GetTimestamp();
-            return deadline.Complete() ? new SocketMessage(payload, started) : null;
+            var completed = time.GetTimestamp();
+            var started = input.Complete() ?? completed;
+            return deadline.Complete() ? new SocketMessage(payload, started, completed) : null;
         }
         finally
         {
@@ -547,7 +555,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private async Task ExpirePartialAsync(bool partial)
     {
-        Volatile.Write(ref _terminal, 1);
+        MarkTerminal();
         await CloseAsync(WebSocketCloseStatus.PolicyViolation, "incomplete message timeout exceeded");
         _pumpStop.CancelAfter(PartialDrainBudget);
     }
@@ -586,11 +594,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                     return;
                 }
 
-                var message = new SocketMessage(payload, input.Complete() ?? time.GetTimestamp());
+                var completed = time.GetTimestamp();
+                var message = new SocketMessage(payload, input.Complete() ?? completed, completed);
 
                 if (Interlocked.Add(ref _pendingBytes, message.Payload.Length) > MaxPendingBytes || !inbox.TryWrite(message))
                 {
-                    Volatile.Write(ref _terminal, 1);
+                    MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.PolicyViolation, "too many frames are waiting; wait for answers before sending more");
                     return;
                 }
@@ -598,7 +607,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         }
         finally
         {
-            Volatile.Write(ref _terminal, 1);
+            MarkTerminal();
             input.Progress = null;
             inbox.TryComplete();
             await ArrivedOnTimeAsync();
@@ -655,18 +664,21 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                 var read = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
+                    MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.NormalClosure, "closed");
                     return null;
                 }
 
                 if (read.MessageType == WebSocketMessageType.Binary)
                 {
+                    MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.InvalidMessageType, "frames are JSON text");
                     return null;
                 }
 
                 if (message.Length + read.Count > limit)
                 {
+                    MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.MessageTooBig, limitReason);
                     return null;
                 }
@@ -680,8 +692,15 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)
         {
+            MarkTerminal();
             return null;
         }
+    }
+
+    private void MarkTerminal()
+    {
+        Volatile.Write(ref _terminal, 1);
+        _inbox?.Writer.TryComplete();
     }
 
     private async Task ExpireAsync(bool partial)
@@ -718,11 +737,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return;
         }
 
+        using var bounded = new CancellationTokenSource(CloseBudget, time);
         try
         {
-            await socket.CloseOutputAsync(status, reason, CancellationToken.None);
+            await socket.CloseOutputAsync(status, reason, bounded.Token);
         }
-        catch (WebSocketException)
+        catch (Exception error) when (error is WebSocketException || (error is OperationCanceledException && bounded.IsCancellationRequested))
         {
         }
     }

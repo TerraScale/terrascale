@@ -96,7 +96,8 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
             return new CredentialRejected("send an API key and connect to <project id>/<database>", "invalid_key");
         }
 
-        var cacheKey = string.Concat(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))), "/", project);
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+        var cacheKey = string.Concat(fingerprint, "/", project);
         if (_tokens.TryGetValue(cacheKey, out string? cached) && cached is { } token)
         {
             return token;
@@ -107,8 +108,7 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
             return Refused;
         }
 
-        var keyId = KeyId(secret);
-        using var permit = _exchanges.AttemptAcquire(_trusted.TryGetValue(keyId, out _) ? keyId : UnknownKeys);
+        using var permit = _exchanges.AttemptAcquire(_trusted.TryGetValue(fingerprint, out _) ? fingerprint : UnknownKeys);
         if (!permit.IsAcquired)
         {
             return Busy;
@@ -117,7 +117,7 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
         var outcome = await RequestAsync(issuer, secret, project, cancellationToken);
         return outcome switch
         {
-            IssuedToken issued => Remember(cacheKey, keyId, issued),
+            IssuedToken issued => Remember(cacheKey, fingerprint, issued),
             CredentialRejected refused => Forget(cacheKey, refused),
             BackendUnavailable unavailable => unavailable,
         };
@@ -137,11 +137,9 @@ internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactor
         return refused;
     }
 
-    private static string KeyId(string secret) => secret.StartsWith(KeyPrefix, StringComparison.Ordinal) ? secret[KeyPrefix.Length..(KeyPrefix.Length + 26)] : secret[..26];
-
-    private string Remember(string cacheKey, string keyId, IssuedToken issued)
+    private string Remember(string cacheKey, string fingerprint, IssuedToken issued)
     {
-        _trusted.Set(keyId, true, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = TrustLifetime });
+        _trusted.Set(fingerprint, true, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = TrustLifetime });
         if (issued.Lifetime > RenewBefore)
         {
             _tokens.Set(cacheKey, issued.Token, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = time.GetUtcNow() + issued.Lifetime - RenewBefore });

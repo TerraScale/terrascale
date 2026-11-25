@@ -61,7 +61,8 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
 
     builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = ApplicationRunCompletion.ShutdownBudget);
     builder.Services.AddSingleton(TimeProvider.System);
-    builder.Services.AddSingleton<HostFaults>();
+    var faults = new HostFaults();
+    builder.Services.AddSingleton(faults);
     builder.Services.AddSingleton(options);
     builder.Services.AddSingleton(prepared.Credential);
     builder.Services.AddSingleton(prepared.Callers);
@@ -109,7 +110,6 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     app.MapTerraScaleOpenApi().WithMetadata(ListenerMetadata.Client);
     app.MapTerraBaseMetrics();
     var bootstrap = app.Services.GetRequiredService<SystemBootstrap>();
-    var faults = app.Services.GetRequiredService<HostFaults>();
     await ApplicationRunCompletion.RunAsync(app);
     if (bootstrap.Failure is { } failure)
     {

@@ -52,6 +52,12 @@ internal sealed class ControlSnapshots(TerraBaseOptions options, TimeProvider ti
             return new InvalidInput("the control snapshot is incomplete", "invalid_snapshot");
         }
 
+        if (snapshot.Organizations.Contains(null) || snapshot.Projects.Contains(null) || snapshot.Databases.Contains(null)
+            || snapshot.ApiKeys.Contains(null) || snapshot.Regions.Contains(null))
+        {
+            return new InvalidInput("the control snapshot contains an empty entry", "invalid_snapshot");
+        }
+
         if (snapshot.Databases.DistinctBy(static database => database.Id).Count() != snapshot.Databases.Count)
         {
             return new InvalidInput("the control snapshot lists a database more than once", "invalid_snapshot");

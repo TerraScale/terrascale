@@ -79,14 +79,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private async ValueTask<CallerAuthenticationOutcome> VerifyTrustedAsync(string token, TrustedIssuer trusted, CancellationToken cancellationToken)
     {
-        Interlocked.Increment(ref trusted.Entry.Discovering);
         try
         {
             return await VerifyPinnedAsync(token, trusted, cancellationToken);
         }
         finally
         {
-            Interlocked.Decrement(ref trusted.Entry.Discovering);
+            Unpin(trusted.Entry);
         }
     }
 
@@ -141,7 +140,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     {
         if (string.Equals(token.Issuer, platformIssuer, StringComparison.Ordinal) && _platform is { } platform)
         {
-            return new TrustedIssuer(platformIssuer, platform, options.AuthAudiences, Tenant: null);
+            return new TrustedIssuer(platformIssuer, Pin(platform), options.AuthAudiences, Tenant: null);
         }
 
         if (!Uri.TryCreate(token.Issuer, UriKind.Absolute, out var issuer) || issuer.Segments is not [.., var last] || !IsCanonicalUlid(last)
@@ -157,7 +156,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
 
         var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, last)).ToArray();
-        if (CachedIssuer(projectIssuer) is { } existing)
+        if (PinCached(projectIssuer) is { } existing)
         {
             return new TrustedIssuer(projectIssuer, existing, audiences, project);
         }
@@ -171,51 +170,91 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         var known = await catalog.GetProjectAsync(project, cancellationToken);
         return known switch
         {
-            ProjectRecord => new TrustedIssuer(projectIssuer, ProjectIssuer(projectIssuer), audiences, project),
+            ProjectRecord => PinNew(projectIssuer) is { } created ? new TrustedIssuer(projectIssuer, created, audiences, project) : AuthenticationGate.Busy,
             ResourceNotFound => UntrustedIssuer.Instance,
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private IssuerEntry? CachedIssuer(string issuer)
+    private IssuerEntry Pin(IssuerEntry entry)
     {
         lock (_issuers)
         {
-            if (!_projects.TryGetValue(issuer, out var slot))
+            entry.Pins++;
+            return entry;
+        }
+    }
+
+    private void Unpin(IssuerEntry entry)
+    {
+        lock (_issuers)
+        {
+            entry.Pins--;
+            if (entry.Pins == 0 && entry.Retired && _projects.TryGetValue(entry.Issuer, out var slot) && ReferenceEquals(slot.Entry, entry))
+            {
+                _projects.Remove(entry.Issuer);
+            }
+        }
+    }
+
+    private IssuerEntry? PinCached(string issuer)
+    {
+        lock (_issuers)
+        {
+            if (!_projects.TryGetValue(issuer, out var slot) || slot.Entry.Retired)
             {
                 return null;
             }
 
             var now = time.GetTimestamp();
-            if (time.GetElapsedTime(slot.LastUsed, now) > ProjectIssuerIdle)
+            if (slot.Entry.Pins == 0 && time.GetElapsedTime(slot.LastUsed, now) > ProjectIssuerIdle)
             {
                 _projects.Remove(issuer);
                 return null;
             }
 
             slot.LastUsed = now;
+            slot.Entry.Pins++;
             return slot.Entry;
         }
     }
 
-    private IssuerEntry ProjectIssuer(string issuer)
+    private IssuerEntry? PinNew(string issuer)
     {
         lock (_issuers)
         {
             var now = time.GetTimestamp();
             if (_projects.TryGetValue(issuer, out var slot))
             {
+                slot.Entry.Retired = false;
                 slot.LastUsed = now;
+                slot.Entry.Pins++;
                 return slot.Entry;
             }
 
-            if (_projects.Count >= MaxProjectIssuers
-                && _projects.Where(static pair => Volatile.Read(ref pair.Value.Entry.Discovering) == 0).MinBy(static pair => pair.Value.LastUsed) is { Key: { } idle })
+            if (_projects.Count >= MaxProjectIssuers)
             {
+                string? idle = null;
+                long oldest = long.MaxValue;
+                foreach (var (key, candidate) in _projects)
+                {
+                    if (candidate.Entry.Pins == 0 && candidate.LastUsed < oldest)
+                    {
+                        idle = key;
+                        oldest = candidate.LastUsed;
+                    }
+                }
+
+                if (idle is null)
+                {
+                    return null;
+                }
+
                 _projects.Remove(idle);
             }
 
             var created = CreateIssuer(http, issuer);
+            created.Pins = 1;
             _projects.Add(issuer, new IssuerSlot(created) { LastUsed = now });
             return created;
         }
@@ -225,10 +264,26 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     {
         lock (_issuers)
         {
-            _projects.Remove(issuer);
+            if (_projects.TryGetValue(issuer, out var slot))
+            {
+                if (slot.Entry.Pins == 0)
+                {
+                    _projects.Remove(issuer);
+                }
+                else
+                {
+                    slot.Entry.Retired = true;
+                }
+            }
         }
 
         return new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token");
+    }
+
+    private async Task ReleaseWhenSettledAsync(Task operation, IssuerEntry entry)
+    {
+        await operation.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        Unpin(entry);
     }
 
     private static IssuerEntry CreateIssuer(IHttpClientFactory http, string issuer)
@@ -240,7 +295,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             AutomaticRefreshInterval = TimeSpan.FromHours(1),
             RefreshInterval = TimeSpan.FromSeconds(30),
         };
-        return new IssuerEntry(metadataAddress, retriever, manager);
+        return new IssuerEntry(issuer, metadataAddress, retriever, manager);
     }
 
     private static bool IsCanonicalUlid(string value) =>
@@ -360,11 +415,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         },
     };
 
-    private static async Task<OpenIdConnectConfiguration?> ConfigurationAsync(ConfigurationManager<OpenIdConnectConfiguration> manager, CancellationToken cancellationToken)
+    private async Task<OpenIdConnectConfiguration?> ConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
+        var operation = entry.Manager.GetConfigurationAsync(cancellationToken);
+        _ = ReleaseWhenSettledAsync(operation, Pin(entry));
         try
         {
-            return await manager.GetConfigurationAsync(cancellationToken).WaitAsync(cancellationToken);
+            return await operation.WaitAsync(cancellationToken);
         }
         catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
             || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
@@ -390,7 +447,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return null;
         }
 
-        var configuration = await ConfigurationAsync(entry.Manager, cancellationToken);
+        var configuration = await ConfigurationAsync(entry, cancellationToken);
         if (configuration is null)
         {
             Interlocked.Exchange(ref entry.LastConfigurationFailureTimestamp, time.GetTimestamp());
@@ -411,7 +468,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                     return null;
                 }
 
-                return entry.Fresh?.Configuration ?? await ConfigurationAsync(entry.Manager, cancellationToken);
+                return entry.Fresh?.Configuration ?? await ConfigurationAsync(entry, cancellationToken);
             }
 
             entry.Manager.RequestRefresh();
@@ -432,11 +489,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
-    private static async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    private async Task<OpenIdConnectConfiguration?> FetchFreshAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
+        var operation = OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, cancellationToken);
+        _ = ReleaseWhenSettledAsync(operation, Pin(entry));
         try
         {
-            return await OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, cancellationToken).WaitAsync(cancellationToken);
+            return await operation.WaitAsync(cancellationToken);
         }
         catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
             || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
@@ -448,8 +507,9 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
 internal sealed record FreshConfigurationState(OpenIdConnectConfiguration Configuration, long FetchedTimestamp);
 
-internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
+internal sealed class IssuerEntry(string issuer, string metadataAddress, HttpDocumentRetriever retriever, ConfigurationManager<OpenIdConnectConfiguration> manager)
 {
+    public string Issuer { get; } = issuer;
     public string MetadataAddress { get; } = metadataAddress;
     public HttpDocumentRetriever Retriever { get; } = retriever;
     public ConfigurationManager<OpenIdConnectConfiguration> Manager { get; } = manager;
@@ -457,7 +517,8 @@ internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever 
     public volatile FreshConfigurationState? Fresh;
     public long LastRefreshAttemptTimestamp;
     public long LastConfigurationFailureTimestamp;
-    public int Discovering;
+    public int Pins;
+    public bool Retired;
     public bool LastRefreshFailed;
 }
 

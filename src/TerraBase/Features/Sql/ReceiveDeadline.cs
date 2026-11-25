@@ -58,6 +58,12 @@ internal sealed class ReceiveDeadline : IDisposable
 
             _finished = true;
             _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            if (_partial && _budget - _time.GetElapsedTime(_armedAt) <= TimeSpan.Zero)
+            {
+                Expiry = ExpireAsync(true);
+                return false;
+            }
+
             return true;
         }
     }

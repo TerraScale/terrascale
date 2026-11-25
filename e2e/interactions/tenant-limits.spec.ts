@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { frame, pacedWrite, rawSqlSocket, scheduleStatement } from '../support/sql-socket';
 import { message, postgres } from '../support/postgres-wire';
-import { auth, onLocalStack, stateDir } from '../support/stack';
+import { auth, localPort, onLocalStack, stateDir } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
 test.describe.configure({ mode: 'default' });
@@ -90,7 +90,7 @@ test('a caller that does not own the project cannot spend its organization reque
     const peerCredential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
     saveSecret('session-peer', peerCredential);
     const stranger = '7ZZZZZZZZZZZZZZZZZZZZZZZZZ';
-    const session = peer('http://127.0.0.1:8081');
+    const session = peer(`http://127.0.0.1:${localPort('internal', 8081)}`);
     const statuses: number[] = [];
     try {
       const status = () => new Promise<number>((resolve, reject) => {

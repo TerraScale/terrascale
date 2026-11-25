@@ -65,7 +65,17 @@ internal sealed class SocketInput(TimeProvider time)
     {
         lock (_gate)
         {
-            return _messages.TryDequeue(out var message) ? message.Started : null;
+            if (!_messages.TryDequeue(out var message))
+            {
+                return null;
+            }
+
+            if (_messages.TryPeek(out var next))
+            {
+                Progress?.Invoke(next.Started, next.Received);
+            }
+
+            return message.Started;
         }
     }
 
