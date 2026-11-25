@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Platform.TsAuth
@@ -13,11 +14,11 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             cancellationToken);
         }
 
-        public Task<TsAuthJwkSet> GetJwksAsync(CancellationToken cancellationToken = default)
+        public Task<JsonElement> GetJwksAsync(CancellationToken cancellationToken = default)
         {
             return client.GetMetadataAsync(
             InstanceRoute("/.well-known/jwks.json"),
-                TsAuthJsonContext.Default.TsAuthJwkSet,
+                TsAuthJsonContext.Default.JsonElement,
             cancellationToken);
         }
 

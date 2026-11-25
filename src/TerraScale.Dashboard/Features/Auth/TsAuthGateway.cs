@@ -59,27 +59,8 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private static async Task<TsAuthJwkSet> UsableKeysAsync(TsAuthClient client)
         {
-            var keys = await client.Oidc.GetJwksAsync(CancellationToken.None);
-            return Usable(keys) ? keys : throw new HttpRequestException("ts-auth published an unusable JSON Web Key Set.");
-        }
-
-        private static bool Usable(TsAuthJwkSet keys)
-        {
-            if (keys.Keys is not { Count: > 0 } published || published.Select(static key => key.KeyId).Distinct(StringComparer.Ordinal).Count() != published.Count)
-            {
-                return false;
-            }
-
-            foreach (var key in published)
-            {
-                using var imported = AuthJwtClaims.Import(key);
-                if (imported is null)
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            var published = await client.Oidc.GetJwksAsync(CancellationToken.None);
+            return AuthJwtClaims.KeySet(published) ?? throw new HttpRequestException("ts-auth published an unusable JSON Web Key Set.");
         }
 
         private async Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, string? token, CancellationToken cancellationToken)

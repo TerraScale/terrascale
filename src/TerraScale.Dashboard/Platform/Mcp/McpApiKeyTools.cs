@@ -84,7 +84,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 using var body = JsonDocument.Parse(WebEncoders.Base64UrlDecode(payload));
                 return body.RootElement.ValueKind == JsonValueKind.Object ? body.RootElement.Clone() : null;
             }
-            catch (Exception error) when (error is JsonException or FormatException)
+            catch (JsonException)
+            {
+                return null;
+            }
+            catch (FormatException)
             {
                 return null;
             }

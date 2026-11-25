@@ -281,21 +281,25 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                             throw new IOException("Session refresh ownership changed.");
                         }
 
-                        if (await ReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, rotating) is null)
+                        var saved = await TryReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, rotating);
+                        var unsaved = saved switch
                         {
-                            if (attempt >= 5)
-                            {
-                                return null;
-                            }
-
-                            await DashboardDb.ConflictBackoffAsync(attempt, time, rotating);
-                            continue;
+                            StorageWritten => null,
+                            StorageConflicted => "concurrent session change",
+                            StorageDuplicate => "duplicate session record",
+                            StorageFailed failed => failed.Failure,
+                        };
+                        if (unsaved is null)
+                        {
+                            break;
                         }
-                        break;
-                    }
-                    catch (Exception error) when (attempt < 5 && DashboardDb.IsConflict(error))
-                    {
-                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, StorageFailure.Describe(error));
+
+                        if (attempt >= 5)
+                        {
+                            return null;
+                        }
+
+                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, unsaved);
                         await DashboardDb.ConflictBackoffAsync(attempt, time, rotating);
                     }
                     catch (Exception error) when (attempt < 5 && (error is TimeoutException or HttpRequestException { StatusCode: null or >= HttpStatusCode.InternalServerError or HttpStatusCode.TooManyRequests } ||
@@ -444,6 +448,13 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
         return lookup.Kind == SessionRow.Browser
             ? await connection.QuerySingleOrDefaultAsync<SessionRow>(ByToken, new { TokenHash = lookup.Key, SessionRow.Browser })
             : await connection.QuerySingleOrDefaultAsync<SessionRow>(ById, new { Id = lookup.Key, SessionRow.Credential });
+    }
+
+    private Task<StorageWrite> TryReplaceAsync(SessionRow row, SessionRecord record, string key, CancellationToken cancellationToken)
+    {
+        var (nonce, ciphertext, tag) = Seal(record, key);
+        var next = Copy(row) with { OriginalVersion = row.Version, Version = AccountService.NewId(), Nonce = nonce, Ciphertext = ciphertext, Tag = tag };
+        return storage.TryWriteAsync(async (connection, transaction) => await connection.ExecuteAsync(DashboardSql.Sessions.Update, next, transaction) == 1, cancellationToken);
     }
 
     private async Task<SessionRow?> ReplaceAsync(SessionRow row, SessionRecord record, string key, CancellationToken cancellationToken)

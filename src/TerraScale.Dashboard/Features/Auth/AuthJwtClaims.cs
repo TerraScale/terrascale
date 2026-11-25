@@ -28,6 +28,50 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public static string? KeyId(string? token) => Parse(token)?.KeyId;
 
+        public static TsAuthJwkSet? KeySet(JsonElement published)
+        {
+            try
+            {
+                if (published.ValueKind != JsonValueKind.Object || !published.TryGetProperty("keys", out var listed) ||
+                    listed.ValueKind != JsonValueKind.Array || listed.GetArrayLength() == 0)
+                {
+                    return null;
+                }
+
+                List<TsAuthJwk> keys = [];
+                foreach (var entry in listed.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.Object || Required(entry, "kty") is not { } type || Required(entry, "crv") is not { } curve ||
+                        Required(entry, "kid") is not { } kid || Required(entry, "x") is not { } x || Required(entry, "y") is not { } y ||
+                        !Optional(entry, "alg", "ES256") || !Optional(entry, "use", "sig"))
+                    {
+                        return null;
+                    }
+
+                    var key = new TsAuthJwk(type, curve, entry.TryGetProperty("alg", out _) ? "ES256" : null, entry.TryGetProperty("use", out _) ? "sig" : null, kid, x, y);
+                    using var imported = Import(key);
+                    if (imported is null || keys.Any(known => known.KeyId == kid))
+                    {
+                        return null;
+                    }
+
+                    keys.Add(key);
+                }
+
+                return new TsAuthJwkSet(keys);
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
+        private static string? Required(JsonElement entry, string name) =>
+            entry.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+        private static bool Optional(JsonElement entry, string name, string expected) =>
+            !entry.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.String && value.ValueEquals(expected);
+
         public static ECDsa? Import(TsAuthJwk key)
         {
             ArgumentNullException.ThrowIfNull(key);
@@ -100,13 +144,25 @@ namespace TerraScale.Dashboard.Features.Auth
             try
             {
                 using var json = JsonDocument.Parse(bytes);
-                return json.RootElement.ValueKind == JsonValueKind.Object ? json.RootElement.Clone() : null;
+                return json.RootElement.ValueKind == JsonValueKind.Object && Transcodable(json.RootElement) ? json.RootElement.Clone() : null;
             }
             catch (JsonException)
             {
                 return null;
             }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
         }
+
+        private static bool Transcodable(JsonElement element) => element.ValueKind switch
+        {
+            JsonValueKind.Object => element.EnumerateObject().All(static property => property.Name is not null && Transcodable(property.Value)),
+            JsonValueKind.Array => element.EnumerateArray().All(Transcodable),
+            JsonValueKind.String => element.GetString() is not null,
+            _ => true,
+        };
 
         private static string? Text(JsonElement element, string name)
         {
