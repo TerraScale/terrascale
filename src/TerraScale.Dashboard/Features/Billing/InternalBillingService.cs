@@ -13,7 +13,7 @@ using TerraScale.Dashboard.Errors;
 namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class InternalBillingService(DashboardDb storage, AccountStore accountStore, OrganizationStore organizations, AccountService accounts, IPlatformRoleGateway roles,
-        IUsageMeasurements measurements, TimeProvider time, ITsAuthPlatform platform)
+        IUsageMeasurements measurements, TimeProvider time, ITsAuthPlatform platform, TerraBasePlanSync plans)
     {
         private readonly TerraScaleIdGenerator ids = new(TimeProvider.System);
         private const string MissingUsage = "Every project's monthly usage is required to compute the internal bill and evaluate its cap.";
@@ -73,6 +73,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 {
                     await organizations.ReplaceAsync(target.Record, cancellationToken);
                     await ActivateAsync(reservation, cancellationToken);
+                    await plans.PublishAsync(target.Organization, cancellationToken);
                     return;
                 }
                 catch (DBConcurrencyException) when (attempt < 7) { }

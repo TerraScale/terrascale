@@ -14,7 +14,13 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         private const string DeletionByKey = DashboardSql.AccountDeletions.Select + " WHERE key_hash = @KeyHash";
         private const string DeletionsOf = DashboardSql.AccountDeletions.Select + " WHERE user_id = @UserId";
-        private const string RemoveCompleted = "DELETE FROM account_deletions WHERE completed_until <= @Now";
+        private const string RemoveCompleted = "DELETE FROM account_deletions WHERE id IN (SELECT id FROM account_deletions WHERE completed_until <= @Now LIMIT 500)";
+        private const string RemoveExpired = """
+            DELETE FROM account_deletions WHERE id IN (SELECT id FROM account_deletions
+             WHERE completed_until <= @Now OR (completed_until IS NULL AND created_at <= @Expired) LIMIT 500)
+            """;
+        private const int WipeBatch = 500;
+        private static readonly TimeSpan GrantLifetime = TimeSpan.FromDays(15);
         private const string RemoveKey = "DELETE FROM account_deletions WHERE key_hash = @KeyHash";
         private const string Complete = """
             UPDATE account_deletions SET user_id = NULL, nonce = NULL, ciphertext = NULL, tag = NULL, completed_until = @CompletedUntil, version = @Version
@@ -22,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Profile
             """;
 
         private const string Operations = "account_deletions";
-        internal const string Cookie = "ts-dashboard-deletion";
+        internal const string Cookie = "__Host-ts-dashboard-deletion";
         private sealed record Operation(SessionRecord Session, string[] Organizations, string Receipt, string Authorization, DateTimeOffset ExpiresAt)
         {
             public override string ToString()
@@ -96,7 +102,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 var operation = new Operation(context.Session, [.. sole], intent.Receipt, authorization,
-                    http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow().AddDays(15));
+                    http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() + GrantLifetime);
                 await WriteOperationAsync(http, storage, identity, operation);
                 persisted = true;
                 operation = await PrepareCheckoutDeletionAsync(http, platform, storage, identity, billing, operation);
@@ -128,7 +134,7 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 try { _ = await platform.AccountDeletionCompletedAsync(refused.Receipt, cancellationToken); }
                 catch (AccountAccessException status) when (status.Code == "deletion_refused")
-                { await DropAsync(storage, Key(http), cancellationToken); http.Response.Cookies.Delete(Cookie); }
+                { await DropAsync(storage, Key(http), cancellationToken); DashboardCookies.Delete(http, Cookie, SameSiteMode.Strict); }
             }
             return await RefusedViewAsync(http, sessions, context, tokens, error.Message, error.StatusCode, form);
         }
@@ -152,7 +158,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
             if (await CompletedAsync(http, storage))
             {
-                http.Response.Cookies.Delete(Cookie);
+                DashboardCookies.Delete(http, Cookie, SameSiteMode.Strict);
                 return HttpRedirects.SeeOther("/account-deleted");
             }
 
@@ -169,7 +175,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 catch (AccountAccessException error) when (error.StatusCode == 404)
                 {
                     await DropAsync(storage, Key(http), http.RequestAborted);
-                    http.Response.Cookies.Delete(Cookie);
+                    DashboardCookies.Delete(http, Cookie, SameSiteMode.Strict);
                     return TypedResults.Problem(StepUpFlow.Required().Message, statusCode: 403,
                         extensions: new Dictionary<string, object?> { ["code"] = "step_up_required" });
                 }
@@ -189,7 +195,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 await DropAsync(storage, Key(http), http.RequestAborted);
-                http.Response.Cookies.Delete(Cookie);
+                DashboardCookies.Delete(http, Cookie, SameSiteMode.Strict);
                 return TypedResults.Text(error.Message + " Dashboard records have been retained. Return to your profile to resolve the issue.", statusCode: error.StatusCode);
             }
             catch (Exception error) when (Transient(error, http)) { return Retry(http); }
@@ -250,14 +256,14 @@ namespace TerraScale.Dashboard.Features.Profile
             await sessions.RevokeUserAsync(operation.Session.UserId, cancellationToken);
             await sessions.EndAsync(http);
             await DropAsync(storage, Key(http), cancellationToken);
-            http.Response.Cookies.Delete(Cookie);
+            DashboardCookies.Delete(http, Cookie, SameSiteMode.Strict);
             http.Request.QueryString = QueryString.Empty;
             return HttpRedirects.SeeOther("/account-deleted");
         }
 
         private static string Key(HttpContext http)
         {
-            var cookie = http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"];
+            var cookie = DashboardCookies.Read(http, Cookie) ?? DashboardCookies.Read(http, DashboardSessions.Cookie);
             if (cookie is not { Length: 64 } || !cookie.All(char.IsAsciiHexDigitLower))
             {
                 throw new AccountAccessException("Sign in to request deletion.", 401);
@@ -304,13 +310,41 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
             }
             finally { CryptographicOperations.ZeroMemory(bytes); }
-            http.Response.Cookies.Append(Cookie, http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"]!,
-                new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/" });
+            if ((DashboardCookies.Read(http, Cookie) ?? DashboardCookies.Read(http, DashboardSessions.Cookie)) is { } bound)
+            {
+                http.Response.Cookies.Append(Cookie, bound, DashboardCookies.Private(http, SameSiteMode.Strict));
+            }
         }
 
         private static async Task<Operation?> ReadOperationAsync(HttpContext http, DashboardDb storage, IDashboardIdentity identity)
         {
-            return await FindAsync(http, storage) is { CompletedUntil: null } row ? await OpenAsync(row, identity, http.RequestAborted) : null;
+            if (await FindAsync(http, storage) is not { CompletedUntil: null } row)
+            {
+                return null;
+            }
+
+            var operation = await OpenAsync(row, identity, http.RequestAborted);
+            if (operation.ExpiresAt > http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow())
+            {
+                return operation;
+            }
+
+            await DropAsync(storage, row.KeyHash, http.RequestAborted);
+            DashboardCookies.Delete(http, Cookie, SameSiteMode.Strict);
+            return null;
+        }
+
+        public static async Task WipeExpiredAsync(DashboardDb storage, TimeProvider clock, CancellationToken cancellationToken)
+        {
+            var now = clock.GetUtcNow();
+            for (var batch = 0; batch < 20; batch++)
+            {
+                await using var connection = await storage.OpenAsync(cancellationToken);
+                if (await connection.ExecuteAsync(RemoveExpired, new { Now = now.UtcDateTime, Expired = (now - GrantLifetime).UtcDateTime }) < WipeBatch)
+                {
+                    return;
+                }
+            }
         }
 
         private static async Task<bool> CompletedAsync(HttpContext http, DashboardDb storage)
@@ -320,7 +354,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
         private static async Task<AccountDeletionRow?> FindAsync(HttpContext http, DashboardDb storage)
         {
-            var cookie = http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"];
+            var cookie = DashboardCookies.Read(http, Cookie) ?? DashboardCookies.Read(http, DashboardSessions.Cookie);
             if (cookie is not { Length: 64 } || !cookie.All(char.IsAsciiHexDigitLower))
             {
                 return null;

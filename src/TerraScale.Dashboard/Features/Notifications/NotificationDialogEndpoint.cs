@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class NotificationDialogEndpoint(DashboardSessions sessions, AccountService accounts) : EndpointWithoutRequest<IResult>
+    public sealed class NotificationDialogEndpoint(DashboardSessions sessions, AccountService accounts, ApiKeyExpiryNotifications expiry) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Get("/notifications/dialog");
 
@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return TypedResults.Redirect("/notifications");
             }
 
-            await ApiKeyExpiryNotifications.RefreshAsync(http, context);
+            await expiry.RefreshAsync(context, http.RequestAborted);
             await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(NotificationEndpoints.Page(http, context, true)));
             return TypedResults.Empty;
         }

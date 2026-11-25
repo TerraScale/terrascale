@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace TerraScale.Dashboard.Platform.Mcp
 {
     public sealed record DashboardMcpContext(DashboardMcpUser User, DashboardMcpSelection Selection,
-        IReadOnlyList<DashboardMcpOrganization> Organizations, string OrganizationCheckoutNotice = "");
+        IReadOnlyList<DashboardMcpOrganization> Organizations);
 
     public sealed record DashboardMcpUser(string Id, string Name, string Email,
         [property: Description("Authoritative platform-admin status is unavailable from the current producer contract; administration remains denied.")]

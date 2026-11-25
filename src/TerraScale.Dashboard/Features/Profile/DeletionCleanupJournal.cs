@@ -7,7 +7,20 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public sealed class DeletionCleanupJournal(DashboardDb storage, OrganizationStore organizations, TimeProvider clock)
     {
-        private const string All = DashboardSql.DeletionCleanup.Select + " ORDER BY id";
+        private const string Pending = DashboardSql.DeletionCleanup.Select +
+            " WHERE acknowledged_at IS NULL OR (scope = 'organization' AND billing_settled_at IS NULL) ORDER BY id LIMIT 100";
+        private const string PendingTargets = DashboardSql.DeletionCleanupTargets.Select +
+            " WHERE cleanup_id IN (SELECT id FROM deletion_cleanup WHERE acknowledged_at IS NULL OR (scope = 'organization' AND billing_settled_at IS NULL) ORDER BY id LIMIT 100)";
+        private const string Completed = """
+            SELECT id FROM deletion_cleanup
+             WHERE acknowledged_at < @Cutoff AND (scope <> 'organization' OR billing_settled_at < @Cutoff) ORDER BY id LIMIT 20
+            """;
+        private const string CompletedTargets = """
+            DELETE FROM deletion_cleanup_targets WHERE cleanup_id = @Id AND target_id IN (
+                SELECT target_id FROM deletion_cleanup_targets WHERE cleanup_id = @Id ORDER BY target_id LIMIT 250)
+            """;
+        private const string CompletedRoot = "DELETE FROM deletion_cleanup WHERE id = @Id";
+        internal static readonly TimeSpan Retention = TimeSpan.FromDays(30);
         private const string ById = DashboardSql.DeletionCleanup.Select + " WHERE id = @Id";
         private const string TargetsOf = DashboardSql.DeletionCleanupTargets.Select + " WHERE cleanup_id = @CleanupId";
         private const string Checkouts = DashboardSql.StripeCheckouts.Select + " WHERE organization_id = @OrganizationId";
@@ -16,12 +29,44 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds, DateTime? AcknowledgedAt, DateTime? BillingSettledAt);
 
-        public async Task<IReadOnlyList<Entry>> ListAsync(CancellationToken cancellationToken)
+        public sealed record PendingEntries(IReadOnlyList<Entry> Entries, IReadOnlyList<string> Malformed);
+
+        public async Task<PendingEntries> ListPendingAsync(CancellationToken cancellationToken)
         {
             await using var connection = await storage.OpenAsync(cancellationToken);
-            var rows = await connection.QueryAsync<DeletionCleanupRow>(All);
-            var targets = (await connection.QueryAsync<DeletionCleanupTargetRow>(DashboardSql.DeletionCleanupTargets.Select)).ToLookup(row => row.CleanupId, StringComparer.Ordinal);
-            return [.. rows.Select(row => Read(row, targets[row.Id]))];
+            var rows = await connection.QueryAsync<DeletionCleanupRow>(Pending);
+            var targets = (await connection.QueryAsync<DeletionCleanupTargetRow>(PendingTargets)).ToLookup(row => row.CleanupId, StringComparer.Ordinal);
+            List<Entry> entries = [];
+            List<string> malformed = [];
+            foreach (var row in rows)
+            {
+                if (TryRead(row, targets[row.Id]) is { } entry)
+                {
+                    entries.Add(entry);
+                }
+                else
+                {
+                    malformed.Add(row.Id);
+                }
+            }
+
+            return new(entries, malformed);
+        }
+
+        public async Task PruneAsync(CancellationToken cancellationToken)
+        {
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            foreach (var id in (await connection.QueryAsync<string>(Completed, new { Cutoff = (clock.GetUtcNow() - Retention).UtcDateTime })).AsList())
+            {
+                int removed;
+                do
+                {
+                    removed = await connection.ExecuteAsync(CompletedTargets, new { Id = id });
+                }
+                while (removed > 0);
+
+                await connection.ExecuteAsync(CompletedRoot, new { Id = id });
+            }
         }
 
         public async Task<Entry> RememberAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
@@ -123,10 +168,21 @@ namespace TerraScale.Dashboard.Features.Profile
 
         private static Entry Read(DeletionCleanupRow row, IEnumerable<DeletionCleanupTargetRow> targets)
         {
+            return TryRead(row, targets) ?? throw new IOException("Cleanup journal row is malformed.");
+        }
+
+        private static Entry? TryRead(DeletionCleanupRow row, IEnumerable<DeletionCleanupTargetRow> targets)
+        {
             var kept = targets.ToLookup(target => target.Kind, StringComparer.Ordinal);
             var organizationId = row.Scope != DeletionCleanupRow.Organization ? row.OrganizationId
-                : row.OrganizationId is null ? row.SubjectId : throw new IOException("Cleanup journal organization row names another organization.");
-            return new(new(row.Id, row.Scope, row.SubjectId, organizationId),
+                : row.OrganizationId is null ? row.SubjectId : null;
+            TsAuthDeletionProof proof = new(row.Id, row.Scope, row.SubjectId, organizationId);
+            if (!TsAuthPlatformClient.ValidDeletionProof(proof))
+            {
+                return null;
+            }
+
+            return new(proof,
                 [.. kept[DeletionCleanupTargetRow.Project].Select(target => target.TargetId).Order(StringComparer.Ordinal)],
                 [.. kept[DeletionCleanupTargetRow.Customer].Select(target => target.TargetId).Order(StringComparer.Ordinal)], row.AcknowledgedAt, row.BillingSettledAt);
         }

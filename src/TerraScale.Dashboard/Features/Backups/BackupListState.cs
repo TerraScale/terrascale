@@ -5,14 +5,23 @@ namespace TerraScale.Dashboard.Features.Backups;
 
 public sealed record BackupListState(string Error = "", string RestoreId = "", string Name = "", string? Through = null)
 {
+    private const string ErrorPurpose = "backups/list-error";
+
     public static BackupListState Read(HttpRequest request) =>
-        new(request.Query["listError"].ToString(), request.Query["restoreId"].ToString(),
+        new(Signed(request), request.Query["restoreId"].ToString(),
             request.Query["name"].ToString(), request.Query["through"].ToString() is { Length: > 0 } through ? through : null);
 
-    public string Path(AccountContext context, string path) =>
+    private static string Signed(HttpRequest request)
+    {
+        var error = request.Query["listError"].ToString();
+        return error.Length is > 0 and <= 500 && SignedNotice.Verify(request.HttpContext, ErrorPurpose, error, request.Query["listErrorSig"].ToString()) ? error : "";
+    }
+
+    public string Path(string csrfToken, AccountContext context, string path) =>
         QueryHelpers.AddQueryString(WorkspaceUrl.For(context, path), new Dictionary<string, string?>
         {
             ["listError"] = Error,
+            ["listErrorSig"] = Error.Length == 0 ? "" : SignedNotice.Sign(csrfToken, ErrorPurpose, Error),
             ["restoreId"] = RestoreId,
             ["name"] = Name,
             ["through"] = Through

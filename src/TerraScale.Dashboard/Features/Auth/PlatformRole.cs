@@ -23,11 +23,15 @@ namespace TerraScale.Dashboard.Features.Auth
                     return null;
                 }
 
-                return claims.TryGetProperty("platform_role", out var role) && role.ValueKind == System.Text.Json.JsonValueKind.String && role.GetString() == "admin"
-                    ? "admin" : null;
+                if (!claims.TryGetProperty("platform_role", out var role) || role.ValueKind != System.Text.Json.JsonValueKind.String || role.GetString() != "admin")
+                {
+                    return null;
+                }
             }
             catch (Exception error) when (error is SignInRejectedException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException)
             { return null; }
+
+            return await IsActiveAsync(freshlyRotatedSession, cancellationToken) ? "admin" : null;
         }
     }
 }

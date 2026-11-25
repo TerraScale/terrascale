@@ -1,12 +1,18 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.Formatting;
+using TerraScale.Dashboard.Platform.Http;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
 {
-    public static class ApiKeyExpiryNotifications
+    public sealed class ApiKeyExpiryNotifications(ApiKeyService keys, AccountService accounts, TimeProvider time, ILogger<ApiKeyExpiryNotifications> logger)
     {
         public const string Type = "api-key-expiring";
+        private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
+        private const int MaxTracked = 10_000;
+
+        private readonly ConcurrentDictionary<string, DateTimeOffset> checkedAt = new(StringComparer.Ordinal);
 
         public static NotificationRecord[] Due(AccountContext context, IEnumerable<ProjectCredential> keys, IEnumerable<NotificationRecord> inbox, DateTimeOffset now)
         {
@@ -34,25 +40,45 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
 
             NotificationRecord[] added = [];
-            try { await accounts.UpdateAccountAsync(context.Session, account => account.Notifications.AddRange(added = Due(context, keys, account.Notifications, now)), cancellationToken); }
-            catch (Exception error) when (error is HttpRequestException or AccountAccessException or IOException or JsonException) { return; }
+            await accounts.UpdateAccountAsync(context.Session, account => account.Notifications.AddRange(added = Due(context, keys, account.Notifications, now)), cancellationToken);
             context.Account.Notifications.AddRange(added);
         }
 
-        public static async Task RefreshAsync(HttpContext http, AccountContext context)
+        public async Task RefreshAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            if (context.Project is null)
+            if (context.Project is not { } project || !context.CanManageKeys)
             {
                 return;
             }
 
-            var services = http.RequestServices;
+            var now = time.GetUtcNow();
+            var scope = context.UserId + ":" + project.Id;
+            if (checkedAt.TryGetValue(scope, out var last) && now - last < Interval)
+            {
+                return;
+            }
+
+            if (checkedAt.Count >= MaxTracked)
+            {
+                foreach (var (stale, at) in checkedAt)
+                {
+                    if (now - at >= Interval)
+                    {
+                        checkedAt.TryRemove(stale, out _);
+                    }
+                }
+            }
+
+            checkedAt[scope] = now;
             try
             {
-                var keys = await services.GetRequiredService<ApiKeyService>().ListAsync(context, http.RequestAborted);
-                await AddAsync(services.GetRequiredService<AccountService>(), context, keys, services.GetRequiredService<TimeProvider>().GetUtcNow(), http.RequestAborted);
+                await AddAsync(accounts, context, await keys.ListAsync(context, cancellationToken), now, cancellationToken);
             }
-            catch (Exception error) when (error is HttpRequestException or AccountAccessException) { }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or AccountAccessException or IOException or JsonException)
+            {
+                checkedAt.TryRemove(scope, out _);
+                logger.ApiKeyExpiryRefreshFailed(project.Id, error.GetType().Name);
+            }
         }
 
         private static string Url(ProjectCredential key)

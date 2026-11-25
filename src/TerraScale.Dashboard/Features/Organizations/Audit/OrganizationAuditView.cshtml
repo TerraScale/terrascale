@@ -4,7 +4,8 @@
 @{
     var matches = Model.AuditMatches;
     var now = Model.Filter.Now ?? DateTimeOffset.UtcNow;
-    var actions = (Model.Access?.AuditEvents ?? []).GroupBy(item => item.Action).Select(group => (Value: group.Key, Label: OrganizationFilters.AuditActionLabel(group.First()))).ToList();
+    var actions = (Model.Access?.AuditActions ?? []).Select(action => (Value: action, Label: OrganizationFilters.AuditActionLabel(action))).ToList();
+    var omitted = Model.Access?.AuditOmitted ?? 0;
     if (Model.Filter.Action != "all" && actions.All(action => action.Value != Model.Filter.Action)) { actions.Add((Model.Filter.Action, Model.Filter.Action)); }
     var filtered = Model.Filter.Search.Length > 0 || Model.Filter.Action != "all" || Model.Filter.Severity != "all" || Model.Filter.Range != "7d";
 }
@@ -68,7 +69,7 @@
                     }
                 </table>
             </div>
-            <nav class="ts-pager" aria-label="Audit pages"><span>Showing @((Model.AuditPage - 1) * 10 + 1)–@((Model.AuditPage - 1) * 10 + Model.AuditRows.Count) of @matches.Count</span>@if (Model.AuditPages > 1) { <div class="ts-row">@if (Model.AuditPage > 1) { <a class="ts-btn ts-btn-secondary ts-btn-sm" rel="prev" href="@Model.Filter.AuditUrl(Model.AuditPage - 1)">Previous</a> }@if (Model.AuditPage < Model.AuditPages) { <a class="ts-btn ts-btn-secondary ts-btn-sm" rel="next" href="@Model.Filter.AuditUrl(Model.AuditPage + 1)">Next</a> }</div> }</nav>
+            <nav class="ts-pager" aria-label="Audit pages"><span>Showing @((Model.AuditPage - 1) * 10 + 1)–@((Model.AuditPage - 1) * 10 + Model.AuditRows.Count) of @matches.Count@(omitted > 0 ? " · " + omitted.ToString("N0", CultureInfo.InvariantCulture) + " older events not listed; narrow the filters to reach them" : "")</span>@if (Model.AuditPages > 1) { <div class="ts-row">@if (Model.AuditPage > 1) { <a class="ts-btn ts-btn-secondary ts-btn-sm" rel="prev" href="@Model.Filter.AuditUrl(Model.AuditPage - 1)">Previous</a> }@if (Model.AuditPage < Model.AuditPages) { <a class="ts-btn ts-btn-secondary ts-btn-sm" rel="next" href="@Model.Filter.AuditUrl(Model.AuditPage + 1)">Next</a> }</div> }</nav>
         }
         else
         {

@@ -14,7 +14,11 @@ public sealed record ProjectAdoptionConflicted;
 
 public sealed record ProjectAdoptionUnconfirmed(string Failure);
 
-public readonly union ProjectAdoption(ProjectAdopted, ProjectAdoptionConflicted, ProjectAdoptionUnconfirmed);
+public sealed record ProjectReservationLapsed;
+
+public readonly union ProjectAdoption(ProjectAdopted, ProjectAdoptionConflicted, ProjectAdoptionUnconfirmed, ProjectReservationLapsed);
+
+public sealed record AuditSlice(IReadOnlyList<AuditRecord> Items, long Omitted);
 
 public sealed record StoredOrganization(OrganizationRecord Organization, string Version, bool Erased)
 {
@@ -42,10 +46,22 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
     private const string Scope = " WHERE @All OR organization_id IN (SELECT value FROM json_each(@Ids))";
     private const string Projects = DashboardSql.OrganizationProjects.Select + Scope;
     private const string Databases = DashboardSql.ProjectDatabases.Select + Scope;
-    private const string Audit = DashboardSql.AuditEvents.Select + Scope + " ORDER BY occurred_at, id";
+    private const string AuditFilter = """
+         WHERE organization_id = @OrganizationId AND occurred_at >= @Since AND (@Action = 'all' OR action = @Action)
+           AND (@Severity = 'all' OR CASE WHEN lower(risk) IN ('high', 'critical') THEN 'critical'
+                WHEN lower(risk) IN ('medium', 'warn', 'warning') THEN 'warn'
+                WHEN lower(risk) IN ('low', 'info', 'informational') THEN 'info' ELSE 'unknown' END = @Severity)
+        """;
+    private const string AuditMatching = "SELECT count(*) FROM audit_events" + AuditFilter;
+    private const string AuditNewest = DashboardSql.AuditEvents.Select + AuditFilter + " ORDER BY occurred_at DESC, id DESC LIMIT " + AuditLimitText;
+    private const string AuditActions = "SELECT DISTINCT action FROM audit_events WHERE organization_id = @OrganizationId AND occurred_at >= @Since ORDER BY action LIMIT 500";
+    private const string ExpiredAudit = "DELETE FROM audit_events WHERE id IN (SELECT id FROM audit_events WHERE occurred_at < @Cutoff ORDER BY occurred_at LIMIT 500)";
+    private const string RemoveAuditBatch = "DELETE FROM audit_events WHERE id IN (SELECT id FROM audit_events WHERE organization_id = @Id LIMIT 500)";
+    private const int DeleteBatch = 500;
+    private const string AuditLimitText = "10000";
+    internal static readonly TimeSpan AuditRetentionCap = TimeSpan.FromDays(365);
     private const string Reservations = DashboardSql.InvitationReservations.Select + Scope;
     private const string FenceVersion = "UPDATE organizations SET version = version WHERE id = @Id AND version = @OriginalVersion";
-    private const string RemoveAudit = "DELETE FROM audit_events WHERE organization_id = @Id";
     private const string RemoveDrainJobs = "DELETE FROM background_jobs WHERE id LIKE @Prefix || '%' AND id LIKE '%' || @Suffix";
     private const string PendingCheckout = DashboardSql.PendingOrganizationCheckouts.Select + " WHERE draft_id = @DraftId";
     private const string BindingOf = DashboardSql.Billing.Select + " WHERE organization_id = @OrganizationId";
@@ -57,9 +73,53 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
 
     public async Task<StoredOrganization?> FindAsync(string id, CancellationToken cancellationToken)
     {
+        List<OrganizationRow> roots;
+        await using (var connection = await storage.OpenAsync(cancellationToken))
+        {
+            roots = (await connection.QueryAsync<OrganizationRow>(ById, new { Id = id })).AsList();
+        }
+
+        return (await LoadAsync(roots, null, cancellationToken)).GetValueOrDefault(id);
+    }
+
+    public async Task<AuditSlice> QueryAuditAsync(string organizationId, DateTimeOffset since, string action, string severity, CancellationToken cancellationToken)
+    {
+        var filter = new { OrganizationId = organizationId, Since = since.UtcDateTime, Action = action, Severity = severity };
         await using var connection = await storage.OpenAsync(cancellationToken);
-        var roots = (await connection.QueryAsync<OrganizationRow>(ById, new { Id = id })).AsList();
-        return (await LoadAsync(connection, roots, null)).GetValueOrDefault(id);
+        var matching = await connection.ExecuteScalarAsync<long>(AuditMatching, filter);
+        var rows = await connection.QueryAsync<AuditEventRow>(AuditNewest, filter);
+        IReadOnlyList<AuditRecord> items = [.. rows.Select(item => new AuditRecord(item.Id, item.Actor, item.Action, item.Target, item.TargetType, RowSync.At(item.OccurredAt), item.Source, item.Risk, item.Ip))];
+        return new(items, Math.Max(0, matching - items.Count));
+    }
+
+    public async Task<IReadOnlyList<string>> AuditActionsAsync(string organizationId, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return [.. await connection.QueryAsync<string>(AuditActions, new { OrganizationId = organizationId, Since = since.UtcDateTime })];
+    }
+
+    public async Task PruneAuditAsync(CancellationToken cancellationToken)
+    {
+        var cutoff = (time.GetUtcNow() - AuditRetentionCap).UtcDateTime;
+        for (var batch = 0; batch < 20; batch++)
+        {
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            if (await connection.ExecuteAsync(ExpiredAudit, new { Cutoff = cutoff }) < DeleteBatch)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task RemoveAuditAsync(string id, CancellationToken cancellationToken)
+    {
+        int removed;
+        do
+        {
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            removed = await connection.ExecuteAsync(RemoveAuditBatch, new { Id = id });
+        }
+        while (removed >= DeleteBatch);
     }
 
     public async Task<IReadOnlyDictionary<string, OrganizationRecord?>> ReadManyAsync(IReadOnlyCollection<string> ids, CancellationToken cancellationToken)
@@ -70,17 +130,25 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
             return new Dictionary<string, OrganizationRecord?>();
         }
 
-        await using var connection = await storage.OpenAsync(cancellationToken);
-        var roots = (await connection.QueryAsync<OrganizationRow>(ByIds, new { Ids = Json(keys) })).AsList();
-        return (await LoadAsync(connection, roots, keys))
+        List<OrganizationRow> roots;
+        await using (var connection = await storage.OpenAsync(cancellationToken))
+        {
+            roots = (await connection.QueryAsync<OrganizationRow>(ByIds, new { Ids = Json(keys) })).AsList();
+        }
+
+        return (await LoadAsync(roots, keys, cancellationToken))
             .ToDictionary(pair => pair.Key, pair => pair.Value.Erased ? null : pair.Value.Organization, StringComparer.Ordinal);
     }
 
     public async Task<IReadOnlyList<OrganizationRecord>> ListAsync(CancellationToken cancellationToken)
     {
-        await using var connection = await storage.OpenAsync(cancellationToken);
-        var roots = (await connection.QueryAsync<OrganizationRow>(Live)).AsList();
-        return [.. (await LoadAsync(connection, roots, [])).Values.Select(stored => stored.Organization)];
+        List<OrganizationRow> roots;
+        await using (var connection = await storage.OpenAsync(cancellationToken))
+        {
+            roots = (await connection.QueryAsync<OrganizationRow>(Live)).AsList();
+        }
+
+        return [.. (await LoadAsync(roots, [], cancellationToken)).Values.Select(stored => stored.Organization)];
     }
 
     public async Task<bool> IsErasedAsync(string id, CancellationToken cancellationToken)
@@ -326,13 +394,14 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
         CancellationToken cancellationToken)
     {
         string? refusal = null;
+        var lapsed = false;
         var write = await storage.TryWriteAsync(async (connection, transaction) =>
         {
             var bound = await DashboardDb.RunAsync(connection, BindReservation,
                 new Dictionary<string, object?> { ["Id"] = reservationId, ["ProjectId"] = project.Id, ["Now"] = time.GetUtcNow().UtcDateTime }, transaction, cancellationToken);
             if (bound != 1)
             {
-                refusal = "reservation expired before the created project was saved";
+                lapsed = true;
                 return false;
             }
 
@@ -374,7 +443,7 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
         return write switch
         {
             StorageWritten => new ProjectAdopted(),
-            StorageConflicted => refusal is { } reason ? new ProjectAdoptionUnconfirmed(reason) : new ProjectAdoptionConflicted(),
+            StorageConflicted => lapsed ? new ProjectReservationLapsed() : refusal is { } reason ? new ProjectAdoptionUnconfirmed(reason) : new ProjectAdoptionConflicted(),
             StorageDuplicate => new ProjectAdoptionUnconfirmed("the created project conflicts with a stored record"),
             StorageFailed failed => new ProjectAdoptionUnconfirmed(failed.Failure),
         };
@@ -392,8 +461,7 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
             var stored = await FindAsync(id, cancellationToken);
             if (stored is { Erased: true })
             {
-                await using var connection = await storage.OpenAsync(cancellationToken);
-                await connection.ExecuteAsync(RemoveAudit, new { Id = id });
+                await RemoveAuditAsync(id, cancellationToken);
                 return;
             }
 
@@ -416,6 +484,7 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
                     }, cancellationToken);
                 }
 
+                await RemoveAuditAsync(id, cancellationToken);
                 return;
             }
             catch (Exception error) when (error is DBConcurrencyException || DashboardDb.IsDuplicate(error))
@@ -507,26 +576,48 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
         }
     }
 
-    private static async Task<Dictionary<string, StoredOrganization>> LoadAsync(TerraBaseDbConnection connection, IReadOnlyList<OrganizationRow> roots, string[]? snapshot)
+    private async Task<Dictionary<string, StoredOrganization>> LoadAsync(List<OrganizationRow> roots, string[]? snapshot, CancellationToken cancellationToken)
     {
         var scope = snapshot ?? [.. roots.Where(row => row.ErasureId is null).Select(row => row.Id)];
         var all = snapshot is [];
         var empty = !all && scope.Length == 0;
-        var filter = new { All = all, Ids = Json(scope) };
-        var projects = empty ? [] : (await connection.QueryAsync<OrganizationProjectRow>(Projects, filter)).AsList();
-        var databases = empty ? [] : (await connection.QueryAsync<ProjectDatabaseRow>(Databases, filter)).AsList();
-        var audit = empty ? [] : (await connection.QueryAsync<AuditEventRow>(Audit, filter)).AsList();
-        var reservations = empty ? [] : (await connection.QueryAsync<InvitationReservationRow>(Reservations, filter)).AsList();
-        var projectRows = projects.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        var databaseRows = databases.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        var auditRows = audit.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        var reservationRows = reservations.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        var ids = Json(scope);
+        var projectsRead = empty ? Task.FromResult<List<OrganizationProjectRow>>([]) : QueryProjectsAsync(all, ids, cancellationToken);
+        var databasesRead = empty ? Task.FromResult<List<ProjectDatabaseRow>>([]) : QueryDatabasesAsync(all, ids, cancellationToken);
+        var reservationsRead = empty ? Task.FromResult<List<InvitationReservationRow>>([]) : QueryReservationsAsync(all, ids, cancellationToken);
+        await Task.WhenAll(projectsRead, databasesRead, reservationsRead);
+        var projectRows = (await projectsRead).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        var databaseRows = (await databasesRead).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        var reservationRows = (await reservationsRead).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        if (roots.Select(row => row.Id).Distinct(StringComparer.Ordinal).Count() != roots.Count)
+        {
+            throw new IOException("Dashboard storage returned duplicate organizations.");
+        }
+
         return roots.ToDictionary(row => row.Id, row =>
         {
-            var rows = new OrganizationRows(row, [.. projectRows[row.Id]], [.. databaseRows[row.Id]], [.. auditRows[row.Id]], [.. reservationRows[row.Id]]);
+            var rows = new OrganizationRows(row, [.. projectRows[row.Id]], [.. databaseRows[row.Id]], [], [.. reservationRows[row.Id]]);
             return row.ErasureId is null ? new StoredOrganization(Read(rows), row.Version, false) { Rows = rows } :
                 new StoredOrganization(new OrganizationRecord { Id = row.Id }, row.Version, true) { Rows = rows };
         }, StringComparer.Ordinal);
+    }
+
+    private async Task<List<OrganizationProjectRow>> QueryProjectsAsync(bool all, string ids, CancellationToken cancellationToken)
+    {
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return (await connection.QueryAsync<OrganizationProjectRow>(Projects, new { All = all, Ids = ids })).AsList();
+    }
+
+    private async Task<List<ProjectDatabaseRow>> QueryDatabasesAsync(bool all, string ids, CancellationToken cancellationToken)
+    {
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return (await connection.QueryAsync<ProjectDatabaseRow>(Databases, new { All = all, Ids = ids })).AsList();
+    }
+
+    private async Task<List<InvitationReservationRow>> QueryReservationsAsync(bool all, string ids, CancellationToken cancellationToken)
+    {
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return (await connection.QueryAsync<InvitationReservationRow>(Reservations, new { All = all, Ids = ids })).AsList();
     }
 
     private static OrganizationRecord Read(OrganizationRows rows)

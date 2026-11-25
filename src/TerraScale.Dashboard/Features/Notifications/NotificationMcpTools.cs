@@ -16,11 +16,6 @@ namespace TerraScale.Dashboard.Features.Notifications
             string? organizationId = null, string? projectId = null)
         {
             var context = await NotificationCommands.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
-            if (http.HttpContext is { } request)
-            {
-                await ApiKeyExpiryNotifications.RefreshAsync(request, context);
-            }
-
             var inbox = NotificationCommands.Inbox(context, status, page);
             return new([.. inbox.Items.Select(item => new NotificationToolItem(item.Id, item.Type, item.Title, item.Body,
                 item.Unread ? "Unread" : "Read", item.Severity, item.CreatedAt))], inbox.Status, inbox.Unread, inbox.Critical,

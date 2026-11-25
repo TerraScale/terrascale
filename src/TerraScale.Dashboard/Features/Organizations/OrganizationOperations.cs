@@ -118,6 +118,11 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 var adoption = await organizations.TryAdoptProjectAsync(project.OrganizationId, project, audit, reservation, CancellationToken.None);
                 var picked = Outcome(adoption, attempt);
+                if (picked.Lapsed)
+                {
+                    return await WithdrawAsync(context, project);
+                }
+
                 if (picked.Adopted)
                 {
                     break;
@@ -147,12 +152,28 @@ namespace TerraScale.Dashboard.Features.Organizations
             return project;
         }
 
-        private static (bool Adopted, string? Failure) Outcome(ProjectAdoption adoption, int attempt) => adoption switch
+        private static (bool Adopted, bool Lapsed, string? Failure) Outcome(ProjectAdoption adoption, int attempt) => adoption switch
         {
-            ProjectAdopted => (true, null),
-            ProjectAdoptionConflicted => (false, attempt >= 4 ? "the organization changed concurrently" : null),
-            ProjectAdoptionUnconfirmed unconfirmed => (false, unconfirmed.Failure),
+            ProjectAdopted => (true, false, null),
+            ProjectAdoptionConflicted => (false, false, attempt >= 4 ? "the organization changed concurrently" : null),
+            ProjectAdoptionUnconfirmed unconfirmed => (false, false, unconfirmed.Failure),
+            ProjectReservationLapsed => (false, true, null),
         };
+
+        private async Task<ProjectCreateResult> WithdrawAsync(AccountContext context, ProjectRecord project)
+        {
+            try
+            {
+                await platform.DeleteProjectAsync(context.Session, project.OrganizationId, project.Id, CancellationToken.None);
+                logger.ProjectCreationWithdrawn(project.Id);
+            }
+            catch (Exception error) when (error is HttpRequestException or AccountAccessException or IOException or TimeoutException)
+            {
+                logger.ProjectCreationNotWithdrawn(project.Id, error.GetType().Name);
+            }
+
+            return Unconfirmed("reservation expired before the created project was saved");
+        }
 
         private async Task<ProjectCreateResult> RefusedAsync(string reservation, ProjectCreationRefused refused)
         {

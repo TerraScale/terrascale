@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         public static IReadOnlyList<(string Id, string Label, int Days)> Ranges { get; } =
             [("24h", "Last 24 hours", 1), ("7d", "Last 7 days", 7), ("30d", "Last 30 days", 30), ("90d", "Last 90 days", 90), ("365d", "Last 365 days", 365)];
-        public IReadOnlyList<AuditRecord> ApplyAudit(IEnumerable<AuditRecord> events, int? retentionDays = null)
+        public DateTimeOffset AuditSince(int? retentionDays)
         {
             var days = Ranges.FirstOrDefault(range => range.Id == Range).Days;
             if (days == 0)
@@ -29,7 +29,12 @@ namespace TerraScale.Dashboard.Features.Organizations
                 days = Math.Min(days, retentionDays.Value);
             }
 
-            var from = (Now ?? DateTimeOffset.UtcNow).AddDays(-days);
+            return (Now ?? DateTimeOffset.UtcNow).AddDays(-days);
+        }
+
+        public IReadOnlyList<AuditRecord> ApplyAudit(IEnumerable<AuditRecord> events, int? retentionDays = null)
+        {
+            var from = AuditSince(retentionDays);
             return [.. events.Where(item => (item.OccurredAt == DateTimeOffset.MinValue || item.OccurredAt >= from) && (Action == "all" || item.Action == Action) &&
                 (Severity == "all" || AuditSeverity(item) == Severity) &&
                 (Search.Length == 0 || string.Join(' ', item.Actor, item.Action, item.Target, item.TargetType, item.Source, AuditSeverity(item), item.OccurredAt.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ")).Contains(Search, StringComparison.OrdinalIgnoreCase)))
@@ -56,9 +61,11 @@ namespace TerraScale.Dashboard.Features.Organizations
             var text = string.Join(' ', item.Action, item.Target, item.Risk).ToLowerInvariant();
             return text.Contains("fail") || text.Contains("denied") ? "failure" : "success";
         }
-        public static string AuditActionLabel(AuditRecord item)
+        public static string AuditActionLabel(AuditRecord item) => AuditActionLabel(item.Action);
+
+        public static string AuditActionLabel(string action)
         {
-            return item.Action switch
+            return action switch
             {
                 "session.created" => "Signed in",
                 "api_key.created" => "API key created",
@@ -71,7 +78,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 "member.mfa_disabled" => "Member turned off two-factor",
                 "member.mfa_recovery_code_used" => "Member used a recovery code",
                 "member.mfa_recovery_codes_regenerated" => "Member regenerated recovery codes",
-                _ => Capitalize(string.Join(' ', item.Action.Replace('.', ' ').Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)))
+                _ => Capitalize(string.Join(' ', action.Replace('.', ' ').Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)))
             };
         }
 

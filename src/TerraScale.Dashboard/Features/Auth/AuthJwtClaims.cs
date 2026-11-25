@@ -28,17 +28,20 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public static string? KeyId(string? token) => Parse(token)?.KeyId;
 
+        private const int MaxKeys = 64;
+
         public static TsAuthJwkSet? KeySet(JsonElement published)
         {
             try
             {
                 if (published.ValueKind != JsonValueKind.Object || !Canonical(published) || !published.TryGetProperty("keys", out var listed) ||
-                    listed.ValueKind != JsonValueKind.Array || listed.GetArrayLength() == 0)
+                    listed.ValueKind != JsonValueKind.Array || listed.GetArrayLength() is 0 or > MaxKeys)
                 {
                     return null;
                 }
 
                 List<TsAuthJwk> keys = [];
+                var keyIds = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var entry in listed.EnumerateArray())
                 {
                     if (entry.ValueKind != JsonValueKind.Object || Required(entry, "kty") is not { } type || Required(entry, "crv") is not { } curve ||
@@ -50,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
                     var key = new TsAuthJwk(type, curve, entry.TryGetProperty("alg", out _) ? "ES256" : null, entry.TryGetProperty("use", out _) ? "sig" : null, kid, x, y);
                     using var imported = Import(key);
-                    if (imported is null || keys.Any(known => known.KeyId == kid))
+                    if (imported is null || !keyIds.Add(kid))
                     {
                         return null;
                     }

@@ -44,6 +44,7 @@ using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Common.Live;
 
 namespace TerraScale.Dashboard
 {
@@ -85,6 +86,8 @@ namespace TerraScale.Dashboard
             builder.Services.AddSingleton<DependencyReadiness>();
             builder.Services.AddSingleton<DashboardSessions>();
             builder.Services.AddSingleton<EntryRateLimits>();
+            builder.Services.AddSingleton<LiveAdmission>();
+            builder.Services.AddSingleton<LiveView>();
             builder.Services.AddSingleton<McpRejectedBearers>();
             builder.Services.AddAccountFeatures();
             builder.Services.AddAllowanceNotifications();
@@ -352,8 +355,9 @@ namespace TerraScale.Dashboard
                 string Policy()
                 {
                     return $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
-                    $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self' https://*.api.terrascale.tech" + fileOrigins + "; form-action 'self' " + authOrigin + " https://checkout.stripe.com https://billing.stripe.com" + fileOrigins +
-                    (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? " " + client : "") + "; base-uri 'none'; frame-ancestors 'none'";
+                    $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self' https://*.api.terrascale.tech" + fileOrigins + "; form-action 'self' " +
+                    (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? client : authOrigin + " https://checkout.stripe.com https://billing.stripe.com" + fileOrigins) +
+                    "; base-uri 'none'; frame-ancestors 'none'";
                 }
 
                 context.Response.OnStarting(() =>

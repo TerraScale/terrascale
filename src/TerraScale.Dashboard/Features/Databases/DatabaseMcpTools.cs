@@ -17,7 +17,7 @@ namespace TerraScale.Dashboard.Features.Databases
         {
             var context = Scope(organizationId, projectId);
             DatabaseService.Scope(context);
-            await databases.SyncAsync(context, Cancellation);
+            await databases.ViewRemoteAsync(context, Cancellation);
             var page = CursorPaging.Page(context.Project!.Databases.Values, db => db.Id,
                 CursorPaging.Scope(context, "databases"), limit, after);
             return new(await Task.WhenAll(page.Items.Select(DatabaseOutput)), page.NextCursor, page.HasMore, page.Limit);
@@ -46,7 +46,7 @@ namespace TerraScale.Dashboard.Features.Databases
         public async Task<McpDatabaseDetail> GetDatabase(string databaseId, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);
-            await databases.SyncAsync(context, Cancellation);
+            await databases.ViewRemoteAsync(context, Cancellation);
             var db = DatabaseService.Database(context, databaseId);
             var output = await DatabaseOutput(db);
             var configured = await databases.ConfiguredPlacementAsync(output.Placement, Cancellation);

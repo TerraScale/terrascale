@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Backups
         [McpServerTool(Name = "set_backup_policy", Title = "Set backup policy", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Save a database's full-backup schedule and retention. Shorter retention can expire existing snapshots; clearing the schedule reduces future recovery coverage. Incremental schedules are unavailable. Requires an owner or admin role.")]
         public Task<BackupPolicyView> SetBackupPolicy(string databaseId,
             [Description("Five-field full-backup cron, up to 256 characters; empty clears the schedule.")] string fullBackupCron,
-            [Description("Snapshot retention in days, from 1 to 35.")] int retentionDays,
+            [Description("Snapshot retention in days, from 1 to the plan maximum: 1 on Hobby, 3 on Starter, 7 on Pro, 14 on Team and 30 on Enterprise.")] int retentionDays,
             [Description("Omit or pass an empty string. Incremental schedules are unavailable.")] string incrementalBackupCron = "",
             string? organizationId = null, string? projectId = null)
         {

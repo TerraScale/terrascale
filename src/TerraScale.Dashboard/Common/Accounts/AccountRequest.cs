@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         public static IResult LoginRedirect(HttpContext http)
         {
-            return http.Request.Cookies[TerraScale.Dashboard.Features.Profile.AccountDeletion.Cookie] is { Length: 64 } deletion && deletion.All(char.IsAsciiHexDigitLower)
+            return DashboardCookies.Read(http, TerraScale.Dashboard.Features.Profile.AccountDeletion.Cookie) is { Length: 64 } deletion && deletion.All(char.IsAsciiHexDigitLower)
                 ? TypedResults.Redirect("/account-deletion")
                 : TypedResults.Redirect("/login?returnTo=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));
         }

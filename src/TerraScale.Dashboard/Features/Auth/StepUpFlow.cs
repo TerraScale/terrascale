@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
     public sealed partial class AuthFlows
     {
-        private const string StepUpCookie = "ts-dashboard-step-up";
+        private const string StepUpCookie = "__Host-ts-dashboard-step-up";
 
         public async Task StoreStepUpAsync(HttpContext http, StepUpIntent intent)
         {
@@ -47,7 +47,7 @@ namespace TerraScale.Dashboard.Features.Auth
         public async Task<StepUpIntent?> TakeStepUpAsync(HttpContext http)
         {
             var stored = await ReadAsync<StepUpIntent>(http, StepUpCookie, AuthFlowRow.StepUpPurpose);
-            http.Response.Cookies.Delete(StepUpCookie, Options(http));
+            DashboardCookies.Delete(http, StepUpCookie, SameSiteMode.Lax);
             if (stored is null || !await TakeAsync(stored.Row, http.RequestAborted))
             {
                 return null;
@@ -196,7 +196,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public static string Browser(HttpContext http)
         {
-            var cookie = http.Request.Cookies["ts-dashboard-session"];
+            var cookie = DashboardCookies.Read(http, DashboardSessions.Cookie);
             if (cookie is not { Length: 64 } || !cookie.All(char.IsAsciiHexDigitLower))
             {
                 throw Required();

@@ -35,6 +35,12 @@ namespace TerraScale.Dashboard.Common.Databases
                 return (context, Checked(known));
             }
 
+            var remembered = project.Id + ":" + id;
+            if (unknown.TryGetValue(remembered, out var missedAt) && time.GetElapsedTime(missedAt) < UnknownDatabaseMemory)
+            {
+                throw NotFound(id);
+            }
+
             var scope = Scope(context);
             DatabaseRecord? imported = null;
             try
@@ -82,6 +88,7 @@ namespace TerraScale.Dashboard.Common.Databases
             { throw Unavailable(id); }
             if (imported is null)
             {
+                Remember(unknown, remembered, UnknownDatabaseMemory);
                 throw NotFound(id);
             }
 

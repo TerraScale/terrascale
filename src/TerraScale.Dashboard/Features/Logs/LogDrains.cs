@@ -44,6 +44,7 @@ namespace TerraScale.Dashboard.Features.Logs
             """;
         private const string JobById = BackgroundJobs.Snapshot + " WHERE id = @Id";
 
+        private const int DrainParallelism = 8;
         private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie", "idempotency-key", "x-terrascale-delivery"];
 
         public async Task<LogDrain?> ReadAsync(string projectId, CancellationToken cancellationToken)
@@ -164,15 +165,15 @@ namespace TerraScale.Dashboard.Features.Logs
                 drains = (await connection.QueryAsync<string>(DrainIds)).AsList();
             }
 
-            foreach (var id in drains)
+            await Parallel.ForEachAsync(drains, new ParallelOptions { MaxDegreeOfParallelism = DrainParallelism, CancellationToken = cancellationToken }, async (id, token) =>
             {
-                try { await ShipAsync(id, cancellationToken); }
+                try { await ShipAsync(id, token); }
                 catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or DBConcurrencyException or ArgumentException or FormatException ||
-                    error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    error is OperationCanceledException && !token.IsCancellationRequested)
                 {
                     logger.AProjectLogDrainCouldNot(error.GetType().Name);
                 }
-            }
+            });
         }
 
         private async Task ShipAsync(string id, CancellationToken cancellationToken)
@@ -195,8 +196,14 @@ namespace TerraScale.Dashboard.Features.Logs
                 headers.Add(new(name, new SealedSecret(nonce, ciphertext, tag).Open((await identity.ReadAsync(cancellationToken)).SessionEncryptionKey, "log-drain/" + drain.ProjectId)));
             }
 
+            var stalled = false;
             foreach (var database in project.Databases.Values)
             {
+                if (stalled)
+                {
+                    return;
+                }
+
                 var jobId = "log-drain/" + drain.ProjectId + "/" + drain.Revision + "/" + database.Id;
                 var snapshot = await db.QuerySingleOrDefaultAsync<BackgroundJobRow>(JobById, new { Id = jobId });
                 if (snapshot is { Leased: true })
@@ -281,6 +288,7 @@ namespace TerraScale.Dashboard.Features.Logs
                     }
                     if (status is < 200 or > 299)
                     {
+                        stalled = true;
                         current.LastErrorAt = clock.GetUtcNow().UtcDateTime;
                         current.LastErrorStatus = status;
                         await claim.SaveAsync((connection, transaction) => SaveDrainAsync(connection, current, transaction), token);

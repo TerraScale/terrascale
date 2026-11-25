@@ -99,6 +99,20 @@ namespace TerraScale.Dashboard.Common.Accounts
                     Resource("projects", "project", "projects"), Resource("databases", "database", "databases"), Resource("members", "team member", "team members") ]));
         }).ToArray());
 
+        public static int BackupRetentionDays(string publishedPlan)
+        {
+            var key = publishedPlan == "hobby" ? "free" : publishedPlan;
+            var plan = catalog.GetProperty("plans").EnumerateArray().FirstOrDefault(plan => plan.GetProperty("id").GetString() == key);
+            if (plan.ValueKind != JsonValueKind.Object || !plan.GetProperty("entitlements").TryGetProperty("backupRetentionDays", out var days))
+            {
+                throw new IOException("The published plan has no backup retention.");
+            }
+
+            return days.ValueKind == JsonValueKind.Null ? MaxBackupRetentionDays : Math.Min(days.GetInt32(), MaxBackupRetentionDays);
+        }
+
+        public const int MaxBackupRetentionDays = 3650;
+
         private static long Ceiling(JsonElement value)
         {
             return value.ValueKind == JsonValueKind.Null ? long.MaxValue : value.GetInt64();

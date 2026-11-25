@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         public Task<JsonElement> GetJwksAsync(CancellationToken cancellationToken = default)
         {
-            return client.GetMetadataAsync(
+            return client.GetKeySetAsync(
             InstanceRoute("/.well-known/jwks.json"),
                 TsAuthJsonContext.Default.JsonElement,
             cancellationToken);

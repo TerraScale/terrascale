@@ -58,6 +58,8 @@ namespace TerraScale.Dashboard.Features.Notifications
         public const int RuleLimit = 20;
         public const int WebhookAttempts = 3;
         private const int EventLimit = 10;
+        private const int ProjectParallelism = 8;
+        private const int DeliveriesPerPass = 3;
         public static readonly string[] Metrics = ["p95_latency_ms", "error_rate_percent", "storage_gb", "operation_units_percent"];
 
         public async Task<IReadOnlyList<AlertRule>> ListAsync(string projectId, CancellationToken cancellationToken)
@@ -206,16 +208,16 @@ namespace TerraScale.Dashboard.Features.Notifications
                 projects = [.. (await connection.QueryAsync<AlertRuleRow>(DashboardSql.AlertRules.Select)).Select(row => (row.ProjectId, row.OrganizationId)).Distinct()];
             }
 
-            Task<IReadOnlyDictionary<string, long>>? units = null;
-            foreach (var (projectId, organizationId) in projects)
+            var units = new Lazy<Task<IReadOnlyDictionary<string, long>>>(() => source.ReadOperationUnitsAsync(cancellationToken));
+            await Parallel.ForEachAsync(projects, new ParallelOptions { MaxDegreeOfParallelism = ProjectParallelism, CancellationToken = cancellationToken }, async (target, token) =>
             {
-                try { await ObserveAsync(projectId, organizationId, () => units ??= source.ReadOperationUnitsAsync(cancellationToken), cancellationToken); }
+                try { await ObserveAsync(target.ProjectId, target.OrganizationId, () => units.Value, token); }
                 catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or TerraBaseException or DBConcurrencyException ||
-                    error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    error is OperationCanceledException && !token.IsCancellationRequested)
                 {
                     logger.AlertRulesForAProjectCould(error.GetType().Name);
                 }
-            }
+            });
         }
 
         private async Task ObserveAsync(string projectId, string organizationId, Func<Task<IReadOnlyDictionary<string, long>>> units, CancellationToken cancellationToken)
@@ -379,6 +381,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 claim.State.DeliveryId = null;
                 await claim.SaveAsync(cancellationToken);
             }
+            var posts = 0;
             foreach (var item in pending.OrderBy(item => item.Id == claim.State.DeliveryId ? 0 : 1).ThenBy(item => item.Id, StringComparer.Ordinal))
             {
                 if (!rules.TryGetValue(item.RuleId, out var rule))
@@ -386,7 +389,16 @@ namespace TerraScale.Dashboard.Features.Notifications
                     continue;
                 }
 
-                await DeliverAsync(projectId, organizationId, rule, item, claim, cancellationToken);
+                if (posts >= DeliveriesPerPass)
+                {
+                    return;
+                }
+
+                if (await DeliverAsync(projectId, organizationId, rule, item, claim, cancellationToken))
+                {
+                    posts++;
+                }
+
                 var finished = item.EmailStatus != "pending" && item.WebhookStatus != "pending";
                 if (finished)
                 {
@@ -424,7 +436,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             return (Math.Round(value, 3), rule.DatabaseId is null ? null : project.Databases.GetValueOrDefault(rule.DatabaseId)?.Name);
         }
 
-        private async Task DeliverAsync(string projectId, string organizationId, AlertRuleRow rule, AlertEventRow item, BackgroundJobs.Claim claim, CancellationToken cancellationToken)
+        private async Task<bool> DeliverAsync(string projectId, string organizationId, AlertRuleRow rule, AlertEventRow item, BackgroundJobs.Claim claim, CancellationToken cancellationToken)
         {
             if (item.EmailStatus == "pending")
             {
@@ -434,7 +446,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
             if (item.WebhookStatus != "pending" || rule.WebhookUrl is null || rule.WebhookNonce is null || rule.WebhookCiphertext is null || rule.WebhookTag is null)
             {
-                return;
+                return false;
             }
 
             if (claim.State.Payload is null)
@@ -468,6 +480,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             finally { CryptographicOperations.ZeroMemory(key); }
             item.WebhookAttempts++;
             item.WebhookStatus = code is >= 200 and <= 299 ? "delivered" : item.WebhookAttempts >= WebhookAttempts ? "failed" : "pending";
+            return true;
         }
 
         private static async Task<List<AlertRuleRow>> RulesWithEventsAsync(TerraBaseDbConnection connection, string projectId, string organizationId)

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Cronos;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -110,9 +111,10 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("Enter a valid full-backup cron schedule or leave it empty.", 422);
             }
 
-            if (retentionDays is < 1 or > 35)
+            var ceiling = RetentionCeiling(context.Organization);
+            if (retentionDays < 1 || retentionDays > ceiling)
             {
-                throw new AccountAccessException("Set snapshot retention from 1 to 35 days.", 422);
+                throw new AccountAccessException(RetentionRule(ceiling), 422);
             }
 
             var policy = await backend.SetPolicyAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, ct), databaseId,
@@ -349,10 +351,21 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new HttpRequestException("The provider returned an invalid completed backup.");
             }
         }
+        public static int RetentionCeiling(OrganizationRecord? organization)
+        {
+            return PlanCatalog.BackupRetentionDays(organization is null ? "hobby" : TerraBasePlanSync.PlanFor(organization));
+        }
+
+        public static string RetentionRule(int ceiling)
+        {
+            return ceiling == 1 ? "Your plan keeps restore points for 1 day. Upgrade the plan to keep them longer."
+                : "Set snapshot retention from 1 to " + ceiling.ToString(CultureInfo.InvariantCulture) + " days on your plan.";
+        }
+
         private static BackupPolicyView Policy(ProducerBackupPolicy policy)
         {
             var cron = string.IsNullOrWhiteSpace(policy.FullBackupCron) ? "" : policy.FullBackupCron.Trim();
-            if (policy.RetentionDays is < 1 or > 35 || !ValidCron(cron))
+            if (policy.RetentionDays is < 1 or > PlanCatalog.MaxBackupRetentionDays || !ValidCron(cron))
             {
                 throw new HttpRequestException("The provider returned an invalid backup policy.");
             }

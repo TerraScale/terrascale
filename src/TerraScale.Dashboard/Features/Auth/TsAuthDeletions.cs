@@ -4,17 +4,16 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public interface ITsAuthDeletions
     {
-        Task<IReadOnlyList<TsAuthDeletionProof>> ListAsync(CancellationToken cancellationToken);
+        Task<IReadOnlyList<TsAuthDeletionItem>> ListAsync(CancellationToken cancellationToken);
         Task AcknowledgeAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken);
     }
 
     public sealed partial class TsAuthGateway : ITsAuthDeletions
     {
-        public async Task<IReadOnlyList<TsAuthDeletionProof>> ListAsync(CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<TsAuthDeletionItem>> ListAsync(CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            var page = await PlatformAsync(() => Client().Platform.ListDeletionsAsync(credentials.AuthClientId, credentials.AuthClientSecret, cancellationToken));
-            return page.Items ?? throw new IOException("ts-auth returned an invalid deletion page.");
+            return await PlatformAsync(() => Client().Platform.ListDeletionsAsync(credentials.AuthClientId, credentials.AuthClientSecret, cancellationToken));
         }
 
         public async Task AcknowledgeAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)

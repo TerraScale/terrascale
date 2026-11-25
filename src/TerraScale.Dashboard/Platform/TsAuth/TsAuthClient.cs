@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     {
         private const int MaxOperationBytes = 1_048_576;
         private const int MaxResponseBytes = 16 * 1024 * 1024;
+        internal const int MaxKeySetBytes = 64 * 1024;
         private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
 
         private static readonly MediaTypeWithQualityHeaderValue AcceptJson = new("application/json");
@@ -40,6 +41,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         private async Task<TResponse> GetMetadataCoreAsync<TResponse>(
             string requestUri,
             JsonTypeInfo<TResponse> responseTypeInfo,
+            int maxResponseBytes,
             CancellationToken cancellationToken)
         {
             using var response = await SendRequestAsync(
@@ -48,7 +50,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 bodyFactory: null,
                 null,
                 cancellationToken);
-            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken);
+            return await ReadJsonAsync(response, responseTypeInfo, maxResponseBytes, cancellationToken);
         }
 
         private async Task<TResponse> SendOAuthFormCoreAsync<TResponse>(
@@ -65,7 +67,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 authorization,
                 cancellationToken);
             await RequireStatusAsync(response, HttpStatusCode.OK, cancellationToken);
-            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken);
+            return await ReadJsonAsync(response, responseTypeInfo, MaxResponseBytes, cancellationToken);
         }
 
         private async Task SendOAuthFormForSuccessCoreAsync(
@@ -99,7 +101,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 bodyFactory: null,
                 TsAuthCredentials.Bearer(accessToken),
                 cancellationToken);
-            return await ReadJsonAsync(response, responseTypeInfo, cancellationToken);
+            return await ReadJsonAsync(response, responseTypeInfo, MaxResponseBytes, cancellationToken);
         }
 
         private async Task<TResponse> SendAuthenticatedJsonCoreAsync<TRequest, TResponse>(
@@ -112,7 +114,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
                 authorization, cancellationToken, stepUpProof: stepUpProof);
             await RequireStatusAsync(response, expectedStatus, cancellationToken);
-            return await ReadJsonAsync(response, responseType, cancellationToken);
+            return await ReadJsonAsync(response, responseType, MaxResponseBytes, cancellationToken);
         }
 
         private async Task SendAuthenticatedForStatusCoreAsync<TRequest>(
@@ -249,6 +251,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         private static async Task<TResponse> ReadJsonAsync<TResponse>(
             HttpResponseMessage response,
             JsonTypeInfo<TResponse> responseTypeInfo,
+            int maxResponseBytes,
             CancellationToken cancellationToken)
         {
             if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
@@ -263,9 +266,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 throw new TsAuthException(response.StatusCode, "ts-auth returned an unexpected response media type.", "invalid_response", TsAuthErrors.ResolveRetryAfter(response), response);
             }
 
-            using var destination = new BoundedHttpBodyStream(MaxResponseBytes,
+            using var destination = new BoundedHttpBodyStream(maxResponseBytes,
                 () => new TsAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TsAuthErrors.ResolveRetryAfter(response), response), cancellationToken);
-            if (response.Content.Headers.ContentLength > MaxResponseBytes)
+            if (response.Content.Headers.ContentLength > maxResponseBytes)
             {
                 throw new TsAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TsAuthErrors.ResolveRetryAfter(response), response);
             }

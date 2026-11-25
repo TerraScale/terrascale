@@ -3,7 +3,8 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Platform.Clients;
 
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = 256)]
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = 256,
+    RespectNullableAnnotations = true)]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(TerraBaseErrorEnvelope))]
 [JsonSerializable(typeof(TerraBaseManagedDatabase))]
