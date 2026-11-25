@@ -204,9 +204,22 @@ internal static class LocalStamper
 
 internal static class CrdtApplier
 {
+    private static TableSchema? Unresolved(WriteScope scope, SqliteStatus failure)
+    {
+        scope.Fail(failure);
+        return null;
+    }
+
     public static void Apply(WriteScope scope, RowMutation mutation, HlcTimestamp hlc, Dictionary<string, HlcTimestamp> tables)
     {
-        if (scope.Connection.Schema(mutation.Table) is not { } schema || mutation.PrimaryKey.Count != schema.PrimaryKeyColumnNames.Count)
+        var lookup = scope.Connection.Schema(mutation.Table);
+        var resolved = lookup switch
+        {
+            TableSchema found => found,
+            TableNotFound => null,
+            SqliteStatus failure => Unresolved(scope, failure),
+        };
+        if (resolved is not { } schema || mutation.PrimaryKey.Count != schema.PrimaryKeyColumnNames.Count)
         {
             return;
         }

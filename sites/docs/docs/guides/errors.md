@@ -411,7 +411,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `too_large`
 
-413, SQLSTATE 54000 — a statement's data exceeds the size limit. Send smaller data. Retry: no.
+400, SQLSTATE 54000 — a value, result or transaction write exceeds its size limit (see [limits](/limits)); 413 when the SQL request body is over 1 MiB. Send smaller data. Retry: no.
 
 ### `too_many_streams`
 

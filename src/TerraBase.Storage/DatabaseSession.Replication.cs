@@ -29,7 +29,7 @@ internal sealed partial class DatabaseSession
 
         try
         {
-            var begun = reader.Exec("BEGIN;");
+            var begun = reader.Begin("BEGIN;");
             if (!begun.IsOk)
             {
                 return begun.ToBusy();
@@ -123,7 +123,7 @@ internal sealed partial class DatabaseSession
 
         try
         {
-            var status = reader.Exec("BEGIN;");
+            var status = reader.Begin("BEGIN;");
             List<SqlValue[]> versions = [];
             if (status.IsOk)
             {
@@ -177,13 +177,13 @@ internal sealed partial class DatabaseSession
             ? HlcCodec.Read(blob.Span)
             : HlcTimestamp.Zero;
 
-    private StorageCorrupted? Recover()
+    private RecoverOutcome Recover()
     {
         List<SqlValue[]> rows = [];
         var status = _writer.Query(MetaStore.SelectVersionsSql, rows);
         if (!status.IsOk)
         {
-            return new StorageCorrupted(DatabaseId, status.Message);
+            return status.IsBusy ? status.ToBusy() : new StorageCorrupted(DatabaseId, status.Message);
         }
 
         var (watermarks, epoch) = ReadVersions(rows);
@@ -204,9 +204,9 @@ internal sealed partial class DatabaseSession
                 OriginLog log => Track(origin, log),
                 StorageCorrupted corrupted => corrupted,
             };
-            if (failure is not null)
+            if (failure is { } corruptedLog)
             {
-                return failure;
+                return corruptedLog;
             }
         }
 
@@ -230,34 +230,33 @@ internal sealed partial class DatabaseSession
                 CommitLogGap gap => new StorageCorrupted(DatabaseId, string.Concat("commit log gap for origin ", gap.OriginRegion)),
                 StorageCorrupted corrupted => corrupted,
             };
-            if (failure is not null)
+            if (failure is { } corruptedPage)
             {
-                return failure;
+                return corruptedPage;
             }
         }
 
         var pending = ApplyPending([], persist: false);
-        var pendingFailure = pending switch
+        return pending switch
         {
-            RemoteApplyOutcome => null,
+            RemoteApplyOutcome => RecoverClockWatermark(),
             SchemaMismatch mismatch => new StorageCorrupted(DatabaseId, string.Concat("schema epoch mismatch during recovery: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture))),
             StorageCorrupted corrupted => corrupted,
-            StorageBusy busy => new StorageCorrupted(DatabaseId, busy.Message),
+            StorageBusy busy => busy,
         };
-        if (pendingFailure is not null)
-        {
-            return pendingFailure;
-        }
-
-        RecoverClockWatermark();
-        return null;
     }
 
-    private void RecoverClockWatermark()
+    private RecoverOutcome RecoverClockWatermark()
     {
         var maxHlc = HlcTimestamp.Zero;
         List<SqlValue[]> metaRows = [];
-        if (_writer.Query(MetaStore.SelectAllMetaSql, metaRows).IsOk)
+        var status = _writer.Query(MetaStore.SelectAllMetaSql, metaRows);
+        if (status.IsBusy)
+        {
+            return status.ToBusy();
+        }
+
+        if (status.IsOk)
         {
             foreach (var row in metaRows)
             {
@@ -299,6 +298,8 @@ internal sealed partial class DatabaseSession
         {
             _context.Clock.Restore(maxHlc);
         }
+
+        return new SessionRecovered();
     }
 
     private StorageCorrupted? Track(string origin, OriginLog log)

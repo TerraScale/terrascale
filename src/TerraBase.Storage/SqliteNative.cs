@@ -352,7 +352,8 @@ internal static class SqliteLibrary
     private const string FileName = "libsqlite3mc.so";
 
     private static readonly Lock Gate = new();
-    private static bool _initialized;
+    private static bool _registered;
+    private static bool _heapLimitsApplied;
 
     public static unsafe string Version
     {
@@ -367,14 +368,17 @@ internal static class SqliteLibrary
     {
         lock (Gate)
         {
-            if (_initialized)
+            if (!_registered)
             {
-                return;
+                NativeLibrary.SetDllImportResolver(typeof(SqliteLibrary).Assembly, Resolve);
+                _registered = true;
             }
 
-            NativeLibrary.SetDllImportResolver(typeof(SqliteLibrary).Assembly, Resolve);
-            SqliteLimits.ApplyHeapLimits();
-            _initialized = true;
+            if (!_heapLimitsApplied)
+            {
+                SqliteLimits.ApplyHeapLimits();
+                _heapLimitsApplied = true;
+            }
         }
     }
 

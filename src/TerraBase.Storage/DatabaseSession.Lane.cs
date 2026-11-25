@@ -133,7 +133,7 @@ internal sealed partial class DatabaseSession
                 return Closing();
             }
 
-            var begun = reader.Exec("BEGIN;");
+            var begun = reader.Begin("BEGIN;");
             if (!begun.IsOk)
             {
                 ReturnReader(reader);
@@ -694,7 +694,7 @@ internal sealed partial class DatabaseSession
         var status = _writer.SetApplyMode(applying);
         if (status.IsOk)
         {
-            status = _writer.Exec("BEGIN IMMEDIATE;");
+            status = _writer.Begin("BEGIN IMMEDIATE;");
         }
 
         if (status.IsOk)

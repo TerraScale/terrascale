@@ -188,6 +188,20 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return status;
     }
 
+    public SqliteStatus Begin(string sql)
+    {
+        if (InTransaction)
+        {
+            var rolledBack = Exec("ROLLBACK;");
+            if (InTransaction)
+            {
+                return rolledBack.IsOk ? new SqliteStatus(SqliteNative.Busy, "an earlier transaction is still open") : rolledBack;
+            }
+        }
+
+        return Exec(sql);
+    }
+
     public SqliteStatus Run(string sql, params ReadOnlySpan<SqlValue> parameters)
     {
         var status = Rent(sql, out var statement, out var cached);
@@ -414,7 +428,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             var status = BindOne(statement, index + 1, source.Positional[index]);
             if (!status.IsOk)
             {
-                return status;
+                return ResourceStatus(status);
             }
         }
 
@@ -429,7 +443,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             var status = BindOne(statement, position, value);
             if (!status.IsOk)
             {
-                return status;
+                return ResourceStatus(status);
             }
         }
 
@@ -454,9 +468,9 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         _collecting = info;
         EnterUserMode();
         SqliteStatus status;
-        SqliteNative.SetProgressHandler(Handle, 1000, &OnProgress, GCHandle<SqliteConnection>.ToIntPtr(_self));
         try
         {
+            SqliteNative.SetProgressHandler(Handle, 1000, &OnProgress, GCHandle<SqliteConnection>.ToIntPtr(_self));
             status = ReadUserRows(statement, rows, columnCount, limitResults && HasUserLimits);
         }
         finally
@@ -596,7 +610,19 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             _ = columns.Add(name[(dot + 1)..]);
         }
 
-        return table is not null && Schema(table) is { UsesImplicitRowId: false } schema && columns.SetEquals(schema.PrimaryKeyColumnNames);
+        if (table is null)
+        {
+            return false;
+        }
+
+        var lookup = Schema(table);
+        return lookup switch
+        {
+            TableSchema { UsesImplicitRowId: false } schema => columns.SetEquals(schema.PrimaryKeyColumnNames),
+            TableSchema => false,
+            TableNotFound => false,
+            SqliteStatus => false,
+        };
     }
 
     public static bool IsReadOnly(nint statement) => SqliteNative.StatementReadOnly(statement) != 0;
