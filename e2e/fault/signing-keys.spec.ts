@@ -1,6 +1,7 @@
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { once } from 'node:events';
+import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { expect, type APIRequestContext, type APIResponse } from '@playwright/test';
@@ -45,6 +46,35 @@ async function unavailable(response: APIResponse) {
   expect(response.status(), text).toBe(503);
   expect((JSON.parse(text) as { error: { code: string } }).error.code).toBe('token_keys_pending');
   expect(response.headers()['retry-after']).toBe('1');
+}
+
+async function isolatedOperator(path: string, payload: unknown, token: string): Promise<{ id: string }> {
+  const user = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub as string;
+  const session = connect('http://127.0.0.1:18781');
+  const stream = session.request({
+    ':method': 'POST', ':path': path, 'content-type': 'application/json', 'x-terrabase-user-id': user,
+    'x-terrabase-peer-credential': readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0],
+  });
+  session.on('error', error => stream.destroy(error));
+  try {
+    const response = once(stream, 'response');
+    stream.end(JSON.stringify(payload));
+    const [headers] = await response;
+    let body = '';
+    for await (const chunk of stream) body += chunk;
+    expect(Number(headers[':status']), body).toBe(201);
+    return JSON.parse(body) as { id: string };
+  } finally {
+    session.close();
+  }
+}
+
+async function ownedProject(request: APIRequestContext, root: string, token: string, label: string): Promise<string> {
+  const direct = await request.post(`${root}/v1/management/organizations`, { headers: { authorization: `Bearer ${token}` }, data: { name: name(label) } });
+  expect(direct.status(), 'a user token cannot create a TerraBase organization directly').toBe(403);
+  expect((JSON.parse(await direct.text()) as { error: { code: string } }).error.code).toBe('forbidden_caller');
+  const organization = await isolatedOperator('/v1/management/organizations', { name: name(label) }, token);
+  return (await isolatedOperator(`/v1/management/organizations/${organization.id}/projects`, { name: name(label) }, token)).id;
 }
 
 async function accepts(request: APIRequestContext, url: string, token: string) {
@@ -141,12 +171,7 @@ test('an open SQL socket keeps its verified token when signing keys drop, and a 
   try {
     await isolated.start();
     await accepts(request, `${root}/v1/management/organizations`, token);
-    const organization = await json<{ id: string }>(await request.post(`${root}/v1/management/organizations`, {
-      headers: { authorization: `Bearer ${token}` }, data: { name: name('signing-org') },
-    }), 201);
-    const createdProject = await json<{ id: string }>(await request.post(`${root}/v1/management/organizations/${organization.id}/projects`, {
-      headers: { authorization: `Bearer ${token}` }, data: { name: name('signing-project') },
-    }), 201);
+    const createdProject = { id: await ownedProject(request, root, token, 'signing-org') };
     const database = await json<{ id: string }>(await request.post(`${root}/v1/projects/${createdProject.id}/databases`, {
       headers: { authorization: `Bearer ${token}` }, data: { name: name('signing-socket') },
     }), 201);
@@ -190,12 +215,8 @@ test('PostgreSQL refuses a bad password with 28P01, reports 57P03 while signing 
   const connections: Awaited<ReturnType<typeof postgres>>[] = [];
   try {
     await isolated.start();
-    const organization = await json<{ id: string }>(await request.post(`${root}/v1/management/organizations`, {
-      headers: { authorization: `Bearer ${token}` }, data: { name: name('signing-pg') },
-    }), 201);
-    const createdProject = await json<{ id: string }>(await request.post(`${root}/v1/management/organizations/${organization.id}/projects`, {
-      headers: { authorization: `Bearer ${token}` }, data: { name: name('signing-pg') },
-    }), 201);
+    await accepts(request, `${root}/v1/management/organizations`, token);
+    const createdProject = { id: await ownedProject(request, root, token, 'signing-pg') };
     const database = await json<{ id: string }>(await request.post(`${root}/v1/projects/${createdProject.id}/databases`, {
       headers: { authorization: `Bearer ${token}` }, data: { name: name('signing-pg') },
     }), 201);

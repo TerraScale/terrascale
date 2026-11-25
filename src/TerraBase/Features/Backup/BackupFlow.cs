@@ -1,3 +1,4 @@
+using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
@@ -22,6 +23,8 @@ internal readonly union BackupPolicyResponse(BackupPolicyBody, InvalidInput, Cre
 internal sealed class BackupFlow(DatabaseAccess access, ManagementService management, IBackupContinuity continuity, SystemDatabase system, TimeProvider time)
 {
     public const string Database = "/v1/projects/{project}/databases/{database}";
+
+    private const int DefaultRetentionDays = 7;
 
     public async ValueTask<BackupTargetResolution> ResolveAsync(
         Caller caller, BackupInput request, string scope, CancellationToken cancellationToken)
@@ -67,6 +70,7 @@ internal sealed class BackupFlow(DatabaseAccess access, ManagementService manage
         var outcome = await ResolveAsync(caller, request, Scopes.DatabasesWrite, cancellationToken);
         return outcome switch
         {
+            ResolvedDatabase resolved when DatabaseAccess.IsNarrowed(resolved.Caller) => DatabaseAccess.NarrowedCreate,
             ResolvedDatabase resolved => target switch
             {
                 DateTimeOffset at => await RestoreIntoAsync(resolved, request, new RestoreTarget(at), cancellationToken),
@@ -166,22 +170,10 @@ internal sealed class BackupFlow(DatabaseAccess access, ManagementService manage
         var outcome = await ResolveAsync(caller, request, write ? Scopes.DatabasesWrite : Scopes.DatabasesRead, cancellationToken);
         return outcome switch
         {
-            ResolvedDatabase resolved when write => await system.WriteAsync(SqlBuild.Statement(
-                "INSERT INTO backup_policies (database_id, retention_days, full_backup_cron, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (database_id) DO UPDATE SET "
-                + "retention_days = excluded.retention_days, full_backup_cron = excluded.full_backup_cron, updated_at = excluded.updated_at",
-                SqlBuild.Id(resolved.Database.Id), SqlBuild.Integer(request.RetentionDays ?? 7), SqlBuild.OptionalText(request.FullBackupCron), SqlBuild.Time(time.GetUtcNow())),
-                ConsistencyMode.Strong, cancellationToken) switch
+            ResolvedDatabase resolved => await management.PlanAsync(resolved.Project, cancellationToken) switch
             {
-                SqlWriteResult => new BackupPolicyBody(resolved.Database.Id.ToString(), request.RetentionDays ?? 7, request.FullBackupCron, time.GetUtcNow()),
-                StateConflict conflict => conflict,
-                BackendUnavailable unavailable => unavailable,
-            },
-            ResolvedDatabase resolved => await system.QueryAsync(SqlBuild.Statement(
-                "SELECT retention_days, full_backup_cron, updated_at FROM backup_policies WHERE database_id = ?", SqlBuild.Id(resolved.Database.Id)), cancellationToken) switch
-            {
-                IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows =>
-                    new BackupPolicyBody(resolved.Database.Id.ToString(), (int)rows[0].IntegerAt(0), rows[0].OptionalTextAt(1), rows[0].TimeAt(2)),
-                IReadOnlyList<IReadOnlyList<SqlValue>> => new BackupPolicyBody(resolved.Database.Id.ToString(), 7, "0 2 * * *", resolved.Database.CreatedAt),
+                string plan when write => await WritePolicyAsync(resolved, request, Plans.BackupRetentionDays(plan), cancellationToken),
+                string plan => await ReadPolicyAsync(resolved, Plans.BackupRetentionDays(plan), cancellationToken),
                 BackendUnavailable unavailable => unavailable,
             },
             InvalidInput invalid => invalid,
@@ -189,6 +181,40 @@ internal sealed class BackupFlow(DatabaseAccess access, ManagementService manage
             CallerForbidden forbidden => forbidden,
             ResourceNotFound missing => missing,
             StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<BackupPolicyResponse> WritePolicyAsync(ResolvedDatabase resolved, BackupInput request, int maximum, CancellationToken cancellationToken)
+    {
+        if (request.RetentionDays is not { } days || days > maximum)
+        {
+            return new InvalidInput(string.Concat("retentionDays is at most ", maximum.ToString(CultureInfo.InvariantCulture), " on this plan"), "invalid_retention");
+        }
+
+        var now = time.GetUtcNow();
+        var outcome = await system.WriteAsync(SqlBuild.Statement(
+            "INSERT INTO backup_policies (database_id, retention_days, full_backup_cron, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (database_id) DO UPDATE SET "
+            + "retention_days = excluded.retention_days, full_backup_cron = excluded.full_backup_cron, updated_at = excluded.updated_at",
+            SqlBuild.Id(resolved.Database.Id), SqlBuild.Integer(days), SqlBuild.OptionalText(request.FullBackupCron), SqlBuild.Time(now)),
+            ConsistencyMode.Strong, cancellationToken);
+        return outcome switch
+        {
+            SqlWriteResult => new BackupPolicyBody(resolved.Database.Id.ToString(), days, request.FullBackupCron, now),
+            StateConflict conflict => conflict,
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<BackupPolicyResponse> ReadPolicyAsync(ResolvedDatabase resolved, int maximum, CancellationToken cancellationToken)
+    {
+        var outcome = await system.QueryAsync(SqlBuild.Statement(
+            "SELECT retention_days, full_backup_cron, updated_at FROM backup_policies WHERE database_id = ?", SqlBuild.Id(resolved.Database.Id)), cancellationToken);
+        return outcome switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows =>
+                new BackupPolicyBody(resolved.Database.Id.ToString(), (int)Math.Min(rows[0].IntegerAt(0), maximum), rows[0].OptionalTextAt(1), rows[0].TimeAt(2)),
+            IReadOnlyList<IReadOnlyList<SqlValue>> => new BackupPolicyBody(resolved.Database.Id.ToString(), Math.Min(DefaultRetentionDays, maximum), "0 2 * * *", resolved.Database.CreatedAt),
             BackendUnavailable unavailable => unavailable,
         };
     }

@@ -61,7 +61,7 @@ internal sealed class ControlSnapshotSync(
             }
         }
 
-        foreach (var database in snapshot.Databases)
+        foreach (var database in snapshot.Databases.OrderBy(static database => database.State == ControlDatabaseState.Deleted ? 0 : 1))
         {
             var applied = database.State == ControlDatabaseState.Deleted
                 ? await DeleteAsync(database, cancellationToken)
@@ -80,20 +80,50 @@ internal sealed class ControlSnapshotSync(
         var outcome = await catalog.GetDatabaseAsync(database.Id, cancellationToken);
         return outcome switch
         {
-            DatabaseRecord record => await catalog.DeleteDatabaseAsync(record, cancellationToken) switch
+            DatabaseRecord record => await catalog.ForgetDatabaseAsync(record, cancellationToken) switch
             {
-                Completed => await databases.DeleteAsync(record.Id, cancellationToken) switch
-                {
-                    Completed => await catalog.PurgeDatabaseAsync(record.Id, cancellationToken) switch
-                    {
-                        Completed => null,
-                        BackendUnavailable error => error,
-                    },
-                    BackendUnavailable error => error,
-                },
+                Completed => await ShredLocalAsync(record.Id, cancellationToken) ?? await CleanupAsync(record.Id, cancellationToken),
+                ResourceNotFound => await ForgottenAsync(record.Id, cancellationToken),
+                StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
                 BackendUnavailable error => error,
             },
-            ResourceNotFound => null,
+            ResourceNotFound => await ForgottenAsync(database.Id, cancellationToken),
+            BackendUnavailable error => error,
+        };
+    }
+
+    private async ValueTask<BackendUnavailable?> ForgottenAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        if (await ShredLocalAsync(databaseId, cancellationToken) is { } failure)
+        {
+            return failure;
+        }
+
+        var row = await catalog.HasDatabaseRowAsync(databaseId, cancellationToken);
+        return row switch
+        {
+            bool present when present => null,
+            bool => await CleanupAsync(databaseId, cancellationToken),
+            BackendUnavailable error => error,
+        };
+    }
+
+    private async ValueTask<BackendUnavailable?> CleanupAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var cleaned = await catalog.CleanupDatabaseAsync(databaseId, purged: true, cancellationToken);
+        return cleaned switch
+        {
+            Completed => null,
+            BackendUnavailable error => error,
+        };
+    }
+
+    private async ValueTask<BackendUnavailable?> ShredLocalAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var local = await databases.DeleteAsync(databaseId, cancellationToken);
+        return local switch
+        {
+            Completed => null,
             BackendUnavailable error => error,
         };
     }
@@ -153,10 +183,12 @@ internal sealed class ControlSnapshotSync(
         }
 
         var record = desired with { Version = existing is null ? 1 : existing.Version + 1 };
-        var outcome = await catalog.UpsertDatabaseAsync(record, cancellationToken);
+        var outcome = await catalog.UpsertDatabaseAsync(record, existing, cancellationToken);
         return outcome switch
         {
             Completed => await OpenAsync(record, cancellationToken),
+            TombstoneKept => null,
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
             BackendUnavailable error => error,
         };
     }
