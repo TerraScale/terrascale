@@ -37,7 +37,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             {
                 foreach (var databaseId in databases.Due())
                 {
-                    await SyncTrackedAsync(databaseId, onDemand: false, cancellationToken);
+                    await SyncTrackedAsync(databaseId, databases.BeginSync(databaseId), cancellationToken);
                 }
             }
         }
@@ -51,9 +51,9 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
     {
         try
         {
-            await foreach (var databaseId in databases.CatchUpRequests.ReadAllAsync(cancellationToken))
+            await foreach (var request in databases.CatchUpRequests.ReadAllAsync(cancellationToken))
             {
-                await SyncTrackedAsync(databaseId, onDemand: true, cancellationToken);
+                await SyncTrackedAsync(request.DatabaseId, databases.BeginSync(request), cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -62,9 +62,9 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         }
     }
 
-    private async Task SyncTrackedAsync(Ulid databaseId, bool onDemand, CancellationToken cancellationToken)
+    private async Task SyncTrackedAsync(Ulid databaseId, ClusterDatabases.TrackedDatabase? tracked, CancellationToken cancellationToken)
     {
-        if (databases.BeginSync(databaseId, onDemand) is not { } tracked)
+        if (tracked is null)
         {
             return;
         }
@@ -77,10 +77,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         }
         finally
         {
-            if (tracked.EndSync(timeProvider.GetUtcNow(), progressed))
-            {
-                _ = databases.RequestCatchUp(databaseId);
-            }
+            databases.EndSync(databaseId, tracked, progressed, requeue: !cancellationToken.IsCancellationRequested);
         }
     }
 
@@ -121,7 +118,8 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         ArgumentNullException.ThrowIfNull(target);
         var started = timeProvider.GetTimestamp();
         var retried = false;
-        for (var page = 0; page < MaxPagesPerPeer && !session.CurrentBookmark.Dominates(target); page++)
+        var page = 0;
+        while (page < MaxPagesPerPeer && !session.CurrentBookmark.Dominates(target))
         {
             var remaining = timeout - timeProvider.GetElapsedTime(started);
             if (remaining <= TimeSpan.Zero)
@@ -145,6 +143,8 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             {
                 break;
             }
+
+            page++;
         }
 
         return session.CurrentBookmark.Dominates(target);
@@ -189,12 +189,20 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
     {
         var totalFetched = 0;
         var totalApplied = 0;
+        var retried = false;
         List<string> failures = [];
-        for (var page = 0; page < MaxPagesPerPeer; page++)
+        var page = 0;
+        while (page < MaxPagesPerPeer)
         {
-            var (fetched, applied, more, failure, _) = await PullAsync(session, nodeId, perPeerTimeout, recoverFromArchive: true, cancellationToken);
+            var (fetched, applied, more, failure, transportReset) = await PullAsync(session, nodeId, perPeerTimeout, recoverFromArchive: true, cancellationToken);
             totalFetched += fetched;
             totalApplied += applied;
+            if (transportReset && !retried)
+            {
+                retried = true;
+                continue;
+            }
+
             if (failure is not null)
             {
                 failures.Add(failure);
@@ -204,6 +212,8 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             {
                 break;
             }
+
+            page++;
         }
 
         return new PeerSyncResult(totalFetched, totalApplied, failures);
@@ -217,7 +227,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         {
             CatchUpResponseMessage page when page.DatabaseId == session.DatabaseId => await ApplyPageAsync(session, page, cancellationToken),
             CatchUpResponseMessage => (0, 0, false, "catch-up response named a different database", false),
-            QuicUnavailable unavailable => (0, 0, false, string.Concat(nodeId, ": ", unavailable.Message), true),
+            QuicUnavailable unavailable => (0, 0, false, string.Concat(nodeId, ": ", unavailable.Message), IsTransient(unavailable)),
             QuicTimeout timeoutError => TimedOutPull(nodeId, timeoutError),
             QuicRemoteError { Code: CommitLogGapCode } gap => await RecoverGapAsync(session, nodeId, gap, recoverFromArchive, cancellationToken),
             QuicRemoteError error => (0, 0, false, string.Concat(nodeId, ": ", error.Message), false),
@@ -234,7 +244,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
 
         if (!recoverFromArchive)
         {
-            _ = databases.RequestCatchUp(session.DatabaseId);
+            _ = databases.RequestCatchUp(session.DatabaseId, target);
             return (0, 0, false, string.Concat(nodeId, ": commit log gap; archive catch-up queued"), false);
         }
 
@@ -246,6 +256,8 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             ClusterUnavailable unavailable => (0, 0, false, string.Concat(nodeId, ": ", unavailable.Message), false),
         };
     }
+
+    private static bool IsTransient(QuicUnavailable unavailable) => unavailable.Code is "peer_unreachable" or "peer_draining" or "stream_reset";
 
     private (int Fetched, int Applied, bool More, string? Failure, bool TransportReset) TimedOutPull(string nodeId, QuicTimeout timeoutError)
     {
@@ -260,7 +272,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             return (0, 0, false, null, false);
         }
 
-        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, cancellationToken);
+        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, requestCatchUpOnBuffered: false, cancellationToken);
         return applied switch
         {
             RemoteApplyOutcome outcome => (page.Entries.Count, outcome.Applied, page.HasMore, null, false),
@@ -328,6 +340,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             return ClusterTopology.PeerForbidden();
         }
 
+        health.ObserveReachable(context.RemoteNodeId);
         var resolved = await databases.ResolveAsync(message.DatabaseId, cancellationToken);
         return resolved switch
         {
@@ -344,7 +357,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             var bookmark = session.CurrentBookmark;
             if (!bookmark.Dominates(message.Have))
             {
-                _ = databases.RequestCatchUp(session.DatabaseId);
+                _ = databases.RequestCatchUp(session.DatabaseId, message.Have);
             }
 
             var budget = Math.Clamp(message.MaxEntries, 1, options.CatchUpPageSize);
