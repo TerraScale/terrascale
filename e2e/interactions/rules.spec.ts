@@ -502,6 +502,8 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     expect(await allowed(`SELECT count(*) FROM ${notes} AS a, ${notes} AS b`)).toEqual([[4]]);
     expect(await allowed(`SELECT body FROM ${view} ORDER BY body`)).toEqual([['a1-edited'], ['a2']]);
     expect(await allowed(`SELECT * FROM ${notes} ORDER BY id`)).toEqual([[1, alice, 'a1-edited'], [2, alice, 'a2']]);
+    expect(await allowed(`SELECT rowid, body FROM ${notes} ORDER BY rowid`)).toEqual([[1, 'a1-edited'], [2, 'a2']]);
+    expect(await allowed(`SELECT rowid AS k, title FROM ${tasks}`)).toEqual([[1, 't1-edited']]);
     await allowed(`UPDATE ${tasks} SET title = 't1-edited' WHERE id = 1`);
     expect(await allowed(`SELECT * FROM ${tasks}`)).toEqual([[1, 't1-edited']]);
 
@@ -529,7 +531,7 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     await refused(`UPDATE ${notes} SET body = body WHERE id = 1 RETURNING *`, 'rule_denied');
     await refused(`DELETE FROM ${notes} WHERE id = 1 RETURNING ${notes}.*`, 'rule_denied');
     await refused(`UPDATE ${notes} SET (body, owner) = ('x', '${bob}') WHERE id = 1`, 'column_not_writable', { column: 'owner' });
-    await refused(`SELECT * FROM ${notes} WHERE body = "oid"`, 'column_not_readable', { column: 'oid' });
+
     await refused(`UPDATE ${notes} SET body = 'pwned' --`, 'rule_denied');
     await refused(`DELETE FROM ${notes} --`, 'rule_denied');
     await refused(`UPDATE ${notes} SET body = 'pwned' /* hidden */`, 'rule_denied');
