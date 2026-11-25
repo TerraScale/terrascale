@@ -114,14 +114,29 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         using var expiry = new CancellationTokenSource(WaitTimeout, clock);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
         var lookup = ring.GetPublicAsync(OidcIssuer.InstanceId, Jwt.KeyId(token), bounded.Token);
-        if (!await WithinAsync(lookup, started, cancellationToken) || lookup.IsCanceled)
+        IReadOnlyList<Es256Key>? signing = null;
+        try
         {
-            _ = DisposeWhenLoadedAsync(lookup);
-            return Busy("Signing keys did not load in time; retry.");
+            if (await WithinAsync(lookup, started, cancellationToken) && !lookup.IsCanceled
+                && lookup.Exception?.InnerException is not ApiException { Code: KeyRing.NoSigningKeysCode })
+            {
+                signing = await lookup;
+            }
+        }
+        finally
+        {
+            if (signing is null)
+            {
+                _ = ReleaseAsync(lookup);
+            }
+        }
+
+        if (signing is null)
+        {
+            return Busy("Signing keys are not available; retry.");
         }
 
         IDictionary<string, object>? claims;
-        var signing = await lookup;
         try
         {
             claims = await Jwt.ValidateAsync(token, signing, "at+jwt", OidcIssuer.Issuer(options).AbsoluteUri, AuthOptions.TerraBaseAudience);
@@ -142,6 +157,11 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
 
         var organization = Claim(claims, PlatformGrants.OrganizationClaim);
         var project = Claim(claims, PlatformGrants.ProjectClaim);
+        if (Spent(started))
+        {
+            return Busy("API key checks are waiting on storage; retry.");
+        }
+
         if (Share(string.Join('\n', keyId, generation, organization, project), deadline => keys.RefusalAsync(keyId, generation, organization, project, deadline))
             is not { } check)
         {
@@ -175,18 +195,23 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return work.IsCompleted;
+        return work.IsCompleted && !Spent(started);
     }
 
-    private static async Task DisposeWhenLoadedAsync(Task<IReadOnlyList<Es256Key>> lookup)
+    private bool Spent(long started) => clock.GetElapsedTime(started) >= WaitTimeout;
+
+    private static async Task ReleaseAsync(Task<IReadOnlyList<Es256Key>> lookup)
     {
         await Task.WhenAny(lookup);
-        if (lookup.IsCompletedSuccessfully)
+        if (!lookup.IsCompletedSuccessfully)
         {
-            foreach (var key in await lookup)
-            {
-                key.Dispose();
-            }
+            _ = lookup.Exception;
+            return;
+        }
+
+        foreach (var key in await lookup)
+        {
+            key.Dispose();
         }
     }
 
