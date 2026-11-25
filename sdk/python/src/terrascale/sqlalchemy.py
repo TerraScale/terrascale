@@ -7,6 +7,8 @@ from sqlalchemy import pool
 from sqlalchemy.dialects.sqlite.pysqlite import SQLiteDialect_pysqlite
 from sqlalchemy.engine.url import URL
 
+from .dbapi import DisconnectError
+
 
 class TerraScaleDialect(SQLiteDialect_pysqlite):
     name = "terrascale"
@@ -39,6 +41,9 @@ class TerraScaleDialect(SQLiteDialect_pysqlite):
 
     def detect_autocommit_setting(self, dbapi_connection: Any) -> bool:
         return dbapi_connection.isolation_level == "AUTOCOMMIT"
+
+    def is_disconnect(self, e: BaseException, connection: Any, cursor: Any) -> bool:
+        return isinstance(e, DisconnectError)
 
     def on_connect(self) -> Any:
         return None

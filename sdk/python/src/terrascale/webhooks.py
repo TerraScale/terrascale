@@ -34,9 +34,12 @@ def verify_webhook(
     delivery_id = lookup["webhook-id"]
     timestamp = lookup["webhook-timestamp"]
     signature = lookup["webhook-signature"]
-    if not timestamp.isdigit():
+    if not timestamp.isascii() or not timestamp.isdecimal():
         raise WebhookVerificationError("invalid_timestamp", "webhook-timestamp must be unix seconds.")
-    unix_seconds = int(timestamp)
+    try:
+        unix_seconds = int(timestamp)
+    except ValueError:
+        raise WebhookVerificationError("invalid_timestamp", "webhook-timestamp must be unix seconds.") from None
     if abs(clock() - unix_seconds) > _TOLERANCE_SECONDS:
         raise WebhookVerificationError(
             "timestamp_out_of_tolerance",

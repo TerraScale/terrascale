@@ -7,7 +7,7 @@ from typing import Any
 from . import _spec
 from .client import TerraScale
 from .errors import CommitUncertainError, SqlError, SqlErrorCodes, TerraScaleError
-from .session import SqlSession
+from .session import SqlSession, SqlSessionConnectionError
 from .sql import StatementResult
 
 apilevel = "2.0"
@@ -25,6 +25,10 @@ class Error(Exception):
 
 
 class InterfaceError(Error):
+    pass
+
+
+class DisconnectError(InterfaceError):
     pass
 
 
@@ -84,7 +88,6 @@ _OPERATIONAL = frozenset(
         SqlErrorCodes.TENANT_BUSY,
         SqlErrorCodes.UNAUTHORIZED,
         SqlErrorCodes.SERIALIZATION_CONFLICT,
-        SqlErrorCodes.SCHEMA_MISMATCH,
     }
 )
 
@@ -92,6 +95,8 @@ _OPERATIONAL = frozenset(
 def _translated(error: TerraScaleError) -> Error | CommitUncertainError:
     if isinstance(error, CommitUncertainError):
         return error
+    if isinstance(error, SqlSessionConnectionError):
+        return DisconnectError(str(error))
     if isinstance(error, SqlError):
         if error.code in _INTEGRITY:
             return IntegrityError(str(error))
@@ -238,12 +243,11 @@ class Connection:
     @isolation_level.setter
     def isolation_level(self, value: str | None) -> None:
         self._check_failure()
+        if value == self._isolation_level:
+            return
         self._isolation_level = value
         session, self._session = self._session, None
-        if value != "SERIALIZABLE" and session is not None:
-            with contextlib.suppress(TerraScaleError):
-                if session.in_transaction:
-                    session.rollback()
+        if session is not None:
             with contextlib.suppress(TerraScaleError):
                 session.close()
 
@@ -297,7 +301,7 @@ class Connection:
 
     def rollback(self) -> None:
         self._check_failure()
-        if self._session is not None and self._session.in_transaction:
+        if self._session is not None and self._session._needs_rollback:
             with contextlib.suppress(TerraScaleError):
                 self._session.rollback()
 

@@ -138,10 +138,12 @@ async with ats.database("main").connect() as session:  # or: session = await db.
 `execute`, `query` and `batch` match the REST methods; outside a transaction each
 call is its own transaction. `transaction(fn)` begins, runs `fn(session)` and
 commits, rolling back and re-raising when `fn` raises. `in_transaction` is the
-last answer's flag. Error frames raise `SqlError` with `status` 0; a refused
-upgrade raises the same HTTP errors as REST. Nothing is resent: when the socket
-drops after a committing request may have been sent, calls in flight and every later
-call raise `CommitUncertainError`; the session stays closed. If no committing request
+last answer's flag. SQL statement errors raise `SqlError` with `status` 0.
+A refused upgrade raises the same HTTP errors as REST. Each frame is sent once and uses
+the client's read timeout (30 seconds by default). SQL responses are limited
+to 64 MiB per WebSocket message. A socket drop after a committing request may
+have been sent or an uncertain write reported by the server raises
+`CommitUncertainError` in pending and future calls. If no committing request
 was sent, a lost open transaction raises `transaction_rolled_back` until `rollback()`
 clears it, after which a call can reconnect. After `close()` the session stays
 closed. Async calls may overlap.
@@ -256,6 +258,11 @@ without `regions` the called region holds it.
 Every region that holds a database accepts writes. REST, the SQL WebSocket and Postgres preserve read-your-writes when the client sends the newest `TerraScale-Bookmark`. `TerraScale-Consistency` is `fast` (the default) or `strong`. All-regions
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds the database in every
 serving region; otherwise set an explicit region list.
+
+The Python SDK tracks bookmarks per database. Assigning `db.bookmark` merges
+it into the tracked bookmark. Passing `bookmark=` to a REST SQL call merges it
+with the tracked bookmark for that request. Each merge retains the highest
+sequence seen per region.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) meters database writes and storage; selecting additional regions does not multiply storage billing. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
