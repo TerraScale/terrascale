@@ -104,7 +104,7 @@ fi
 
 inspect_json() {
   local ref=$1 field=$2 file attempt
-  file=$(mktemp "${tmpdir}/inspect.XXXXXX")
+  file=$(mktemp "${tmpdir}/inspect.XXXXXX") || return 1
   for attempt in 1 2 3; do
     if docker buildx imagetools inspect "$ref" --format "{{json .${field}}}" > "$file"; then
       break
@@ -147,9 +147,11 @@ repository_of() {
 }
 
 inspect_revision() {
-  local image=$1 manifest child digests repo digest live revisions=()
+  local image=$1 manifest child parsed repo kind digest live first rev parsed_lines=() revisions=()
   manifest=$(inspect_json "$image" Manifest) || return 1
-  if ! digests=$(jq -r '
+  if ! parsed=$(jq -r '
+    def digest_pattern:
+      "^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-zA-Z0-9=_-]+\\z";
     def index_type:
       IN("application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json");
     def attestation:
@@ -157,21 +159,38 @@ inspect_revision() {
       and (.platform | type) == "object" and .platform.os == "unknown" and .platform.architecture == "unknown";
     if (.manifests != null) or (.mediaType | index_type) then
       if (.manifests | type) != "array" then error("index without a manifests array") else . end
-      | if (.manifests | all(type == "object" and (.digest | type == "string" and test("^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-zA-Z0-9=_-]+\\z")) and (.mediaType | index_type | not))) then . else error("invalid or nested descriptor") end
+      | if (.manifests | all(type == "object" and (.digest | type == "string" and test(digest_pattern)) and (.mediaType | index_type | not))) then . else error("invalid or nested descriptor") end
       | [.manifests[] | select(attestation | not) | .digest]
-      | if length == 0 then error("no platform descriptors") else .[] end
+      | if length == 0 then error("no platform descriptors") else "index", .[] end
+    elif (.digest | type) == "string" and (.digest | test(digest_pattern)) then
+      "single", .digest
     else
-      empty
+      error("manifest without a valid digest")
     end' "$manifest"); then
-    echo "::error::Live ${service} image ${image} has an invalid image index; refusing to release" >&2
+    echo "::error::Live ${service} image ${image} has an invalid manifest or image index; refusing to release" >&2
     return 1
   fi
-  if [[ -z $digests ]]; then
-    config_revision "$image"
+  repo=$(repository_of "$image") || return 1
+  mapfile -t parsed_lines <<< "$parsed"
+  kind=${parsed_lines[0]:-}
+  if [[ $kind == single ]]; then
+    if (( ${#parsed_lines[@]} != 2 )); then
+      echo "::error::Live ${service} image ${image} returned unexpected manifest metadata; refusing to release" >&2
+      return 1
+    fi
+    digest=${parsed_lines[1]}
+    if [[ $image == *@* && ${image#*@} != "$digest" ]]; then
+      echo "::error::Live ${service} image ${image} returned mismatched manifest digest ${digest}; refusing to release" >&2
+      return 1
+    fi
+    config_revision "${repo}@${digest}"
     return
   fi
-  repo=$(repository_of "$image")
-  while IFS= read -r digest; do
+  if [[ $kind != index ]] || (( ${#parsed_lines[@]} < 2 )); then
+    echo "::error::Live ${service} image ${image} returned unexpected index metadata; refusing to release" >&2
+    return 1
+  fi
+  for digest in "${parsed_lines[@]:1}"; do
     child=$(inspect_json "${repo}@${digest}" Manifest) || return 1
     if ! jq -e '.manifests == null and (.mediaType | IN("application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json") | not)' "$child" > /dev/null 2>&1; then
       echo "::error::Live ${service} image ${image} platform ${digest} resolves to a nested image index; refusing to release" >&2
@@ -179,12 +198,15 @@ inspect_revision() {
     fi
     live=$(config_revision "${repo}@${digest}") || return 1
     revisions+=("$live")
-  done <<< "$digests"
-  if (( $(printf '%s\n' "${revisions[@]}" | sort -u | wc -l) != 1 )); then
-    echo "::error::Live ${service} image ${image} has conflicting org.opencontainers.image.revision labels across its platforms; refusing to release" >&2
-    return 1
-  fi
-  printf '%s\n' "${revisions[0]}"
+  done
+  first=${revisions[0]}
+  for rev in "${revisions[@]}"; do
+    if [[ $rev != "$first" ]]; then
+      echo "::error::Live ${service} image ${image} has conflicting org.opencontainers.image.revision labels across its platforms; refusing to release" >&2
+      return 1
+    fi
+  done
+  printf '%s\n' "$first"
 }
 
 compare_status() {
