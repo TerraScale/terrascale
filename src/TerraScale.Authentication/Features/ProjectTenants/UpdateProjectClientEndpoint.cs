@@ -9,6 +9,8 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenIddictApplicationManager applications, PlatformAuthentication authentication,
     ProjectAuthSettings settings, StepUpProofs proofs) : ProjectTenantEndpoint(tenants, authentication)
 {
+    protected override bool PersonOnly => true;
+
     public override void Configure()
     {
         Put(Root + "/clients/{client_id}");

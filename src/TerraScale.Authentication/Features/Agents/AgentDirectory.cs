@@ -49,7 +49,11 @@ public readonly union ShareOwnerEmailResult(AgentBody, AuthNotFound);
 
 public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, AgentLifecycleEvents events, AttemptLimiter limiter, TimeProvider clock, ILogger<AgentDirectory> logger)
 {
-    public static readonly IReadOnlyList<string> PlatformScopes = ["mcp:read", "mcp:write"];
+    public const string McpRead = "mcp:read";
+
+    public const string McpWrite = "mcp:write";
+
+    public static readonly IReadOnlyList<string> PlatformScopes = [McpRead, McpWrite];
 
     public const int MaxLiveAgentsPerUser = 25;
 

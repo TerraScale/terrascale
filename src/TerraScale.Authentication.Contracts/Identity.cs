@@ -47,6 +47,9 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     public string? ActingAgentId { get; init; }
 
     [JsonIgnore]
+    public IReadOnlyList<string> ActingAgentScopes { get; init; } = [];
+
+    [JsonIgnore]
     public string? Version { get; init; }
 }
 

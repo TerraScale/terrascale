@@ -51,9 +51,18 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
         var liveRead = this.LiveAsync(claims, userId, cancellationToken);
         var agentRead = Claim(claims, LiveAgents.Claim) is { } agentId ? agents.ActiveAsync(agentId, userId, cancellationToken) : null;
         await Task.WhenAll(userRead, liveRead, agentRead ?? Task.CompletedTask);
+        var agent = agentRead is null ? null : await agentRead;
         return await liveRead is { } entry && await userRead is { } user
-            && (agentRead is null || await agentRead is not null)
-            ? user with { AuthenticationBindings = entry.Bindings, SessionId = Claim(claims, "ts_auth_session"), ActingAgentId = Claim(claims, LiveAgents.Claim) }
+            && (agentRead is null || agent is not null)
+            ? user with
+            {
+                AuthenticationBindings = entry.Bindings,
+                SessionId = Claim(claims, "ts_auth_session"),
+                ActingAgentId = Claim(claims, LiveAgents.Claim),
+                ActingAgentScopes = agent is not null && Claim(claims, LiveAgents.ScopeClaim) is { } granted
+                    ? [.. granted.Split(' ', StringSplitOptions.RemoveEmptyEntries).Intersect(agent.Agent.Value.AllowedScopes, StringComparer.Ordinal)]
+                    : [],
+            }
             : null;
     }
 

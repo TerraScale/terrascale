@@ -23,6 +23,17 @@ export async function exchangeAgentToken(request: APIRequestContext, subject: st
   return { status: response.status(), body: await response.json() };
 }
 
+export async function exchangeForProject(request: APIRequestContext, subject: string, organization: string, project: string, scope?: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await request.post(platformTokenEndpoint, {
+    headers: { Authorization: 'Basic ' + Buffer.from(`${dashboardClient}:${dashboardSecret()}`).toString('base64') },
+    form: {
+      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange', subject_token: subject, subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+      organization, ...(project ? { project } : {}), ...(scope ? { scope } : {}),
+    },
+  });
+  return { status: response.status(), body: await response.json() };
+}
+
 export type Jwk = { kty: string; crv: string; x: string; y: string };
 export type Enrollment = { enrollment_id: string; user_code: string; verification_uri: string; verification_uri_complete: string; expires_in: number; interval: number };
 

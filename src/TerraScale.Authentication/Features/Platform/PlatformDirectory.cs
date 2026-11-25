@@ -371,11 +371,11 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             ? Change.Assert(membership)
             : null;
 
-    public Task<ProjectRecord> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken) =>
+    public Task<ProjectRecord> CreateProjectAsync(string userId, string organizationId, string name, string minimumRole, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
             var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken);
-            RequireRole(access, Roles.Member);
+            RequireRole(access, minimumRole);
             await this.FenceAsync(organizationId, null, null, cancellationToken);
             var now = clock.GetUtcNow();
             var project = new ProjectRecord(AuthIds.New(), Instance, organizationId, name, userId, now);

@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Storage;
@@ -32,6 +33,11 @@ public static class TerraBaseScopes
     public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite, AuthRead, AuthWrite, AuthTokensMint];
 
     public static bool IsAuth(string scope) => scope is AuthRead or AuthWrite or AuthTokensMint;
+
+    public static IReadOnlyList<string> Delegated(IEnumerable<string> agentScopes) =>
+        agentScopes.Contains(AgentDirectory.McpWrite, StringComparer.Ordinal) ? [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite]
+        : agentScopes.Contains(AgentDirectory.McpRead, StringComparer.Ordinal) ? [DatabasesRead, SqlRead]
+        : [];
 
     public static IReadOnlyList<string> For(string? projectRole) => projectRole switch
     {

@@ -6,6 +6,8 @@ namespace TerraScale.Authentication.Features.Impersonation;
 public sealed class EndImpersonationEndpoint(TenantDirectory tenants, PlatformAuthentication authentication, Impersonations impersonations)
     : ProjectTenantEndpoint(tenants, authentication)
 {
+    protected override bool PersonOnly => true;
+
     public override void Configure()
     {
         Post(Root + "/impersonations/{impersonation}/end");

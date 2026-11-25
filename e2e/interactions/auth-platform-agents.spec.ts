@@ -1,5 +1,5 @@
 import type { APIRequestContext } from '@playwright/test';
-import { Agent, assertion, claims, dashboardSecret, exchangeAgentToken, platformTokenEndpoint } from '../support/agents';
+import { Agent, assertion, claims, dashboardSecret, exchangeAgentToken, exchangeForProject, platformTokenEndpoint } from '../support/agents';
 import { expect, test } from '../support/audit';
 import { signInToken } from '../support/auth-management';
 import { hostedReady } from '../support/hosted';
@@ -10,11 +10,11 @@ import { saveSecret } from '../support/state';
 
 const invalidGrant = { status: 400, body: expect.objectContaining({ error: 'invalid_grant' }) };
 
-async function agentToken(request: APIRequestContext, agent: Agent, agentId: string, kid: string, subject = 'owner'): Promise<{ status: number; body: Record<string, unknown> }> {
+async function agentToken(request: APIRequestContext, agent: Agent, agentId: string, kid: string, subject = 'owner', scope = 'mcp:read mcp:write'): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await request.post(platformTokenEndpoint, {
     form: {
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: assertion(agent.key.privateKey, kid, agentId, platformTokenEndpoint),
-      scope: 'mcp:read mcp:write', requested_subject: subject,
+      scope, requested_subject: subject,
     },
   });
   return { status: response.status(), body: await response.json() };
@@ -54,6 +54,7 @@ test('a TerraScale account enrolls an agent, the dashboard exchanges its token f
     const approved = await agent.poll();
     expect(approved.status).toBe(200);
     agentId = approved.body.agent_id!;
+    const approvedAgent = agentId;
     const kid = approved.body.kid!;
 
     const granted = await agentToken(request, agent, agentId, kid);
@@ -102,6 +103,71 @@ test('a TerraScale account enrolls an agent, the dashboard exchanges its token f
       const userInfo = await request.get(auth + '/terrascale/oauth/userinfo', { headers: { Authorization: 'Bearer ' + exchanged } });
       expect(userInfo.status()).toBe(200);
       expect((await userInfo.json()).sub).toBe(ownerId);
+      expect(acting.agent_scope).toBe('mcp:read mcp:write');
+      expect([acting.aud].flat()).toEqual([acting.iss]);
+
+      const databases = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases`;
+      expect((await request.get(databases, { headers: { Authorization: 'Bearer ' + exchanged } })).status()).toBe(401);
+      expect(await exchangeForProject(request, exchanged, current.organizationId, ''))
+        .toEqual({ status: 400, body: expect.objectContaining({ error: 'invalid_target' }) });
+
+      const projectToken = await exchangeForProject(request, exchanged, current.organizationId, current.projectId);
+      expect(projectToken.status).toBe(200);
+      const projectAccess = projectToken.body.access_token as string;
+      saveSecret('platform-agent-project-token', projectAccess);
+      expect((await request.get(databases, { headers: { Authorization: 'Bearer ' + projectAccess } })).status()).toBe(200);
+      const projectClaims = claims(projectAccess);
+      expect(projectClaims.exp as number).toBeLessThanOrEqual(acting.exp as number);
+      expect(projectClaims).toMatchObject({ sub: ownerId, agent_id: agentId, act: { sub: agentId }, org_id: current.organizationId, project_id: current.projectId });
+      expect((projectClaims.scope as string).split(' ').sort()).toEqual(['databases:read', 'databases:write', 'sql:read', 'sql:write']);
+      expect(await exchangeForProject(request, exchanged, current.organizationId, current.projectId, 'auth:read'))
+        .toEqual({ status: 400, body: expect.objectContaining({ error: 'invalid_scope' }) });
+
+      const readGranted = await agentToken(request, agent, approvedAgent, kid, 'owner', 'mcp:read');
+      expect(readGranted.status).toBe(200);
+      const readToken = readGranted.body.access_token as string;
+      saveSecret('platform-agent-read-token', readToken);
+      const readOwner = await exchangeAgentToken(request, readToken);
+      expect(readOwner.status).toBe(200);
+      const readExchanged = readOwner.body.access_token as string;
+      saveSecret('platform-agent-read-owner-token', readExchanged);
+      expect(claims(readExchanged)).toMatchObject({ agent_id: agentId, act: { sub: agentId }, agent_scope: 'mcp:read' });
+      expect((await request.get(databases, { headers: { Authorization: 'Bearer ' + readExchanged } })).status()).toBe(401);
+      const readProject = await exchangeForProject(request, readExchanged, current.organizationId, current.projectId);
+      expect(readProject.status).toBe(200);
+      const readProjectAccess = readProject.body.access_token as string;
+      saveSecret('platform-agent-read-project-token', readProjectAccess);
+      expect((claims(readProjectAccess).scope as string).split(' ').sort()).toEqual(['databases:read', 'sql:read']);
+      for (const scope of ['databases:write', 'sql:write', 'auth:write']) {
+        expect(await exchangeForProject(request, readExchanged, current.organizationId, current.projectId, scope))
+          .toEqual({ status: 400, body: expect.objectContaining({ error: 'invalid_scope' }) });
+      }
+
+      const actingHeaders = { Authorization: 'Bearer ' + exchanged, Origin: auth };
+      const projectRoot = `${root}/organizations/${current.organizationId}/projects/${current.projectId}`;
+      const refusedMutations = [
+        request.post(`${projectRoot}/api-keys`, { headers: actingHeaders, data: { name: 'agent key', scopes: ['sql:read'] } }),
+        request.post(`${root}/organizations/${current.organizationId}/api-keys`, { headers: actingHeaders, data: { name: 'agent key', scopes: ['sql:read'] } }),
+        request.delete(projectRoot, { headers: actingHeaders }),
+        request.post(`${root}/account/sign-out`, { headers: actingHeaders }),
+        request.post(`${root}/organizations`, { headers: actingHeaders, data: { name: 'Agent organization' } }),
+        request.put(`${projectRoot}/members/${ownerId}`, { headers: actingHeaders, data: { role: 'viewer' } }),
+        request.delete(`${root}/me/agents/${agentId}`, { headers: actingHeaders }),
+        request.put(`${auth}/v1/${current.projectId}/providers/google`, { headers: actingHeaders, data: { client_id: 'agent', client_secret: 'agent' } }),
+        request.patch(`${auth}/v1/${current.projectId}/users/${ownerId}`, { headers: actingHeaders, data: { custom_claims: { role: 'admin' } } }),
+      ];
+      for (const refused of await Promise.all(refusedMutations)) {
+        expect(refused.status()).toBe(403);
+        expect((await refused.json()).error.code).toBe('agent_forbidden');
+      }
+      expect((await request.get(`${root}/organizations/${current.organizationId}/projects`, { headers: { Authorization: 'Bearer ' + exchanged } })).status()).toBe(200);
+      const projectName = (await (await request.get(projectRoot, { headers: owned })).json()).name as string;
+      const readRename = await request.patch(projectRoot, { headers: { Authorization: 'Bearer ' + readExchanged }, data: { name: projectName } });
+      expect(readRename.status()).toBe(403);
+      expect((await readRename.json()).error.code).toBe('agent_forbidden');
+      const writeRename = await request.patch(projectRoot, { headers: { Authorization: 'Bearer ' + exchanged }, data: { name: projectName } });
+      expect(writeRename.status()).toBe(200);
+      expect((await writeRename.json()).name).toBe(projectName);
     });
 
     expect((await request.delete(`${root}/me/agents/${agentId}`, { headers: owned })).status()).toBe(204);
@@ -136,4 +202,15 @@ test('a TerraScale account enrolls an agent, the dashboard exchanges its token f
     }
     await account.close();
   }
+});
+
+test('internal TerraScale projects are never customer end-user tenants', async ({ request }) => {
+  for (const project of ['00000000000000000000000002', '00000000000000000000000005']) {
+    const signUp = await request.post(`${auth}/ui/${project}/sign-up`, { headers: { Origin: auth }, form: { email: 'nobody@example.com', password: 'not-a-real-password-1' } });
+    expect(signUp.status()).toBe(404);
+    expect((await request.get(`${auth}/ui/${project}/sign-in`)).status()).toBe(404);
+    expect((await request.get(`${auth}/${project}/.well-known/jwks.json`)).status()).toBe(404);
+    expect((await request.get(`${auth}/${project}/.well-known/openid-configuration`)).status()).toBe(404);
+  }
+  expect((await request.get(`${auth}/terrascale/.well-known/jwks.json`)).status()).toBe(200);
 });

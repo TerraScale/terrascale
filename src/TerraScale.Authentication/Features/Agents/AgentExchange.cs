@@ -19,9 +19,13 @@ namespace TerraScale.Authentication.Features.Agents;
 
 public sealed record LiveAgent(Versioned<AgentRecord> Agent, Versioned<UserRecord> Owner);
 
+public sealed record ActingAgent(string Id, IReadOnlyList<string> Scopes);
+
 public sealed class LiveAgents(AuthData data, TimeProvider clock)
 {
     public const string Claim = "agent_id";
+
+    public const string ScopeClaim = "agent_scope";
 
     public async Task<LiveAgent?> ActiveAsync(string agentId, string ownerId, CancellationToken cancellationToken)
     {
@@ -82,7 +86,7 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
             return OidcResults.Forbid(OidcErrors.InvalidRequest, $"Send grant_type, subject_token and subject_token_type {SubjectTokenType}; nothing else.");
         }
 
-        if (await this.ValidateAsync(subject) is not var (ownerId, agentId, expires))
+        if (await this.ValidateAsync(subject) is not var (ownerId, agentId, scopes, expires))
         {
             return this.Refuse(null, "subject token signature, issuer, type or claims");
         }
@@ -102,11 +106,11 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
         context.Items[Fence] = current;
         logger.ZLogInformation($"Agent token exchanged for agent {agentId} of owner {ownerId}");
         return OidcResults.SignIn(options, current.Owner.Value with { MultiFactor = false, MfaMethod = null, SessionId = null }, current.Agent.Value.CreatedAt, [],
-            OidcIssuer.SignInAudiences(options),
-            agentId: agentId, lifetime: lifetime);
+            [OidcIssuer.Issuer(options).AbsoluteUri],
+            agent: new(agentId, [.. scopes.Intersect(current.Agent.Value.AllowedScopes, StringComparer.Ordinal)]), lifetime: lifetime);
     }
 
-    private async Task<(string Owner, string Agent, DateTimeOffset Expires)?> ValidateAsync(string subject)
+    private async Task<(string Owner, string Agent, IReadOnlyList<string> Scopes, DateTimeOffset Expires)?> ValidateAsync(string subject)
     {
         if (!Handler.CanReadToken(subject))
         {
@@ -138,7 +142,8 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
             return Text(claims, "token_use") == AgentTokens.TokenUse && Text(claims, "actor_type") == "agent" && !claims.TryGetProperty("owner_sub", out _)
                 && Text(claims, LiveAgents.Claim) is { } agentId && Text(claims, JwtRegisteredClaimNames.Sub) is { } ownerId && ownerId != agentId
                 && claims.TryGetProperty("act", out var act) && act.ValueKind == JsonValueKind.Object && Text(act, JwtRegisteredClaimNames.Sub) == agentId
-                    ? (ownerId, agentId, new DateTimeOffset(token.ValidTo, TimeSpan.Zero))
+                && Text(claims, Claims.Scope) is { } scope
+                    ? (ownerId, agentId, scope.Split(' ', StringSplitOptions.RemoveEmptyEntries), new DateTimeOffset(token.ValidTo, TimeSpan.Zero))
                     : null;
         }
         catch (Exception error) when (error is JsonException or FormatException or ArgumentException)

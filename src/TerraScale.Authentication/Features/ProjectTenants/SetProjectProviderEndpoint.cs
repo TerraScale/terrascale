@@ -8,6 +8,8 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 public sealed class SetProjectProviderEndpoint(TenantDirectory tenants, ProjectAuthSettings settings, AuthOptions options, PlatformAuthentication authentication,
     ILogger<SetProjectProviderEndpoint> logger) : ProjectTenantEndpoint(tenants, authentication)
 {
+    protected override bool PersonOnly => true;
+
     public override void Configure()
     {
         Put(Root + "/providers/{provider}");
