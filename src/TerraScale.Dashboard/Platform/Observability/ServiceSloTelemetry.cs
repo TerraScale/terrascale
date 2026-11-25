@@ -2,6 +2,8 @@ using System.Data;
 using System.Globalization;
 using System.Net;
 using Microsoft.AspNetCore.Http.Features;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 
 namespace TerraScale.Dashboard.Platform.Observability
 {
@@ -93,6 +95,7 @@ namespace TerraScale.Dashboard.Platform.Observability
             }
 
             var status = error is AccountAccessException access ? access.StatusCode : error is DBConcurrencyException ? StatusCodes.Status412PreconditionFailed :
+                error is TerraBaseSqlException sql ? DashboardStorageOutcomes.Classify(sql).Status :
                 error is HttpRequestException { StatusCode: { } code } ? (int)code : 503;
             if (status is >= 500 or 408)
             {

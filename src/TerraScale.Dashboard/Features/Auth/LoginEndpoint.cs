@@ -2,7 +2,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    public sealed class LoginEndpoint(DashboardSessions sessions) : EndpointWithoutRequest<IResult>
+    public sealed class LoginEndpoint(DashboardSessions sessions, EntryRateLimits limits) : EndpointWithoutRequest<IResult>
     {
         public override void Configure()
         {
@@ -11,6 +11,6 @@ namespace TerraScale.Dashboard.Features.Auth
         }
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-            new(AuthEndpoints.StartAsync(HttpContext, sessions));
+            limits.AdmitSignIn(HttpContext) ? new(AuthEndpoints.StartAsync(HttpContext, sessions)) : new(EntryRateLimits.Refuse(HttpContext));
     }
 }

@@ -103,14 +103,14 @@ namespace TerraScale.Dashboard.Features.Auth
             var refresh = tokens.TryGetProperty("refresh_token", out var refreshValue) ? refreshValue.GetString() : null;
             var user = await UserInfoAsync(Client(), access, cancellationToken);
             var email = user.Email?.Trim().ToLowerInvariant() ?? "";
-            if (string.IsNullOrWhiteSpace(user.Subject) || user.EmailVerified != true || email.Length is 0 or > 254 ||
+            if (string.IsNullOrWhiteSpace(user.Subject) || user.EmailVerified != true || email.Length is 0 or > 254 || user.IsAnonymous == true || user.Actor is not null ||
                 previous is not null && (previous.UserId != user.Subject || previous.Email != email))
             {
                 throw new SignInRejectedException();
             }
 
             return new(user.Subject, email, email, access, string.IsNullOrWhiteSpace(refresh) ? previous?.RefreshToken : refresh,
-                AccessTokenExpiry(access, TrustedIssuer((await MetadataAsync(Client(), cancellationToken)).Issuer), await SigningKeysAsync(Client(), cancellationToken)));
+                AccessTokenExpiry(access, TrustedIssuer((await MetadataAsync(Client(), cancellationToken)).Issuer), await SigningKeysAsync(Client(), access, cancellationToken)));
         }
 
         private async Task<CliAnswer> CliPostAsync(string endpoint, Dictionary<string, string> form, CancellationToken cancellationToken)

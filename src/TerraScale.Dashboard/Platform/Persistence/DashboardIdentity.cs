@@ -1,48 +1,111 @@
+using System.Globalization;
+using System.Text;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
     public interface IDashboardIdentity
     {
+        DashboardCredentials Current { get; }
+
         Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken);
     }
 
-    public sealed class DashboardIdentity(Func<string, string?> environment) : IDashboardIdentity
+    public sealed class DashboardIdentity(Func<string, string?> environment, TimeProvider time) : IDashboardIdentity
     {
         public const string AuthClientSecretName = "TS_AUTH_DASHBOARD_CLIENT_SECRET";
         public const string SessionEncryptionKeyName = "TS_DASHBOARD_SESSION_ENCRYPTION_KEY";
         public const string StripeSecretKeyName = "STRIPE_SECRET_KEY";
         public const string StripeWebhookSecretName = "STRIPE_WEBHOOK_SECRET";
         public const string TerraBasePeerSecretName = "TERRABASE_PEER_SECRET";
+        private const string CallerKeyFileName = "TS_DASHBOARD_TERRABASE_KEY_FILE";
+        private const string RequestProofKeyFileName = "TERRASCALE_REQUEST_PROOF_KEY_FILE";
 
-        private readonly Lazy<CallerCredential?> caller = new(() =>
-            environment("TS_DASHBOARD_TERRABASE_KEY_FILE") is { Length: > 0 } path
-                ? new CallerCredential("dashboard", File.ReadAllText(path), TimeProvider.System) : null);
+        private static readonly TimeSpan Recheck = TimeSpan.FromSeconds(30);
+        private static readonly string[] SecretNames = [AuthClientSecretName, SessionEncryptionKeyName, StripeSecretKeyName, StripeWebhookSecretName, TerraBasePeerSecretName];
+        private readonly Lock gate = new();
+        private Snapshot? snapshot;
+        private Task? refreshing;
 
-        public DashboardIdentity() : this(Environment.GetEnvironmentVariable) { }
+        public DashboardIdentity() : this(Environment.GetEnvironmentVariable, TimeProvider.System) { }
 
-        public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
+        public DashboardCredentials Current =>
+            Volatile.Read(ref snapshot)?.Credentials ?? throw new InvalidOperationException("Dashboard credentials are read at startup before any request is served.");
+
+        public async Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
         {
-            var credentials = new DashboardCredentials(Read(AuthClientSecretName), Read(SessionEncryptionKeyName),
-                new(Read(StripeSecretKeyName), Read(StripeWebhookSecretName)), Read(TerraBasePeerSecretName))
+            if (!Fresh(Volatile.Read(ref snapshot)))
             {
-                Caller = caller.Value,
-                RequestProofKey = environment("TERRASCALE_REQUEST_PROOF_KEY_FILE") is { Length: > 0 } path
-                    ? File.ReadAllText(path).TrimEnd('\r', '\n')
-                    : Optional("TERRASCALE_REQUEST_PROOF_KEY") ?? Read(TerraBasePeerSecretName),
+                await RefreshAsync().WaitAsync(cancellationToken);
+            }
+
+            return Current;
+        }
+
+        private bool Fresh(Snapshot? current) => current is not null && time.GetUtcNow() - current.CheckedAt < Recheck;
+
+        private Task RefreshAsync()
+        {
+            lock (gate)
+            {
+                if (refreshing is { IsCompleted: false } running)
+                {
+                    return running;
+                }
+
+                return Fresh(snapshot) ? Task.CompletedTask : refreshing = ReloadAsync();
+            }
+        }
+
+        private async Task ReloadAsync()
+        {
+            await Task.Yield();
+            var stamp = Stamp();
+            var current = Volatile.Read(ref snapshot);
+            var credentials = current is not null && current.Stamp == stamp ? current.Credentials : await LoadAsync();
+            Volatile.Write(ref snapshot, new Snapshot(stamp, time.GetUtcNow(), credentials));
+        }
+
+        private async Task<DashboardCredentials> LoadAsync()
+        {
+            var credentials = new DashboardCredentials(await ReadAsync(AuthClientSecretName), await ReadAsync(SessionEncryptionKeyName),
+                new(await ReadAsync(StripeSecretKeyName), await ReadAsync(StripeWebhookSecretName)), await ReadAsync(TerraBasePeerSecretName))
+            {
+                Caller = environment(CallerKeyFileName) is { Length: > 0 } callerPath
+                    ? new CallerCredential("dashboard", await File.ReadAllTextAsync(callerPath), time) : null,
+                RequestProofKey = environment(RequestProofKeyFileName) is { Length: > 0 } path
+                    ? (await File.ReadAllTextAsync(path)).TrimEnd('\r', '\n')
+                    : await OptionalAsync("TERRASCALE_REQUEST_PROOF_KEY") ?? await ReadAsync(TerraBasePeerSecretName),
             };
             credentials.Validate();
-            return Task.FromResult(credentials);
+            return credentials;
         }
 
-        private string Read(string name) => Optional(name) ?? throw new IOException($"Dashboard secret {name} is not set.");
+        private string Stamp()
+        {
+            var stamp = new StringBuilder();
+            foreach (var path in SecretNames.Select(name => environment(name + "_FILE")).Append(environment(CallerKeyFileName)).Append(environment(RequestProofKeyFileName)))
+            {
+                if (path is { Length: > 0 })
+                {
+                    var file = new FileInfo(path);
+                    stamp.Append(CultureInfo.InvariantCulture, $"{path}:{(file.Exists ? file.LastWriteTimeUtc.Ticks : 0)}:{(file.Exists ? file.Length : -1)};");
+                }
+            }
 
-        private string? Optional(string name)
+            return stamp.ToString();
+        }
+
+        private async Task<string> ReadAsync(string name) => await OptionalAsync(name) ?? throw new IOException($"Dashboard secret {name} is not set.");
+
+        private async Task<string?> OptionalAsync(string name)
         {
             return environment(name) is { Length: > 0 } value ? value
-            : environment(name + "_FILE") is { Length: > 0 } path ? File.ReadAllText(path).TrimEnd('\r', '\n')
+            : environment(name + "_FILE") is { Length: > 0 } path ? (await File.ReadAllTextAsync(path)).TrimEnd('\r', '\n')
             : null;
         }
+
+        private sealed record Snapshot(string Stamp, DateTimeOffset CheckedAt, DashboardCredentials Credentials);
     }
 
     public sealed record DashboardCredentials(string AuthClientSecret, string SessionEncryptionKey, StripeCredentials Stripe, string TerraBasePeerSecret)

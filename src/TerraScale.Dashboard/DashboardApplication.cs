@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using TerraScale.Endpoints;
 using RequestIdentity = TerraScale.Dashboard.Platform.Http.RequestIdentity;
 using ExceptionFrames = TerraScale.Dashboard.Platform.Http.ExceptionFrames;
@@ -48,8 +49,6 @@ namespace TerraScale.Dashboard
 {
     public static class DashboardApplication
     {
-        private const string ConflictRetry = "This changed in another tab or request at the same time. Try again.";
-
         public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configureTestHost = null)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -78,13 +77,15 @@ namespace TerraScale.Dashboard
                 problem.ProblemDetails.Extensions["requestId"] = problem.HttpContext.TraceIdentifier);
             builder.Services.AddSingleton<ServiceSloTelemetry>();
             builder.Services.AddSingleton(TimeProvider.System);
-            builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
+            builder.Services.AddSingleton<IDashboardIdentity>(provider => new DashboardIdentity(Environment.GetEnvironmentVariable, provider.GetRequiredService<TimeProvider>()));
             builder.Services.AddDashboardStorage();
             builder.Services.AddSingleton<TerraBasePlanSync>();
             builder.Services.AddSingleton<DashboardDbUpRunner>();
             builder.Services.AddHostedService(services => services.GetRequiredService<DashboardDbUpRunner>());
             builder.Services.AddSingleton<DependencyReadiness>();
             builder.Services.AddSingleton<DashboardSessions>();
+            builder.Services.AddSingleton<EntryRateLimits>();
+            builder.Services.AddSingleton<McpRejectedBearers>();
             builder.Services.AddAccountFeatures();
             builder.Services.AddAllowanceNotifications();
             builder.Services.AddSupport();
@@ -414,6 +415,18 @@ namespace TerraScale.Dashboard
 
                     await RequestError.Response(context, error.StatusCode, error.Message).ExecuteAsync(context);
                 }
+                catch (Exception error) when (DashboardStorageOutcomes.Find(error) is { } storage && !context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+                {
+                    var refusal = DashboardStorageOutcomes.Classify(storage);
+                    app.Logger.DashboardStorageRefused((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", storage.Code, refusal.Status);
+                    context.Response.Clear();
+                    if (refusal.RetryAfter is { } retryAfter)
+                    {
+                        context.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    await RequestError.Response(context, refusal.Status, refusal.Message).ExecuteAsync(context);
+                }
                 catch (Exception error) when (error is HttpRequestException or IOException or JsonException or TimeoutException or Stripe.StripeException ||
                                               error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
                 {
@@ -438,7 +451,7 @@ namespace TerraScale.Dashboard
                     app.Logger.DashboardRequestConflicted((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]");
                     context.Response.Clear();
                     context.Response.Headers.RetryAfter = "1";
-                    await RequestError.Response(context, StatusCodes.Status409Conflict, ConflictRetry).ExecuteAsync(context);
+                    await RequestError.Response(context, StatusCodes.Status409Conflict, DashboardStorageOutcomes.ConflictMessage).ExecuteAsync(context);
                 }
                 catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
                 {
