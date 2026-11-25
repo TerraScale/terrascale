@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Features.Auth
         Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task<TsAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
-        Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
+        Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, TimeSpan budget, CancellationToken cancellationToken);
         Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken);
         Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
@@ -118,11 +118,13 @@ namespace TerraScale.Dashboard.Features.Auth
             }
         }
 
-        public async Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
+        public async Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, TimeSpan budget, CancellationToken cancellationToken)
         {
+            using var deadline = new CancellationTokenSource(budget, time);
+            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
             try
             {
-                return await CreateProjectAsync(session, organizationId, name, cancellationToken);
+                return await CreateProjectAsync(session, organizationId, name, bounded.Token);
             }
             catch (AccountAccessException refused)
             {

@@ -26,6 +26,8 @@ namespace TerraScale.Dashboard.Features.Organizations
         }
 
         public const string UnconfirmedProjectMessage = "Project creation could not be confirmed. Reload the project list before trying again.";
+        private static readonly TimeSpan CreateBudget = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan ReservationMargin = TimeSpan.FromMinutes(1);
 
         public async Task<ProjectCreateResult> CreateProjectAsync(AccountContext context, string name,
             IReadOnlyList<string>? regions, CancellationToken cancellationToken)
@@ -33,18 +35,26 @@ namespace TerraScale.Dashboard.Features.Organizations
             context = await FreshManagerAsync(context, cancellationToken);
             name = AccountService.ValidName(name);
             var chosen = await LocationsAsync(regions, cancellationToken);
-            var (reserved, reservation) = await ReserveSlotAsync(context, name, cancellationToken);
+            var (reserved, slot) = await ReserveSlotAsync(context, name, cancellationToken);
             var organizationId = reserved.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
-            var creation = await platform.TryCreateProjectAsync(reserved.Session, organizationId, name, cancellationToken);
+            var remaining = slot.ExpiresAt - ReservationMargin - time.GetUtcNow();
+            if (remaining <= TimeSpan.Zero)
+            {
+                await reservations.ReleaseAsync(slot.ReservationId, CancellationToken.None);
+                throw new TimeoutException("Project creation could not start before its reserved slot expired.");
+            }
+
+            var budget = remaining < CreateBudget ? remaining : CreateBudget;
+            var creation = await platform.TryCreateProjectAsync(reserved.Session, organizationId, name, budget, cancellationToken);
             return creation switch
             {
-                TsAuthPlatformProject created => await AdoptAsync(reserved, reservation, created, name, chosen, cancellationToken),
-                ProjectCreationRefused refused => await RefusedAsync(reservation, refused),
-                ProjectCreationUnknown unknown => Unconfirmed(unknown),
+                TsAuthPlatformProject created => await AdoptAsync(reserved, slot.ReservationId, created, name, chosen, cancellationToken),
+                ProjectCreationRefused refused => await RefusedAsync(slot.ReservationId, refused),
+                ProjectCreationUnknown unknown => Unconfirmed(unknown.Failure),
             };
         }
 
-        private async Task<(AccountContext Context, string Reservation)> ReserveSlotAsync(AccountContext context, string name, CancellationToken cancellationToken)
+        private async Task<(AccountContext Context, ProjectSlotReserved Slot)> ReserveSlotAsync(AccountContext context, string name, CancellationToken cancellationToken)
         {
             var organizationId = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
             for (var attempt = 0; ; attempt++)
@@ -57,21 +67,21 @@ namespace TerraScale.Dashboard.Features.Organizations
                 CanCreate(organization, fresh.UserId, name);
                 var limit = ProjectLimit(organization);
                 var outcome = await reservations.ReserveAsync(organizationId, version, organization.Projects.Keys, limit, cancellationToken);
-                (string? Reservation, int? Full) picked = outcome switch
+                (ProjectSlotReserved? Slot, int? Full) picked = outcome switch
                 {
-                    ProjectSlotReserved slot => (slot.ReservationId, null),
+                    ProjectSlotReserved slot => (slot, null),
                     ProjectSlotsFull full => (null, full.Limit),
                     ProjectInventoryChanged => (null, null),
                 };
-                var (reservation, fullLimit) = picked;
+                var (reserved, fullLimit) = picked;
                 if (fullLimit is { } capped)
                 {
                     throw ProjectLimitReached(capped);
                 }
 
-                if (reservation is { } id)
+                if (reserved is { } held)
                 {
-                    return (fresh, id);
+                    return (fresh, held);
                 }
 
                 if (attempt >= 4)
@@ -86,7 +96,25 @@ namespace TerraScale.Dashboard.Features.Organizations
         private async Task<ProjectCreateResult> AdoptAsync(AccountContext context, string reservation, TsAuthPlatformProject created, string name,
             List<string> regions, CancellationToken cancellationToken)
         {
-            await reservations.BindAsync(reservation, created.Id, cancellationToken);
+            try
+            {
+                return await SaveCreatedAsync(context, reservation, created, name, regions, cancellationToken);
+            }
+            catch (Exception error) when (error is DBConcurrencyException or HttpRequestException or IOException or TimeoutException or System.Text.Json.JsonException ||
+                                          error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                return Unconfirmed(StorageFailure.Describe(error));
+            }
+        }
+
+        private async Task<ProjectCreateResult> SaveCreatedAsync(AccountContext context, string reservation, TsAuthPlatformProject created, string name,
+            List<string> regions, CancellationToken cancellationToken)
+        {
+            if (!await reservations.BindAsync(reservation, created.Id, cancellationToken))
+            {
+                return Unconfirmed("reservation expired before the created project was bound");
+            }
+
             var project = new ProjectRecord
             {
                 Id = created.Id,
@@ -118,9 +146,9 @@ namespace TerraScale.Dashboard.Features.Organizations
             throw new AccountAccessException(refused.Message, refused.StatusCode, refused.Code);
         }
 
-        private ProjectCreationUnconfirmed Unconfirmed(ProjectCreationUnknown unknown)
+        private ProjectCreationUnconfirmed Unconfirmed(string failure)
         {
-            logger.ProjectCreationUnconfirmed(unknown.Failure);
+            logger.ProjectCreationUnconfirmed(failure);
             return new ProjectCreationUnconfirmed(UnconfirmedProjectMessage);
         }
 

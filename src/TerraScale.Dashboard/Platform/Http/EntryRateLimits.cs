@@ -11,28 +11,26 @@ public sealed class EntryRateLimits(TimeProvider time)
     private readonly ClientBuckets mcp = new(time, 600, 300);
     private readonly ClientBuckets mcpRejections = new(time, 60, 30);
 
-    public bool AdmitSignIn(HttpContext context) => signIn.TryTake(ClientKey(context));
+    public bool AdmitSignIn(HttpContext context) => signIn.Take(ClientKey(context)) is not null;
 
-    public bool AdmitRegistration(HttpContext context) => registration.TryTake(ClientKey(context));
+    public bool AdmitRegistration(HttpContext context) => registration.Take(ClientKey(context)) is not null;
 
-    public bool AdmitMcp(HttpContext context)
+    public McpAdmission? AdmitMcp(HttpContext context)
     {
         var client = ClientKey(context);
-        if (!mcpRejections.TryTake(client))
+        if (mcpRejections.Take(client) is not { } rejection)
         {
-            return false;
+            return null;
         }
 
-        if (mcp.TryTake(client))
+        if (mcp.Take(client) is null)
         {
-            return true;
+            mcpRejections.Refund(rejection);
+            return null;
         }
 
-        mcpRejections.Refund(client);
-        return false;
+        return new McpAdmission(() => mcpRejections.Refund(rejection));
     }
-
-    public void RefundMcpRejection(HttpContext context) => mcpRejections.Refund(ClientKey(context));
 
     public static IResult Refuse(HttpContext context)
     {
@@ -63,39 +61,35 @@ public sealed class EntryRateLimits(TimeProvider time)
         private readonly Bucket overflow = new(burst * 8.0, time.GetUtcNow());
         private DateTimeOffset swept;
 
-        public bool TryTake(string client)
+        public Bucket? Take(string client)
         {
             lock (gate)
             {
-                var bucket = Refilled(client);
+                var now = time.GetUtcNow();
+                var bucket = Find(client, now);
+                Refill(bucket, now, Limit(bucket), Rate(bucket));
                 if (bucket.Tokens < 1)
                 {
-                    return false;
+                    return null;
                 }
 
                 bucket.Tokens -= 1;
-                return true;
+                return bucket;
             }
         }
 
-        public void Refund(string client)
+        public void Refund(Bucket bucket)
         {
             lock (gate)
             {
-                var bucket = Refilled(client);
+                Refill(bucket, time.GetUtcNow(), Limit(bucket), Rate(bucket));
                 bucket.Tokens = Math.Min(Limit(bucket), bucket.Tokens + 1);
             }
         }
 
-        private Bucket Refilled(string client)
-        {
-            var now = time.GetUtcNow();
-            var bucket = Find(client, now);
-            Refill(bucket, now, Limit(bucket), bucket == overflow ? perMinute * 8.0 : perMinute);
-            return bucket;
-        }
-
         private double Limit(Bucket bucket) => bucket == overflow ? burst * 8.0 : burst;
+
+        private double Rate(Bucket bucket) => bucket == overflow ? perMinute * 8.0 : perMinute;
 
         private Bucket Find(string client, DateTimeOffset now)
         {
@@ -142,11 +136,25 @@ public sealed class EntryRateLimits(TimeProvider time)
             }
         }
 
-        private sealed class Bucket(double tokens, DateTimeOffset at)
-        {
-            public double Tokens { get; set; } = tokens;
+    }
 
-            public DateTimeOffset At { get; set; } = at;
+    private sealed class Bucket(double tokens, DateTimeOffset at)
+    {
+        public double Tokens { get; set; } = tokens;
+
+        public DateTimeOffset At { get; set; } = at;
+    }
+}
+
+public sealed class McpAdmission(Action refund)
+{
+    private int refunded;
+
+    public void Refund()
+    {
+        if (Interlocked.Exchange(ref refunded, 1) == 0)
+        {
+            refund();
         }
     }
 }

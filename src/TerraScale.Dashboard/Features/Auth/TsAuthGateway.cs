@@ -39,8 +39,6 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private static readonly TimeSpan DiscoveryReuse = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan KeysReuse = TimeSpan.FromMinutes(5);
-        private static readonly TimeSpan KeysRefreshFloor = TimeSpan.FromSeconds(30);
-        private static readonly TimeSpan FirstFailureFloor = TimeSpan.FromSeconds(5);
         private readonly SharedRead<TsAuthOidcDiscovery> discovery = new();
         private readonly SharedRead<TsAuthJwkSet> signingKeys = new();
 
@@ -65,50 +63,7 @@ namespace TerraScale.Dashboard.Features.Auth
             return await signingKeys.Get(time, KeysReuse, true, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
-        private sealed class SharedRead<T>
-        {
-            private readonly Lock gate = new();
-            private Task<T>? good;
-            private DateTimeOffset goodAt;
-            private Lazy<Task<T>>? attempt;
-            private DateTimeOffset attemptAt;
 
-            public Task<T> Get(TimeProvider time, TimeSpan reuse, bool refresh, Func<Task<T>> read)
-            {
-                Lazy<Task<T>> chosen;
-                lock (gate)
-                {
-                    var now = time.GetUtcNow();
-                    if (attempt is { IsValueCreated: true, Value: { IsCompletedSuccessfully: true } succeeded })
-                    {
-                        good = succeeded;
-                        goodAt = attemptAt;
-                    }
-
-                    if (!refresh && good is { } fresh && now - goodAt < reuse)
-                    {
-                        return fresh;
-                    }
-
-                    if (attempt is { } running && (!running.IsValueCreated || !running.Value.IsCompleted))
-                    {
-                        chosen = running;
-                    }
-                    else if (attempt is { } last && now - attemptAt < (good is null ? FirstFailureFloor : KeysRefreshFloor))
-                    {
-                        return good ?? last.Value;
-                    }
-                    else
-                    {
-                        chosen = new Lazy<Task<T>>(read, LazyThreadSafetyMode.ExecutionAndPublication);
-                        attempt = chosen;
-                        attemptAt = now;
-                    }
-                }
-
-                return chosen.Value;
-            }
-        }
 
         private Task<TsAuthUserInfo> SessionUserInfoAsync(TsAuthClient client, SessionRecord session, CancellationToken cancellationToken)
         {

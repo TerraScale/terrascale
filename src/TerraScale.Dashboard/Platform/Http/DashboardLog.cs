@@ -134,7 +134,7 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 39, Level = LogLevel.Warning, Message = "An allowance notification for organization {OrganizationId} could not be processed ({ErrorType}); other organizations continue.")]
         internal static partial void AnAllowanceNotificationForOrganizationCould(this ILogger logger, object? organizationId, object? errorType);
 
-        [LoggerMessage(EventId = 107, Level = LogLevel.Warning, Message = "Project creation in ts-auth could not be confirmed ({ErrorType}); its reserved slot is held until it expires")]
+        [LoggerMessage(EventId = 107, Level = LogLevel.Warning, Message = "Project creation in ts-auth could not be confirmed ({ErrorType}); answered reload-first and kept the reserved slot until it is bound or expires")]
         internal static partial void ProjectCreationUnconfirmed(this ILogger logger, string errorType);
 
         [LoggerMessage(EventId = 40, Level = LogLevel.Warning, Message = "Revoke dashboard sessions after committed member removal for {UserId} ({ErrorType})")]

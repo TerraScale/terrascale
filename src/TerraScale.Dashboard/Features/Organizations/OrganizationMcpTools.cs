@@ -367,12 +367,8 @@ namespace TerraScale.Dashboard.Features.Organizations
         private async Task<T> Invoke<T>(Func<Task<T>> action)
         {
             try { return await action(); }
-            catch (Exception error) when (DashboardStorageOutcomes.Find(error) is { } storage)
-            {
-                var refusal = DashboardStorageOutcomes.Classify(storage);
-                throw new AccountAccessException(refusal.Message, refusal.Status);
-            }
-            catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !Cancellation.IsCancellationRequested)
+            catch (Exception error) when (DashboardStorageOutcomes.Find(error) is null &&
+                                          (error is IOException or HttpRequestException || error is OperationCanceledException && !Cancellation.IsCancellationRequested))
             { throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502); }
         }
 

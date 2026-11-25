@@ -18,6 +18,7 @@ using TerraScale.Dashboard.Features.Functions;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.Validation;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
@@ -187,6 +188,17 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
                         return result;
                     }
+                    catch (Exception error) when (DashboardStorageOutcomes.Find(error) is { } storage)
+                    {
+                        var refusal = DashboardStorageOutcomes.Classify(storage);
+                        if (refusal.Status >= StatusCodes.Status500InternalServerError)
+                        {
+                            ServiceSloTelemetry.MarkBad(http);
+                        }
+
+                        Log(request.Services).MCPToolFailedUpstreamWithCode(LoggedTool(request.Params?.Name), refusal.Status, "sql", storage.Code);
+                        return Failure(refusal.Message);
+                    }
                     catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
                     {
                         if (error is AccountAccessException { StatusCode: >= 500 })
@@ -307,7 +319,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 { context.Response.StatusCode = 403; return; }
                 if (context.Request.Headers["Sec-Fetch-Site"] == "cross-site") { context.Response.StatusCode = 403; return; }
                 var limits = context.RequestServices.GetRequiredService<EntryRateLimits>();
-                if (!limits.AdmitMcp(context))
+                if (limits.AdmitMcp(context) is not { } admission)
                 {
                     await EntryRateLimits.Refuse(context).ExecuteAsync(context);
                     return;
@@ -367,7 +379,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 {
                     if (!charged)
                     {
-                        limits.RefundMcpRejection(context);
+                        admission.Refund();
                     }
                 }
 
