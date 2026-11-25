@@ -50,7 +50,6 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
     private enum Quota
     {
         Attempt,
-        Pause,
         Total,
         Shared,
         Tenant,
@@ -59,29 +58,24 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         TenantAuthentication,
     }
 
-    internal async Task<bool> AcquireAsync(EmailMessage message, CancellationToken cancellationToken, string? attemptId = null)
+    internal async Task<EmailAdmissionDecision> AcquireAsync(EmailMessage message, CancellationToken cancellationToken, string? attemptId = null)
     {
         ArgumentNullException.ThrowIfNull(message);
         for (var attempt = 0; attempt < 16; attempt++)
         {
             var decision = await this.DecideAsync(message.Purpose, message.Tenant, attemptId, cancellationToken);
-            var admitted = decision switch
+            var changes = decision switch
             {
-                EmailAdmitted granted => granted,
-                EmailRefused => null,
+                EmailAdmitted granted => granted.Changes,
+                EmailRefused or EmailPaused => null,
             };
-            if (admitted is null)
+            if (changes is null || await data.SaveAsync(changes, cancellationToken))
             {
-                return false;
-            }
-
-            if (await data.SaveAsync(admitted.Changes, cancellationToken))
-            {
-                return true;
+                return decision;
             }
         }
 
-        return false;
+        return new EmailRefused(MinimumWait);
     }
 
     internal Task<bool> ReservedAsync(string reservationId, CancellationToken cancellationToken) =>
@@ -108,14 +102,20 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
                 @attemptId IS NOT NULL AND EXISTS (SELECT 1 FROM email_reservations WHERE attempt_id = @attemptId) AS attempt
             """, new { cutoff, authentication, purposeValue, tenant, attemptId, TenantFairShare }), cancellationToken);
         Observe(counts.Total, counts.Authentication);
-        var binding = Binding(global.Value, counts, purpose, tenant, now).ToList();
+        if (!counts.Attempt && global.Value.PausedUntil > now)
+        {
+            Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "paused"));
+            return new EmailPaused(global.Value.PausedUntil);
+        }
+
+        var binding = Binding(counts, purpose, tenant).ToList();
         if (binding.Count > 0)
         {
             Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "refused"));
             List<TimeSpan> waits = [];
             foreach (var (quota, excess) in binding)
             {
-                waits.Add(await this.WaitAsync(quota, excess, counts, global.Value, purpose, tenant, now, cancellationToken));
+                waits.Add(await this.WaitAsync(quota, excess, counts, purpose, tenant, now, cancellationToken));
             }
 
             return new EmailRefused(waits.Max());
@@ -126,16 +126,11 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         return new EmailAdmitted(reservation.Id, [Change.Update(global, global.Value), Change.Insert(reservation)]);
     }
 
-    private static IEnumerable<(Quota Quota, int Excess)> Binding(EmailBudgetRecord global, AdmissionCounts counts, EmailPurpose purpose, string tenant, DateTimeOffset now)
+    private static IEnumerable<(Quota Quota, int Excess)> Binding(AdmissionCounts counts, EmailPurpose purpose, string tenant)
     {
         if (counts.Attempt)
         {
             yield return (Quota.Attempt, 0);
-        }
-
-        if (global.PausedUntil > now)
-        {
-            yield return (Quota.Pause, 0);
         }
 
         if (counts.Total >= TotalLimit)
@@ -175,7 +170,7 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         }
     }
 
-    private async Task<TimeSpan> WaitAsync(Quota quota, int excess, AdmissionCounts counts, EmailBudgetRecord global, EmailPurpose purpose, string tenant, DateTimeOffset now,
+    private async Task<TimeSpan> WaitAsync(Quota quota, int excess, AdmissionCounts counts, EmailPurpose purpose, string tenant, DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var authentication = (long)EmailPurpose.Authentication;
@@ -184,7 +179,6 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         var freedAt = quota switch
         {
             Quota.Attempt => now + AttemptRetry - Window,
-            Quota.Pause => global.PausedUntil - Window,
             Quota.Overflow => Earliest(await this.OverflowFreedAsync(excess, cancellationToken), await this.FirstAsync(connection => connection.QueryAsync<ReservationTime>(
                 "SELECT at FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @fairShareExcess",
                 new { authentication, tenant, fairShareExcess }), cancellationToken)),
@@ -291,7 +285,7 @@ public sealed record EmailAdmitted(string ReservationId, IReadOnlyList<Change> C
 
 public sealed record EmailRefused(TimeSpan RetryAfter);
 
-public readonly union EmailAdmissionDecision(EmailAdmitted, EmailRefused);
+public readonly union EmailAdmissionDecision(EmailAdmitted, EmailRefused, EmailPaused);
 
 public sealed record EmailBudgetRecord(string Key, DateTimeOffset PausedUntil)
 {
@@ -324,10 +318,14 @@ public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailS
             }
 
             var reserved = message.AdmissionId is { } admitted && await admission.ReservedAsync(admitted, cancellationToken);
-            if (!reserved && !await admission.AcquireAsync(message, cancellationToken))
+            if (!reserved)
             {
-                AuthMetrics.Email("capacity_refused");
-                return new EmailSent(EmailDeliveryOutcome.Retryable);
+                var acquired = await admission.AcquireAsync(message, cancellationToken);
+                if (Unsent(acquired) is { } refusal)
+                {
+                    AuthMetrics.Email(refusal.Metric);
+                    return refusal.Delivery;
+                }
             }
 
             outcome = EmailDeliveryOutcome.Unknown;
@@ -349,6 +347,13 @@ public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailS
             return new EmailSent(outcome);
         }
     }
+
+    private static (EmailDelivery Delivery, string Metric)? Unsent(EmailAdmissionDecision decision) => decision switch
+    {
+        EmailAdmitted => null,
+        EmailRefused => (new EmailSent(EmailDeliveryOutcome.Retryable), "capacity_refused"),
+        EmailPaused paused => (paused, "provider_paused"),
+    };
 
     private static EmailDeliveryOutcome Outcome(EmailDelivery delivery) => delivery switch
     {

@@ -58,13 +58,20 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
         {
             return EmailApi.Error(StatusCodes.Status400BadRequest, "invalid_request", "A fresh attempt ULID is required.");
         }
-        if (!await admission.AcquireAsync(new("", "") { Purpose = EmailPurpose.Alert, Tenant = "ts-alerts" }, cancellationToken, id.ToString()))
+        var decision = await admission.AcquireAsync(new("", "") { Purpose = EmailPurpose.Alert, Tenant = "ts-alerts" }, cancellationToken, id.ToString());
+        if (!Admitted(decision))
         {
             this.HttpContext.Response.Headers.RetryAfter = "60";
             return EmailApi.Error(StatusCodes.Status429TooManyRequests, "rate_limited", "Notification capacity is unavailable.");
         }
         return TypedResults.Json(new EmailAdmissionResponse("admitted", now + TimeSpan.FromSeconds(10)), EmailAdmissionApiJson.Default.EmailAdmissionResponse);
     }
+
+    private static bool Admitted(EmailAdmissionDecision decision) => decision switch
+    {
+        EmailAdmitted => true,
+        EmailRefused or EmailPaused => false,
+    };
 
     internal static string Credential(string token) => Convert.ToHexStringLower(HMACSHA256.HashData(
         Encoding.UTF8.GetBytes(token), "terrascale:email-admission:v1:ts-alerts"u8));

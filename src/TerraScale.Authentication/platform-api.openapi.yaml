@@ -1877,7 +1877,8 @@ components:
       description: The created resource.
       schema: { type: string }
     RetryAfter:
-      description: Seconds to wait.
+      description: Minimum delay in whole seconds before retrying.
+      required: true
       schema: { type: integer }
   parameters:
     Organization:
