@@ -2,14 +2,12 @@
 
 Read the root [AGENTS.md](../AGENTS.md).
 
-Playwright Test (TypeScript) that drives the real services built from the commit under test: TerraBase, ts-auth
-and the dashboard behind an edge that serves the production host names (Caddy for HTTPS, a PostgreSQL TLS edge for
-`pg.terrascale.tech`), a per-run CA, Mailpit as the SMTP server, a Cloudflare send-API sink that must stay empty, a
-Stripe stand-in for the API and Checkout and an R2 stand-in for customer file storage. CI runs it through `.github/workflows/journey.yml` on the
-merge commit GitHub tests for a pull request, unless every file the pull request changes is a `*.md` file or sits
-under `docs/`, `sites/docs/`, `sites/status/` or `sites/landing/` other than `sites/landing/static/pricing.json` (the
-`journey` filter of `.github/workflows/ci.yml`). Pushes to `main` and dispatches of `CI` never run it on a local stack;
-after each release the same specs run against production ("The production target" below).
+Playwright Test (TypeScript) drives TerraBase, ts-platform, ts-auth and Dashboard builds from the commit under
+test. The harness provides a per-run CA, Caddy for HTTPS, a PostgreSQL TLS edge, Mailpit for SMTP, a Cloudflare
+send-API sink, and stand-ins for Stripe and S3-compatible object storage. PR CI selects affected lanes on the
+GitHub merge commit. The shard matrix lives in `.github/workflows/ci.yml` and `.github/workflows/journey.yml`
+runs those shards. Main pushes select the full local journey. The production journey runs after a successful
+release and on its daily schedule.
 
 ## Quarantine
 
@@ -71,7 +69,10 @@ To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
 
 ## Port registry
 
-Every listener the journey starts, and every harness that binds its own (`env/engine-crash.py`, `replication/frontier.mjs`, `clock/cluster.ts`, `keyring/proof.mjs`, `keyring/promotion.spec.ts`, `placement/fleet.ts`, regions R19), takes its ports from `env/ports.py`. The registry is one flock per network namespace under `$XDG_RUNTIME_DIR/terrascale-e2e-ports` (or `/tmp` when that directory is unset). A claim lives as long as its holder process. A dead holder is reaped because the kernel drops the lock.
+The stack and standalone harnesses such as `env/engine-crash.py`, `replication/frontier.mjs` and
+`keyring/proof.mjs` take their ports from `env/ports.py`. The registry is one flock per network namespace
+under `$XDG_RUNTIME_DIR/terrascale-e2e-ports` (or `/tmp` when that directory is unset). A claim lives as long
+as its holder process. The kernel drops the lock when the holder exits.
 
 `local.sh` puts each stack in its own network namespace, so two stacks on one machine both keep the canonical journey block (`caddy` 443, `terrabase` 8080, `internal` 8081, and the rest of the `journey` profile in `ports.py`). Inside one namespace the block is reserved up front, and a second claimant (an engine-crash shard, the frontier harness, an extra region) receives the next free block, shifted by a multiple of 1000. The assignment is `$E2E_STATE/ports.json`. Harnesses that share the host network, including parallel engine-crash shards, cannot take a port another live claim in that namespace still holds. The old bind-to-zero-and-release race is gone.
 
@@ -140,20 +141,18 @@ bash env/local.sh exec npx playwright test --project placement
 bash env/local.sh stop
 ```
 
-The R3 proxy scenario also needs `iptables` on PATH; its packet-drop rule lives only in the throwaway network namespace and is removed in cleanup. The placement project runs one worker because its shared Free-plan account can hold only one database.
+The placement project runs one worker because their shared Free-plan account can hold only one database.
 
 The namespace remembers the mode chosen by `start`; later `exec` and `stop` need no switch. Without it, the
 Development cell, service startup and default test list stay the same. The placement project is selected explicitly;
 selecting it in one-region mode reports its tests skipped with the reason that `E2E_REGIONS=2` is required.
 
-The pair runs as Production because Development refuses `TS_PEERS_FILE`. The peers file in `$E2E_STATE/peers`
-names `journey-1 gru 127.0.0.1` and `journey-2 fra 127.0.0.2`. Both use port 8081 on their own address for
-authenticated HTTP/2 peer calls, with the run's shared peer credential. Namespace-local routes give a call to one
-peer the other's source address, which the pull endpoint uses to identify the replica. The client, metrics and
-PostgreSQL ports are 8080/9091/6432 for gru and 8180/9191/6532 for fra; the data directories are
-`$E2E_STATE/terrabase` and `$E2E_STATE/terrabase-fra`. The edge and run CA cover
-`gru.api.terrascale.tech` and `fra.api.terrascale.tech`. The dashboard and ts-auth keep using gru's internal listener.
-Discovery returns gru and fra, both known to the dashboard map; the default cell still identifies as local.
+The pair runs with `DOTNET_ENVIRONMENT=Production`. `env/up.sh` writes `$E2E_STATE/peers` with the
+node, region, loopback address, QUIC port and internal HTTP/2 port for each peer. The first two nodes are
+`journey-1` in gru at `127.0.0.1` and `journey-2` in fra at `127.0.0.2`. QuicRpc carries peer replication.
+Dashboard and ts-auth connect to gru's internal HTTP/2 listener. The registry assigns client, metrics and
+PostgreSQL ports. The data directories are `$E2E_STATE/terrabase` and `$E2E_STATE/terrabase-fra`.
+The edge and run CA cover `gru.api.terrascale.tech` and `fra.api.terrascale.tech`.
 
 Both regions use the same signed R2 stand-in, with separate `terrascale-gru-files` and `terrascale-fra-files`
 object namespaces. Production also requires backup and shape credentials: the same stand-in serves the
@@ -183,98 +182,42 @@ and deletes the account. Its third test signs up nobody: it sends a closure, the
 `X-TerraBase-Closure-Scope: region` and the check of the dashboard's platform project to fra's internal listener, for
 both versions, and each answers 409 `platform_project_protected`.
 
-`placement/regions.spec.ts` R16 removes gru from a database's regions, verifies requests through gru are proxied, and reads gru's data directory
-(`$E2E_STATE/terrabase`, through `stateDir`) to see that no database file named after the database is left there
-(a retained key file is not the copy; the engine keeps it until an operator removes it), then that
-the files are back once gru is added again. R3 also opens SQL sockets with header credentials, checks 1012 and PostgreSQL FATAL 57P01 on a writer move, refuses forwarded REST and socket upgrades with 503 instead of a second hop, and drops destination SYN packets to prove the five-second REST connect bound. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
+`placement/regions.spec.ts` checks that every placed region accepts writes, concurrent updates converge,
+bookmarks give read-your-writes across regions, and conflicting strong transactions yield one commit and
+one refusal. It also covers placement changes, branch identity and the region picker. The pair shares one
+machine and the third-party stand-ins.
 
-Other existing projects can run in two-region mode by starting this same stack first and selecting their project
-normally. The placement pair shares one machine and third-party stand-ins and has no network delay. Two-region mode
-starts one NATS broker from the port registry. With one node in a region the local-write gauge stays 0 and a write
-that would commit locally still commits at home. That broker also lets a home move's sequencers finish inside the
-request instead of spinning until the 30 s catch-up bound; catalog sweep remains the fallback when the broker is down.
-It does not model geographic latency or regional host failure.
+The CI `session limits` shard runs `placement/session-limits.spec.ts` on two nodes in each of two regions.
+It covers input and answer progress, session admission, platform SQL traffic, unknown outcomes and native
+commit completion. Its peer-stream faults keep the HTTP/2 connection open while withholding an answer body.
 
-The CI session-limits shard selects only `placement/session-limits.spec.ts` with one worker and two cells. It covers input and answer progress, session admission, platform EF traffic, unknown outcomes and native commit completion. It also holds 32 idle sockets (no startup packet, a startup then silence, or a stalled TLS handshake) on the Postgres listener and the public edge and checks that an authenticated session keeps running and a new client still queries. Its peer-stream faults retain a live HTTP/2 connection while withholding an answer body.
-
-The CI write-guarantees shard selects `placement/write-guarantees.spec.ts` and `placement/region-restore.spec.ts` with one worker, two regions and one node in each. It checks that a local write preference cannot force a local commit, that one node never acknowledges locally, and that snapshot and point-in-time restore run in fra and in sjc.
+The CI `write guarantees` shard runs `placement/database-functions.spec.ts`, `placement/write-guarantees.spec.ts`
+and `placement/region-restore.spec.ts` on one node in each of two regions. It checks local REST, row and
+PostgreSQL writes in fra and their convergence in gru, request and database consistency settings, and
+bookmark and point-in-time restores in fra that gru can read.
 
 ## Multi-region fault lane
 
-The `multi-region retired source` shard runs only the retired-source case on its own fresh two-region stack: it
-refuses one node's outgoing connections with strace and must not inherit the follower and lease state the other
-fault cases leave behind. The `multi-region faults` shard excludes it.
+The `multi-region faults` shard sets `E2E_REGIONS=2 E2E_NODES_PER_REGION=2` and runs the `fault` project
+with one worker. For a local run, use those variables with the normal prepare/start/up/stop lifecycle, then
+run `bash env/local.sh exec npx playwright test --project fault` from `e2e/`. The extra nodes are
+`journey-3` in gru and `journey-4` in fra, with their own registry ports and data directories
+(`terrabase-gru-2` and `terrabase-fra-2` under the run state).
 
-The `multi-region faults` shard of `journey.yml` shares the normal service and SDK build artifacts. It sets
-`E2E_REGIONS=2 E2E_NODES_PER_REGION=2` before prepare/start and selects `--project fault`, with one worker for
-the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
-`bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
+The fault project kills a peer during a write and verifies that it retains acknowledged rows and converges
+after restart. It also checks backup continuity, archive and peer restore, catalog replay, project closure
+propagation and signing-key behavior. The stop and scrub steps cover the additional nodes and their evidence.
 
-One fault case runs gru's writer on the base revision's TerraBase while a move to a node of this build rolls back.
-`E2E_PREVIOUS_TERRABASE` names that build's `terrabase.dll`: CI unpacks the `engine-rollback-baseline` artifact
-(the PR's base commit) in the `multi-region home moves and receipt handoffs` shard. That shard runs the home-move
-cases with the receipt handoffs, so each fault shard's Journey step stays within its 15-minute limit; locally, build `origin/main` with `bash e2e/env/build.sh <main checkout> <dir> terrabase`
-and export `E2E_PREVIOUS_TERRABASE=<dir>/terrabase/terrabase.dll` before `local.sh exec`.
+## Engine crash recovery
 
-The shard also builds a journey-only receipt driver from the same product sources.
-Its exporter copy includes receipt kinds only inside that driver; the shipped exporter
-is unchanged. The driver uses the real engine, catalog schema, serializers and importer
-to prove receipt bytes and holder/authority bindings through the real importer,
-atomic refusal of invalid or conflicting evidence, and byte-preserving receipt-free
-import retention. Isolated pairs of real driver nodes with their own NATS exercise
-the real drain and preparation endpoints: retained receipt bytes and unapplied
-snapshot sentinels prove refusal while background maintenance runs; the source
-resumes management writes and reads after receipt or
-row/byte-limit rejection. Only the journey copy sends receipts; the product
-importer and handoff refusal path are unchanged in the driver. It adds no runtime
-product setting.
-
-The early-receipt case uses a unique database per invocation. It seeds an authorized
-holder before its regional writer has the purge record. It waits until the holder reports its receipt settled,
-checks that the writer retains live row 73 without storing unbound evidence,
-then installs the writer's authority. The same writer must fetch and record the receipt on
-a normal maintenance pass and complete backup erasure. The refused-receipt case gives the writer a purge
-record that does not name the holder, waits for the holder to settle, moves the writer role to the holder,
-names the holder in the first writer's record, deletes the region's owner key so that writer returns at
-epoch 1, and requires that writer to record the receipt and complete backup erasure. R3 waits for the deleted
-restriction database's internal receipt status to settle on every node before
-measuring destination traffic; its zero-traffic assertions remain unchanged.
-
-The retained-receiver case uses isolated real driver nodes. Its source seeds a retained
-catalog record without enabling a production deletion feature. Repeated missing-registration
-sweeps must preserve the receiver's original row; restoring the source registration and
-writing another row must resume normal replication. The receiver build can be replaced
-with a previous-head driver through `E2E_RETAINED_RECEIVER_BUILD` for regression proof.
-
-Alongside the journey shards, the separately selected `engine crash recovery (<shard>)` jobs run `env/engine-crash.py` against the shared PR service artifact
-and one shared artifact built from the PR base revision. They check rollback startup on each crash directory, stale rewrite
-intents at both rename boundaries, idle retained-history draining, missing root stores and three large-file
-recovery samples. Each shard requires 24 GB of disk headroom below 80% use and removes its data; the baseline job removes its source checkout after packaging.
-Local runs pass the rollback DLL, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4. An optional second argument is
-a comma-separated case list; omitting it runs every case. `python3 e2e/env/engine-crash-shards.py` checks that every
-registered case appears exactly once in `engine-crash-shards.json` and emits the CI matrix. Each case prints its
-elapsed time; the dependent nine-snapshot recovery sequence stays together in the recovery shard and runs first
-when selected with other cases.
-
-The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
-taken from the journey profile (`terrabase_gru2` / `metrics_gru2` / `postgres_gru2` and the fra-2 names; 8280/9291/6632
-and 8380/9391/6732 when that block is free). Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
-under the run state. Every two-region stack starts one checksum-pinned NATS server with JetStream and a generated credential
-registered with the scrubber; the real nodes use it for replication notices, home-move sequencer catch-up and regional writer coordination.
-The namespace remembers the node count for later exec calls and owns every original and restarted process.
-
-The fault owner upgrades through the existing Stripe stand-in so a restore has room alongside its source. Each
-database has a client JSONL ledger under `$E2E_STATE/logs/ledger-<id>.jsonl`, recording submitted and acknowledged
-rows from both regions. The crash scenario flushes a write to the elected writer's socket, kills that node with
-SIGKILL before awaiting its response, records a reset write as unacknowledged without resending it, and restarts
-the identical command and environment against the same data directory. Both regions must retain every previously
-observed acknowledged row and converge to the same state, including any submitted write whose response was lost.
-Writes after recovery must also converge. A separate scenario takes a backup, writes more source data, restores
-into another database, and checks both restored regions against the earlier snapshot ledger.
-
-This lane exercises process failure and recovery, not a region-wide outage, network partitions, NATS failure,
-geographic latency or mixed service versions. It does not assert continued write availability during the outage.
-The normal Stop and scrub steps cover the extra nodes, NATS, restart logs and ledgers before evidence uploads.
+The separately selected `engine crash recovery (<shard>)` jobs run `env/engine-crash.py` against the
+shared candidate service artifact and a rollback build from the PR base or the commit preceding the main push. The shards are `recovery`, `integrity`, `isolation`,
+`lifecycle` and `idle`, as listed in `env/engine-crash-shards.json`. From the repo root, run
+`python3 e2e/env/engine-crash-shards.py` to verify that each registered case appears exactly once and emit the
+CI matrix. For a local crash run, set `E2E_BUILD` to the candidate build directory, pass the rollback DLL to
+`env/engine-crash.py`, and optionally pass a
+comma-separated list of cases as the second argument. The harness requires 24 GB of free space and reports the
+elapsed time of each case.
 
 ## The production target
 
@@ -359,15 +302,13 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
 The workflow fetches only `uv` of the pinned tools (`env/tools.sh uv`): production starts no Caddy, no Mailpit and no
 branch action. `env/local.sh` refuses to run when `E2E_TARGET` is set, before it builds anything.
 
-For a manual run against an older deployment, record the fleet-ready digest for TerraBase, ts-auth and the
-dashboard in `us-sanjose-1`, `eu-frankfurt-1` and `sa-saopaulo-1` using the regional rollout observations in
-`docs/dev/ocir-publication.md`. Verify each digest's build provenance with `gh attestation verify` for
-`--repo TerraScale/terrascale --source-ref refs/heads/main`. Use signer workflow
-`TerraScale/terrascale/.github/workflows/ci.yml` for TerraBase and ts-auth and
-`TerraScale/terrascale/.github/workflows/images-ghcr.yml` for dashboard, with `--bundle-from-oci` on the
-digest-pinned OCI reference. Record the `sourceRepositoryDigest` from the verified certificate, independently for
-each image. Use that digest as `signed_source` in the input comparison. The TerraBase readiness display version
-is insufficient to establish this commit.
+For a manual run against an older deployment, record the serving image digests for TerraBase, ts-platform,
+ts-auth and Dashboard using `ts-orch status --region <region> --json`. Verify their build provenance with
+`gh attestation verify`, using `--repo TerraScale/terrascale`, `--source-ref refs/heads/main`,
+`--signer-workflow` and `--bundle-from-oci` with each digest-pinned OCI reference. The signer workflow is `CI`
+(`TerraScale/terrascale/.github/workflows/ci.yml`) for TerraBase, ts-platform and ts-auth, and
+`Images (OCIR)` (`TerraScale/terrascale/.github/workflows/images-ghcr.yml`) for Dashboard.
+Record each attestation's `sourceRepositoryDigest` and use it as `signed_source` in the input comparison.
 
 Choose the exact current `origin/main` SHA as `dispatch_sha`. For each verified regional image, run this
 conservative harness-only check from the repository root. It compares a superset of that service's app, SDK,
@@ -440,16 +381,15 @@ without the bucket of the files tests fails with "left no bucket for the account
 
 ## Caller authentication counters
 
-`interactions/callers.spec.ts` uses the journey-only `journey-probe` caller for its exact gRPC
+`interactions/callers.spec.ts` uses the journey-only `journey-probe` caller for its exact HTTP/2
 `caller` counter deltas; the data and catalog keys have separate grants under that one caller name.
 `placement/callers.spec.ts` uses `journey-bridge-probe` so the probes can run together while dashboard,
 auth and peer traffic continue. Both names are bounded registry values, accepted by the registry's
 nonempty, at-most-128-character caller rule; no request identifier becomes a metric label.
 
 The peer credential has no caller identity. `up.sh` therefore runs `caller-peer-probe.mjs` immediately
-after the first cell is ready, before starting any other cell, ts-auth or dashboard. The exact peer +1
-includes the outer gRPC admission and its SQL replay. Only that probe can send peer requests then;
-the interactions spec checks its saved successful proof. This is a serial stack boot step.
+after TerraBase is ready and before ts-platform, ts-auth and Dashboard start. The probe sends one
+HTTP/2 SQL request and checks for an exact peer counter increment of one. The interactions spec checks the proof saved at startup.
 
 Malformed caller tokens are emitted only by the caller probes. The admission probe sends them only
 to gru's platform database, while the bridge checks fra's rejected-caller delta stays exactly zero:
@@ -612,9 +552,8 @@ reads status, proves the retained data through the removed endpoint's proxy, and
 The two-region group B books an upper bound of 110 requests to cover the bounded repeat loop; the metrics check
 still refuses tenant_busy and verifies that every operation ran. The removed endpoint proxies the status and data requests to fra without a client redirect.
 
-The multi-region PR lane also runs the R3 placement scenario against its four-node stack: header-authenticated
-sockets, writer-move closure, second-hop refusals, unknown writers, bounded connection failure and a new session
-on a rejoined copy.
+The placement project also covers concurrent cross-region writes, bookmark visibility and conflicting
+strong transactions in `placement/regions.spec.ts`.
 
 ## Social provider stand-in
 
@@ -622,17 +561,11 @@ The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.
 
 ## Keyring recovery lane
 
-The keyring job in the existing journey workflow reuses the TerraBase service artifact and its lifecycle
-driver from the service build. TerraBase changes, the keyring lane's own inputs and changes
-to the journey workflow select it; main runs select it too. It builds a pinned single-key baseline and runs
-`bash e2e/keyring/proof.sh` in an isolated network namespace. The proof selects the keyring
-interaction and promotion specs itself, including process kills before publication and after durable
-publication, reconstructed states at every intermediate detach and publication rename, conflicting
-replicas and destinations, corrupt destinations with valid keys, mid-copy cancellation and put-back,
-local key-removal refusal after restoration, key material changes, record-store
-refusal, reverse credential compatibility and row reads from every persisted database.
-Intermediate states are reconstructed from real detached/published files after a process kill;
-the journey does not claim to inject power failure at every individual system call. The extra lane runs alongside the normal shards.
+The `keyring recovery and rotation` job uses the TerraBase service artifact and its lifecycle driver.
+The keyring lane runs on applicable PRs and on main pushes. `bash e2e/keyring/proof.sh` runs the
+proof in an isolated network namespace. Set `E2E_STATE` to a throwaway directory, `E2E_BUILD` to the
+service build directory, and `E2E_KEYRING_DRIVER` to the lifecycle driver's DLL. The proof uses encrypted
+files and key records to verify the keyring lifecycle.
 
 ## SQL session lost replies
 
