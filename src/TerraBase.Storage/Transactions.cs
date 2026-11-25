@@ -193,7 +193,19 @@ internal sealed class ReadTransaction : ISqlTransaction
         SqlReadOutcome outcome;
         lock (_gate)
         {
-            outcome = _finished ? new StorageTimeout("transaction has finished") : ReadCatalog(statements, cancellationToken);
+            if (_finished)
+            {
+                outcome = new StorageTimeout("transaction has finished");
+            }
+            else
+            {
+                _ = _idleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                outcome = ReadCatalog(statements, cancellationToken);
+                if (!_finished)
+                {
+                    _ = _idleTimer?.Change(_idleTimeout, Timeout.InfiniteTimeSpan);
+                }
+            }
         }
 
         return ValueTask.FromResult(outcome);
