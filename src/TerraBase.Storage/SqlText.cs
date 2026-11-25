@@ -35,7 +35,18 @@ internal static class SqlTokenizer
         while (index < sql.Length)
         {
             var current = sql[index];
-            if (IsSpace(current) || current == '\uFEFF')
+            if (StartsSpace(current))
+            {
+                index++;
+                while (index < sql.Length && IsSpace(sql[index]))
+                {
+                    index++;
+                }
+
+                continue;
+            }
+
+            if (current == '\uFEFF')
             {
                 index++;
                 continue;
@@ -44,7 +55,7 @@ internal static class SqlTokenizer
             if (current == '-' && Next(sql, index) == '-')
             {
                 var end = sql.IndexOf('\n', index);
-                index = end < 0 ? sql.Length : end + 1;
+                index = end < 0 ? sql.Length : end;
                 continue;
             }
 
@@ -136,6 +147,8 @@ internal static class SqlTokenizer
     }
 
     private static bool IsSpace(char character) => character is ' ' or '\t' or '\n' or '\v' or '\f' or '\r';
+
+    private static bool StartsSpace(char character) => character is ' ' or '\t' or '\n' or '\f' or '\r';
 
     private static bool IsIdChar(char character) => char.IsAsciiLetterOrDigit(character) || character is '_' or '$' || character > 127;
 

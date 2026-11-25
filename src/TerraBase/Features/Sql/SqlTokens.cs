@@ -38,16 +38,32 @@ internal static class SqlText
         {
             var c = sql[i];
             var next = i + 1 < sql.Length ? sql[i + 1] : '\0';
-            if (IsSpace(c) || c == '\uFEFF')
+            if (StartsSpace(c))
+            {
+                i++;
+                while (i < sql.Length && IsSpace(sql[i]))
+                {
+                    i++;
+                }
+
+                continue;
+            }
+
+            if (c == '\uFEFF')
             {
                 i++;
                 continue;
             }
 
+            if (c == '\v')
+            {
+                return false;
+            }
+
             if (c == '-' && next == '-')
             {
                 var end = sql.IndexOf('\n', i);
-                i = end < 0 ? sql.Length : end + 1;
+                i = end < 0 ? sql.Length : end;
                 continue;
             }
 
@@ -186,6 +202,8 @@ internal static class SqlText
     }
 
     public static bool IsSpace(char c) => c is ' ' or '\t' or '\n' or '\v' or '\f' or '\r';
+
+    private static bool StartsSpace(char c) => c is ' ' or '\t' or '\n' or '\f' or '\r';
 
     private static int Variable(string sql, int start)
     {
