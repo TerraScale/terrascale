@@ -22,6 +22,18 @@ decide() {
   printf -- '- %s: %s\n' "$service" "$2" | tee -a "$summary"
 }
 
+reject_nul() {
+  local nuls
+  if ! nuls=$(LC_ALL=C tr -cd '\0' < "$1" | tr '\0' x); then
+    printf '::error::failed to scan %s for NUL bytes\n' "$2" >&2
+    exit 1
+  fi
+  if [[ -n "$nuls" ]]; then
+    printf '::error::%s contained a NUL byte\n' "$2" >&2
+    exit 1
+  fi
+}
+
 sep='?'
 if [[ $ACTIONS_ID_TOKEN_REQUEST_URL == *\?* ]]; then
   sep='&'
@@ -31,14 +43,19 @@ jwt=$(curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=ts-orch" | jq -er '.value')
 echo "::add-mask::$jwt"
 
-if ! status=$(curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+status_file="${tmpdir}/status.json"
+if ! curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
   -H "Authorization: Bearer ${jwt}" \
-  "${orch_url}/api/status"); then
+  -o "$status_file" \
+  "${orch_url}/api/status"; then
   echo "::error::Cannot read ${orch_url}/api/status; refusing to guess the live ${service} images" >&2
   exit 1
 fi
-if ! jq -e '(.services | type == "array") and (.placements | type == "array") and (.rollouts | type == "array")' <<< "$status" > /dev/null 2>&1; then
-  echo "::error::${orch_url}/api/status returned no services, placements or rollouts array; refusing to guess the live ${service} images" >&2
+reject_nul "$status_file" "${orch_url}/api/status"
+if ! jq -se 'length == 1 and (.[0] | type == "object") and (.[0].services | type == "array") and (.[0].placements | type == "array") and (.[0].rollouts | type == "array")' "$status_file" > /dev/null 2>&1; then
+  echo "::error::${orch_url}/api/status did not return a single object with services, placements and rollouts arrays; refusing to guess the live ${service} images" >&2
   exit 1
 fi
 
@@ -48,12 +65,16 @@ if ! images=$(jq -r --arg service "$service" '
     | if $value == null or $value == "" then
         if $required then error("\($name) is missing or empty") else empty end
       elif ($value | type) != "string" then error("\($name) is not a string")
-      elif ($value | test("\\s")) then error("\($name) contains whitespace")
+      elif ($value | explode | any(. <= 32 or . == 127)) or ($value | test("\\s")) then error("\($name) contains whitespace or control characters")
       else $value
       end;
   def checked($field):
     if (.[$field] | type) == "string" then . else error("\($field) is not a string") end;
+  def named($field):
+    (.[$field] | type == "string" and length > 0);
   if ([.services[], .placements[], .rollouts[]] | all(type == "object")) then . else error("non-object entry") end
+  | if (.services | all(named("name"))) then . else error("service without a name") end
+  | if ([.placements[], .rollouts[]] | all(named("serviceName"))) then . else error("placement or rollout without a serviceName") end
   | [
       (.services[] | select(.name == $service) | image_field("image"; true)),
       (.placements[]
@@ -67,7 +88,7 @@ if ! images=$(jq -r --arg service "$service" '
         | select(.phase | IN("succeeded", "rolled_back", "failed") | not)
         | image_field("targetImage"; true))
     ]
-  | unique[]' <<< "$status"); then
+  | unique[]' "$status_file"); then
   echo "::error::${orch_url}/api/status lists an invalid live ${service} image; refusing to release" >&2
   exit 1
 fi
@@ -81,43 +102,111 @@ if (( ${#live_images[@]} == 0 )); then
   exit 0
 fi
 
-inspect_revision() {
-  local image=$1 config='' attempt live
+inspect_json() {
+  local ref=$1 field=$2 file attempt
+  file=$(mktemp "${tmpdir}/inspect.XXXXXX") || return 1
   for attempt in 1 2 3; do
-    if config=$(docker buildx imagetools inspect "$image" --format '{{json .Image}}'); then
+    if docker buildx imagetools inspect "$ref" --format "{{json .${field}}}" > "$file"; then
       break
     fi
     if (( attempt == 3 )); then
-      echo "::error::Cannot inspect the live ${service} image ${image} after ${attempt} attempts; refusing to release" >&2
+      echo "::error::Cannot inspect the ${field} of live ${service} image ${ref} after ${attempt} attempts; refusing to release" >&2
       return 1
     fi
-    echo "Inspecting the live ${service} image ${image} failed on attempt ${attempt}; retrying in 2s" >&2
+    echo "Inspecting the ${field} of live ${service} image ${ref} failed on attempt ${attempt}; retrying in 2s" >&2
     sleep 2
   done
+  reject_nul "$file" "docker inspect ${field} for ${ref}"
+  if ! jq -se 'length == 1 and (.[0] | type == "object")' "$file" > /dev/null 2>&1; then
+    echo "::error::Live ${service} image ${ref} returned no single ${field} object; refusing to release" >&2
+    return 1
+  fi
+  printf '%s\n' "$file"
+}
+
+config_revision() {
+  local ref=$1 config live
+  config=$(inspect_json "$ref" Image) || return 1
   live=$(jq -r '
-    def revision:
-      if type == "object" and (.config | type) == "object" and (.config.Labels | type) == "object" then
-        .config.Labels["org.opencontainers.image.revision"]
-      else
-        null
-      end
-      | if type == "string" and test("^[0-9a-f]{40}\\z") then . else error("missing or invalid revision") end;
-    def attestation:
-      .key == "unknown/unknown" or (if (.value | type) == "object" then (.value.os // "") == "unknown" else false end);
-    if type != "object" then
-      error("image config is not an object")
-    elif (.config | type) == "object" then
-      revision
-    else
-      [to_entries[] | select(attestation | not) | .value]
-      | if length == 0 then error("no platform configs") else map(revision) end
-      | if (unique | length) != 1 then error("conflicting platform revisions") else .[0] end
-    end' <<< "$config") || live=''
+    if (.os // "") == "unknown" then error("attestation config") else . end
+    | if (.config | type) == "object" and (.config.Labels | type) == "object" then .config.Labels["org.opencontainers.image.revision"] else null end
+    | if type == "string" and test("^[0-9a-f]{40}\\z") then . else error("missing or invalid revision") end' "$config") || live=''
   if ! [[ $live =~ ^[0-9a-f]{40}$ ]]; then
-    echo "::error::Live ${service} image ${image} has no single valid org.opencontainers.image.revision label across its platforms; refusing to release" >&2
+    echo "::error::Live ${service} image ${ref} has no valid org.opencontainers.image.revision label or is an attestation; refusing to release" >&2
     return 1
   fi
   printf '%s\n' "$live"
+}
+
+repository_of() {
+  local ref=${1%%@*}
+  if [[ ${ref##*/} == *:* ]]; then
+    ref=${ref%:*}
+  fi
+  printf '%s\n' "$ref"
+}
+
+inspect_revision() {
+  local image=$1 manifest child parsed repo kind digest live first rev parsed_lines=() revisions=()
+  manifest=$(inspect_json "$image" Manifest) || return 1
+  if ! parsed=$(jq -r '
+    def digest_pattern:
+      "^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-zA-Z0-9=_-]+\\z";
+    def index_type:
+      IN("application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json");
+    def attestation:
+      (.annotations | type) == "object" and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+      and (.platform | type) == "object" and .platform.os == "unknown" and .platform.architecture == "unknown";
+    if (.manifests != null) or (.mediaType | index_type) then
+      if (.manifests | type) != "array" then error("index without a manifests array") else . end
+      | if (.manifests | all(type == "object" and (.digest | type == "string" and test(digest_pattern)) and (.mediaType | index_type | not))) then . else error("invalid or nested descriptor") end
+      | [.manifests[] | select(attestation | not) | .digest]
+      | if length == 0 then error("no platform descriptors") else "index", .[] end
+    elif (.digest | type) == "string" and (.digest | test(digest_pattern)) then
+      "single", .digest
+    else
+      error("manifest without a valid digest")
+    end' "$manifest"); then
+    echo "::error::Live ${service} image ${image} has an invalid manifest or image index; refusing to release" >&2
+    return 1
+  fi
+  repo=$(repository_of "$image") || return 1
+  mapfile -t parsed_lines <<< "$parsed"
+  kind=${parsed_lines[0]:-}
+  if [[ $kind == single ]]; then
+    if (( ${#parsed_lines[@]} != 2 )); then
+      echo "::error::Live ${service} image ${image} returned unexpected manifest metadata; refusing to release" >&2
+      return 1
+    fi
+    digest=${parsed_lines[1]}
+    if [[ $image == *@* && ${image#*@} != "$digest" ]]; then
+      echo "::error::Live ${service} image ${image} returned mismatched manifest digest ${digest}; refusing to release" >&2
+      return 1
+    fi
+    config_revision "${repo}@${digest}"
+    return
+  fi
+  if [[ $kind != index ]] || (( ${#parsed_lines[@]} < 2 )); then
+    echo "::error::Live ${service} image ${image} returned unexpected index metadata; refusing to release" >&2
+    return 1
+  fi
+  for digest in "${parsed_lines[@]:1}"; do
+    child=$(inspect_json "${repo}@${digest}" Manifest) || return 1
+    if ! jq -e '.manifests == null and (.mediaType | IN("application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json") | not)' "$child" > /dev/null 2>&1; then
+      echo "::error::Live ${service} image ${image} platform ${digest} resolves to a nested image index; refusing to release" >&2
+      return 1
+    fi
+    live=$(config_revision "${repo}@${digest}") || return 1
+    revisions+=("$live")
+  done
+  first=${revisions[0]}
+  for rev in "${revisions[@]}"; do
+    if [[ $rev != "$first" ]]; then
+      echo "::error::Live ${service} image ${image} has conflicting org.opencontainers.image.revision labels across its platforms; refusing to release" >&2
+      return 1
+    fi
+  done
+  printf '%s\n' "$first"
 }
 
 compare_status() {
