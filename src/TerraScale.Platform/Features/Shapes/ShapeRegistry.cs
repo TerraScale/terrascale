@@ -44,8 +44,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
     public static readonly TimeSpan ActiveFor = TimeSpan.FromHours(1);
     private const string PointerObject = "head.json";
     private const int DatabasePage = 1000;
-    private static readonly TimeSpan ObjectSettle = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan RolloutGrace = TimeSpan.FromDays(1);
+    private static readonly TimeSpan DeletionGrace = TimeSpan.FromDays(1);
 
     private const string RecordColumns =
         "handle, shape_id, organization_id, project_id, database_id, project_route, database_route, table_name, where_clause, columns, viewer_key, head, head_digest";
@@ -200,7 +199,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
             SqlValues.Statement(
                 "INSERT OR IGNORE INTO platform_shape_object_deletions (id, handle, name, due_at) "
                 + "SELECT handle || '/' || object, handle, object, ? FROM platform_shape_chunks WHERE handle = ? AND chunk_offset <= ?",
-                SqlValues.Number((timeProvider.GetUtcNow() + RolloutGrace).UnixMs()),
+                SqlValues.Number((timeProvider.GetUtcNow() + DeletionGrace).UnixMs()),
                 key,
                 limit),
             SqlValues.Statement("DELETE FROM platform_shape_chunks WHERE handle = ? AND chunk_offset <= ?", key, limit),
@@ -342,7 +341,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
                 SqlValues.Text(Guard(handle, name, sealer)),
                 SqlValues.Text(handle),
                 SqlValues.Text(name),
-                SqlValues.Number((timeProvider.GetUtcNow() + ObjectSettle).UnixMs()))],
+                SqlValues.Number((timeProvider.GetUtcNow() + DeletionGrace).UnixMs()))],
             cancellationToken);
 
     private async ValueTask<UpdateShapeDeletionsOutcome> UpdateDeletionsAsync(IReadOnlyList<SqlHttpStatement> statements, CancellationToken cancellationToken)
@@ -364,7 +363,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
     private async ValueTask<RetireShapeOutcome> RetireAsync(string condition, IReadOnlyList<JsonElement> keys, CancellationToken cancellationToken)
     {
         var shapes = $"SELECT handle FROM platform_shapes WHERE {condition}";
-        var now = SqlValues.Number((timeProvider.GetUtcNow() + RolloutGrace).UnixMs());
+        var now = SqlValues.Number((timeProvider.GetUtcNow() + DeletionGrace).UnixMs());
         var pointer = SqlValues.Text(PointerObject);
         IReadOnlyList<SqlHttpStatement> statements =
         [

@@ -39,13 +39,37 @@ public sealed class ShapeMaterializerService(
 
         try
         {
-            await Task.WhenAll(ManageAsync(stoppingToken), MaterializeAsync(stoppingToken));
+            await Task.WhenAll(ManageAsync(stoppingToken), MaterializeAsync(stoppingToken), CleanAsync(stoppingToken));
         }
         finally
         {
             foreach (var subscription in _subscriptions.Values)
             {
                 await subscription.StopAsync();
+            }
+        }
+    }
+
+    private async Task CleanAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(Tick, timeProvider);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            if (!readiness.SchemaReady)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (await sealer.DrainAsync(stoppingToken) is { } undrained)
+                {
+                    logger.ZLogWarning($"Shape object cleanup deferred: {undrained}");
+                }
+            }
+            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+            {
+                logger.ZLogWarning(error, $"Shape object cleanup pass failed");
             }
         }
     }
@@ -264,11 +288,6 @@ public sealed class ShapeMaterializerService(
             {
                 logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");
             }
-        }
-
-        if (await sealer.DrainAsync(cancellationToken) is { } undrained)
-        {
-            logger.ZLogWarning($"Shape object cleanup deferred: {undrained}");
         }
     }
 

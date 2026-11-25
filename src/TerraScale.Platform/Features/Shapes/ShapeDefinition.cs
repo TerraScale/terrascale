@@ -193,11 +193,19 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
         var depth = 0;
         var index = 0;
+        var typeName = false;
         while (index < where.Length)
         {
             var character = where[index];
+            if (character == ' ')
+            {
+                index++;
+                continue;
+            }
+
             if (character is '\'' or '"')
             {
+                typeName = false;
                 if (QuotedEnd(where, index) is not { } end)
                 {
                     return false;
@@ -223,12 +231,13 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
                 var word = where[start..index];
                 var calls = Calls(where, index);
-                if (ForbiddenWordSet.Contains(word) || (calls && !AllowedFunctions.Contains(word) && !CallKeywords.Contains(word))
+                if (ForbiddenWordSet.Contains(word) || (calls && !typeName && !AllowedFunctions.Contains(word) && !CallKeywords.Contains(word))
                     || (!calls && string.Equals(word, "in", StringComparison.OrdinalIgnoreCase)))
                 {
                     return false;
                 }
 
+                typeName = string.Equals(word, "as", StringComparison.OrdinalIgnoreCase) || (typeName && !calls);
                 continue;
             }
 
@@ -237,6 +246,7 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
                 return false;
             }
 
+            typeName = false;
             depth += character switch
             {
                 '(' => 1,

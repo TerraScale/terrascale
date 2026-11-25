@@ -394,7 +394,9 @@ test('one subject with different trusted claims never shares a shape handle, and
     for (const where of ['length(zeroblob(100000000)) > 0', '"zeroblob"(10) IS NOT NULL', "printf('%s', body) <> ''", "hex(randomblob(16)) <> ''", "unicode(body) > 0", `(1, 'red', 'r1') IN ${table}`, 'id IN (SELECT 1)', 'id = #a']) {
       await answer(await read(owner, 'offset=-1&where=' + encodeURIComponent(where), 0), 400, 'unsafe_where');
     }
-    expect((await read(owner, 'offset=-1&where=' + encodeURIComponent("lower(body) = 'r1' AND coalesce(team, '') IN ('red', 'blue')"), 0)).status()).toBe(307);
+    for (const where of ["lower(body) = 'r1' AND coalesce(team, '') IN ('red', 'blue')", "CAST(id AS VARCHAR(10)) = '1'"]) {
+      expect((await read(owner, 'offset=-1&where=' + encodeURIComponent(where), 0)).status(), where).toBe(307);
+    }
 
     await answer(await request.put(database + '/rules', {
       headers: headers({ 'if-none-match': '*' }), data: { tables: { [table]: { read: 'row.team = auth.claims.team' } } },

@@ -86,6 +86,10 @@ public sealed class ShapeObjectStore : IDisposable
         {
             return Failed(error);
         }
+        catch (TimeoutException error)
+        {
+            return Failed(error);
+        }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return new PlatformUnavailable("shape object storage did not answer in time", "shapes_timeout");
@@ -126,6 +130,10 @@ public sealed class ShapeObjectStore : IDisposable
         {
             return Failed(error);
         }
+        catch (TimeoutException error)
+        {
+            return Failed(error);
+        }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return new PlatformUnavailable("shape object storage did not answer in time", "shapes_timeout");
@@ -157,6 +165,10 @@ public sealed class ShapeObjectStore : IDisposable
             return Failed(error);
         }
         catch (HttpRequestException error)
+        {
+            return Failed(error);
+        }
+        catch (TimeoutException error)
         {
             return Failed(error);
         }
