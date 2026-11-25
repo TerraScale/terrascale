@@ -35,7 +35,7 @@ internal static class SqlTokenizer
         while (index < sql.Length)
         {
             var current = sql[index];
-            if (char.IsWhiteSpace(current) || current == '\uFEFF')
+            if (IsSpace(current) || current == '\uFEFF')
             {
                 index++;
                 continue;
@@ -71,9 +71,13 @@ internal static class SqlTokenizer
                     index = close < 0 ? sql.Length : close + 1;
                     tokens.Add(new SqlToken(TokenKind.QuotedIdentifier, start, index - start, sql[(start + 1)..Math.Max(start + 1, index - 1)]));
                     continue;
+                case ':' or '@' or '$' or '#' when Variable(sql, index) is > 0 and var length:
+                    index += length;
+                    tokens.Add(new SqlToken(TokenKind.Parameter, start, length, sql[start..index]));
+                    continue;
                 case '?' or ':' or '@' or '$':
                     index++;
-                    while (index < sql.Length && (char.IsAsciiLetterOrDigit(sql[index]) || sql[index] is '_' or '$'))
+                    while (index < sql.Length && char.IsAsciiDigit(sql[index]))
                     {
                         index++;
                     }
@@ -129,6 +133,45 @@ internal static class SqlTokenizer
         }
 
         return tokens;
+    }
+
+    private static bool IsSpace(char character) => character is ' ' or '\t' or '\n' or '\v' or '\f' or '\r';
+
+    private static bool IsIdChar(char character) => char.IsAsciiLetterOrDigit(character) || character is '_' or '$' || character > 127;
+
+    private static int Variable(string sql, int start)
+    {
+        var named = 0;
+        var index = start + 1;
+        while (index < sql.Length)
+        {
+            var current = sql[index];
+            if (IsIdChar(current))
+            {
+                named++;
+                index++;
+            }
+            else if (current == '(' && named > 0)
+            {
+                index++;
+                while (index < sql.Length && !IsSpace(sql[index]) && sql[index] is not (')' or '\0'))
+                {
+                    index++;
+                }
+
+                return index < sql.Length && sql[index] == ')' ? index + 1 - start : index - start;
+            }
+            else if (current == ':' && index + 1 < sql.Length && sql[index + 1] == ':')
+            {
+                index += 2;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return named > 0 ? index - start : 0;
     }
 
     private static char Next(string sql, int index) => index + 1 < sql.Length ? sql[index + 1] : '\0';

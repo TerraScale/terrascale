@@ -893,12 +893,12 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     private static int ParameterIndex(nint statement, string name)
     {
-        if (name.Length > 0 && name[0] is ':' or '@' or '$' or '?')
+        if (name.Length > 0 && name[0] is ':' or '@' or '$' or '#' or '?')
         {
             return ParameterIndexExact(statement, name);
         }
 
-        foreach (var prefix in ":@$")
+        foreach (var prefix in ":@$#")
         {
             var index = ParameterIndexExact(statement, string.Concat(prefix.ToString(), name));
             if (index != 0)
