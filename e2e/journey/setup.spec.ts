@@ -70,7 +70,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
         for (const outcome of tokenOutcomes) reading(authMetrics, 'ts_auth_tokens_total', `grant_type="${grant}"`, `outcome="${outcome}"`);
       }
       for (const purpose of mailPurposes) {
-        for (const outcome of ['admitted', 'refused']) reading(authMetrics, 'ts_auth_email_admission_total', `purpose="${purpose}"`, `outcome="${outcome}"`);
+        for (const outcome of ['admitted', 'refused', 'held']) reading(authMetrics, 'ts_auth_email_admission_total', `purpose="${purpose}"`, `outcome="${outcome}"`);
       }
       each(authMetrics, 'ts_auth_deletion_cleanup_total', 'outcome', ['invalid', 'verified', 'storage_unavailable', 'cleanup_failed', 'batch_remaining', 'records_remaining', 'scope_not_deleted', 'project_handoff_required', 'organization_handoff_required']);
       const refusedBefore = reading(authMetrics, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"');
