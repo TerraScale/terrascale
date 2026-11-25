@@ -126,7 +126,7 @@ internal sealed partial class PostgresConnection
             }
 
             var remaining = PostgresLimits.MaxTransaction - session.Time.GetElapsedTime(started);
-            var read = await Reader.ReadMessageAsync(remaining, remaining, closed);
+            var read = await Reader.ReadMessageAsync(remaining, new PgReadDeadline(remaining, TimeSpan.Zero), closed);
             var (records, done, error) = read switch
             {
                 PgFrontendMessage message => message switch

@@ -65,7 +65,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
 
             var open = session.Transaction is { Failed: false } block ? block : null;
             var timeout = open is null ? PostgresLimits.SessionIdleTimeout : PostgresLimits.MaxTransaction - session.Time.GetElapsedTime(open.Started);
-            var read = await Reader.ReadMessageAsync(timeout, open is null ? null : timeout, closed);
+            var read = await Reader.ReadMessageAsync(timeout, open is null ? null : new PgReadDeadline(timeout, PostgresLimits.MessageTimeout), closed);
             var proceed = read switch
             {
                 PgFrontendMessage when open is not null && session.Time.GetElapsedTime(open.Started, Reader.LastMessageStarted) > PostgresLimits.MaxTransaction =>

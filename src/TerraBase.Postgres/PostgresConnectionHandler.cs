@@ -170,7 +170,7 @@ public sealed class PostgresConnectionHandler(
         }
 
         var remaining = HandshakeRemaining(handshake);
-        var read = await wire.Reader.ReadMessageAsync(remaining, remaining, closed);
+        var read = await wire.Reader.ReadMessageAsync(remaining, new PgReadDeadline(remaining, TimeSpan.Zero), closed);
         var password = read switch
         {
             PgFrontendMessage frontend => frontend switch

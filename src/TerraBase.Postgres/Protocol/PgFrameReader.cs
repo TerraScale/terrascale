@@ -62,7 +62,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
     public long LastMessageStarted { get; private set; }
 
-    public async ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, TimeSpan? ceiling, CancellationToken cancellationToken)
+    public async ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, PgReadDeadline? ceiling, CancellationToken cancellationToken)
     {
         var called = timeProvider.GetTimestamp();
         using var deadline = new CancellationTokenSource(timeout > TimeSpan.Zero ? timeout : TimeSpan.Zero, timeProvider);
@@ -89,7 +89,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                 var first = started ??= timeProvider.GetTimestamp();
                 seen = discarded + buffer.Length;
                 var remaining = PostgresLimits.MessageBudget(seen) - timeProvider.GetElapsedTime(first);
-                if (ceiling is { } limit && limit - timeProvider.GetElapsedTime(called) is var left && left < remaining)
+                if (ceiling is { } limit && Bound(limit, called, first) - timeProvider.GetElapsedTime(called) is var left && left < remaining)
                 {
                     remaining = left;
                 }
@@ -116,7 +116,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                     var message = Parse(buffer.Slice(5, length - 4), body => ParseMessage(type, body));
                     input.AdvanceTo(buffer.GetPosition(length + 1));
                     LastMessageStarted = started ?? timeProvider.GetTimestamp();
-                    return ceiling is { } limit && timeProvider.GetElapsedTime(called) >= limit ? new PgIncompleteExpired() : message;
+                    return ceiling is { } limit && timeProvider.GetElapsedTime(called) >= Bound(limit, called, LastMessageStarted) ? new PgIncompleteExpired() : message;
                 }
             }
 
@@ -148,6 +148,9 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             input.AdvanceTo(buffer.Start, buffer.End);
         }
     }
+
+    private TimeSpan Bound(PgReadDeadline ceiling, long called, long started) =>
+        timeProvider.GetElapsedTime(called, started) < ceiling.Limit ? ceiling.Limit + ceiling.Grace : ceiling.Limit;
 
     private delegate TResult SpanParser<out TResult>(ReadOnlySpan<byte> body);
 

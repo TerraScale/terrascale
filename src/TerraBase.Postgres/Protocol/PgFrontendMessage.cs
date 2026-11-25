@@ -42,6 +42,8 @@ internal sealed record PgFunctionCallMessage : PgFrontendMessage;
 
 internal sealed record PgUnknownMessage(char Type) : PgFrontendMessage;
 
+internal readonly record struct PgReadDeadline(TimeSpan Limit, TimeSpan Grace);
+
 internal sealed record PgPeerClosed;
 
 internal sealed record PgIdleExpired;
