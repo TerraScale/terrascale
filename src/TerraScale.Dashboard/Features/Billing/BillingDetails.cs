@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var client = await ClientAsync(cancellationToken);
             var customer = await client.V1.Customers.GetAsync(binding.CustomerId,
                 new() { Expand = ["tax_ids"] }, cancellationToken: cancellationToken);
-            if (customer.Id != binding.CustomerId || customer.Deleted == true || customer.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
+            if (customer.Id != binding.CustomerId || customer.Deleted == true || !Owns(customer.Metadata, context.Organization.Id, [binding.RequestId]))
             {
                 throw new IOException("Billing details customer ownership does not match.");
             }

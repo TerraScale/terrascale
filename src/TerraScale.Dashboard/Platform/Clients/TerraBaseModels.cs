@@ -81,6 +81,14 @@ public sealed record TerraBaseDatabaseUsage(string DatabaseId, long StorageBytes
 public sealed record TerraBaseProjectUsage(string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Reads, long Writes, TerraBaseUsagePeriod Period,
     IReadOnlyList<TerraBaseUsagePoint> Series, IReadOnlyList<TerraBaseDatabaseUsage> Items, long FileBytes = 0, TerraBaseUsageMonth? Month = null);
 
+public sealed record TerraBaseUsageTotals(long Requests, long Reads, long Writes, long RowsRead, long RowsWritten, long StrongCommits, long StorageByteHours);
+
+public sealed record TerraBaseProjectUsageTotals(string ProjectId, long Requests, long Reads, long Writes, long RowsRead, long RowsWritten, long StrongCommits,
+    long StorageByteHours);
+
+public sealed record TerraBaseOrganizationUsage(string OrganizationId, string Month, bool Complete, IReadOnlyList<string> Gaps,
+    TerraBaseUsageTotals Totals, IReadOnlyList<TerraBaseProjectUsageTotals> Projects);
+
 public sealed record TerraBaseUsageBody(string Scope, string Month, IReadOnlyDictionary<string, long> Metrics)
 {
     public long Metric(string name) => Metrics.TryGetValue(name, out var value) ? value : 0;

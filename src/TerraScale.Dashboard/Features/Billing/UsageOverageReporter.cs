@@ -4,7 +4,6 @@ using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
 using StripeException = Stripe.StripeException;
-using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Clients;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
@@ -15,10 +14,11 @@ namespace TerraScale.Dashboard.Features.Billing
     {
         NotDue,
         WaitingForTerms,
+        WaitingForUsage,
         Settled
     }
 
-    public sealed class UsageOverageReporter(DashboardDb storage, IAllowanceNotificationBackend usage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<UsageOverageReporter> logger, BackgroundJobs jobs)
+    public sealed class UsageOverageReporter(DashboardDb storage, OrganizationUsage usage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<UsageOverageReporter> logger, BackgroundJobs jobs)
     {
         private const string PendingCharges = "SELECT id FROM billing_overage_charges WHERE state = @Pending AND (@After IS NULL OR id > @After) ORDER BY id LIMIT @Limit";
         private const string OpenMonths = """
@@ -26,8 +26,12 @@ namespace TerraScale.Dashboard.Features.Billing
             WHERE kind = 'stripe' AND state <> 'deleting' AND erasure_id IS NULL AND overage_starts_at <> @Default AND overage_starts_at < @Current
             ORDER BY overage_starts_at LIMIT @Limit
             """;
+        private const string OpenBindings = """
+            SELECT count(*) FROM billing
+            WHERE kind = 'stripe' AND state <> 'deleting' AND erasure_id IS NULL AND overage_starts_at <> @Default AND overage_starts_at < @Current
+            """;
         private const string MonthBindings = DashboardSql.Billing.Select + """
-             WHERE kind = 'stripe' AND overage_starts_at = @Month AND (@After IS NULL OR organization_id > @After) AND (@Upper IS NULL OR organization_id <= @Upper)
+             WHERE kind = 'stripe' AND overage_starts_at = @Month AND (@After IS NULL OR organization_id > @After)
             ORDER BY organization_id LIMIT @Limit
             """;
         private const string Subscriptions = DashboardSql.BillingSubscriptions.Select + " WHERE organization_id = @OrganizationId";
@@ -36,30 +40,19 @@ namespace TerraScale.Dashboard.Features.Billing
         private const string Advance = "UPDATE billing SET overage_starts_at = @Next, version = @Version WHERE organization_id = @OrganizationId AND overage_starts_at = @Month";
 
         private const int MonthsPerPass = 3;
-        private const int UsagePagesPerPass = 200;
+        private const int UsageReadsPerPass = 2000;
         private const int DispatchesPerPass = 500;
         private const int PageSize = 200;
 
         public async Task<long?> OperationUnitOverageAsync(BillingBinding binding, CancellationToken cancellationToken)
         {
-            string? after = null;
-            do
+            var read = await usage.ReadAsync(binding.OrganizationId, OrganizationUsage.MonthOf(clock.GetUtcNow()), cancellationToken);
+            return read switch
             {
-                if (await usage.ReadAsync(after, null, cancellationToken) is not { } page)
-                {
-                    return null;
-                }
-
-                AllowanceNotifications.ValidatedMonth(page, after, clock.GetUtcNow(), null);
-                var item = page.Items.FirstOrDefault(item => item.OrganizationId == binding.OrganizationId);
-                if (item is not null)
-                {
-                    var units = item.Operations ?? throw new IOException("Operation usage is unavailable.");
-                    return OperationUnitOverage.Units(PlanCatalog.For(binding.EffectivePlan), units);
-                }
-                after = page.Next;
-            } while (after is not null);
-            return 0;
+                MeasuredUsage measured => OperationUnitOverage.Units(PlanCatalog.For(binding.EffectivePlan), measured.OperationUnits),
+                PartialUsage partial => OperationUnitOverage.Units(PlanCatalog.For(binding.EffectivePlan), partial.OperationUnits),
+                UsageUnavailable => null,
+            };
         }
 
         public async Task RunCurrentAsync(CancellationToken cancellationToken)
@@ -112,75 +105,70 @@ namespace TerraScale.Dashboard.Features.Billing
                 months = [.. (await connection.QueryAsync<DateTime>(OpenMonths, new { Current = current, Default = default(DateTimeOffset), Limit = MonthsPerPass }))
                     .Select(static month => new DateTimeOffset(DateTime.SpecifyKind(month, DateTimeKind.Utc)))];
             }
-            var pages = 0;
-            long waiting = 0;
-            DateTimeOffset? oldest = null;
+            var reads = 0;
+            long waitingTerms = 0;
+            long waitingUsage = 0;
             foreach (var month in months)
             {
                 var prefix = month.ToString("yyyy-MM/", CultureInfo.InvariantCulture);
                 string? after = claim.State.Cursor is { } resumed && resumed.StartsWith(prefix, StringComparison.Ordinal) ? resumed[prefix.Length..] : null;
-                while (pages < UsagePagesPerPass)
+                while (reads < UsageReadsPerPass)
                 {
-                    AllowanceUsagePage? read;
-                    try
+                    List<BillingBinding> bindings;
+                    await using (var connection = await storage.OpenAsync(cancellationToken))
                     {
-                        read = await usage.ReadAsync(after, month, cancellationToken);
-                        if (read is not null)
-                        {
-                            AllowanceNotifications.ValidatedMonth(read, after, clock.GetUtcNow(), month);
-                        }
-                    }
-                    catch (Exception error) when (IsReportingFailure(error, cancellationToken))
-                    {
-                        logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
-                        break;
+                        bindings = (await connection.QueryAsync<BillingBinding>(MonthBindings, new { Month = month, After = after, Limit = PageSize })).AsList();
                     }
 
-                    if (read is not { } page)
-                    {
-                        break;
-                    }
-
-                    pages++;
-                    var measured = page.Items.ToDictionary(item => item.OrganizationId, StringComparer.Ordinal);
-                    var storageKnown = page.StorageContract == AllowanceNotifications.StorageContract;
-                    string? organizationAfter = after;
-                    while (true)
-                    {
-                        List<BillingBinding> bindings;
-                        await using (var connection = await storage.OpenAsync(cancellationToken))
-                        {
-                            bindings = (await connection.QueryAsync<BillingBinding>(MonthBindings,
-                                new { Month = month, After = organizationAfter, Upper = page.Next, Limit = PageSize })).AsList();
-                        }
-                        foreach (var binding in bindings)
-                        {
-                            var item = measured.GetValueOrDefault(binding.OrganizationId);
-                            var units = item is null ? 0 : item.Operations;
-                            var byteHours = storageKnown ? item is null ? 0 : item.StorageByteHours : null;
-                            try
-                            {
-                                if (await SettleAsync(binding, month, units, byteHours, cancellationToken) == MonthSettlement.WaitingForTerms)
-                                {
-                                    waiting++;
-                                    oldest = oldest is { } known && known < month ? known : month;
-                                }
-                            }
-                            catch (Exception error) when (IsReportingFailure(error, cancellationToken))
-                            {
-                                logger.UsageOverageCouldNotBeReported(error.GetType().Name);
-                            }
-                        }
-                        if (bindings.Count < PageSize) { break; }
-                        organizationAfter = bindings[^1].OrganizationId;
-                    }
-                    after = page.Next;
+                    reads += bindings.Count;
+                    var settled = new MonthSettlement[bindings.Count];
+                    await Parallel.ForAsync(0, bindings.Count, new ParallelOptions { MaxDegreeOfParallelism = OrganizationUsage.Concurrency, CancellationToken = cancellationToken },
+                        async (index, token) => settled[index] = await SettleMeasuredAsync(bindings[index], month, token));
+                    waitingTerms += settled.Count(static outcome => outcome == MonthSettlement.WaitingForTerms);
+                    waitingUsage += settled.Count(static outcome => outcome == MonthSettlement.WaitingForUsage);
+                    after = bindings.Count < PageSize ? null : bindings[^1].OrganizationId;
                     claim.State.Cursor = after is null ? null : prefix + after;
                     await claim.SaveAsync(cancellationToken);
                     if (after is null) { break; }
                 }
             }
-            billing.RecordWaitingOverageMonths(waiting, oldest);
+            long open;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
+            {
+                open = await connection.ExecuteScalarAsync<long>(OpenBindings, new { Current = current, Default = default(DateTimeOffset) });
+            }
+
+            billing.RecordWaitingOverageMonths(waitingTerms, waitingUsage, open, open > 0 && months.Count > 0 ? months[0] : null);
+        }
+
+        private async Task<MonthSettlement> SettleMeasuredAsync(BillingBinding binding, DateTimeOffset month, CancellationToken cancellationToken)
+        {
+            var read = await usage.ReadAsync(binding.OrganizationId, month, cancellationToken);
+            return read switch
+            {
+                MeasuredUsage measured => await SettleContainedAsync(binding, month, measured, cancellationToken),
+                PartialUsage partial => WaitingForUsage(binding, month, string.Join(',', partial.Gaps)),
+                UsageUnavailable unavailable => WaitingForUsage(binding, month, unavailable.Reason),
+            };
+        }
+
+        private MonthSettlement WaitingForUsage(BillingBinding binding, DateTimeOffset month, string reason)
+        {
+            BillingLog.UsageIncomplete(logger, binding.OrganizationId, month, reason);
+            return MonthSettlement.WaitingForUsage;
+        }
+
+        private async Task<MonthSettlement> SettleContainedAsync(BillingBinding binding, DateTimeOffset month, MeasuredUsage measured, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await SettleAsync(binding, month, measured.OperationUnits, measured.StorageByteHours, cancellationToken);
+            }
+            catch (Exception error) when (IsReportingFailure(error, cancellationToken))
+            {
+                logger.UsageOverageCouldNotBeReported(error.GetType().Name);
+                return MonthSettlement.NotDue;
+            }
         }
 
         private static bool IsReportingFailure(Exception error, CancellationToken cancellationToken) =>

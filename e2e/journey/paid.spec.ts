@@ -23,11 +23,12 @@ function kv(page: Page, card: string, label: string) {
 }
 
 test('overage months freeze on provider-dated terms, adopt earlier items and never charge twice', async () => {
+  test.setTimeout(180_000);
   const build = process.env.E2E_BUILD;
   if (!build) throw new Error('E2E_BUILD is required for the billing journey');
   const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll')], { env: process.env });
-  const lines = result.stdout.split('\n').filter((line) => /^billing (ledger|terms|migration|grace|tax|webhook) journey:/.test(line));
-  expect(lines).toHaveLength(18);
+  const lines = result.stdout.split('\n').filter((line) => /^billing (ledger|terms|migration|grace|tax|draft|plan|usage|webhook) journey:/.test(line));
+  expect(lines).toHaveLength(24);
   console.log(lines.join('\n'));
 });
 
@@ -381,7 +382,7 @@ test('organization checkout creates nothing before payment and completes exactly
   expect(paidResponse.status()).toBe(200);
   const paidSession = await paidResponse.json();
   const failure = await fetch(stripeStandIn + '/failure', {
-    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + paidSession.subscription, status: 404, remaining: 2 }),
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + paidSession.subscription, status: 404, remaining: null }),
   });
   expect(failure.status).toBe(200);
   const authFailure = await fetch(stripeStandIn + '/auth-failure', {
@@ -403,7 +404,8 @@ test('organization checkout creates nothing before payment and completes exactly
   await page.goto(paid.headers().location);
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/organization' && url.searchParams.get('newOrganization') === 'project');
   const afterFailure = await stripeLog();
-  expect(afterFailure.calls.filter((call) => call.path === '/v1/subscriptions/' + paidSession.subscription && call.status === 404)).toHaveLength(2);
+  expect(afterFailure.calls.filter((call) => call.path === '/v1/subscriptions/' + paidSession.subscription && call.status === 404).length,
+    'page navigations never write Stripe metadata; only the once-a-minute background stamp may have met one injected failure').toBeLessThanOrEqual(1);
   const staleCancel = await page.request.post('/api/v1/dashboard/organization/new-organization', { form: cancelForm, maxRedirects: 0 });
   expect(staleCancel.status()).toBe(303);
   await page.goto(staleCancel.headers().location);
@@ -411,10 +413,20 @@ test('organization checkout creates nothing before payment and completes exactly
   await page.goto('/organization?tab=billing');
   await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Team');
   await expect(page.locator('#billing-summary .ts-billing-plan .ts-badge')).toHaveText('Active');
+  const unstamped = await page.request.get('https://api.stripe.com/v1/subscriptions/' + paidSession.subscription, { headers: stripeHeaders });
+  expect(unstamped.status()).toBe(200);
+  expect((await unstamped.json()).metadata.organization_id, 'the owner stamp is still failing, so Stripe only knows the draft').toBeUndefined();
+  await expect(page.locator('#billing-payment-method')).toHaveText('Visa •••• 4242, expires 12/34');
+  await expect(page.locator('#billing-payment .ts-alert')).toHaveCount(0);
+  await expect(page.locator('#billing-payment dt', { hasText: 'Billing address' })).toBeVisible();
+  const disarmed = await fetch(stripeStandIn + '/failure', {
+    method: 'POST', body: JSON.stringify({ method: 'POST', path: '/v1/subscriptions/' + paidSession.subscription, status: 404, remaining: 0 }),
+  });
+  expect(disarmed.status).toBe(200);
   const afterResume = await stripeLog();
   expect(afterResume.cancels.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(0);
   expect(afterResume.refunds.filter((entry) => entry.subscription === paidSession.subscription)).toHaveLength(0);
-  console.log('organization checkout after mark: Stripe metadata 404 twice; stale wizard cancel refused; no cancel or refund; next navigation has Team with its binding');
+  console.log('organization checkout after mark: navigations write no Stripe metadata while it fails; stale wizard cancel refused; no cancel or refund; Team billing loads its card and details from the draft-owned customer before the owner stamp lands');
   const created = (await owner.organizations()).filter((org) => org.name === name);
   expect(created).toHaveLength(1);
   const organization = created[0];

@@ -133,53 +133,7 @@ public sealed partial class StripeBilling
             }
         }
 
-        await OptionalPanel.RunAsync(http, "organization checkout metadata", async () =>
-        {
-            var context = await accounts.GetContextAsync(session, cancellationToken);
-            var owned = context.Organizations.Where(org => org.Kind == "business" && org.OwnerUserId == session.UserId).Select(org => org.Id).ToArray();
-            foreach (var binding in await OwnedBindingsAsync(owned, cancellationToken))
-            {
-                await OptionalPanel.RunAsync(http, "organization checkout metadata", async () =>
-                {
-                    try
-                    {
-                        var client = await ClientAsync(cancellationToken);
-                        var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId, new() { Expand = ["customer"] }, cancellationToken: cancellationToken);
-                        var metadata = new Dictionary<string, string> { ["organization_id"] = binding.OrganizationId };
-                        if (subscription.Metadata.GetValueOrDefault("organization_id") != binding.OrganizationId)
-                        {
-                            await client.V1.Subscriptions.UpdateAsync(binding.SubscriptionId, new() { Metadata = metadata },
-                                Idempotent("organization-subscription-" + binding.RequestId), cancellationToken);
-                        }
-                        if (subscription.Customer?.Metadata.GetValueOrDefault("organization_id") != binding.OrganizationId)
-                        {
-                            await client.V1.Customers.UpdateAsync(binding.CustomerId, new() { Metadata = metadata },
-                                Idempotent("organization-owner-" + binding.RequestId), cancellationToken);
-                        }
-                    }
-                    catch (StripeException)
-                    {
-                        telemetry.ReportOrganizationMetadataFailure();
-                        throw;
-                    }
-                });
-            }
-        });
         return result;
-    }
-
-    private async Task<List<BillingBinding>> OwnedBindingsAsync(string[] owned, CancellationToken cancellationToken)
-    {
-        List<BillingBinding> bindings = [];
-        foreach (var organizationId in owned)
-        {
-            if (await storage.BindingRowAsync(organizationId, cancellationToken) is { Kind: "stripe", ErasureId: null, State: "active", RequestId.Length: 26, SubscriptionId.Length: > 0 } binding)
-            {
-                bindings.Add(binding);
-            }
-        }
-
-        return bindings;
     }
 
     internal static async Task<OrganizationCheckoutCompletion?> OrganizationCheckoutNoticeAsync(HttpContext http, string userId)

@@ -1,6 +1,4 @@
-using System.Globalization;
 using TerraScale.Dashboard.Platform.Persistence;
-using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
 using System.Net.Http.Headers;
@@ -9,26 +7,8 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseHttpClient terraBase, TimeProvider clock) : IAllowanceNotificationBackend
+    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity) : IAllowanceNotificationBackend
     {
-        public async Task<AllowanceUsagePage?> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken)
-        {
-            var outcome = await terraBase.ListAllowancesAsync(cancellationToken);
-            return outcome switch
-            {
-                JsonElement answer when answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("items", out _) =>
-                    answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty."),
-                JsonElement answer when answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("plans", out var plans) && plans.ValueKind == JsonValueKind.Array =>
-                    EmptyPage(clock.GetUtcNow(), month),
-                JsonElement => throw new IOException("Allowance producer response is invalid."),
-                TerraBaseRefusal => throw new IOException("Allowance producer is unavailable."),
-            };
-        }
-
-        private static AllowanceUsagePage EmptyPage(DateTimeOffset now, DateTimeOffset? month) =>
-            new(month ?? new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), now, [], null,
-                AllowanceNotifications.OperationsContract, AllowanceNotifications.StorageContract);
-
         public async Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
@@ -54,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     {
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5), clock);
             do
             {
                 try { await notifications.RunOnceAsync(stoppingToken); }
@@ -76,8 +56,4 @@ namespace TerraScale.Dashboard.Features.Notifications
             .AddSingleton<AllowanceNotifications>().AddHostedService<AllowanceNotificationWorker>();
         }
     }
-    [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-    [JsonSerializable(typeof(AllowanceUsagePage))]
-    internal sealed partial class AllowanceBackendJson : JsonSerializerContext;
-
 }

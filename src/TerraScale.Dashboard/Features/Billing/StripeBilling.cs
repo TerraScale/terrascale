@@ -239,13 +239,21 @@ namespace TerraScale.Dashboard.Features.Billing
         public async Task<WebhookReceipt> HandleWebhookAsync(string body, string signature, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            var webhookSecret = credentials.Stripe?.WebhookSecret ?? throw new IOException("Stripe identity is unavailable.");
+            if (credentials.Stripe is not { WebhookSecret: { } webhookSecret } stripe)
+            {
+                throw new IOException("Stripe identity is unavailable.");
+            }
+
             Event @event;
             try { @event = EventUtility.ConstructEvent(body, signature, webhookSecret); }
             catch (Exception)
-            { return new Rejected(); }
-            if (@event.Livemode != credentials.Stripe!.IsLive)
             {
+                BillingLog.StripeEventRejected(logger, "the signature or payload is invalid");
+                return new Rejected();
+            }
+            if (@event.Livemode != stripe.IsLive)
+            {
+                BillingLog.StripeEventRejected(logger, "the event mode does not match this deployment");
                 return new Rejected();
             }
 
@@ -261,15 +269,10 @@ namespace TerraScale.Dashboard.Features.Billing
                 Invoice invoice => invoice.CustomerId,
                 _ => null
             };
-            if (string.IsNullOrEmpty(customerId))
-            {
-                return new Done();
-            }
-
-            var customer = await CustomerAsync(customerId, cancellationToken);
+            var customer = string.IsNullOrEmpty(customerId) ? null : await CustomerAsync(customerId, cancellationToken);
             if (customer is null)
             {
-                return new Done();
+                return await RecordDraftEventAsync(@event, cancellationToken);
             }
 
             var orgId = customer.OrganizationId;
@@ -284,28 +287,37 @@ namespace TerraScale.Dashboard.Features.Billing
                 EventType = @event.Type,
                 EventCreated = new(DateTime.SpecifyKind(@event.Created, DateTimeKind.Utc)),
                 ReceivedAt = time.GetUtcNow(),
-                ProcessingUntil = time.GetUtcNow().AddMinutes(5)
+                ProcessingUntil = time.GetUtcNow() + ReceiptLease
             };
-            if (!await storage.InsertAsync(receipt, cancellationToken)) { return new Done(); }
-            try
+            if (await storage.InsertAsync(receipt, cancellationToken))
             {
-                if (binding?.CustomerId != customerId)
-                {
-                    throw new IOException("Billing index does not match its customer.");
-                }
+                return await ApplyClaimedAsync(@event, receipt, binding?.CustomerId == customerId, cancellationToken);
+            }
 
-                await ApplyEventReceiptAsync(receipt, cancellationToken);
-            }
-            catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or TimeoutException or StripeException ||
-                                          error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            var redelivery = await ClaimRedeliveryAsync(@event.Id, cancellationToken);
+            return redelivery switch
             {
-                receipt.ProcessingUntil = time.GetUtcNow();
-                await storage.ReplaceAsync(receipt, cancellationToken);
-                return new Deferred(@event.Id, @event.Type, error);
+                ReceiptSettled => new Done(),
+                ReceiptBusy => Busy(@event),
+                StripeEventReceipt stored => await ApplyClaimedAsync(@event, stored, binding?.CustomerId == customerId, cancellationToken),
+            };
+        }
+
+        private async Task<WebhookReceipt> ApplyClaimedAsync(Event @event, StripeEventReceipt receipt, bool indexed, CancellationToken cancellationToken)
+        {
+            var failure = indexed
+                ? await ProcessReceiptAsync(receipt, cancellationToken)
+                : await FailReceiptAsync(receipt, new IOException("Billing index does not match its customer."));
+            if (failure is not null)
+            {
+                return new Deferred(@event.Id, @event.Type, failure);
             }
-            logger.StripeEventAppliedForOrganization(@event.Id, @event.Type, orgId);
+
+            logger.StripeEventAppliedForOrganization(@event.Id, @event.Type, receipt.OrganizationId);
             return new Done();
         }
+
+        private static Deferred Busy(Event @event) => new(@event.Id, @event.Type, new IOException("The event is still being processed."));
 
         internal async Task<BillingBinding?> EndSubscriptionAsync(string orgId, CancellationToken cancellationToken, bool completedDeletion = false)
         {
@@ -369,7 +381,7 @@ namespace TerraScale.Dashboard.Features.Billing
             foreach (var subscriptionId in subscriptions)
             {
                 var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken);
-                if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
+                if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || !OwnedBy(subscription, binding))
                 {
                     throw new IOException("Subscription ownership does not match.");
                 }
@@ -377,7 +389,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 if (subscription.Status is not ("canceled" or "incomplete_expired"))
                 {
                     subscription = await client.V1.Subscriptions.CancelAsync(subscription.Id, cancellationToken: cancellationToken);
-                    if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId || subscription.Status is not ("canceled" or "incomplete_expired"))
+                    if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || !OwnedBy(subscription, binding) || subscription.Status is not ("canceled" or "incomplete_expired"))
                     {
                         throw new IOException("Subscription cancellation is incomplete.");
                     }
@@ -394,7 +406,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }, cancellationToken, allowDeletion: terminalDeletion);
         }
 
-        private readonly SemaphoreSlim[] refreshing = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
+        private readonly KeyedGate refreshing = new();
 
         private async Task ApplyPaymentAsync(BillingBinding binding, string invoiceId, string eventType, DateTime created, CancellationToken cancellationToken)
         {
@@ -405,7 +417,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
             var client = await ClientAsync(cancellationToken);
             var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId, new() { Expand = ["latest_invoice"] }, cancellationToken: cancellationToken);
-            if (subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != binding.OrganizationId ||
+            if (subscription.CustomerId != binding.CustomerId || !OwnedBy(subscription, binding) ||
                 subscription.LatestInvoiceId != invoiceId || subscription.LatestInvoice is not { Status: "paid" or "open" } invoice)
             {
                 return;
@@ -443,10 +455,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
         internal async Task<bool> RefreshAsync(string orgId, CancellationToken cancellationToken)
         {
-            var turn = refreshing[(StringComparer.Ordinal.GetHashCode(orgId) & int.MaxValue) % refreshing.Length];
-            await turn.WaitAsync(cancellationToken);
-            try { return await RefreshOnceAsync(orgId, cancellationToken); }
-            finally { turn.Release(); }
+            return await refreshing.RunAsync(orgId, () => RefreshOnceAsync(orgId, cancellationToken), cancellationToken);
         }
 
         private async Task<bool> RefreshOnceAsync(string orgId, CancellationToken cancellationToken)
@@ -498,7 +507,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 {
                     var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId,
                         new() { Expand = ["items.data.price.product", "default_payment_method", "customer.tax", "latest_invoice"] }, cancellationToken: cancellationToken);
-                    if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
+                    if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || !OwnedBy(subscription, binding))
                     {
                         throw new IOException("Subscription ownership does not match.");
                     }
@@ -639,6 +648,13 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             throw new IOException("Billing changed concurrently. Retry reconciliation.");
         }
+
+        private static bool OwnedBy(Subscription subscription, BillingBinding binding) => Owns(subscription.Metadata, binding.OrganizationId, [binding.RequestId]);
+
+        internal static bool Owns(IReadOnlyDictionary<string, string>? metadata, string organizationId, IReadOnlyCollection<string> drafts) =>
+            metadata?.GetValueOrDefault("organization_id") is { } owner
+                ? owner == organizationId
+                : metadata?.GetValueOrDefault("draft_id") is { Length: 26 } draft && drafts.Contains(draft);
 
         private static DateTimeOffset GraceDeadline(DateTimeOffset failedAt) => new(failedAt.UtcDateTime.Date.AddDays(8).AddMilliseconds(-1), TimeSpan.Zero);
 

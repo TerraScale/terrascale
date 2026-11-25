@@ -108,6 +108,7 @@ public sealed record BillingChangeReceipt : IBillingRow
     public DateTimeOffset PeriodEnd { get; set; }
     public long Revision { get; set; }
     public string Status { get; set; } = "reserved";
+    public DateTimeOffset? StatusChangedAt { get; set; }
 }
 
 public sealed record InternalBillingRow

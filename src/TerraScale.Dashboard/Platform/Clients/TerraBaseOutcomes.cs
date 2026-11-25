@@ -202,6 +202,14 @@ public readonly union TerraBaseProjectUsageOutcome(TerraBaseProjectUsage, TerraB
     };
 }
 
+public readonly union TerraBaseOrganizationUsageOutcome(TerraBaseOrganizationUsage, TerraBaseRefusal)
+    : ITerraBaseOutcome<TerraBaseOrganizationUsageOutcome, TerraBaseOrganizationUsage>
+{
+    public static TerraBaseOrganizationUsageOutcome Accepted(TerraBaseOrganizationUsage value) => new(value);
+
+    public static TerraBaseOrganizationUsageOutcome Refused(TerraBaseRefusal refusal) => new(refusal);
+}
+
 public readonly union TerraBaseDatabaseUsageOutcome(TerraBaseDatabaseUsage, TerraBaseRefusal) : ITerraBaseOutcome<TerraBaseDatabaseUsageOutcome, TerraBaseDatabaseUsage>
 {
     public static TerraBaseDatabaseUsageOutcome Accepted(TerraBaseDatabaseUsage value) => new(value);

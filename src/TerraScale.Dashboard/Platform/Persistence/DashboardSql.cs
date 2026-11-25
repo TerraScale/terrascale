@@ -125,11 +125,11 @@ internal static class DashboardSql
 
     internal static class BillingChanges
     {
-        public const string Select = "SELECT id, action, interval, organization_id, period_end, plan, request_id, revision, source_interval, source_plan_key, source_price_id, status, subscription_id, target_price_id, version FROM billing_changes";
+        public const string Select = "SELECT id, action, interval, organization_id, period_end, plan, request_id, revision, source_interval, source_plan_key, source_price_id, status, status_changed_at, subscription_id, target_price_id, version FROM billing_changes";
 
-        public const string Insert = "INSERT INTO billing_changes (id, action, interval, organization_id, period_end, plan, request_id, revision, source_interval, source_plan_key, source_price_id, status, subscription_id, target_price_id, version) VALUES (@Id, @Action, @Interval, @OrganizationId, @PeriodEnd, @Plan, @RequestId, @Revision, @SourceInterval, @SourcePlanKey, @SourcePriceId, @Status, @SubscriptionId, @TargetPriceId, @Version)";
+        public const string Insert = "INSERT INTO billing_changes (id, action, interval, organization_id, period_end, plan, request_id, revision, source_interval, source_plan_key, source_price_id, status, status_changed_at, subscription_id, target_price_id, version) VALUES (@Id, @Action, @Interval, @OrganizationId, @PeriodEnd, @Plan, @RequestId, @Revision, @SourceInterval, @SourcePlanKey, @SourcePriceId, @Status, @StatusChangedAt, @SubscriptionId, @TargetPriceId, @Version)";
 
-        public const string Update = "UPDATE billing_changes SET action = @Action, interval = @Interval, organization_id = @OrganizationId, period_end = @PeriodEnd, plan = @Plan, request_id = @RequestId, revision = @Revision, source_interval = @SourceInterval, source_plan_key = @SourcePlanKey, source_price_id = @SourcePriceId, status = @Status, subscription_id = @SubscriptionId, target_price_id = @TargetPriceId, version = @Version WHERE id = @Id AND version = @OriginalVersion";
+        public const string Update = "UPDATE billing_changes SET action = @Action, interval = @Interval, organization_id = @OrganizationId, period_end = @PeriodEnd, plan = @Plan, request_id = @RequestId, revision = @Revision, source_interval = @SourceInterval, source_plan_key = @SourcePlanKey, source_price_id = @SourcePriceId, status = @Status, status_changed_at = @StatusChangedAt, subscription_id = @SubscriptionId, target_price_id = @TargetPriceId, version = @Version WHERE id = @Id AND version = @OriginalVersion";
 
         public const string Delete = "DELETE FROM billing_changes WHERE id = @Id AND version = @OriginalVersion";
     }
@@ -224,11 +224,11 @@ internal static class DashboardSql
 
     internal static class StripeEventReceipts
     {
-        public const string Select = "SELECT id, completed_at, event_created, event_type, invoice_id, organization_id, processing_until, received_at, subscription_id, version FROM stripe_event_receipts";
+        public const string Select = "SELECT id, attempts, completed_at, dead_lettered_at, event_created, event_type, invoice_id, organization_id, processing_until, received_at, subscription_id, version FROM stripe_event_receipts";
 
-        public const string Insert = "INSERT INTO stripe_event_receipts (id, completed_at, event_created, event_type, invoice_id, organization_id, processing_until, received_at, subscription_id, version) VALUES (@Id, @CompletedAt, @EventCreated, @EventType, @InvoiceId, @OrganizationId, @ProcessingUntil, @ReceivedAt, @SubscriptionId, @Version)";
+        public const string Insert = "INSERT INTO stripe_event_receipts (id, attempts, completed_at, dead_lettered_at, event_created, event_type, invoice_id, organization_id, processing_until, received_at, subscription_id, version) VALUES (@Id, @Attempts, @CompletedAt, @DeadLetteredAt, @EventCreated, @EventType, @InvoiceId, @OrganizationId, @ProcessingUntil, @ReceivedAt, @SubscriptionId, @Version)";
 
-        public const string Update = "UPDATE stripe_event_receipts SET completed_at = @CompletedAt, event_created = @EventCreated, event_type = @EventType, invoice_id = @InvoiceId, organization_id = @OrganizationId, processing_until = @ProcessingUntil, received_at = @ReceivedAt, subscription_id = @SubscriptionId, version = @Version WHERE id = @Id AND version = @OriginalVersion";
+        public const string Update = "UPDATE stripe_event_receipts SET attempts = @Attempts, completed_at = @CompletedAt, dead_lettered_at = @DeadLetteredAt, event_created = @EventCreated, event_type = @EventType, invoice_id = @InvoiceId, organization_id = @OrganizationId, processing_until = @ProcessingUntil, received_at = @ReceivedAt, subscription_id = @SubscriptionId, version = @Version WHERE id = @Id AND version = @OriginalVersion";
 
         public const string Delete = "DELETE FROM stripe_event_receipts WHERE id = @Id AND version = @OriginalVersion";
     }

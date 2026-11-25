@@ -11,9 +11,6 @@ using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed record AllowanceUsageObservation(string OrganizationId, long? Operations, long? LogicalBytes, long? SqlReads = null, long? StorageByteHours = null,
-        long? WriteUnits = null, long? Invocations = null);
-    public sealed record AllowanceUsagePage(DateTimeOffset PeriodStart, DateTimeOffset ObservedAt, IReadOnlyList<AllowanceUsageObservation> Items, string? Next, string OperationsContract, string StorageContract);
     public sealed record AllowanceAlert(string Id, string OrganizationId, string BillingMonth, string Metric, int Threshold, long Used, long Allowance,
         DateTimeOffset CreatedAt, string EmailStatus = "pending")
     {
@@ -38,11 +35,10 @@ namespace TerraScale.Dashboard.Features.Notifications
     }
     public interface IAllowanceNotificationBackend
     {
-        Task<AllowanceUsagePage?> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken);
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
-    public sealed class AllowanceNotifications(DashboardDb storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs, BillingSchemaGate gate)
+    public sealed class AllowanceNotifications(DashboardDb storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, OrganizationUsage usage, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
         private const string AlertsOf = DashboardSql.AllowanceAlerts.Select + " WHERE organization_id = @OrganizationId";
         private const string RemoveJob = "DELETE FROM background_jobs WHERE id = @Id";
@@ -51,59 +47,47 @@ namespace TerraScale.Dashboard.Features.Notifications
         private const string PendingEmail = DashboardSql.AllowanceAlerts.Select + " WHERE id = @Id AND email_status = 'pending'";
         private const string SetEmailStatus = "UPDATE allowance_alerts SET email_status = @EmailStatus WHERE id = @Id";
 
-        public const string OperationsContract = "operation-units-writes-invocations-global-v3";
-        public const string StorageContract = "stored-byte-hours-global-v1";
-
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
             if (!await gate.AllowsAsync(cancellationToken)) { return; }
-            string? after = null;
-            do
-            {
-                if (await backend.ReadAsync(after, null, cancellationToken) is not { } page)
+            var month = OrganizationUsage.MonthOf(clock.GetUtcNow());
+            var candidates = (await organizations.ListAsync(cancellationToken)).Where(Observed).Select(static organization => organization.Id).ToList();
+            await Parallel.ForEachAsync(candidates, new ParallelOptions { MaxDegreeOfParallelism = OrganizationUsage.Concurrency, CancellationToken = cancellationToken },
+                async (organizationId, token) =>
                 {
-                    return;
-                }
-
-                var month = ValidatedMonth(page, after, clock.GetUtcNow());
-                foreach (var item in page.Items)
-                {
-                    try { await ObserveAsync(item, month, cancellationToken); }
-                    catch (Exception error) when (error is TerraBaseException or DBConcurrencyException or HttpRequestException or IOException or JsonException or InvalidOperationException ||
-                        error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    var read = await usage.ReadAsync(organizationId, month, token);
+                    var operations = read switch
                     {
-                        logger.AnAllowanceNotificationForOrganizationCould(item.OrganizationId, error.GetType().Name);
+                        MeasuredUsage measured => measured.OperationUnits,
+                        PartialUsage partial => partial.OperationUnits,
+                        UsageUnavailable unavailable => Unavailable(unavailable),
+                    };
+                    if (operations is not { } used)
+                    {
+                        return;
                     }
-                }
-                after = page.Next;
-            } while (after is not null);
+
+                    try { await ObserveAsync(organizationId, used, month, token); }
+                    catch (Exception error) when (error is TerraBaseException or DBConcurrencyException or HttpRequestException or IOException or JsonException or InvalidOperationException ||
+                        error is OperationCanceledException && !token.IsCancellationRequested)
+                    {
+                        logger.AnAllowanceNotificationForOrganizationCould(organizationId, error.GetType().Name);
+                    }
+                });
         }
 
-        public static DateTimeOffset ValidatedMonth(AllowanceUsagePage page, string? after, DateTimeOffset now, DateTimeOffset? expectedMonth = null)
+        private long? Unavailable(UsageUnavailable unavailable)
         {
-            if (page.Items.Count > 0 && page.OperationsContract != OperationsContract)
-            {
-                throw new IOException("Allowance metering does not report authoritative global operation units.");
-            }
-
-            var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            var month = expectedMonth ?? current;
-            if (page.PeriodStart != month || page.ObservedAt < current || page.ObservedAt > now || now - page.ObservedAt > TimeSpan.FromMinutes(5) ||
-                page.Items.Count > 25 || page.Items.Any(item => !TerraScaleIds.IsValid(item.OrganizationId) || item.Operations < 0 || item.LogicalBytes < 0 || item.SqlReads < 0 || item.StorageByteHours < 0 ||
-                    item.WriteUnits < 0 || item.Invocations < 0 || item.Operations < item.WriteUnits) ||
-                page.Items.Select(item => item.OrganizationId).Distinct(StringComparer.Ordinal).Count() != page.Items.Count ||
-                page.Items.Any(item => after is not null && string.CompareOrdinal(item.OrganizationId, after) <= 0) ||
-                page.Next is not null && (!TerraScaleIds.IsValid(page.Next) || page.Items.Count == 0 || page.Items[^1].OrganizationId != page.Next || string.CompareOrdinal(page.Next, after) <= 0))
-            {
-                throw new IOException("Allowance producer returned an invalid billing period or page.");
-            }
-
-            return month;
+            BillingLog.UsageUnavailable(logger, unavailable.OrganizationId, unavailable.Reason);
+            return null;
         }
 
-        private async Task ObserveAsync(AllowanceUsageObservation item, DateTimeOffset month, CancellationToken cancellationToken)
+        private static bool Observed(OrganizationRecord organization) =>
+            organization.Status == "active" && !organization.Archived && !organization.DeletionRequested && PlanCatalog.For(organization) is not null;
+
+        private async Task ObserveAsync(string organizationId, long used, DateTimeOffset month, CancellationToken cancellationToken)
         {
-            var stored = await organizations.FindAsync(item.OrganizationId, cancellationToken);
+            var stored = await organizations.FindAsync(organizationId, cancellationToken);
             if (stored is not { Erased: false })
             {
                 return;
@@ -111,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
             var organization = stored.Organization;
 
-            if (organization.Status != "active" || organization.Archived || organization.DeletionRequested || PlanCatalog.For(organization) is null)
+            if (!Observed(organization))
             {
                 return;
             }
@@ -123,13 +107,13 @@ namespace TerraScale.Dashboard.Features.Notifications
                 List<AllowanceAlertRow> alerts;
                 await using (var connection = await storage.OpenAsync(cancellationToken))
                 {
-                    alerts = (await connection.QueryAsync<AllowanceAlertRow>(AlertsOf, new { item.OrganizationId })).AsList();
+                    alerts = (await connection.QueryAsync<AllowanceAlertRow>(AlertsOf, new { OrganizationId = organizationId })).AsList();
                 }
 
                 List<AllowanceAlertRow> removed = [.. alerts.Where(alert => alert.BillingMonth != billingMonth)];
                 List<AllowanceAlertRow> added = [];
                 var current = alerts.Where(alert => alert.BillingMonth == billingMonth).ToList();
-                if (item.Operations is { } used && limits.MonthlyOperations is > 0 and < long.MaxValue)
+                if (limits.MonthlyOperations is > 0 and < long.MaxValue)
                 {
                     foreach (var threshold in new[] { 80, 100 })
                     {
@@ -138,18 +122,18 @@ namespace TerraScale.Dashboard.Features.Notifications
                             continue;
                         }
 
-                        added.Add(Row(item.OrganizationId, billingMonth, "operations", threshold, used, limits.MonthlyOperations));
+                        added.Add(Row(organizationId, billingMonth, "operations", threshold, used, limits.MonthlyOperations));
                     }
                 }
 
-                if (item.Operations is { } spent && organization.InternalBilling is null && PlanCatalog.For(organization) is { PriceCents: > 0 } plan &&
+                if (organization.InternalBilling is null && PlanCatalog.For(organization) is { PriceCents: > 0 } plan &&
                     organization.SpendCapCents > 0 && !current.Any(alert => alert.Metric == "spend" && alert.Allowance == organization.SpendCapCents))
                 {
-                    var monthToDateCents = OperationUnitOverage.Cents(OperationUnitOverage.Units(plan, spent));
+                    var monthToDateCents = OperationUnitOverage.Cents(OperationUnitOverage.Units(plan, used));
                     if (monthToDateCents >= organization.SpendCapCents)
                     {
                         removed.AddRange(current.Where(alert => alert.Metric == "spend"));
-                        added.Add(Row(item.OrganizationId, billingMonth, "spend", 100, monthToDateCents, organization.SpendCapCents));
+                        added.Add(Row(organizationId, billingMonth, "spend", 100, monthToDateCents, organization.SpendCapCents));
                     }
                 }
 
@@ -181,15 +165,10 @@ namespace TerraScale.Dashboard.Features.Notifications
                 }
             }
 
-            if (item.Operations is null)
-            {
-                return;
-            }
-
             List<AllowanceAlertRow> pending;
             await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                pending = (await connection.QueryAsync<AllowanceAlertRow>(PendingEmails, new { item.OrganizationId, BillingMonth = billingMonth })).AsList();
+                pending = (await connection.QueryAsync<AllowanceAlertRow>(PendingEmails, new { OrganizationId = organizationId, BillingMonth = billingMonth })).AsList();
             }
 
             foreach (var alert in pending)

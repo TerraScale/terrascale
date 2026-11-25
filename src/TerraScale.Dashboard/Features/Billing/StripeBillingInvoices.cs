@@ -5,6 +5,8 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed partial class StripeBilling
     {
+        private const int InvoicePages = 3;
+
         public async Task<IReadOnlyList<BillingInvoice>> InvoicesAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await MemberAsync(context, cancellationToken);
@@ -24,7 +26,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var invoices = new List<BillingInvoice>();
             var ids = new HashSet<string>(StringComparer.Ordinal);
             var options = new InvoiceListOptions { Customer = binding.CustomerId, Limit = 100 };
-            while (true)
+            for (var pages = 1; ; pages++)
             {
                 var page = await client.V1.Invoices.ListAsync(options, cancellationToken: cancellationToken);
                 foreach (var invoice in page.Data)
@@ -41,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Billing
                         InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl), InvoiceHistory.SafeUrl(invoice.InvoicePdf))
                     { RemainingCents = invoice.AmountRemaining });
                 }
-                if (!page.HasMore)
+                if (!page.HasMore || pages == InvoicePages)
                 {
                     break;
                 }

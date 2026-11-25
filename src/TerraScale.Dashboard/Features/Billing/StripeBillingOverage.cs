@@ -27,7 +27,7 @@ public sealed partial class StripeBilling
         logger.UsageOverageMonthSkipped(month, reason);
     }
 
-    internal void RecordWaitingOverageMonths(long count, DateTimeOffset? oldest) => telemetry.ReportWaitingOverageMonths(count, oldest);
+    internal void RecordWaitingOverageMonths(long terms, long usage, long open, DateTimeOffset? oldest) => telemetry.ReportWaitingOverageMonths(terms, usage, open, oldest);
 
     private const string ClaimOverage = """
         UPDATE billing_overage_charges SET claim_owner = @ClaimOwner, claim_until = @ClaimUntil
