@@ -12,6 +12,55 @@ internal static class TerraBaseSqlScript
         Other,
     }
 
+    public static string? TransactionControl(string sql)
+    {
+        var words = Words(sql);
+        return words switch
+        {
+            ["BEGIN" or "START", ..] => "begin",
+            ["COMMIT" or "END", ..] => "commit",
+            ["ROLLBACK", ..] when !words.Contains("TO") => "rollback",
+            _ => null,
+        };
+    }
+
+    private static List<string> Words(string sql)
+    {
+        List<string> words = [];
+        var i = 0;
+        while (i < sql.Length)
+        {
+            var c = sql[i];
+            if (c == '-' && i + 1 < sql.Length && sql[i + 1] == '-')
+            {
+                var end = sql.IndexOf('\n', i);
+                i = end < 0 ? sql.Length : end + 1;
+            }
+            else if (c == '/' && i + 1 < sql.Length && sql[i + 1] == '*')
+            {
+                var end = sql.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                i = end < 0 ? sql.Length : end + 2;
+            }
+            else if (c is '\'' or '"' or '`' or '[')
+            {
+                var end = sql.IndexOf(c == '[' ? ']' : c, i + 1);
+                i = end < 0 ? sql.Length : end + 1;
+            }
+            else if (char.IsAsciiLetter(c) || c == '_')
+            {
+                var start = i;
+                while (i < sql.Length && (char.IsAsciiLetterOrDigit(sql[i]) || sql[i] is '_' or '$')) i++;
+                words.Add(sql[start..i].ToUpperInvariant());
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        return words;
+    }
+
     public static IReadOnlyList<TerraBaseScriptStatement> Split(string sql)
     {
         List<TerraBaseScriptStatement> statements = [];

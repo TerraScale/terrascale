@@ -26,7 +26,7 @@ internal sealed class TerraBaseConnection
     private readonly ITerraBaseEndpointResolver endpointResolver;
     private readonly AuthenticationHeaderValue? authorization;
     private readonly Func<CancellationToken, ValueTask<string>>? accessTokenProvider;
-    private readonly Action<string>? rejectAccessToken;
+    private readonly Action<string>? rejectToken;
     private readonly bool anonymous;
     private readonly bool publicAnonymous;
     private readonly TimeSpan timeout;
@@ -83,7 +83,7 @@ internal sealed class TerraBaseConnection
 
         authorization = secret is null ? null : new AuthenticationHeaderValue("Bearer", secret);
         this.accessTokenProvider = accessTokenProvider;
-        this.rejectAccessToken = rejectAccessToken;
+        rejectToken = rejectAccessToken;
         this.timeout = timeout;
         this.timeProvider = timeProvider ?? TimeProvider.System;
         this.maxResponseBytes = maxResponseBytes;
@@ -428,9 +428,9 @@ internal sealed class TerraBaseConnection
 
     private bool Reject(string? token, TerraBaseException refusal)
     {
-        if (rejectAccessToken is null || token is null || refusal is not TerraBaseAuthenticationException || refusal is TerraBaseKeyRevokedException or TerraBaseKeyExpiredException)
+        if (rejectToken is null || token is null || refusal is not TerraBaseAuthenticationException || refusal is TerraBaseKeyRevokedException or TerraBaseKeyExpiredException)
             return false;
-        rejectAccessToken(token);
+        rejectToken(token);
         return true;
     }
 
@@ -516,8 +516,10 @@ internal sealed class TerraBaseConnection
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var response = TerraScaleOrigin.Sent(await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false), origin);
-            if (response.StatusCode != HttpStatusCode.SwitchingProtocols && !response.IsSuccessStatusCode)
-                Refusal = await TerraBaseException.FromResponseAsync(response, null, cancellationToken).ConfigureAwait(false);
+            var upgraded = response.Version.Major >= 2
+                ? response.StatusCode == HttpStatusCode.OK
+                : response.StatusCode == HttpStatusCode.SwitchingProtocols;
+            if (!upgraded) Refusal = await TerraBaseException.FromResponseAsync(response, null, cancellationToken).ConfigureAwait(false);
             return response;
         }
     }

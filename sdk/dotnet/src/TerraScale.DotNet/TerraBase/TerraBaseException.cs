@@ -123,8 +123,9 @@ public class TerraBaseException : HttpRequestException
     internal void CaptureResponse(HttpResponseMessage response)
     {
         RequestId = ResponseRequestId.Read(response);
-        ResponseHeaders = response.Headers.ToDictionary(header => header.Key,
-            header => (IReadOnlyList<string>)Array.AsReadOnly(header.Value.ToArray()), StringComparer.OrdinalIgnoreCase).AsReadOnly();
+        Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, values) in response.Headers.Concat(response.Content.Headers)) headers.TryAdd(name, Array.AsReadOnly(values.ToArray()));
+        ResponseHeaders = headers.AsReadOnly();
         Region = RegionHeader(response, "X-TerraBase-Region");
         RetryAfter = response.Headers.RetryAfter?.Delta
             ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);

@@ -191,7 +191,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
     {
         lock (stateGate)
         {
-            if (!current.Overdue()) return;
+            if (!current.Expired()) return;
             Drop(current, new TimeoutException($"TerraBase did not answer a SQL frame within {FrameDeadline.TotalSeconds:0} seconds."));
         }
 
@@ -249,7 +249,8 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
             TerraBaseSqlJsonContext.Wire.TerraBaseSqlSocketRequest);
         if (frame.Length > MaxFrameBytes) throw new ArgumentException("A SQL frame is at most 1 MiB.", nameof(statements));
         var current = await CurrentAsync(cancellationToken).ConfigureAwait(false);
-        var pending = new Pending(type);
+        var kind = type == "execute" && statements is [{ Sql: var sql }] ? TerraBaseSqlScript.TransactionControl(sql) ?? type : type;
+        var pending = new Pending(kind);
         current.Pending[id] = pending;
         try
         {
@@ -261,7 +262,7 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
                 {
                     if (uncertain is { } failure) throw failure;
                     if (Volatile.Read(ref current.Failure) is { } dropped) throw Closed(dropped);
-                    pending.Committing = type == "commit" || type == "execute" && (!transaction || current.Pending.Values.Any(other => other.Sent && other.Control));
+                    pending.Committing = kind == "commit" || kind == "execute" && (!transaction || current.Pending.Values.Any(other => other.Sent && other.Control));
                     if (!current.Pending.Values.Any(other => other.Sent)) current.Arm(FrameDeadline);
                     pending.Sent = true;
                 }
@@ -281,9 +282,8 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
             var canceled = error is OperationCanceledException && cancellationToken.IsCancellationRequested;
             Drop(current, canceled ? new WebSocketException(WebSocketError.ConnectionClosedPrematurely, "A canceled SQL request closed the session's connection.", error) : error);
             current.Socket.Abort();
-            if (uncertain is { } unknown) throw unknown;
-            if (!canceled) throw Closed(error);
-            throw;
+            if (canceled && !pending.Committing) throw;
+            throw uncertain ?? Closed(error);
         }
         finally
         {
@@ -392,26 +392,33 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         public readonly ConcurrentDictionary<long, Pending> Pending = new();
         public Task Receiving = Task.CompletedTask;
         public Exception? Failure;
-        private readonly TimeProvider time;
+        private readonly TimeProvider clock;
         private readonly ITimer watchdog;
         private long due = long.MaxValue;
 
         public Link(WebSocket socket, TimeProvider time, Action<Link> expire)
         {
             Socket = socket;
-            this.time = time;
+            clock = time;
             watchdog = time.CreateTimer(_ => expire(this), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
 
         public void Arm(TimeSpan deadline)
         {
-            Volatile.Write(ref due, deadline == Timeout.InfiniteTimeSpan
+            due = deadline == Timeout.InfiniteTimeSpan
                 ? long.MaxValue
-                : time.GetTimestamp() + (long)(deadline.TotalSeconds * time.TimestampFrequency));
+                : clock.GetTimestamp() + (long)(deadline.TotalSeconds * clock.TimestampFrequency);
             watchdog.Change(deadline, Timeout.InfiniteTimeSpan);
         }
 
-        public bool Overdue() => time.GetTimestamp() >= Volatile.Read(ref due);
+        public bool Expired()
+        {
+            if (due == long.MaxValue) return false;
+            var remaining = clock.GetElapsedTime(clock.GetTimestamp(), due);
+            if (remaining <= TimeSpan.Zero) return true;
+            watchdog.Change(remaining + TimeSpan.FromMilliseconds(1), Timeout.InfiniteTimeSpan);
+            return false;
+        }
 
         public void Dispose()
         {
