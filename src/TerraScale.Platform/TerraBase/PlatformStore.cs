@@ -90,6 +90,10 @@ public sealed class PlatformSchema(
             epoch INTEGER NOT NULL, digest TEXT NOT NULL, row_count INTEGER NOT NULL, created_at INTEGER NOT NULL,
             PRIMARY KEY (handle, chunk_offset))
         """,
+        """
+        CREATE TABLE IF NOT EXISTS platform_shape_object_deletions (
+            id TEXT NOT NULL PRIMARY KEY, handle TEXT NOT NULL, name TEXT NOT NULL, due_at INTEGER NOT NULL, claimed INTEGER NOT NULL DEFAULT 0)
+        """,
     ];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

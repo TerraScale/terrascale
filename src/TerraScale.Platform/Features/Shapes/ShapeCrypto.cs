@@ -5,9 +5,11 @@ using System.Text;
 
 namespace TerraScale.Platform.Features.Shapes;
 
-public readonly union OpenShapeChunkOutcome(ShapeChunk, PlatformUnavailable);
+public readonly union OpenShapeChunkOutcome(OpenedShapeChunk, PlatformUnavailable);
 
-public sealed record SealedChunk(byte[] Bytes, long Epoch, string Sha256);
+public sealed record OpenedShapeChunk(ShapeChunk Chunk, long PlainBytes);
+
+public sealed record SealedChunk(byte[] Bytes, long Epoch, string Sha256, long PlainBytes);
 
 public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvider)
 {
@@ -38,7 +40,8 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
     public SealedChunk Seal(string handle, Ulid keyId, ShapeChunk chunk)
     {
         var epoch = CurrentEpoch;
-        var plain = Compress(JsonSerializer.SerializeToUtf8Bytes(chunk, ShapesJsonContext.Default.ShapeChunk));
+        var json = JsonSerializer.SerializeToUtf8Bytes(chunk, ShapesJsonContext.Default.ShapeChunk);
+        var plain = Compress(json);
         var output = new byte[HeaderBytes + plain.Length + TagBytes];
         Magic.CopyTo(output, 0);
         output[4] = 1;
@@ -57,7 +60,7 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
             CryptographicOperations.ZeroMemory(key);
         }
 
-        return new SealedChunk(output, epoch, Convert.ToHexStringLower(SHA256.HashData(output)));
+        return new SealedChunk(output, epoch, Convert.ToHexStringLower(SHA256.HashData(output)), json.LongLength);
     }
 
     public OpenShapeChunkOutcome Open(string handle, ReadOnlySpan<byte> sealedChunk)
@@ -90,7 +93,7 @@ public sealed class ShapeCrypto(PlatformOptions options, TimeProvider timeProvid
         return Decompress(plain) switch
         {
             byte[] json => TerraBaseAnswers.Parse(json, ShapesJsonContext.Default.ShapeChunk) is { } chunk
-                ? chunk
+                ? new OpenedShapeChunk(chunk, json.LongLength)
                 : new PlatformUnavailable("a sealed shape chunk holds unreadable JSON", "shape_chunk_unreadable"),
             PlatformUnavailable unavailable => unavailable,
         };

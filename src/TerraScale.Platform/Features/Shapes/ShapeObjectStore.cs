@@ -33,6 +33,8 @@ public sealed class ShapeObjectStore : IDisposable
         _client = new AmazonS3Client(new BasicAWSCredentials(shapes.AccessKeyId, shapes.SecretAccessKey), new AmazonS3Config
         {
             ServiceURL = shapes.Endpoint.AbsoluteUri,
+            Timeout = TimeSpan.FromSeconds(30),
+            MaxErrorRetry = 2,
             AuthenticationRegion = "auto",
             ForcePathStyle = true,
             RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
@@ -42,7 +44,7 @@ public sealed class ShapeObjectStore : IDisposable
 
     public bool IsConfigured => _client is not null;
 
-    public static string ObjectName(long offset, string digest) => $"{offset:D20}-{digest[..16]}.tbs1";
+    public static string ObjectName(long offset, string digest, string sealer) => $"{offset:D20}-{digest[..16]}-{sealer}.tbs1";
 
     public static string Key(string handle, string objectName) => $"v1/shapes/{handle}/{objectName}";
 
@@ -81,6 +83,10 @@ public sealed class ShapeObjectStore : IDisposable
             return Failed(error);
         }
         catch (HttpRequestException error)
+        {
+            return Failed(error);
+        }
+        catch (TimeoutException error)
         {
             return Failed(error);
         }
@@ -124,6 +130,10 @@ public sealed class ShapeObjectStore : IDisposable
         {
             return Failed(error);
         }
+        catch (TimeoutException error)
+        {
+            return Failed(error);
+        }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return new PlatformUnavailable("shape object storage did not answer in time", "shapes_timeout");
@@ -142,6 +152,10 @@ public sealed class ShapeObjectStore : IDisposable
             _ = await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = options.Bucket, Key = key }, cancellationToken);
             return new ShapeObjectDeleted();
         }
+        catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new ShapeObjectDeleted();
+        }
         catch (AmazonServiceException error)
         {
             return Failed(error);
@@ -151,6 +165,10 @@ public sealed class ShapeObjectStore : IDisposable
             return Failed(error);
         }
         catch (HttpRequestException error)
+        {
+            return Failed(error);
+        }
+        catch (TimeoutException error)
         {
             return Failed(error);
         }

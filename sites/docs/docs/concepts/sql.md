@@ -100,6 +100,10 @@ Reads need the `sql:read` scope; writes and schema changes also need `sql:write`
 Live shapes send a table snapshot followed by committed changes. Use React's `useQuery` or Svelte's `createQuery`
 to read data that changes. These framework examples require the next JavaScript SDK release.
 Select rows with `where` and columns with `columns`; rows enter or leave the shape as they start or stop matching.
+A `where` clause may use the table's columns, literals, operators, `CASE`, `CAST`, `COLLATE` and the functions `abs`, `coalesce`,
+`ifnull`, `iif`, `nullif`, `length`, `octet_length`, `lower`, `upper`, `trim`, `ltrim`, `rtrim`, `substr`, `substring`, `instr`, `round`,
+`ceil`, `ceiling`, `floor`, `sign`, `typeof`, `min`, `max`, `likely`, `unlikely`, `likelihood`, `like`, `glob`, `date`, `time`, `datetime`,
+`julianday`, `unixepoch`, `strftime`, `json_extract`, `json_type`, `json_valid` and `json_array_length`; anything else answers 400 `unsafe_where`.
 
 ```jsx
 import { useQuery } from "@terrascale/sdk/react";

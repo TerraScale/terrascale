@@ -57,8 +57,6 @@ public sealed record ShapeRowEntry(string Key, JsonElement Row);
 
 public sealed record ShapeChunk(long Offset, long Previous, string Digest, IReadOnlyList<string> Columns, IReadOnlyList<ShapeRowEntry> Rows, IReadOnlyList<ShapeOperation> Ops);
 
-public sealed record ShapeHeadPointer(string Handle, string Head, [property: JsonPropertyName("object")] string ObjectName);
-
 public sealed record GetRowRequest(string Project, string Database, string Table, string Key, string? Columns);
 
 public sealed record ShapeRouteRequest(string Project, string Database, string Table);
@@ -82,9 +80,7 @@ public sealed record ShapeRecord(
 
 public sealed record ShapeChunkInfo(long Offset, string Name, string Sha256, long Size, long Epoch, string Digest);
 
-public sealed record ShapeChunkObject(string Handle, string Name);
-
-public sealed record ShapeRetirement(IReadOnlyList<string> Handles, IReadOnlyList<ShapeChunkObject> Chunks);
+public sealed record ShapeRetirement(IReadOnlyList<string> Handles);
 
 public closed record class ShapeOffset
 {
@@ -130,7 +126,6 @@ public sealed record DecimalOffset(long Value) : ShapeOffset;
 [JsonSerializable(typeof(ShapeHintAuth))]
 [JsonSerializable(typeof(RowResponse))]
 [JsonSerializable(typeof(ShapeChunk))]
-[JsonSerializable(typeof(ShapeHeadPointer))]
 public sealed partial class ShapesJsonContext : JsonSerializerContext;
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]

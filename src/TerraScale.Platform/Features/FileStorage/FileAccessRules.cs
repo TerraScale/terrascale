@@ -73,7 +73,7 @@ public sealed record FileAccessRules(string? Owner, FileAccessPolicy? Read, File
 
     private static bool BucketWide(FileAccessPolicy? policy, AccessContext access) =>
         policy is not null
-        && ((policy.Public && !access.Grant.Anonymous) || (policy.Roles is { } roles && roles.Any(role => access.Grant.Roles.Contains(role, StringComparer.Ordinal))));
+        && ((policy.Public && !access.Guest) || (policy.Roles is { } roles && roles.Any(role => access.Grant.Roles.Contains(role, StringComparer.Ordinal))));
 
     private static IEnumerable<string> Segments(string pointer) =>
         pointer.Split('/').Skip(1).Select(static segment => segment.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal));

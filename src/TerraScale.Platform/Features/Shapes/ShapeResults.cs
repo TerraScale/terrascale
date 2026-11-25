@@ -69,4 +69,4 @@ public sealed class ShapeSocketClosed : IResult
 
 public readonly union ShapeReply(ShapeAnswer, ShapeRedirect, ShapeRefetch, PlatformInvalidRequest, PlatformUnauthorized, PlatformForbidden, PlatformNotFound, PlatformUnavailable);
 
-public sealed record ResolvedShape(ShapeRecord Shape, DatabaseAccess Access, ShapeQuery Query);
+public sealed record ResolvedShape(ShapeRecord Shape, DatabaseAccess Access, ShapeQuery Query, long Seen);

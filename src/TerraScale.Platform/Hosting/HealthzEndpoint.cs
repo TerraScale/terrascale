@@ -12,5 +12,5 @@ public sealed class HealthzEndpoint(PlatformOptions options) : EndpointWithoutRe
     }
 
     public override ValueTask<HealthStatus> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(new HealthStatus("ok", options.Region, options.Node));
+        ValueTask.FromResult(new HealthStatus("ok", options.Region));
 }

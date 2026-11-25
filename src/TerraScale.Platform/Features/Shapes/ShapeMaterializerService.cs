@@ -17,6 +17,8 @@ public sealed class ShapeMaterializerService(
     ILogger<ShapeMaterializerService> logger) : BackgroundService
 {
     private const int ClaimLimit = 64;
+    private const int AuditPage = 256;
+    private const string RefusedFilter = "its persisted filter is no longer accepted";
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Lease = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan Reconnect = TimeSpan.FromSeconds(1);
@@ -25,6 +27,7 @@ public sealed class ShapeMaterializerService(
     private readonly Dictionary<Ulid, ChangeSubscription> _subscriptions = [];
     private readonly string _owner = options.Region + "/" + options.Node + "/" + Ulid.NewUlid();
     private IReadOnlyList<ShapeRecord> _owned = [];
+    private string _audited = "";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -36,13 +39,37 @@ public sealed class ShapeMaterializerService(
 
         try
         {
-            await Task.WhenAll(ManageAsync(stoppingToken), MaterializeAsync(stoppingToken));
+            await Task.WhenAll(ManageAsync(stoppingToken), MaterializeAsync(stoppingToken), CleanAsync(stoppingToken));
         }
         finally
         {
             foreach (var subscription in _subscriptions.Values)
             {
                 await subscription.StopAsync();
+            }
+        }
+    }
+
+    private async Task CleanAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(Tick, timeProvider);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            if (!readiness.SchemaReady)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (await sealer.DrainAsync(stoppingToken) is { } undrained)
+                {
+                    logger.ZLogWarning($"Shape object cleanup deferred: {undrained}");
+                }
+            }
+            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+            {
+                logger.ZLogWarning(error, $"Shape object cleanup pass failed");
             }
         }
     }
@@ -81,7 +108,7 @@ public sealed class ShapeMaterializerService(
         var active = activeOutcome switch
         {
             ActiveShapeDatabases { Items: var databases } => databases,
-            PlatformUnavailable unavailable => Deferred<Ulid>(unavailable.Message),
+            PlatformUnavailable unavailable => Kept(unavailable.Message),
         };
         var wanted = active.ToHashSet();
         foreach (var database in _subscriptions.Keys.Where(database => !wanted.Contains(database)).ToArray())
@@ -100,6 +127,8 @@ public sealed class ShapeMaterializerService(
         {
             await EnqueueAsync(shape.Database, "", cancellationToken);
         }
+
+        await AuditAsync(cancellationToken);
     }
 
     private async Task FollowAsync(Ulid database, CancellationToken cancellationToken)
@@ -191,9 +220,23 @@ public sealed class ShapeMaterializerService(
 
     private async Task RefreshAsync(ShapeRecord shape, string bookmark, CancellationToken cancellationToken)
     {
+        var outcome = Accepted(shape)
+            ? await SnapshotAsync(shape, bookmark, cancellationToken)
+            : Retire(shape.Handle, RefusedFilter, await registry.RetireShapeAsync(shape.Handle, cancellationToken));
+        if (outcome is not null)
+        {
+            logger.ZLogWarning($"Shape {shape.Handle} was not materialized: {outcome}");
+        }
+    }
+
+    private static bool Accepted(ShapeRecord shape) =>
+        ShapeQuery.IsTable(shape.Table) && ShapeQuery.IsSafeFilter(shape.Where) && (shape.Columns is null || ShapeQuery.ColumnList(shape.Columns) is not null);
+
+    private async Task<string?> SnapshotAsync(ShapeRecord shape, string bookmark, CancellationToken cancellationToken)
+    {
         var query = new ShapeQuery(shape.Table, shape.Where, shape.Columns);
         var outcomeOutcome = await terraBase.ExecuteLowLatencyAsync(shape.Database, SqlValues.Batch(query.Select()), SqlContext.After(bookmark), cancellationToken);
-        var outcome = outcomeOutcome switch
+        return outcomeOutcome switch
         {
             SqlExecuteResponse response => ShapeQuery.Snapshot(response.Results[0]) switch
             {
@@ -201,38 +244,51 @@ public sealed class ShapeMaterializerService(
                 PlatformUnavailable unavailable => unavailable.Message,
             },
             SqlFailure { Error.SqlState: "42P01" or "42703" } failure =>
-                await RetireAsync(shape, failure.Error.Message, await registry.RetireShapeAsync(shape.Handle, cancellationToken), cancellationToken),
+                Retire(shape.Handle, failure.Error.Message, await registry.RetireShapeAsync(shape.Handle, cancellationToken)),
             SqlFailure failure => failure.Error.Message,
-            PlatformNotFound { Code: "unknown_database" } missing =>
-                await RetireAsync(shape, missing.Message ?? "the database no longer exists", await registry.RetireDatabaseAsync(shape.Database, cancellationToken), cancellationToken),
             PlatformNotFound missing => missing.Message ?? "the database no longer exists",
             PlatformUnavailable unavailable => unavailable.Message,
         };
-        if (outcome is not null)
-        {
-            logger.ZLogWarning($"Shape {shape.Handle} was not materialized: {outcome}");
-        }
     }
 
-    private async Task<string?> RetireAsync(ShapeRecord shape, string reason, RetireShapeOutcome outcome, CancellationToken cancellationToken) =>
+    private string? Retire(string subject, string reason, RetireShapeOutcome outcome) =>
         outcome switch
         {
-            ShapeRetirement retired => await RetiredAsync(shape, reason, retired, cancellationToken),
+            ShapeRetirement retired => Retired(subject, reason, retired),
             PlatformUnavailable unavailable => $"{reason}; retiring the shape failed: {unavailable.Message}",
         };
 
-    private async Task<string?> RetiredAsync(ShapeRecord shape, string reason, ShapeRetirement retired, CancellationToken cancellationToken)
+    private string? Retired(string subject, string reason, ShapeRetirement retired)
     {
-        var handles = retired.Handles.ToHashSet(StringComparer.Ordinal);
-        Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
         if (retired.Handles.Count == 0)
         {
             return null;
         }
 
-        var kept = await sealer.RetireAsync(retired, cancellationToken);
-        logger.ZLogInformation($"Retired {retired.Handles.Count} shapes of {shape.Database} after {shape.Handle} failed permanently: {reason}");
-        return kept == 0 ? null : $"{reason}; {kept} retired shape objects could not be deleted";
+        sealer.ForgetShapes(retired.Handles);
+        var handles = retired.Handles.ToHashSet(StringComparer.Ordinal);
+        Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
+        logger.ZLogInformation($"Retired {retired.Handles.Count} shapes for {subject}: {reason}");
+        return null;
+    }
+
+    private async Task AuditAsync(CancellationToken cancellationToken)
+    {
+        var pageOutcome = await registry.PageAsync(_audited, AuditPage, cancellationToken);
+        var page = pageOutcome switch
+        {
+            ShapePage { Items: var items } => items,
+            PlatformUnavailable unavailable => Deferred<ShapeRecord>(unavailable.Message),
+        };
+        _audited = page.Count < AuditPage ? "" : page[^1].Handle;
+        foreach (var shape in page.Where(static shape => !Accepted(shape)))
+        {
+            var outcome = Retire(shape.Handle, RefusedFilter, await registry.RetireShapeAsync(shape.Handle, cancellationToken));
+            if (outcome is not null)
+            {
+                logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");
+            }
+        }
     }
 
     private async Task<string?> SealAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken)
@@ -283,6 +339,12 @@ public sealed class ShapeMaterializerService(
     {
         logger.ZLogWarning($"Changefeed for {database} broke: {unavailable.Message}");
         return null;
+    }
+
+    private IReadOnlyList<Ulid> Kept(string message)
+    {
+        logger.ZLogWarning($"Shape changefeed subscriptions kept unchanged: {message}");
+        return [.. _subscriptions.Keys];
     }
 
     private T[] Deferred<T>(string message)
