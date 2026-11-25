@@ -135,7 +135,7 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
         AuthorizeRequest authorize,
         DateTimeOffset now)
     {
-        if (grant.Anonymous)
+        if (grant.Anonymous && !IsGuest(grant, credential))
         {
             return new PlatformUnauthorized("a credential is required", "invalid_key");
         }
@@ -153,6 +153,10 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
         _grants[key] = new CachedGrant(grant, now + GrantLifetime);
         return new AccessContext(grant, credential);
     }
+
+    private static bool IsGuest(CallerGrant grant, CallerCredential credential) =>
+        grant is { EndUser: true, Subject.Length: > 0 } && grant.ProjectId != Ulid.Empty && credential is { Peer: false, IsJwt: true }
+        && EndUserToken.Read(credential) is { Guest: true };
 
     private sealed record CachedGrant(CallerGrant Grant, DateTimeOffset ExpiresAt);
 }

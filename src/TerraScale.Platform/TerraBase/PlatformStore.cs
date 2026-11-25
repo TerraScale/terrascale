@@ -85,6 +85,9 @@ public sealed class PlatformSchema(
             sealer TEXT NOT NULL, owner TEXT NOT NULL, lease_until INTEGER NOT NULL, last_read_at INTEGER NOT NULL, created_at INTEGER NOT NULL)
         """,
         """
+        CREATE TABLE IF NOT EXISTS platform_shape_lineages (shape_id TEXT NOT NULL PRIMARY KEY, handle TEXT NOT NULL)
+        """,
+        """
         CREATE TABLE IF NOT EXISTS platform_shape_chunks (
             handle TEXT NOT NULL, chunk_offset INTEGER NOT NULL, object TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL,
             epoch INTEGER NOT NULL, digest TEXT NOT NULL, row_count INTEGER NOT NULL, created_at INTEGER NOT NULL,

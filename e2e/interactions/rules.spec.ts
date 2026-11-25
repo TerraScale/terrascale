@@ -2,8 +2,8 @@ import { randomBytes } from 'node:crypto';
 import type { APIRequestContext, APIResponse, Page } from '@playwright/test';
 import { expect, test as base } from '../support/audit';
 import { mcpTool } from '../support/mcp';
-import { signInToken } from '../support/auth-management';
-import { auth } from '../support/stack';
+import { signInToken, stepUp } from '../support/auth-management';
+import { auth, dash } from '../support/stack';
 import { waitForCreatedDatabase } from '../support/database';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { saveSecret } from '../support/state';
@@ -428,6 +428,67 @@ test('one subject with different trusted claims never shares a shape handle, and
     const again = await bootstrap(await teamToken('red'));
     expect(again.handle, 'a fresh token with the same claims reuses the shape').toBe(red.handle);
     expect(again.rows).toEqual(red.rows);
+    await answer(await request.put(database + '/rules', {
+      headers: headers({ 'if-match': `"${(await answer<RulesBody>(await request.get(database + '/rules', { headers: headers() }), 200)).version}"` }), data: { tables: {} },
+    }), 200);
+  } finally {
+    await execute(`DROP TABLE IF EXISTS ${table}`);
+  }
+});
+
+test('guest tokens are admitted as end users to shapes and rows under their own handle, while a missing credential is refused', async ({ request, rulesAccount: { current, page } }) => {
+  const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
+  const table = 'rules_guests_' + randomBytes(4).toString('hex');
+  const shape = `${database}/tables/${table}/shape`;
+  const rows = `${database}/tables/${table}/rows/`;
+  const owner = await ownerToken(request, current);
+  const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
+  const execute = async (sql: string) => {
+    const response = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql }] } });
+    expect(response.status(), sql).toBe(200);
+  };
+  const read = (credential: string, query: string, maxRedirects = 20) =>
+    request.get(`${shape}?${query}`, { headers: { authorization: 'Bearer ' + credential }, maxRedirects });
+  const bootstrap = async (credential: string) => {
+    const redirect = await read(credential, 'offset=-1', 0);
+    expect(redirect.status(), await redirect.text()).toBe(307);
+    const body = await answer<ShapeBody>(await request.get(api + redirect.headers()['location'], { headers: { authorization: 'Bearer ' + credential } }), 200);
+    expect(body.handle).toBe(redirect.headers()['tb-shape-handle']);
+    return { handle: body.handle, body, rows: body.changes.flatMap(change => change.ops.map(op => op.row)) };
+  };
+
+  await execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, body TEXT NOT NULL)`);
+  try {
+    await execute(`INSERT INTO ${table} (id, body) VALUES (1, 'welcome'), (2, 'tour')`);
+    await answer(await request.put(database + '/rules', {
+      headers: headers({ 'if-none-match': '*' }), data: { tables: { [table]: { read: 'auth.is_anonymous = 1' } } },
+    }), 200);
+
+    const signedIn = await signInToken(page.request, 'rules-guests-owner');
+    const clients = await page.request.post(`${auth}/v1/${current.projectId}/clients`, {
+      headers: { authorization: 'Bearer ' + signedIn, 'X-TerraScale-Step-Up-Proof': await stepUp(page.request, signedIn, 'create_oauth_client', current.password) },
+      data: { name: 'Rules guests journey', type: 'public', redirect_uris: [dash + '/auth/rules-guests'], allow_anonymous: true },
+    });
+    expect(clients.status(), await clients.text()).toBe(201);
+    const issued = await request.post(`${auth}/${current.projectId}/oauth/anonymous`, { form: { client_id: (await clients.json()).client_id as string } });
+    expect(issued.status(), await issued.text()).toBe(200);
+    const guestToken = (await issued.json()).access_token as string;
+    saveSecret('rules-guests-guest-token', guestToken);
+    expect(JSON.parse(Buffer.from(guestToken.split('.')[1], 'base64url').toString()).is_anonymous).toBe(true);
+    const memberToken = await endUserToken(request, await mintKey(page.request, current), ulid(), current);
+
+    const guest = await bootstrap(guestToken);
+    const member = await bootstrap(memberToken);
+    expect(guest.rows, 'a guest reads the rows its Rules allow guests to read').toEqual([{ id: 1, body: 'welcome' }, { id: 2, body: 'tour' }]);
+    expect(member.rows).toEqual([]);
+    expect(guest.handle, 'a guest and a signed-in end user never share a shape handle').not.toBe(member.handle);
+    expect((await bootstrap(guestToken)).handle, 'the guest keeps its shape handle across requests').toBe(guest.handle);
+    expect(await answer(await request.get(rows + '2', { headers: { authorization: 'Bearer ' + guestToken } }), 200)).toEqual({ row: { id: 2, body: 'tour' } });
+
+    const crossed = await answer<{ error: { handle: string } }>(await read(memberToken, `handle=${guest.handle}&offset=${guest.body.next_offset}`), 409, 'must_refetch');
+    expect(crossed.error.handle).toBe(member.handle);
+    await answer(await request.get(`${shape}?offset=-1`, { maxRedirects: 0 }), 401, 'invalid_key');
+    await answer(await request.get(rows + '2'), 401, 'invalid_key');
     await answer(await request.put(database + '/rules', {
       headers: headers({ 'if-match': `"${(await answer<RulesBody>(await request.get(database + '/rules', { headers: headers() }), 200)).version}"` }), data: { tables: {} },
     }), 200);
