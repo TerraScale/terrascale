@@ -327,9 +327,9 @@ public sealed class ShapeReader(
             return new PlatformUnauthorized("the end-user token's claims are unreadable", "invalid_token");
         }
 
-        var (handle, shapeId) = query.Lineage(database.Access.Organization, database.Access.Project, database.Database, viewer, snapshot.Columns);
-        var shape = new ShapeRecord(handle, shapeId, database.Access.Organization, database.Access.Project, database.Database, route.Project, route.Database,
-            query.Table, query.Where, query.Columns, viewer, 0, "");
+        var shapeId = query.ShapeId(database.Access.Organization, database.Access.Project, database.Database, viewer, snapshot.Columns);
+        var shape = new ShapeRecord(ShapeQuery.NewHandle(), shapeId, database.Access.Organization, database.Access.Project, database.Database, route.Project,
+            route.Database, query.Table, query.Where, query.Columns, viewer, 0, "");
         var outcome = await registry.EnsureAsync(shape, cancellationToken);
         return outcome switch
         {
