@@ -66,9 +66,9 @@ export async function cliAgentEnrollment(page: Page, audit: Audit, project: stri
     expect(second.items).toHaveLength(1);
     expect(second.items[0].id).not.toBe(first.items[0].id);
     const policy = JSON.parse(await command('policy', 'get')) as { allowed_scopes: string[] };
-    const set = JSON.parse(await command('policy', 'set', ...policy.allowed_scopes.flatMap(scope => ['--scope', scope]))) as { allowed_scopes: string[] };
+    const set = JSON.parse(await command('policy', 'set', ...policy.allowed_scopes.flatMap(scope => ['--scope', scope]), '--yes')) as { allowed_scopes: string[] };
     expect(set.allowed_scopes).toEqual(policy.allowed_scopes);
-    await command('revoke', '--agent', agent.agent_id);
+    await command('revoke', '--agent', agent.agent_id, '--yes');
     await expect(command('token', '--agent', agent.agent_id)).rejects.toThrow('Agent CLI command failed');
   } finally {
     child.kill();
