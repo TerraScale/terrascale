@@ -19,11 +19,13 @@ jobs:
     concurrency:
       group: dashboard-release
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     permissions:
       contents: read
       actions: read
+      pull-requests: read
       issues: write
       attestations: write
       id-token: write
@@ -60,6 +62,8 @@ jobs:
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         with:
           node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
       - name: Build or reuse the target image
@@ -118,8 +122,14 @@ jobs:
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main &
+          provenance=$!
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main &
+          sbom=$!
+          status=0
+          wait "$provenance" || status=$?
+          wait "$sbom" || status=$?
+          exit "$status"
       - name: Deploy ts-dashboard through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-dashboard "$IMAGE"

@@ -130,6 +130,7 @@ jobs:
               - .github/docker/terrabase.Dockerfile
               - .github/scripts/ci/image-payloads.sh
               - .github/scripts/ci/deploy-v2.sh
+              - .github/scripts/ci/check-live-ahead.sh
               - .github/scripts/ci/publish-ocir.sh
               - .github/scripts/ci/publish-image.sh
               - .github/scripts/ci/ocir-repositories.sh
@@ -144,6 +145,7 @@ jobs:
               - .github/docker/ts-platform.Dockerfile
               - .github/scripts/ci/image-payloads.sh
               - .github/scripts/ci/deploy-v2.sh
+              - .github/scripts/ci/check-live-ahead.sh
               - .github/scripts/ci/publish-ocir.sh
               - .github/scripts/ci/publish-image.sh
               - .github/scripts/ci/ocir-repositories.sh
@@ -214,7 +216,7 @@ jobs:
             journey-write:
               - *journey-browser
               - e2e/placement/{support,fleet}.ts
-              - e2e/placement/{write-guarantees,region-restore,close}.spec.ts
+              - e2e/placement/{database-functions,write-guarantees,region-restore,close}.spec.ts
               - e2e/fault/support.ts
             journey-faults:
               - *journey-browser
@@ -319,7 +321,8 @@ jobs:
           jq -cn '
             [
               {shard: "desktop and paid", projects: "--project pages-desktop --project paid-invitation", selected: env.DESKTOP},
-              {shard: "phone and flows", projects: "--project pages-mobile --project hosted --project interactions --project invitation", selected: env.PHONE},
+              {shard: "phone pages and hosted", projects: "pages/ hosted/ journey/invitation interactions/f --project pages-mobile --project hosted --project invitation --project interactions", selected: env.PHONE},
+              {shard: "phone interactions", projects: "interactions/[^f] interactions/files\\. --project interactions", selected: env.PHONE},
               {shard: "session limits", projects: "placement/session-limits.spec.ts --project placement --workers 1", regions: 2, nodes: 2, selected: env.SESSION},
               {shard: "write guarantees", projects: "placement/database-functions.spec.ts placement/write-guarantees.spec.ts placement/region-restore.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
               {shard: "multi-region faults", projects: "--project fault", regions: 2, nodes: 2, selected: env.FAULTS}
@@ -524,6 +527,7 @@ jobs:
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
+      queue: max
     env:
       AREA: terrabase
       SERVICE: terrabase
@@ -535,6 +539,7 @@ jobs:
       # ts-orch accepts this job's OIDC token to release the image it just published.
       id-token: write
       actions: read
+      pull-requests: read
     steps: &production-steps
       - *checkout
       - id: qualify
@@ -549,26 +554,6 @@ jobs:
         with:
           revision: ${{ github.sha }}
           qualification: terrabase-maintenance
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        if: steps.qualify.outputs.qualified != 'false'
-        with:
-          global-json-file: terrascale/global.json
-      - name: Pinned native libraries
-        if: steps.qualify.outputs.qualified != 'false'
-        uses: ./terrascale/.github/actions/native-libs
-        with:
-          dir: terrascale
-          runtimes: linux-arm64
-      # Production runs linux/arm64 natively on ubuntu-24.04-arm: publish once, wrap in the chiseled image, attest, and roll out via ts-orch.
-      - name: Publish the linux/arm64 runtime payload
-        if: steps.qualify.outputs.qualified != 'false'
-        working-directory: terrascale
-        run: |
-          docker buildx create --use --driver docker-container --bootstrap > "$RUNNER_TEMP/builder.log" 2>&1 &
-          builder=$!
-          bash .github/scripts/ci/image-payloads.sh publish "$AREA"
-          bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
-          wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
       - name: Authenticate to OCIR with GitHub OIDC
         if: steps.qualify.outputs.qualified != 'false'
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
@@ -577,9 +562,37 @@ jobs:
           domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
           client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
           client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
+      # A queued or late release must never roll production back: skip when ts-orch already runs this or a newer commit.
+      - id: liveguard
+        name: Skip when live is already at or ahead of this commit
+        if: steps.qualify.outputs.qualified != 'false' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
+        working-directory: terrascale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/ci/check-live-ahead.sh "$SERVICE"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
+        with:
+          global-json-file: terrascale/global.json
+      - name: Pinned native libraries
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
+        uses: ./terrascale/.github/actions/native-libs
+        with:
+          dir: terrascale
+          runtimes: linux-arm64
+      # Production runs linux/arm64 natively on ubuntu-24.04-arm: publish once, wrap in the chiseled image, attest, and roll out via ts-orch.
+      - name: Publish the linux/arm64 runtime payload
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
+        working-directory: terrascale
+        run: |
+          docker buildx create --use --driver docker-container --bootstrap > "$RUNNER_TEMP/builder.log" 2>&1 &
+          builder=$!
+          bash .github/scripts/ci/image-payloads.sh publish "$AREA"
+          bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
+          wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
       # Private OCIR images ts-orch pulls via Instance Principal from each region's local OCIR mirror.
       - id: image
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ runner.temp }}/image-payloads
@@ -592,7 +605,7 @@ jobs:
           push: true
       - id: digest
         name: Verify the published linux/arm64 child
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         env:
           INDEX: ${{ steps.image.outputs.digest }}
         run: |
@@ -609,21 +622,21 @@ jobs:
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
       - name: Record the build-only digest (no release)
-        if: steps.qualify.outputs.qualified != 'false' && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
         env:
           INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
       - id: provenance
         name: Attest build provenance (linux/arm64 child)
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}
           subject-digest: ${{ steps.digest.outputs.arm64 }}
           push-to-registry: false
       - name: Generate the linux/arm64 child SBOM
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
@@ -632,7 +645,7 @@ jobs:
           upload-artifact: false
       - id: sbom
         name: Attest the SBOM
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}
@@ -640,11 +653,11 @@ jobs:
           sbom-path: ${{ runner.temp }}/sbom.spdx.json
           push-to-registry: false
       - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         with:
           version: 1.3.6
       - name: Mirror image and Sigstore bundles to every OCIR region
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         working-directory: terrascale
         env:
           SOURCE: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
@@ -656,17 +669,24 @@ jobs:
           if [[ $PUBLICATION != build-only ]]; then tags+=,main; fi
           bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "$tags" "$PROVENANCE" "$SBOM"
       - name: Verify the attestations
-        if: steps.qualify.outputs.qualified != 'false'
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
-          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
-          gh attestation verify "oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
+          subject="oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}"
+          gh attestation verify "$subject" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
+          provenance=$!
+          gh attestation verify "$subject" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
+          sbom=$!
+          status=0
+          wait "$provenance" || status=$?
+          wait "$sbom" || status=$?
+          exit "$status"
       - name: Deploy through ts-orch
-        if: steps.qualify.outputs.qualified != 'false' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
+        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
         working-directory: terrascale
         env:
           ARM64: ${{ steps.digest.outputs.arm64 }}
@@ -681,6 +701,7 @@ jobs:
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
+      queue: max
     env:
       AREA: terrabase
       SERVICE: terrabase
@@ -692,6 +713,7 @@ jobs:
       attestations: write
       id-token: write
       actions: read
+      pull-requests: read
     steps: *production-steps
 
   main-platform:
@@ -705,6 +727,7 @@ jobs:
     concurrency:
       group: production-platform
       cancel-in-progress: false
+      queue: max
     env:
       AREA: platform
       SERVICE: ts-platform
@@ -715,6 +738,7 @@ jobs:
       attestations: write
       id-token: write
       actions: read
+      pull-requests: read
     steps: *production-steps
 
   main-platform-fallback:
@@ -726,6 +750,7 @@ jobs:
     concurrency:
       group: production-platform
       cancel-in-progress: false
+      queue: max
     env:
       AREA: platform
       SERVICE: ts-platform
@@ -737,6 +762,7 @@ jobs:
       attestations: write
       id-token: write
       actions: read
+      pull-requests: read
     steps: *production-steps
 
   main-build-only:
@@ -758,6 +784,7 @@ jobs:
       attestations: write
       id-token: write
       actions: read
+      pull-requests: read
     steps: *production-steps
 
   release-only:
@@ -768,6 +795,7 @@ jobs:
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
@@ -809,18 +837,22 @@ jobs:
 
   main-auth:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && !inputs.pr_gate))
+    outputs:
+      deploy: ${{ steps.live.outputs.deploy }}
     concurrency:
       group: production-auth
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     permissions:
       contents: read
       actions: read
+      pull-requests: read
       issues: write
       attestations: write
       id-token: write
-    steps:
+    steps: &auth-steps
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
@@ -837,6 +869,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           AUTH_LIVE_REVISION: ${{ steps.probe.outputs.revision }}
+          SITE_DEPLOY_GATE_FALLBACK: ${{ github.job == 'main-auth-fallback' }}
         run: node .github/scripts/ci/site-deploy-gate.mjs auth --reconcile
       - name: Authenticate to OCIR with GitHub OIDC
         if: steps.live.outputs.deploy == 'true'
@@ -914,8 +947,14 @@ jobs:
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
+          provenance=$!
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
+          sbom=$!
+          status=0
+          wait "$provenance" || status=$?
+          wait "$sbom" || status=$?
+          exit "$status"
       - name: Deploy ts-auth through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-auth "$IMAGE"
@@ -926,11 +965,172 @@ jobs:
         if: steps.live.outputs.deploy == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: deploy-revision
+          name: deploy-revision-auth
           overwrite: true
           path: ${{ runner.temp }}/deploy-revision
           if-no-files-found: error
           retention-days: 1
+
+  # main-auth starts with the push and finds its commit qualified only through a matching PR run. When none matched,
+  # this locked job reconciles again after this run's all-green, so ts-auth cannot starve; it fails rather than skips.
+  main-auth-fallback:
+    needs: [changes, all-green, main-auth]
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.all-green.result == 'success' && needs.main-auth.result == 'success' && needs.main-auth.outputs.deploy == 'false'
+    concurrency:
+      group: production-auth
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      issues: write
+      attestations: write
+      id-token: write
+    steps: *auth-steps
+
+  # The dashboard twin of main-auth-fallback: images-ghcr.yml releases early through a matching PR run, and this locked
+  # job reconciles after all-green. A commit that is already live leaves it with deploy=false, so nothing deploys twice.
+  main-dashboard-fallback:
+    needs: [changes, all-green]
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.all-green.result == 'success'
+    concurrency:
+      group: dashboard-release
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      issues: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - id: live
+        name: Reconcile qualified main with the live dashboard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SITE_DEPLOY_GATE_FALLBACK: 'true'
+        run: node .github/scripts/ci/site-deploy-gate.mjs dashboard
+      - name: Authenticate to OCIR with GitHub OIDC
+        if: steps.live.outputs.deploy == 'true'
+        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
+        with:
+          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
+          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
+          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
+      - id: cached
+        name: Inspect the immutable target image
+        if: steps.live.outputs.deploy == 'true'
+        run: bash .github/scripts/ci/inspect-app-image.sh dashboard
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
+      - name: Build or reuse the target image
+        if: steps.live.outputs.deploy == 'true'
+        run: bash .github/scripts/ci/reconcile-image.sh dashboard
+      - id: dashboarddigest
+        name: Extract the released arm64 child digest
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          IMAGE: ${{ env.IMAGE }}
+        run: |
+          echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
+          echo "name=${IMAGE%@*}" >> "$GITHUB_OUTPUT"
+      - id: provenance
+        name: Attest build provenance (linux/arm64 child)
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ steps.dashboarddigest.outputs.name }}
+          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
+          push-to-registry: false
+      - name: Generate the linux/arm64 child SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ steps.dashboarddigest.outputs.name }}@${{ steps.dashboarddigest.outputs.arm64 }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom.spdx.json
+          upload-artifact: false
+      - id: sbom
+        name: Attest the SBOM
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
+        with:
+          subject-name: ${{ steps.dashboarddigest.outputs.name }}
+          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: false
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          version: 1.3.6
+      - name: Mirror image and Sigstore bundles to every OCIR region
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          SOURCE: ${{ env.IMAGE }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+        run: bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "${REVISION},main" "$PROVENANCE" "$SBOM"
+      - name: Verify the attestations
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ steps.dashboarddigest.outputs.arm64 }}
+          NAME: ${{ steps.dashboarddigest.outputs.name }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
+          provenance=$!
+          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
+          sbom=$!
+          status=0
+          wait "$provenance" || status=$?
+          wait "$sbom" || status=$?
+          exit "$status"
+      - name: Deploy ts-dashboard through ts-orch
+        if: steps.live.outputs.deploy == 'true'
+        run: bash .github/scripts/ci/deploy-v2.sh ts-dashboard "$IMAGE"
+      - name: Prove the live revision
+        if: steps.live.outputs.deploy == 'true'
+        run: node .github/scripts/ci/site-deploy-gate.mjs dashboard --prove
+      - name: Record the released source for the production journey
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deploy-revision-dashboard
+          overwrite: true
+          path: ${{ runner.temp }}/deploy-revision
+          if-no-files-found: error
+          retention-days: 1
+
   test:
     name: test
     needs: [changes, checks, libs, auth, terrabase, dashboard, aspire, sdk]

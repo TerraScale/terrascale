@@ -96,7 +96,7 @@ while true; do
     exit 1
   fi
 
-  sleep 5
+  sleep 2
 
   if (( SECONDS - jwt_fetched_at >= 180 )); then
     jwt=$(fetch_oidc_jwt)
