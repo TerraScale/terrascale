@@ -38,7 +38,7 @@ internal static class SqlText
         {
             var c = sql[i];
             var next = i + 1 < sql.Length ? sql[i + 1] : '\0';
-            if (char.IsWhiteSpace(c))
+            if (IsSpace(c) || c == '\uFEFF')
             {
                 i++;
                 continue;
@@ -106,6 +106,8 @@ internal static class SqlText
 
                     (kind, value, i) = (SqlTokenKind.Parameter, sql[start..(start + length)], start + length);
                     break;
+                case '#':
+                    return false;
                 case '.' when !char.IsAsciiDigit(next):
                     (kind, value, i) = (SqlTokenKind.Dot, ".", i + 1);
                     break;
@@ -183,6 +185,8 @@ internal static class SqlText
         return false;
     }
 
+    public static bool IsSpace(char c) => c is ' ' or '\t' or '\n' or '\v' or '\f' or '\r';
+
     private static int Variable(string sql, int start)
     {
         var named = 0;
@@ -198,7 +202,7 @@ internal static class SqlText
             else if (c == '(' && named > 0)
             {
                 i++;
-                while (i < sql.Length && sql[i] is not (' ' or '\t' or '\n' or '\v' or '\f' or '\r' or ')' or '\0'))
+                while (i < sql.Length && !IsSpace(sql[i]) && sql[i] is not (')' or '\0'))
                 {
                     i++;
                 }

@@ -559,7 +559,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     {
         foreach (var character in text)
         {
-            if (!char.IsWhiteSpace(character))
+            if (!SqlText.IsSpace(character) && character != '\uFEFF')
             {
                 return false;
             }
