@@ -353,25 +353,27 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         return new PlatformUnavailable($"retiring shape {handle} needs more than {RetirePasses} passes", "platform_state");
     }
 
-    private sealed record RetireProgress(long? Head, bool Drained, string Bookmark);
+    private sealed record ShapeFence(long Head, string Sealer, long CreatedAt);
+
+    private sealed record RetireProgress(ShapeFence? Fence, bool Drained, string Bookmark);
 
     private readonly union RetireStep(RetireProgress, ShapeRetirement, PlatformUnavailable);
 
     private ValueTask<RetireStep> RetirePassAsync(string handle, RetireProgress state, CancellationToken cancellationToken) =>
         state switch
         {
-            { Head: null } => ReadHeadAsync(handle, state, cancellationToken),
+            { Fence: null } => ReadFenceAsync(handle, state, cancellationToken),
             { Drained: false } => DrainChunksAsync(handle, state, cancellationToken),
-            { Head: { } head } => FinishRetirementAsync(handle, head, state, cancellationToken),
+            { Fence: { } fence } => FinishRetirementAsync(handle, fence, state, cancellationToken),
         };
 
-    private async ValueTask<RetireStep> ReadHeadAsync(string handle, RetireProgress state, CancellationToken cancellationToken)
+    private async ValueTask<RetireStep> ReadFenceAsync(string handle, RetireProgress state, CancellationToken cancellationToken)
     {
         var context = state.Bookmark.Length == 0 ? SqlContext.Fast : SqlContext.After(state.Bookmark);
-        var outcome = await store.ExecuteAsync([SqlValues.Statement("SELECT head FROM platform_shapes WHERE handle = ?", SqlValues.Text(handle))], context, cancellationToken);
+        var outcome = await store.ExecuteAsync([SqlValues.Statement("SELECT head, sealer, created_at FROM platform_shapes WHERE handle = ?", SqlValues.Text(handle))], context, cancellationToken);
         return outcome switch
         {
-            SqlExecuteResponse { Results: var results } read when results[0].FirstRow() is { } row => new RetireProgress(row.Number(0), false, read.Bookmark),
+            SqlExecuteResponse { Results: var results } read when results[0].FirstRow() is { } row => new RetireProgress(new ShapeFence(row.Number(0), row.Text(1), row.Number(2)), false, read.Bookmark),
             SqlExecuteResponse => new ShapeRetirement([]),
             PlatformConflict => state,
             PlatformUnavailable unavailable => unavailable,
@@ -404,27 +406,34 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         };
     }
 
-    private async ValueTask<RetireStep> FinishRetirementAsync(string handle, long head, RetireProgress state, CancellationToken cancellationToken)
+    private async ValueTask<RetireStep> FinishRetirementAsync(string handle, ShapeFence fence, RetireProgress state, CancellationToken cancellationToken)
     {
+        const string fenced = "handle = ? AND head = ? AND sealer = ? AND created_at = ?";
         var key = SqlValues.Text(handle);
-        var at = SqlValues.Number(head);
+        var head = SqlValues.Number(fence.Head);
+        var sealer = SqlValues.Text(fence.Sealer);
+        var created = SqlValues.Number(fence.CreatedAt);
         var pointer = SqlValues.Text(PointerObject);
         IReadOnlyList<SqlHttpStatement> statements =
         [
             SqlValues.Statement(
                 "INSERT OR IGNORE INTO platform_shape_object_deletions (id, handle, name, due_at) "
-                + "SELECT handle || '/' || ?, handle, ?, ? FROM platform_shapes WHERE handle = ? AND head = ?",
+                + $"SELECT handle || '/' || ?, handle, ?, ? FROM platform_shapes WHERE {fenced}",
                 pointer,
                 pointer,
                 SqlValues.Number((timeProvider.GetUtcNow() + DeletionGrace).UnixMs()),
                 key,
-                at),
+                head,
+                sealer,
+                created),
             SqlValues.Statement(
-                "DELETE FROM platform_shape_lineages WHERE shape_id = (SELECT shape_id FROM platform_shapes WHERE handle = ? AND head = ?) AND handle = ?",
+                $"DELETE FROM platform_shape_lineages WHERE shape_id = (SELECT shape_id FROM platform_shapes WHERE {fenced}) AND handle = ?",
                 key,
-                at,
+                head,
+                sealer,
+                created,
                 key),
-            SqlValues.Statement("DELETE FROM platform_shapes WHERE handle = ? AND head = ?", key, at),
+            SqlValues.Statement($"DELETE FROM platform_shapes WHERE {fenced}", key, head, sealer, created),
         ];
         var outcome = await store.ExecuteAsync(statements, new SqlContext(state.Bookmark, SqlConsistencyHint.Strong), cancellationToken);
         return outcome switch
