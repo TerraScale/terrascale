@@ -91,7 +91,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             await RegisterAsync(state, cancellationToken);
             if (!state.Registered)
             {
-                Record(state, success: false, TimeSpan.Zero, refused: false);
+                _ = Record(state, success: false, TimeSpan.Zero, refused: false);
                 return;
             }
         }
@@ -111,34 +111,33 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             QuicTimeout => (false, true, false, 0L),
             PongMessage or QuicUnavailable or QuicRemoteError => (false, false, false, 0L),
         };
-        if (remoteInstanceId != 0)
-        {
-            state.ObserveInstance(remoteInstanceId);
-        }
-
+        var restarted = remoteInstanceId != 0 && state.ObserveInstance(remoteInstanceId);
         if (timedOut)
         {
             client.ResetPeer(state.Info.NodeId);
         }
 
-        var failures = Record(state, success, timeProvider.GetElapsedTime(started), refused);
+        var (previous, next, failures) = Record(state, success, timeProvider.GetElapsedTime(started), refused);
+        if (restarted || (previous == PeerStatus.Unreachable && next == PeerStatus.Healthy))
+        {
+            databases.OnPeerRecovered();
+        }
+
         if (!success && !refused && failures >= options.UnreachableAfterFailures && failures % options.UnreachableAfterFailures == 0 && !IPAddress.TryParse(state.Info.Host, out _))
         {
             await RefreshAddressAsync(state, cancellationToken);
         }
     }
 
-    private int Record(PeerState state, bool success, TimeSpan roundTrip, bool refused)
+    private (PeerStatus Previous, PeerStatus Next, int Failures) Record(PeerState state, bool success, TimeSpan roundTrip, bool refused)
     {
-        var previous = state.Health.Status;
-        var (next, failures) = state.Record(success, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures);
-        if (previous != next)
+        var recorded = state.Record(success, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures);
+        if (recorded.Previous != recorded.Next)
         {
-            ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
-            Recovered(previous, next);
+            ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, recorded.Previous, recorded.Next);
         }
 
-        return failures;
+        return recorded;
     }
 
     private void Recovered(PeerStatus previous, PeerStatus next)
@@ -259,24 +258,27 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
         }
 
-        public (PeerStatus Status, int Failures) Record(bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter)
+        public (PeerStatus Previous, PeerStatus Next, int Failures) Record(bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter)
         {
             lock (_gate)
             {
+                var previous = _health.Status;
                 _failures = success ? 0 : _failures + 1;
                 var status = success ? PeerStatus.Healthy : _failures >= unreachableAfter ? PeerStatus.Unreachable : PeerStatus.Suspect;
                 _health = success
                     ? new PeerHealth(Info, status, roundTrip, now)
                     : _health with { Status = status };
-                return (status, _failures);
+                return (previous, status, _failures);
             }
         }
 
-        public void ObserveInstance(long instanceId)
+        public bool ObserveInstance(long instanceId)
         {
             lock (_gate)
             {
+                var restarted = _instanceId != 0 && _instanceId != instanceId;
                 _instanceId = instanceId;
+                return restarted;
             }
         }
 

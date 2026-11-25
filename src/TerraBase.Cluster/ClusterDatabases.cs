@@ -271,6 +271,8 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
                 _onDemandBackoff = InitialInterval;
                 _onDemandNotBefore = default;
                 _exhaustedFrontier = CausalBookmark.Empty;
+                _attemptedFrontier = CausalBookmark.Empty;
+                _onDemandAttempt = false;
                 if (_deferred || _interval > InitialInterval)
                 {
                     _interval = InitialInterval;
