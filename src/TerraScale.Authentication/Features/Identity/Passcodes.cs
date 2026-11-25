@@ -50,6 +50,8 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
 
     internal const string SignUpKey = "sign-up:";
 
+    private static readonly string DecoyDigest = new('0', 64);
+
     private readonly byte[] digestKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth passcode digests"u8.ToArray());
 
     public Task<IssuedPasscode?> RequestAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
@@ -167,10 +169,14 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
 
     public async Task<UserRecord?> RedeemAsync(string instanceId, string email, string code, PasscodePurpose purpose, string? issueId = null, CancellationToken cancellationToken = default)
     {
-        if (purpose is not PasscodePurpose.SignIn || !WellFormed(code)
-            || await users.FindByEmailAsync(instanceId, email, cancellationToken) is not { } user)
+        if (purpose is not PasscodePurpose.SignIn || !WellFormed(code))
         {
             return null;
+        }
+
+        if (await users.FindByEmailAsync(instanceId, email, cancellationToken) is not { } user)
+        {
+            return await this.DecoyAsync(instanceId, email, code.Trim(), cancellationToken);
         }
 
         var consumed = await this.ConsumeAsync(instanceId, user.Id, code.Trim(), purpose,
@@ -184,9 +190,14 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     public async Task<UserRecord?> ResetPasswordAsync(string instanceId, string email, string code, string passwordHash, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(passwordHash);
-        if (!WellFormed(code) || await users.FindByEmailAsync(instanceId, email, cancellationToken) is not { } user)
+        if (!WellFormed(code))
         {
             return null;
+        }
+
+        if (await users.FindByEmailAsync(instanceId, email, cancellationToken) is not { } user)
+        {
+            return await this.DecoyAsync(instanceId, email, code.Trim(), cancellationToken);
         }
 
         return (await this.ConsumeAsync(instanceId, user.Id, code.Trim(), PasscodePurpose.PasswordReset,
@@ -482,6 +493,14 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
     private async Task<Versioned<PasscodeRecord>?> ReadAsync(string instanceId, string key, CancellationToken cancellationToken) =>
         Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<PasscodeRecord>(
             "SELECT * FROM passcodes WHERE instance_id = @instanceId AND \"key\" = @key", new { instanceId, key }), cancellationToken));
+
+    private async Task<UserRecord?> DecoyAsync(string instanceId, string email, string code, CancellationToken cancellationToken)
+    {
+        var key = AuthIds.Derived(instanceId, "passcode-decoy", email);
+        await this.ReadAsync(instanceId, key, cancellationToken);
+        _ = Tokens.FixedTimeEquals(this.Digest(instanceId, key, code), DecoyDigest);
+        return null;
+    }
 
     private string Digest(string instanceId, string userId, string code) =>
         Convert.ToHexStringLower(HMACSHA256.HashData(this.digestKey,

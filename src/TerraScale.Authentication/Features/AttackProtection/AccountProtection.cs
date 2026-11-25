@@ -33,7 +33,7 @@ public sealed class AccountProtection(AuthData data, ProjectAuthSettings project
             return valid;
         }
 
-        var subject = limiter.Fold(email);
+        var subject = limiter.Digest(email);
         using var reservation = mail.Reserve();
         for (var round = 0; round < 3; round++)
         {

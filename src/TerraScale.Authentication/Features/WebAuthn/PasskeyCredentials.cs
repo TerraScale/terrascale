@@ -48,7 +48,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             ExcludeCredentials = [.. entries.Select(entry => new Fido2NetLib.Objects.PublicKeyCredentialDescriptor(Base64UrlDecode(entry.Value.CredentialId)))],
             AuthenticatorSelection = new AuthenticatorSelection
             {
-                ResidentKey = Fido2NetLib.Objects.ResidentKeyRequirement.Preferred,
+                ResidentKey = Fido2NetLib.Objects.ResidentKeyRequirement.Required,
                 UserVerification = Fido2NetLib.Objects.UserVerificationRequirement.Required,
             },
             AttestationPreference = Fido2NetLib.Objects.AttestationConveyancePreference.None,
@@ -182,18 +182,15 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         return entry;
     }
 
-    public async Task<(AssertionOptions Options, string Challenge)?> SignInOptionsAsync(string instanceId, string email, CancellationToken cancellationToken = default)
+    public (AssertionOptions Options, string Challenge) SignInOptions(string instanceId)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var user = await users.FindByEmailAsync(instanceId, email, cancellationToken);
-        var entries = user is null ? [] : await this.ReadAsync(instanceId, user.Id, cancellationToken);
         var assertion = fido2.GetAssertionOptions(new GetAssertionOptionsParams
         {
-            AllowedCredentials = [.. entries.Select(entry => new Fido2NetLib.Objects.PublicKeyCredentialDescriptor(Base64UrlDecode(entry.Value.CredentialId)))],
+            AllowedCredentials = [],
             UserVerification = Fido2NetLib.Objects.UserVerificationRequirement.Required,
         });
-        var challenge = new PasskeySignInChallenge(AuthIds.New(), user?.Id ?? string.Empty, user?.AuthEpoch ?? 0, user?.AuthStamp ?? string.Empty,
-            clock.GetUtcNow() + ChallengeLifetime, assertion.ToJson());
+        var challenge = new PasskeySignInChallenge(AuthIds.New(), clock.GetUtcNow() + ChallengeLifetime, assertion.ToJson());
         return (assertion, SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, WebAuthnJson.Default.PasskeySignInChallenge),
             Context(instanceId)));
     }
@@ -216,11 +213,10 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
         var credentialId = Base64UrlEncode(response.RawId);
         var completion = Credentials.New(SignInChallengeKind, challenge.Id);
-        if (challenge.UserId.Length == 0
-            || await credentials.IsClaimedAsync(instanceId, completion, cancellationToken)
-            || await users.GetAsync(instanceId, challenge.UserId, cancellationToken) is not { Disabled: false } user
-            || user.AuthEpoch != challenge.AuthEpoch || user.AuthStamp != challenge.AuthStamp
-            || (await this.ReadAsync(instanceId, user.Id, cancellationToken)).FirstOrDefault(item => item.Value.CredentialId == credentialId) is not { } entry)
+        if (await credentials.IsClaimedAsync(instanceId, completion, cancellationToken)
+            || await this.FindAsync(instanceId, credentialId, cancellationToken) is not { } entry
+            || await users.GetAsync(instanceId, entry.Value.UserId, cancellationToken) is not { Disabled: false } user
+            || Users.NormalizeEmail(user.Email) is not { } owner || owner != Users.NormalizeEmail(address))
         {
             return null;
         }
@@ -273,8 +269,6 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         return challenge is not null
             && challenge.ExpiresAt > clock.GetUtcNow()
             && TerraScaleIds.IsValid(challenge.Id)
-            && (challenge.UserId.Length == 0 || TerraScaleIds.IsValid(challenge.UserId))
-            && challenge.AuthEpoch >= 0
             ? challenge : null;
     }
 
@@ -309,6 +303,10 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<PasskeyCredentialEntry>(
             "SELECT * FROM passkeys WHERE instance_id = @instanceId AND user_id = @userId ORDER BY created_at, credential_id", new { instanceId, userId }), cancellationToken));
 
+    private async Task<Versioned<PasskeyCredentialEntry>?> FindAsync(string instanceId, string credentialId, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<PasskeyCredentialEntry>(
+            "SELECT * FROM passkeys WHERE instance_id = @instanceId AND credential_id = @credentialId", new { instanceId, credentialId }), cancellationToken));
+
     private Task<bool> ExistsAsync(string instanceId, string credentialId, CancellationToken cancellationToken) =>
         data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
             "SELECT EXISTS (SELECT 1 FROM passkeys WHERE instance_id = @instanceId AND credential_id = @credentialId)", new { instanceId, credentialId }), cancellationToken);
@@ -327,7 +325,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
 internal sealed record PasskeyChallenge(string Id, string UserId, long AuthEpoch, string AuthStamp, DateTimeOffset ExpiresAt, string OptionsJson);
 
-internal sealed record PasskeySignInChallenge(string Id, string UserId, long AuthEpoch, string AuthStamp, DateTimeOffset ExpiresAt, string OptionsJson);
+internal sealed record PasskeySignInChallenge(string Id, DateTimeOffset ExpiresAt, string OptionsJson);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     RespectRequiredConstructorParameters = true)]

@@ -14,7 +14,7 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
         Post("/ui/{slug}/sign-in/passkey/options");
         Name("ui_sign_in_passkey_options");
         Summary("Start a passkey sign-in");
-        Description("Same-origin form post with the email address. Returns WebAuthn PublicKeyCredentialRequestOptions with a sealed single-use challenge valid 5 minutes, the account's credential ids as allowCredentials and userVerification required. An unknown address gets the same shape with an empty allowCredentials, so nothing reveals which addresses have accounts; the verification then fails the same way for every address. The challenge dies with the account's authentication state. Pass the answer to ui_sign_in_passkey.");
+        Description("Same-origin form post. Returns WebAuthn PublicKeyCredentialRequestOptions with a sealed single-use challenge valid 5 minutes, an empty allowCredentials so the authenticator offers its discoverable passkeys, and userVerification required. The answer never reads the account directory, so it is identical for every address and reveals nothing about which addresses have accounts or passkeys. Pass the answer to ui_sign_in_passkey.");
         Tags("Sign-in");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<PasskeyOptionsBody>(StatusCodes.Status200OK);
@@ -26,7 +26,7 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is null)
         {
             return SignInFlow.Refused(this.HttpContext);
         }
@@ -36,10 +36,7 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
             throw ApiException.RateLimited("Too many sign-in attempts; retry after the Retry-After delay.", wait);
         }
 
-        var assertion = await passkeys.SignInOptionsAsync(SignInFlow.Tenant(this.HttpContext), form.Email ?? string.Empty, cancellationToken);
-        return assertion is null
-            ? throw ApiException.Unavailable()
-            : TypedResults.Json(new PasskeyOptionsBody(assertion.Value.Challenge, JsonDocument.Parse(assertion.Value.Options.ToJson()).RootElement),
-                WebAuthnJson.Default.PasskeyOptionsBody);
+        var (assertion, challenge) = passkeys.SignInOptions(SignInFlow.Tenant(this.HttpContext));
+        return TypedResults.Json(new PasskeyOptionsBody(challenge, JsonDocument.Parse(assertion.ToJson()).RootElement), WebAuthnJson.Default.PasskeyOptionsBody);
     }
 }

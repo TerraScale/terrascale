@@ -28,11 +28,17 @@ public static class HostedThemes
     {
         if (context.Request.Path.StartsWithSegments("/ui") && Tenancy.Resolved(context) is { } tenant && Tenancy.IsProject(tenant))
         {
+            if (!AnonymousTenantReads.Admit(context))
+            {
+                await AnonymousTenantReads.RefuseAsync(context);
+                return;
+            }
+
             var services = context.RequestServices;
             var settings = await services.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, context.RequestAborted);
-            var project = await services.GetRequiredService<AuthData>().ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectRecord>(
-                "SELECT * FROM projects WHERE id = @tenant", new { tenant }), context.RequestAborted);
-            context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUpMode,
+            var name = settings.Name ?? await services.GetRequiredService<AuthData>().ReadAsync(connection => connection.QuerySingleOrDefaultAsync<string>(
+                "SELECT name FROM projects WHERE id = @tenant", new { tenant }), context.RequestAborted);
+            context.Items[HostedTheme.ItemKey] = new HostedTheme(name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUpMode,
                 settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.MagicLink, settings.Username)
             {
                 BotChallenge = settings.AttackProtection.BotChallenge,

@@ -349,6 +349,18 @@ test.describe('project MFA and session policy', () => {
         } };
       }, { project, email: passkeyUser });
       saveSecret('passkey-step-up-challenge', assertion.challenge);
+      const passkeyOptions = async (email: string) => {
+        const response = await passkeyContext.request.post(auth + '/ui/' + project + '/sign-in/passkey/options', {
+          headers: { Origin: auth }, form: { email },
+        });
+        expect(response.status()).toBe(200);
+        return (await response.json()).options as Record<string, unknown>;
+      };
+      const enrolledOptions = await passkeyOptions(passkeyUser);
+      const unknownOptions = await passkeyOptions('nobody-' + runId + '@example.com');
+      expect(enrolledOptions.allowCredentials, 'passkey options never list an account credential').toEqual([]);
+      expect(unknownOptions.allowCredentials).toEqual([]);
+      expect(Object.keys(unknownOptions).sort(), 'passkey options look the same for unknown and enrolled addresses').toEqual(Object.keys(enrolledOptions).sort());
       const passkeyStepUp = await passkeyContext.request.post(auth + '/v1/' + project + '/step-up', {
         headers: { Authorization: 'Bearer ' + passkeyTokens.access_token }, data: { client_id: client, ...assertion },
       });
@@ -394,7 +406,7 @@ test.describe('project MFA and session policy', () => {
           if (wrong.status() === 401) expect(await wrong.text()).toContain('That code is wrong or already used');
         }
         expect(statuses[0], 'a wrong second factor reaches proof verification').toBe(401);
-        expect(statuses[10], 'eleven wrong proofs exceed the ten-attempt MFA budget even after the earlier window expires').toBe(429);
+        expect(statuses[10], 'eleven wrong proofs exceed the five-failure MFA budget even after the earlier window expires').toBe(429);
         expect(statuses.slice(statuses.indexOf(429)).every(status => status === 429), 'an exhausted proof budget stays exhausted').toBe(true);
       } finally {
         await saveCookies(probe);

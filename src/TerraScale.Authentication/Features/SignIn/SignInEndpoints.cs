@@ -762,10 +762,16 @@ internal static class SignInFlow
         }
 
         var enrolled = await mfa.HasAllowedFactorAsync(user, ssoProof is not null, cancellationToken);
-        if (!policy.RequireMfa && !ssoRequired && !(forceEnrolled && enrolled)
-            && (!policy.AllowTotp || !(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled))
+        var totpEnabled = (await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled;
+        if (!policy.RequireMfa && !ssoRequired && !(ssoProof is not null && enrolled) && !totpEnabled)
         {
             return null;
+        }
+
+        if (totpEnabled && !enrolled)
+        {
+            AuthMetrics.SignIn("hosted_mfa", "refused");
+            return Refused(context);
         }
 
         if (!enrolled && !user.InboxProven)
@@ -811,12 +817,13 @@ internal static class SignInFlow
         var sso = context.RequestServices.GetRequiredService<SsoSignIn>();
         if (!Tenancy.IsProject(tenant) && sso.ProofFor(context, session.Session.UserId, session.Session.AuthEpoch, session.Session.AuthStamp) is { } proof)
         {
-            if (!await sso.FinishProofAsync(context, session, cancellationToken))
+            if (await sso.FinishProofAsync(context, sessions, session, cancellationToken) is not { } finished)
             {
                 await sessions.RevokeAsync(tenant, session.Token, cancellationToken);
                 return Refused(context);
             }
 
+            session = finished;
             next = proof.Next;
             AuthMetrics.SignIn("hosted_sso", "succeeded");
         }
@@ -877,11 +884,13 @@ internal static class SignInFlow
         var tenant = Tenant(context);
         if (!Tenancy.IsProject(tenant))
         {
-            if (!await context.RequestServices.GetRequiredService<SsoSignIn>().FinishProofAsync(context, session, cancellationToken))
+            if (await context.RequestServices.GetRequiredService<SsoSignIn>().FinishProofAsync(context, sessions, session, cancellationToken) is not { } finished)
             {
                 await sessions.RevokeAsync(tenant, session.Token, cancellationToken);
                 return false;
             }
+
+            session = finished;
 
             AuthMetrics.SignIn("hosted_sso", "succeeded");
             await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);

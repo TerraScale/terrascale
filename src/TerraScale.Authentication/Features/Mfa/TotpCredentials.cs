@@ -1,4 +1,5 @@
 using Dapper;
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -24,6 +25,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
     private const int RecoveryCount = 8;
+    private const int FailedProofs = 5;
 
     public async Task<bool> AllowsPrimaryAuthenticationAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
@@ -134,7 +136,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             var enrolled = policy is null || !policy.RequireMfa || policy.AllowTotp && enabled || passkey;
             var allowed = policy is null || multiFactorMethod is null || multiFactorMethod == "totp" && policy.AllowTotp
                 || multiFactorMethod == "passkey" && policy.AllowPasskey || multiFactorMethod == "recovery" && enabled && (policy.AllowTotp || passkey);
-            return enrolled && allowed && (!(policy?.RequireMfa == true || enabled && policy?.AllowTotp != false) || multiFactorMethod is not null)
+            return enrolled && allowed && (!(policy?.RequireMfa == true || enabled) || multiFactorMethod is not null)
                 && await users.GetAsync(instanceId, userId, cancellationToken) is { Disabled: false } user
                 && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
                     ? user with { MultiFactor = multiFactorMethod is not null, MfaMethod = multiFactorMethod }
@@ -205,10 +207,14 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return issued;
     }
 
-    internal async Task<IssuedRecoveryCodes?> ActivateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    internal Task<IssuedRecoveryCodes?> ActivateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken);
+        return this.ProveAsync(caller, () => this.ActivateCheckedAsync(caller, code, authorization, cancellationToken), issued => issued is not null, cancellationToken);
+    }
+
+    private async Task<IssuedRecoveryCodes?> ActivateCheckedAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    {
         if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user
             || await this.ReadAsync(caller, cancellationToken) is not { } current
             || current.Record.Enabled || current.Record.SecretBox is null || current.Record.EnrollmentEpoch != caller.AuthEpoch
@@ -241,10 +247,14 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     public Task<bool> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
         this.VerifyAsync(caller, code, null, cancellationToken);
 
-    internal async Task<bool> VerifyAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    internal Task<bool> VerifyAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken);
+        return this.ProveAsync(caller, () => this.VerifyCheckedAsync(caller, code, authorization, cancellationToken), verified => verified, cancellationToken);
+    }
+
+    private async Task<bool> VerifyCheckedAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    {
         if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user
             || await this.ReadAsync(caller, cancellationToken) is not { } current
             || this.Consume(caller, current.Record, code) is not { } proof)
@@ -261,10 +271,14 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     internal async Task<bool> DisableAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default) =>
         await this.DisabledUserAsync(caller, code, authorization, cancellationToken) is not null;
 
-    internal async Task<UserRecord?> DisabledUserAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    internal Task<UserRecord?> DisabledUserAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken);
+        return this.ProveAsync(caller, () => this.DisableCheckedAsync(caller, code, authorization, cancellationToken), disabled => disabled is not null, cancellationToken);
+    }
+
+    private async Task<UserRecord?> DisableCheckedAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    {
         if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user
             || await this.ReadAsync(caller, cancellationToken) is not { } current
             || this.Consume(caller, current.Record, code) is null)
@@ -280,10 +294,14 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             : null;
     }
 
-    internal async Task<IssuedRecoveryCodes?> RegenerateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    internal Task<IssuedRecoveryCodes?> RegenerateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken);
+        return this.ProveAsync(caller, () => this.RegenerateCheckedAsync(caller, code, authorization, cancellationToken), issued => issued is not null, cancellationToken);
+    }
+
+    private async Task<IssuedRecoveryCodes?> RegenerateCheckedAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    {
         if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user
             || await this.ReadAsync(caller, cancellationToken) is not { } current
             || this.Consume(caller, current.Record, code) is not { } proof)
@@ -420,12 +438,22 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return await data.SaveAsync(changes, cancellationToken);
     }
 
-    private async Task LimitAsync(UserRecord caller, CancellationToken cancellationToken)
+    private async Task<T> ProveAsync<T>(UserRecord caller, Func<Task<T>> proof, Func<T, bool> succeeded, CancellationToken cancellationToken)
     {
-        if (await limiter.AcquireAsync(caller.InstanceId, "mfa-proof", caller.Id, 10, AttemptWindow, cancellationToken) is { } wait)
+        var admission = await limiter.ReserveAsync(caller.InstanceId, "mfa-proof", caller.Id, FailedProofs, AttemptWindow, cancellationToken);
+        var reservation = admission switch
         {
-            throw ApiException.RateLimited("Too many MFA attempts; retry after the Retry-After delay.", wait);
+            (_, { } refused) => throw ApiException.RateLimited("Too many MFA attempts; retry after the Retry-After delay.", refused.RetryAfter),
+            ({ } held, null) => held,
+            (null, null) => throw new UnreachableException(),
+        };
+        var result = await proof();
+        if (succeeded(result))
+        {
+            await reservation.ReturnAsync(cancellationToken);
         }
+
+        return result;
     }
 
     private static string Context(UserRecord user) => Context(user.InstanceId, user.Id);

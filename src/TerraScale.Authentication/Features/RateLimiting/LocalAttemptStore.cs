@@ -11,6 +11,10 @@ internal sealed class LocalAttemptStore(TimeProvider clock) : IAttemptStore
 
     private static readonly TimeSpan Idle = TimeSpan.FromHours(1);
 
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(10);
+
+    private long sweptAt = long.MinValue;
+
     private readonly ConcurrentDictionary<(string Instance, string Key), Entry> buckets = new();
 
     private long versions;
@@ -22,21 +26,9 @@ internal sealed class LocalAttemptStore(TimeProvider clock) : IAttemptStore
 
     public Task<bool> TryCreateAsync(string instanceId, string key, AttemptBucket rowData, CancellationToken cancellationToken)
     {
-        if (this.buckets.Count >= Capacity)
+        if (this.buckets.Count >= Capacity && (!this.ClaimSweep() || this.Sweep() >= Capacity))
         {
-            var cutoff = clock.GetUtcNow() - Idle;
-            foreach (var (address, entry) in this.buckets)
-            {
-                if (entry.Touched < cutoff)
-                {
-                    this.buckets.TryRemove(address, out _);
-                }
-            }
-
-            if (this.buckets.Count >= Capacity)
-            {
-                return Task.FromResult(false);
-            }
+            return Task.FromResult(false);
         }
 
         return Task.FromResult(this.buckets.TryAdd((instanceId, key), this.Next(rowData)));
@@ -62,6 +54,28 @@ internal sealed class LocalAttemptStore(TimeProvider clock) : IAttemptStore
         }
 
         return Task.FromResult(false);
+    }
+
+    private bool ClaimSweep()
+    {
+        var now = clock.GetTimestamp();
+        var last = Interlocked.Read(ref this.sweptAt);
+        return (last == long.MinValue || clock.GetElapsedTime(last, now) >= SweepInterval)
+            && Interlocked.CompareExchange(ref this.sweptAt, now, last) == last;
+    }
+
+    private int Sweep()
+    {
+        var cutoff = clock.GetUtcNow() - Idle;
+        foreach (var (address, entry) in this.buckets)
+        {
+            if (entry.Touched < cutoff)
+            {
+                this.buckets.TryRemove(address, out _);
+            }
+        }
+
+        return this.buckets.Count;
     }
 
     private Entry Next(AttemptBucket rowData) =>

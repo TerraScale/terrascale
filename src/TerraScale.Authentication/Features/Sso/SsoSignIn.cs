@@ -335,8 +335,9 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
         this.ProofFor(context, user.Id, user.AuthEpoch, user.AuthStamp) is { } proof
         && await this.PlanAsync(proof, true, cancellationToken) is not null;
 
-    internal async Task<bool> FinishProofAsync(HttpContext context, IssuedSession session, CancellationToken cancellationToken)
+    internal async Task<IssuedSession?> FinishProofAsync(HttpContext context, Sessions sessions, IssuedSession session, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(sessions);
         var proof = this.ProofFor(context, session.Session.UserId, session.Session.AuthEpoch, session.Session.AuthStamp);
         Clear(context);
         if (session.Session.InstanceId != PlatformDirectory.Instance || SignInFlow.Tenant(context) != PlatformDirectory.Instance
@@ -345,7 +346,7 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             || await this.PlanAsync(proof, session.Session.Mfa, cancellationToken) is not { } plan
             || !await data.SaveAsync(plan.Changes, cancellationToken))
         {
-            return false;
+            return null;
         }
 
         if (plan.Joining)
@@ -353,7 +354,15 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             logger.ZLogInformation($"Audit: user {proof.UserId:@UserId} joined organization {proof.OrganizationId:@OrganizationId} through SSO");
         }
 
-        return true;
+        if (plan.Advanced is not { } advanced)
+        {
+            return session;
+        }
+
+        logger.ZLogInformation($"Audit: user {proof.UserId:@UserId} linked a new SSO identity; every earlier session and token was revoked");
+        await sessions.RevokeAsync(session.Session.InstanceId, session.Token, cancellationToken);
+        return await SignInFlow.OpenSessionAsync(sessions,
+            Users.BindAuthenticationState(advanced) with { MultiFactor = session.Session.Mfa, MfaMethod = session.Session.MfaMethod }, cancellationToken);
     }
 
     private async Task<SsoLinkPlan?> PlanAsync(SsoProof proof, bool mfa, CancellationToken cancellationToken)
@@ -386,7 +395,9 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             return null;
         }
 
-        changes.Add(Change.Assert(user));
+        var advanced = linked is null ? user with { AuthEpoch = checked(user.AuthEpoch + 1), AuthStamp = AuthIds.New() } : null;
+        var userChange = advanced is null ? Change.Assert(user) : Change.Update(advanced);
+        changes.Add(userChange);
         changes.Add(Change.Assert(found));
         changes.Add(Change.Assert(organization));
         var record = Link(user, connection, proof.Subject);
@@ -397,7 +408,7 @@ public sealed class SsoSignIn(AuthData data, SsoConnections connections, Users u
             changes.Add(platform.Audit(connection.OrganizationId, user.Id, "member.joined_sso", user.Id, connection.Domain));
         }
 
-        return new(changes, joining);
+        return new(changes, joining, advanced is null ? null : advanced with { Version = userChange.Version });
     }
 
     private async Task<Versioned<SsoIdentityLinkRecord>?> LinkedAsync(UserRecord user, SsoConnectionRecord connection, string subject, CancellationToken cancellationToken)
@@ -459,7 +470,7 @@ public sealed record SsoIdentityLinkRecord(string Domain, string OrganizationId,
 internal sealed record SsoProof(string UserId, string Email, long AuthEpoch, string? AuthStamp, string Domain, string Issuer, string Subject, string? LinkVersion,
     string? Next, DateTimeOffset ExpiresAt, string OrganizationId, DateTimeOffset ConnectionUpdatedAt, bool Confirmed);
 
-internal sealed record SsoLinkPlan(IReadOnlyList<Change> Changes, bool Joining);
+internal sealed record SsoLinkPlan(IReadOnlyList<Change> Changes, bool Joining, UserRecord? Advanced);
 
 [JsonSerializable(typeof(SsoState))]
 [JsonSerializable(typeof(SsoProof))]

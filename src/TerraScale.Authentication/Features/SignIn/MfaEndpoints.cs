@@ -24,7 +24,7 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         Post("/ui/{slug}/sign-in/mfa");
         Name("ui_sign_in_mfa");
         Summary("Sign in with a second factor");
-        Description("Same-origin form post with challenge (from the code, password, sign-up or platform provider step), code and next. code is the authenticator app's current six-digit code or one unused 24-character recovery code; each works once. The challenge lasts 5 minutes, completes at most once and dies with a sign-out everywhere, reset or factor change; a spent or expired challenge answers 401 with sign-in from the start. Charges the IP call bucket of 120 refilling 30 per minute and 10 second-factor attempts per account per 15 minutes; exhaustion answers 429 with Retry-After and keeps a live challenge. A wrong code answers 401 with the step again. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post with challenge (from the code, password, sign-up or platform provider step), code and next. code is the authenticator app's current six-digit code or one unused 24-character recovery code; each works once. The challenge lasts 5 minutes, completes at most once and dies with a sign-out everywhere, reset or factor change; a spent or expired challenge answers 401 with sign-in from the start. Charges the IP call bucket of 120 refilling 30 per minute and 5 failed second-factor attempts per account per 15 minutes (a successful proof is not charged); exhaustion answers 429 with Retry-After and keeps a live challenge. A wrong code answers 401 with the step again. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -195,7 +195,7 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
         Post("/ui/{slug}/security/totp/confirm");
         Name("ui_security_totp_confirm");
         Summary("Turn on two-factor authentication");
-        Description("Same-origin form post with code, the authenticator's current six-digit code for the pending secret, from a live session; a sign-out that lands before the change commits refuses it. Success activates the factor, signs the account out everywhere (every session and token), opens a fresh two-factor session for this browser, records member.mfa_enabled in the account's organizations' audit logs and shows eight single-use recovery codes once. A wrong or expired code answers 401; 10 attempts per account per 15 minutes (429).");
+        Description("Same-origin form post with code, the authenticator's current six-digit code for the pending secret, from a live session; a sign-out that lands before the change commits refuses it. Success activates the factor, signs the account out everywhere (every session and token), opens a fresh two-factor session for this browser, records member.mfa_enabled in the account's organizations' audit logs and shows eight single-use recovery codes once. A wrong or expired code answers 401; 5 failed attempts per account per 15 minutes (429); a successful code is not charged.");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -244,7 +244,7 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
         Post("/ui/{slug}/security/totp/disable");
         Name("ui_security_totp_disable");
         Summary("Turn off two-factor authentication");
-        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session; the code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success removes the factor and its recovery codes, signs the account out everywhere, opens a fresh session for this browser and records member.mfa_disabled in the account's organizations' audit logs. Members of organizations that require two-factor authentication lose access to them until they enrol again. A wrong code answers 401; 10 attempts per account per 15 minutes (429).");
+        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session; the code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success removes the factor and its recovery codes, signs the account out everywhere, opens a fresh session for this browser and records member.mfa_disabled in the account's organizations' audit logs. Members of organizations that require two-factor authentication lose access to them until they enrol again. A wrong code answers 401; 5 failed attempts per account per 15 minutes (429); a successful code is not charged.");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -295,7 +295,7 @@ public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredential
         Post("/ui/{slug}/security/recovery/regenerate");
         Name("ui_security_recovery_regenerate");
         Summary("Regenerate recovery codes");
-        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session opened in the last 15 minutes; an older session is asked to sign in again before its code is read. The code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success replaces every recovery code with eight new ones in one write (old codes stop working, the authenticator and its secret stay, the account's sessions stay) and shows the new codes once. The authorizing code is spent. A wrong code answers 401; 10 attempts per account per 15 minutes (429).");
+        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session opened in the last 15 minutes; an older session is asked to sign in again before its code is read. The code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success replaces every recovery code with eight new ones in one write (old codes stop working, the authenticator and its secret stay, the account's sessions stay) and shows the new codes once. The authorizing code is spent. A wrong code answers 401; 5 failed attempts per account per 15 minutes (429); a successful code is not charged.");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
