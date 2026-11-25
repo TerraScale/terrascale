@@ -521,6 +521,7 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
         return outcome switch
         {
             FileObject => new FileDeleted(),
+            PlatformConflict { Code: "serialization_conflict" } conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
             PlatformConflict => new FileDeleted(),
             PlatformUnavailable unavailable => unavailable,
         };

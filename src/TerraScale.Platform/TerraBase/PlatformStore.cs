@@ -18,6 +18,7 @@ public sealed class PlatformStore(TerraBaseClient terraBase, PlatformOptions opt
             SqlExecuteResponse response => response,
             SqlFailure { Error.Code: var code } failure when code.Contains("constraint", StringComparison.OrdinalIgnoreCase)
                 || code.Contains("unique", StringComparison.OrdinalIgnoreCase) => new PlatformConflict(failure.Error.Message, "conflict"),
+            SqlFailure { Error.Code: "serialization_conflict" } failure => new PlatformConflict(failure.Error.Message, "serialization_conflict"),
             SqlFailure failure => new PlatformUnavailable($"the platform state database refused a statement: {failure.Error.Message}", "platform_state"),
             PlatformNotFound => new PlatformUnavailable("the platform state database does not exist", "platform_state_missing"),
             PlatformUnavailable unavailable => unavailable,
@@ -83,6 +84,9 @@ public sealed class PlatformSchema(
             database_id TEXT NOT NULL, project_route TEXT NOT NULL, database_route TEXT NOT NULL, table_name TEXT NOT NULL,
             where_clause TEXT, columns TEXT, viewer_key TEXT NOT NULL, head INTEGER NOT NULL, head_digest TEXT NOT NULL,
             sealer TEXT NOT NULL, owner TEXT NOT NULL, lease_until INTEGER NOT NULL, last_read_at INTEGER NOT NULL, created_at INTEGER NOT NULL)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS platform_shape_lineages (shape_id TEXT NOT NULL PRIMARY KEY, handle TEXT NOT NULL)
         """,
         """
         CREATE TABLE IF NOT EXISTS platform_shape_chunks (

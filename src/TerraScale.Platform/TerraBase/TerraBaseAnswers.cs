@@ -57,7 +57,7 @@ public static class TerraBaseAnswers
         {
             return JsonSerializer.Deserialize(body, typeInfo);
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
         {
             return null;
         }
