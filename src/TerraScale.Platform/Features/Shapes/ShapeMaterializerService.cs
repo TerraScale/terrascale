@@ -18,9 +18,7 @@ public sealed class ShapeMaterializerService(
 {
     private const int ClaimLimit = 64;
     private const int AuditPage = 256;
-    private const int IdleRetirements = 128;
     private const string RefusedFilter = "its persisted filter is no longer accepted";
-    private const string Idle = "not read for a day";
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Lease = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan Reconnect = TimeSpan.FromSeconds(1);
@@ -290,11 +288,6 @@ public sealed class ShapeMaterializerService(
             {
                 logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");
             }
-        }
-
-        if (Retire("idle shapes", Idle, await registry.RetireIdleAsync(IdleRetirements, cancellationToken)) is { } idle)
-        {
-            logger.ZLogWarning($"Idle shapes were not retired: {idle}");
         }
     }
 

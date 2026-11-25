@@ -28,15 +28,13 @@ public static class Scopes
     public static IReadOnlyList<string> Write { get; } = [SqlWrite];
 }
 
-public sealed record AccessContext(CallerGrant Grant, CallerCredential Credential)
+public sealed record AccessContext(CallerGrant Grant, CallerCredential Credential, EndUserToken? Token)
 {
     public Ulid Organization => Grant.OrganizationId;
 
     public Ulid Project => Grant.ProjectId;
 
     public bool IsAdministrator => !Grant.EndUser && !Grant.DatabaseRestricted;
-
-    public EndUserToken? Token { get; } = Grant.EndUser ? EndUserToken.Read(Credential) : null;
 
     public bool Guest => Grant.Anonymous || Token is { Guest: true };
 }
@@ -89,7 +87,7 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
         var now = timeProvider.GetUtcNow();
         if (_grants.TryGetValue(key, out var cached) && cached.ExpiresAt > now)
         {
-            return new AccessContext(cached.Grant, credential);
+            return new AccessContext(cached.Grant, credential, cached.Token);
         }
 
         var screened = credential.BearerToken is { } token && credential.IsJwt
@@ -135,7 +133,8 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
         AuthorizeRequest authorize,
         DateTimeOffset now)
     {
-        if (grant.Anonymous && !IsGuest(grant, credential))
+        var token = grant.EndUser ? EndUserToken.Read(credential) : null;
+        if (grant.Anonymous && !IsGuest(grant, credential, token))
         {
             return new PlatformUnauthorized("a credential is required", "invalid_key");
         }
@@ -150,13 +149,12 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
             _grants.Clear();
         }
 
-        _grants[key] = new CachedGrant(grant, now + GrantLifetime);
-        return new AccessContext(grant, credential);
+        _grants[key] = new CachedGrant(grant, token, now + GrantLifetime);
+        return new AccessContext(grant, credential, token);
     }
 
-    private static bool IsGuest(CallerGrant grant, CallerCredential credential) =>
-        grant is { EndUser: true, Subject.Length: > 0 } && grant.ProjectId != Ulid.Empty && credential is { Peer: false, IsJwt: true }
-        && EndUserToken.Read(credential) is { Guest: true };
+    private static bool IsGuest(CallerGrant grant, CallerCredential credential, EndUserToken? token) =>
+        grant is { EndUser: true, Subject.Length: > 0 } && grant.ProjectId != Ulid.Empty && credential is { Peer: false, IsJwt: true } && token is { Guest: true };
 
-    private sealed record CachedGrant(CallerGrant Grant, DateTimeOffset ExpiresAt);
+    private sealed record CachedGrant(CallerGrant Grant, EndUserToken? Token, DateTimeOffset ExpiresAt);
 }

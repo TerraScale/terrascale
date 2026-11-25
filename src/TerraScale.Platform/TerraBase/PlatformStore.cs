@@ -18,6 +18,7 @@ public sealed class PlatformStore(TerraBaseClient terraBase, PlatformOptions opt
             SqlExecuteResponse response => response,
             SqlFailure { Error.Code: var code } failure when code.Contains("constraint", StringComparison.OrdinalIgnoreCase)
                 || code.Contains("unique", StringComparison.OrdinalIgnoreCase) => new PlatformConflict(failure.Error.Message, "conflict"),
+            SqlFailure { Error.Code: "serialization_conflict" } failure => new PlatformConflict(failure.Error.Message, "serialization_conflict"),
             SqlFailure failure => new PlatformUnavailable($"the platform state database refused a statement: {failure.Error.Message}", "platform_state"),
             PlatformNotFound => new PlatformUnavailable("the platform state database does not exist", "platform_state_missing"),
             PlatformUnavailable unavailable => unavailable,

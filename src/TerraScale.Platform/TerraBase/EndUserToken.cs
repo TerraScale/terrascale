@@ -26,9 +26,21 @@ public sealed record EndUserToken(string Digest, bool Guest)
             return null;
         }
 
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
+        if (Canonical(payload) is not { } canonical)
         {
+            return null;
+        }
+
+        var guest = payload.TryGetValue("is_anonymous", out var anonymous) && anonymous.ValueKind == JsonValueKind.True;
+        return new EndUserToken(Convert.ToHexStringLower(SHA256.HashData(canonical)), guest);
+    }
+
+    private static byte[]? Canonical(Dictionary<string, JsonElement> payload)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        try
+        {
+            using var writer = new Utf8JsonWriter(buffer);
             writer.WriteStartObject();
             foreach (var (name, value) in payload.Where(static member => RulesInputs.Contains(member.Key)).OrderBy(static member => member.Key, StringComparer.Ordinal))
             {
@@ -37,10 +49,14 @@ public sealed record EndUserToken(string Digest, bool Guest)
             }
 
             writer.WriteEndObject();
+            writer.Flush();
+        }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException or JsonException)
+        {
+            return null;
         }
 
-        var guest = payload.TryGetValue("is_anonymous", out var anonymous) && anonymous.ValueKind == JsonValueKind.True;
-        return new EndUserToken(Convert.ToHexStringLower(SHA256.HashData(buffer.WrittenSpan)), guest);
+        return buffer.WrittenSpan.ToArray();
     }
 
     private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
