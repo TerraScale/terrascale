@@ -128,9 +128,14 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
             "SELECT token_hash FROM sessions WHERE instance_id = @projectId AND id = @id", new { projectId, id }), cancellationToken) is { } tokenHash
         && await sessions.RevokeStoredAsync(projectId, tokenHash, cancellationToken);
 
-    public async Task<IReadOnlyList<OidcApplication>> ClientsAsync(string projectId, CancellationToken cancellationToken) =>
-        (await data.ReadAsync(connection => connection.QueryAsync<OidcApplication>(
-            "SELECT * FROM oidc_applications WHERE instance_id = @projectId ORDER BY id", new { projectId }), cancellationToken)).AsList();
+    public async Task<Page<OidcApplication>> ClientsAsync(string projectId, int limit, string? after, CancellationToken cancellationToken)
+    {
+        var from = PlatformDirectory.Cursor(after);
+        var take = limit + 1;
+        var rows = (await data.ReadAsync(connection => connection.QueryAsync<OidcApplication>(
+            "SELECT * FROM oidc_applications WHERE instance_id = @projectId AND id > @from ORDER BY id LIMIT @take", new { projectId, from, take }), cancellationToken)).AsList();
+        return PlatformDirectory.Paged(rows, limit, client => client.Id ?? throw new InvalidDataException("A stored client has no id."));
+    }
 
     public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, NewClient client, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
     {

@@ -8,6 +8,7 @@ using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Email;
 
@@ -51,6 +52,8 @@ public sealed record AuthEmailValues(string Email)
     public string? Organization { get; init; }
 
     public string? Inviter { get; init; }
+
+    public string? AdmissionId { get; init; }
 
     public string? Device { get; init; }
 
@@ -387,10 +390,12 @@ public sealed partial class AuthEmails(AuthOptions options)
         await AuthEmailLayout.Create(view).RenderAsync(html, Encoder, cancellationToken);
         return new EmailMessage(view.Subject, Text(view), html.ToString())
         {
-            FromName = kind == AuthEmailKind.Invitation && values.Tenant != OidcIssuer.InstanceId && values.Organization is { } organization
-                ? organization + " (" + brand.Name + ")" : brand.SenderName,
+            FromName = kind == AuthEmailKind.Invitation && values.Tenant != OidcIssuer.InstanceId && PlatformDirectory.Name(values.Organization) is { } organization
+                && PlatformDirectory.Name(brand.Name, brand: true) is { } brandName
+                ? organization + " (" + brandName + ")" : brand.SenderName,
             ReplyTo = brand.ReplyTo,
             Tenant = values.Tenant,
+            AdmissionId = values.AdmissionId,
             Purpose = kind is AuthEmailKind.SignInCode or AuthEmailKind.SocialLinkCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.MfaCode or AuthEmailKind.StepUpCode
                 ? EmailPurpose.Authentication : kind == AuthEmailKind.Invitation ? EmailPurpose.Invitation : EmailPurpose.Notification
         };

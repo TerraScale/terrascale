@@ -115,6 +115,7 @@ jobs:
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
               - src/TerraScale.Authentication/platform-api.openapi.yaml
               - .github/scripts/auth/export-openapi.sh
+              - .github/scripts/auth/check-openapi-drift.py
               - sdk/dotnet/scripts/{check-nuget-vulnerabilities{,.lib}.cs,packages.lock.json}
             auth-server:
               - src/TerraBase*/**/!(AGENTS.md)

@@ -20,6 +20,8 @@ public sealed record EmailMessage(string Subject, string Text, string? Html = nu
 
     public string? ReplyTo { get; init; }
 
+    public string? AdmissionId { get; init; }
+
     public override string ToString() => nameof(EmailMessage);
 }
 
@@ -32,7 +34,16 @@ public interface IEmailSender
         await this.SendAsync(recipient, message, cancellationToken);
         return EmailDeliveryOutcome.Unknown;
     }
+
+    async Task<EmailDelivery> DeliverUnlessPausedAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
+        new EmailSent(await this.DeliverAsync(recipient, message, cancellationToken));
 }
+
+public sealed record EmailSent(EmailDeliveryOutcome Outcome);
+
+public sealed record EmailPaused(DateTimeOffset Until);
+
+public readonly union EmailDelivery(EmailSent, EmailPaused);
 
 public enum EmailDeliveryOutcome
 {
@@ -42,8 +53,10 @@ public enum EmailDeliveryOutcome
     Unknown,
 }
 
-public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEmailSender
+public sealed class LoggingEmailSender(AuthOptions options, ILogger<LoggingEmailSender> logger) : IEmailSender
 {
+    private readonly byte[] recipientKey = EmailOutcomeLog.Key(options);
+
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         await this.SendAsync(recipient, message, cancellationToken);
@@ -54,7 +67,7 @@ public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEm
     {
         ArgumentNullException.ThrowIfNull(recipient);
         ArgumentNullException.ThrowIfNull(message);
-        EmailOutcomeLog.Write(logger, recipient, "error");
+        EmailOutcomeLog.Write(logger, this.recipientKey, recipient, "error");
         if (cancellationToken.IsCancellationRequested)
         {
             return Task.FromCanceled(cancellationToken);
@@ -74,8 +87,10 @@ public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEm
     }
 }
 
-public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOptions email, ILogger<CloudflareEmailSender> logger) : IEmailSender, IEmailProvider
+public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOptions email, AuthOptions options, ILogger<CloudflareEmailSender> logger) : IEmailSender, IEmailProvider
 {
+    private readonly byte[] recipientKey = EmailOutcomeLog.Key(options);
+
     private const string SenderAddress = "no-reply@terrascale.tech";
 
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
@@ -161,7 +176,7 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
         }
         finally
         {
-            EmailOutcomeLog.Write(logger, recipient, outcome);
+            EmailOutcomeLog.Write(logger, this.recipientKey, recipient, outcome);
         }
     }
 
@@ -209,17 +224,16 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
 
 internal static class EmailOutcomeLog
 {
-    public static void Write(ILogger logger, string recipient, string outcome)
+    public static byte[] Key(AuthOptions options)
     {
-        try
-        {
-            var recipientHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(recipient)));
-            logger.ZLogInformation($"Email send outcome: {outcome:@Outcome} (recipient SHA256 {recipientHash:@RecipientHash})");
-        }
-        catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
-        {
-            _ = logFailure;
-        }
+        ArgumentNullException.ThrowIfNull(options);
+        return HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth email outcome recipients"u8.ToArray());
+    }
+
+    public static void Write(ILogger logger, byte[] key, string recipient, string outcome)
+    {
+        var recipientHash = Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(recipient)));
+        logger.ZLogInformation($"Email send outcome: {outcome:@Outcome} (recipient HMAC {recipientHash:@RecipientHash})");
     }
 }
 

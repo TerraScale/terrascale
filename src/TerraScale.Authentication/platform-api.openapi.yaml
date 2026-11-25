@@ -33,6 +33,10 @@ tags:
     description: An organization's OpenID Connect identity provider and the email domain it proves by DNS.
   - name: Platform
     description: Operations of the platform itself, without a user - project suspension (ts-dashboard) and platform administrators (operator).
+  - name: Account
+    description: The signed-in platform user's own account - purpose-bound reauthentication, sign-in email change, linked providers and deletion status.
+  - name: Agents
+    description: Agents a platform account owns, Sign in as agent clients and agent enrollment.
   - name: OAuth
     description: Token endpoint grants for API keys (client credentials) and user organization or project tokens (token exchange).
 paths:
@@ -189,7 +193,7 @@ paths:
       operationId: change_member_role
       tags: [Members]
       summary: Change a member's organization role
-      description: Needs admin, and owner when the member is or becomes an owner. 409 last_owner when it would demote the last owner.
+      description: Needs admin, and owner when the member is or becomes an owner. 409 last_owner when it would demote the last owner. Revokes the member's organization and project API keys, and cancels the pending invitations the member sent, that the new role no longer covers.
       requestBody:
         required: true
         content:
@@ -216,7 +220,7 @@ paths:
       operationId: remove_member
       tags: [Members]
       summary: Remove a member
-      description: Needs admin, and owner to remove an owner. 409 last_owner for the last owner. Also removes the user's project roles in the organization.
+      description: Needs admin, and owner to remove an owner. 409 last_owner for the last owner. Also removes the user's project roles in the organization, revokes every API key the user created in it and cancels every invitation the user sent that is still pending.
       responses:
         '204': { description: 'Removed.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -471,6 +475,10 @@ paths:
   /v1/terrascale/account:
     delete:
       operationId: delete_account
+      parameters:
+        - {"name": "X-TerraScale-Step-Up-Proof", "in": "header", "description": "Fresh approved single-use ts-auth audience proof for this operation's purpose. Account deletion alternatively accepts its exact preauthorized deletion receipt continuation.", "schema": {"maxLength": 70, "minLength": 70, "type": "string"}}
+        - {"name": "X-TerraScale-Deletion-Receipt", "in": "header", "description": "Status-only capability: 32 random bytes in canonical unpadded base64url. Never put it in a URL or logs.", "schema": {"maxLength": 43, "minLength": 43, "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$", "type": "string"}}
+        - {"name": "X-TerraScale-Deletion-Authorization", "in": "header", "description": "Secret acknowledgement returned only after timely proof consumption; required with the exact receipt for continuation. Never put it in a URL or logs.", "schema": {"maxLength": 43, "minLength": 43, "type": "string"}}
       tags: [Members]
       summary: Delete your account
       description: |
@@ -506,7 +514,7 @@ paths:
         Without project_id: an organization role; needs admin, and owner to invite an owner. With project_id: a role
         on that project; needs the project's admin role. ts-auth emails a link to the dashboard's accept page,
         <dashboard origin>/invitations/<token>; the token is also answered once. Valid 7 days, single use. 409 invitation_pending while an unexpired
-        invitation for the email and target is pending, 409 already_member when the address's user already has it.
+        invitation for the email and target is pending, 409 already_member when the address's user already has it. 429 rate_limited with Retry-After past the invitation or email capacity limits.
       requestBody:
         required: true
         content:
@@ -525,7 +533,9 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429':
-          description: rate_limited; at most 100 invitations per organization per hour.
+          description: rate_limited; at most 100 invitations per organization per hour and 50 per inviting user per day, or the organization's share of invitation email capacity is used up. No invitation is created; Retry-After is when the binding limit next admits one.
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -871,7 +881,7 @@ paths:
       operationId: set_project_member_role
       tags: [Project members]
       summary: Grant or change a project role
-      description: Needs the project's admin role. A new grant needs a member of the organization (404 otherwise; invite anyone else).
+      description: Needs the project's admin role. A new grant needs a member of the organization (404 otherwise; invite anyone else). Lowering a role revokes the member's organization and project API keys, and cancels the pending invitations the member sent, that it no longer covers.
       requestBody:
         required: true
         content:
@@ -893,7 +903,7 @@ paths:
       operationId: remove_project_member
       tags: [Project members]
       summary: Remove a project role
-      description: Needs the project's admin role. A collaborator left with no project role leaves the organization.
+      description: Needs the project's admin role. A collaborator left with no project role leaves the organization. Revokes the member's organization and project API keys, and cancels the pending invitations the member sent, that the remaining role no longer covers.
       responses:
         '204': { description: 'Removed.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -907,7 +917,7 @@ paths:
       operationId: create_organization_api_key
       tags: [API keys]
       summary: Create an organization API key
-      description: Needs admin. The key reaches every project of the organization, one project per token. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.
+      description: Needs admin. The key reaches every project of the organization, one project per token, and stays valid only while its creator keeps the organization admin role; sign-out everywhere, password resets and email changes leave it valid. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.
       requestBody:
         required: true
         content:
@@ -987,6 +997,8 @@ paths:
       - $ref: '#/components/parameters/Key'
     post:
       operationId: rotate_organization_api_key
+      parameters:
+        - {"name": "X-TerraScale-Step-Up-Proof", "in": "header", "description": "Fresh approved single-use ts-auth audience proof for this operation's purpose. Account deletion alternatively accepts its exact preauthorized deletion receipt continuation.", "required": true, "schema": {"maxLength": 70, "minLength": 70, "type": "string"}}
       tags: [API keys]
       summary: Rotate an organization API key
       description: "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid."
@@ -1122,6 +1134,8 @@ paths:
       - $ref: '#/components/parameters/Key'
     post:
       operationId: rotate_project_api_key
+      parameters:
+        - {"name": "X-TerraScale-Step-Up-Proof", "in": "header", "description": "Fresh approved single-use ts-auth audience proof for this operation's purpose. Account deletion alternatively accepts its exact preauthorized deletion receipt continuation.", "required": true, "schema": {"maxLength": 70, "minLength": 70, "type": "string"}}
       tags: [API keys]
       summary: Rotate a project API key
       description: "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid."
@@ -1525,6 +1539,319 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
+  /v1/terrascale/account/deletion:
+    get:
+      operationId: account_deletion_status
+      tags: [Account]
+      summary: "Read your account deletion status"
+      description: "Present the deletion receipt capability header, without a bearer token. 204 proves logical account deletion for its exact closure generation; 202 means that generation is pending. 404 unknown or expired; 409 deletion_refused when the generation ended without completion proof. Optional organization ULID query: 204 requires both account proof and that candidate organization’s deletion fence; a surviving candidate stays 202, noncandidates are 404. Grants no mutation or personal data. Does not certify physical erasure or other services' data."
+      security:
+        - accountDeletionReceipt: []
+      parameters:
+        - {"name": "X-TerraScale-Deletion-Receipt", "in": "header", "description": "Status-only capability: 32 random bytes in canonical unpadded base64url. Never put it in a URL or logs.", "required": true, "schema": {"maxLength": 43, "minLength": 43, "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$", "type": "string"}}
+        - {"name": "organization", "in": "query", "description": "Candidate organization ULID; completion additionally requires its own deletion fence.", "schema": {"pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$", "type": "string"}}
+      responses:
+        '202': {"description": "Accepted", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '204': {"description": "No Content", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/deletion/history:
+    get:
+      operationId: account_deletion_history
+      parameters:
+        - {"name": "organization", "in": "query", "required": false, "description": "Candidate organization ULID covered by the deletion receipt.", "schema": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"}}
+      tags: [Account]
+      summary: "Read your deletion's history request metadata"
+      description: "Requires the existing generation-specific deletion receipt capability. Optional organization ULID must be a candidate covered by that receipt. Returns only the opaque erasure id, immutable request time and auth worker progress after logical deletion; 404 when no history job is available (including retirement), never completion evidence. Does not advance cleanup, settlement or erasure and returns no subject ids, records or tokens. Read the peer-only TerraBase inspection separately for holder metadata."
+      security:
+        - accountDeletionReceipt: []
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccountDeletionHistory"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/email-change:
+    post:
+      operationId: request_email_change
+      tags: [Account]
+      summary: "Start a sign-in email change"
+      description: "Requires a fresh change_email/ts-auth proof in X-TerraScale-Step-Up-Proof. Emails a single-use code, valid ten minutes, to new_email and a cancel link to the current address; replaces any pending change. 409 email_taken when another account owns the address; 429 rate_limited after three requests per account or address per hour, or the platform-wide hourly budget."
+      security:
+        - platformUser: []
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/EmailChangeRequest"}}}, "required": true}
+      responses:
+        '202': {"description": "Accepted", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EmailChangeBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/email-change/confirm:
+    post:
+      operationId: confirm_email_change
+      tags: [Account]
+      summary: "Confirm a sign-in email change"
+      description: "Commits the caller's pending change with the code the new address received, at the authentication state it was requested in: the new address becomes the sign-in email, the old one is released, and the epoch advances, ending every session and token of the account, including this one. The code works once; five wrong codes, expiry, a replaced request or any sign-out void it (403 email_change_denied). 409 email_taken when another account claimed the address meanwhile."
+      security:
+        - platformUser: []
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ConfirmEmailChangeRequest"}}}, "required": true}
+      responses:
+        '204': {"description": "No Content", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/providers:
+    get:
+      operationId: account_linked_providers
+      tags: [Account]
+      summary: "List my linked sign-in providers"
+      description: "Requires the account's live sign-in token. Returns provider names only."
+      security:
+        - platformUser: []
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LinkedProvidersBody"}}}}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/providers/{provider}:
+    delete:
+      operationId: account_unlink_provider
+      tags: [Account]
+      summary: "Unlink my sign-in provider"
+      description: "Requires a live sign-in token and a fresh emailed sign-in code. Email-code sign-in remains available. Success revokes every prior session and token; sign in again."
+      security:
+        - platformUser: []
+      parameters:
+        - {"name": "provider", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/UnlinkProviderRequest"}}}, "required": true}
+      responses:
+        '204': {"description": "No Content", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': {"description": "Too Many Requests", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OAuthErrorBody"}}}}
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/providers/{provider}/code:
+    post:
+      operationId: account_send_unlink_code
+      tags: [Account]
+      summary: "Email me a code to unlink a provider"
+      description: "Requires a live sign-in token and a linked provider. Emails a sign-in code to the account's verified email, subject to the sign-in mail limits; use it with DELETE /v1/terrascale/account/providers/{provider}."
+      security:
+        - platformUser: []
+      parameters:
+        - {"name": "provider", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        '202': {"description": "Accepted", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': {"description": "Too Many Requests", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OAuthErrorBody"}}}}
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/agentid-clients:
+    get:
+      operationId: list_agentid_clients
+      tags: [Agents]
+      summary: "List your Sign in as agent clients"
+      description: "The Sign in as agent clients the signed-in TerraScale account registered, at most 10, without their secrets. previous_secret_expires_at is set while a rotated-out secret still works. A token an agent acts with is 403 owner_required."
+      security:
+        - platformUser: []
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentIdClientPageBody"}}}}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    post:
+      operationId: create_agentid_client
+      tags: [Agents]
+      summary: "Register a Sign in as agent client"
+      description: "Registers a confidential client of the agent issuer {origin}/agents for the signed-in TerraScale account. name is 1 to 64 characters; redirect_uris holds 1 to 10 distinct absolute https URLs in canonical form (lowercase scheme and host, no default port, userinfo or fragment), matched exactly at authorization. The answer has client_id (a ULID) and client_secret, shown once; only its SHA-256 digest is kept. The client authenticates at {origin}/agents/oauth/token with client_secret_basic or client_secret_post and may request the owner_email scope. An account has at most 10 clients (409 client_limit). Needs a create_oauth_client step-up proof in X-TerraScale-Step-Up-Proof, spent in the same save as the change, so a sign-out everywhere that commits first refuses it with 409; a token an agent acts with is 403 owner_required."
+      security:
+        - platformUser: []
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateAgentIdClientRequest"}}}, "required": true}
+      responses:
+        '201': {"description": "Created", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentIdClientBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/agentid-clients/{client_id}:
+    delete:
+      operationId: delete_agentid_client
+      tags: [Agents]
+      summary: "Delete a Sign in as agent client"
+      description: "Deletes a client the signed-in account owns: its next authorization request, token redemption and secret are refused at once. Another account's client is 404. Needs a delete_oauth_client step-up proof in X-TerraScale-Step-Up-Proof, spent in the same save as the change, so a sign-out everywhere that commits first refuses it with 409; a token an agent acts with is 403 owner_required."
+      security:
+        - platformUser: []
+      parameters:
+        - {"name": "client_id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        '204': {"description": "No Content", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/agentid-clients/{client_id}/secret/rotate:
+    post:
+      operationId: rotate_agentid_client_secret
+      tags: [Agents]
+      summary: "Rotate a Sign in as agent client's secret"
+      description: "Issues a new client_secret for a client the signed-in account owns and answers it exactly once; only its digest is kept. The previous secret keeps working for grace_seconds (default 3600, 0 to 86400), then is refused like any wrong secret; rotating again inside the grace replaces the previous secret. Another account's client is 404. Needs a rotate_oauth_client step-up proof in X-TerraScale-Step-Up-Proof, spent in the same save as the change, so a sign-out everywhere that commits first refuses it with 409; a token an agent acts with is 403 owner_required."
+      security:
+        - platformUser: []
+      parameters:
+        - {"name": "client_id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/RotateAgentIdClientRequest"}}}, "required": true}
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentIdClientSecretBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/email/admission:
+    post:
+      operationId: email_admission
+      x-internal: true
+      tags: [Platform]
+      summary: "Reserve one infrastructure notification attempt"
+      description: "ts-alerts only. Domain-separated HMAC credential derived from CLOUDFLARE_EMAIL_TOKEN (Vault secret gru-1-cloudflare-email-token). A fresh ULID may grant one send, within ten seconds. Admitted IDs never grant another attempt; refusals and ambiguous responses suppress email. No retry of an unknown provider outcome."
+      security:
+        - mailAdmission: []
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/EmailAdmissionRequest"}}}, "required": true}
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EmailAdmissionResponse"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/me/agents:
+    get:
+      operationId: list_account_agents
+      tags: [Agents]
+      summary: "List your agents"
+      description: "The agents the signed-in TerraScale account owns, enrolled through /v1/terrascale/agent-enrollments, with their scopes (mcp:read, mcp:write), keys and last_used_at."
+      security:
+        - platformUser: []
+      parameters:
+        - {"name": "limit", "in": "query", "description": "Agents per page, default 50.", "schema": {"maximum": 100, "minimum": 1, "type": "integer"}}
+        - {"name": "after", "in": "query", "description": "The previous page's next cursor; omit to start.", "schema": {"pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$", "type": "string"}}
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentPageBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/me/agents/{agent}:
+    delete:
+      operationId: revoke_account_agent
+      tags: [Agents]
+      summary: "Revoke your agent"
+      description: "Revokes an agent the signed-in TerraScale account owns, and every key of it: its next token, exchange or platform call is refused. Another account's agent is 404; revoking again is 204."
+      security:
+        - platformUser: []
+      parameters:
+        - {"name": "agent", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        '204': {"description": "No Content", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    patch:
+      operationId: share_account_agent_owner_email
+      tags: [Agents]
+      summary: "Share your email with apps your agent signs in to"
+      description: "Sets share_owner_email (default false) on an agent the signed-in TerraScale account owns. While it is true, a registered Sign in as agent client that was granted the owner_email scope receives owner_email and owner_email_verified for sign-ins of this agent; while it is false they are omitted. UserInfo reads the flag on every call; ID tokens already issued keep what they carry until they expire (5 minutes). Another account's agent is 404; a token an agent acts with is 403 owner_required."
+      security:
+        - platformUser: []
+      parameters:
+        - {"name": "agent", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentSharingRequest"}}}, "required": true}
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/step-up:
+    post:
+      operationId: request_step_up
+      tags: [Account]
+      summary: "Start purpose-bound reauthentication"
+      description: "Creates a pending five-minute proof bound to the account, authentication epoch/state, purpose and audience. Supported: delete_account (ts-auth or ts-dashboard), create_pat (ts-dashboard), delete_organization, start_ownership_transfer, change_plan, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, the event endpoint creation and secret rotation purposes, change_email, add_passkey, delete_passkey and start_impersonation (ts-auth). organization_id is required for, and binds the proof to, delete_organization, start_ownership_transfer and change_plan. For start_impersonation it must be the project ULID, a colon, and the target user ULID. It is refused for every other purpose. Keep proof on the backend; send the browser only to step_up_url. return_uri must be /auth/step-up/callback on a registered dashboard redirect origin, without query or fragment. Fresh primary credentials and active MFA are mandatory; an existing session never approves it."
+      security:
+        - platformUser: []
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/StepUpRequest"}}}, "required": true}
+      responses:
+        '201': {"description": "Created", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/StepUpBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/step-up/consume:
+    post:
+      operationId: consume_step_up
+      tags: [Account]
+      summary: "Consume a dashboard step-up proof"
+      description: "Atomically consumes an approved, unexpired proof with the current account epoch/state before issuing a PAT, a dashboard plan change or any deletion side effects. ts-dashboard create_pat, ts-auth change_plan, ts-auth delete_organization and ts-dashboard delete_account are accepted. change_plan and delete_organization require organization_id, the organization the caller is about to change, and consume their proof single-use for the signed-in user only when it was minted for that organization; a proof minted for another organization answers 403 and stays unconsumed. create_pat and delete_account refuse organization_id. delete_account requires operation_receipt, a canonical 32-byte base64url deletion receipt; 200 returns operation_grant only after the commit and final five-minute deadline check. Persist it privately: auth DELETE retries require both that secret in X-TerraScale-Deletion-Authorization and the exact receipt/account/state, for 15 days. create_pat, change_plan and delete_organization return 204 without a credential. The organization DELETE then requires the consumed delete_organization proof in X-TerraScale-Step-Up-Proof before the proof's five-minute deadline and spends it. A late or failed deletion consume releases no operation_grant. Other operations consume their ts-auth proofs at the sensitive API itself. Replay or mismatch: 403 step_up_required."
+      security:
+        - platformUser: []
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ConsumeStepUpRequest"}}}, "required": true}
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/StepUpGrantBody"}}}}
+        '204': {"description": "No Content", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/{project}/agent-enrollments:
+    post:
+      operationId: start_agent_enrollment
+      tags: [Agents]
+      summary: "Start agent enrollment"
+      description: "Unauthenticated. An agent asks to be enrolled with its own public P-256 JWK (the same rules as create_agent). {project} is a project id, or terrascale for an agent of a TerraScale account (allowed scopes mcp:read and mcp:write, fixed by TerraScale). Answers enrollment_id, a single-use user_code, verification_uri (the tenant's hosted approval page), verification_uri_complete, expires_in (600) and interval (5). The user of that tenant who will own the agent signs in there, verifies again and approves or denies. Limited to 10 per IP per 15 minutes and 300 per tenant per hour, the platform tenant included (429 with Retry-After). A storage conflict answers 409 version_conflict; start again."
+      security:
+        - {}
+      parameters:
+        - {"name": "project", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/StartAgentEnrollmentRequest"}}}, "required": true}
+      responses:
+        '201': {"description": "Created", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentEnrollmentBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/{project}/agent-enrollments/{enrollment}/token:
+    post:
+      operationId: redeem_agent_enrollment
+      tags: [Agents]
+      summary: "Poll agent enrollment"
+      description: "Unauthenticated; proof is an ES256 JWT signed by the enrolled private key with aud this exact URL, a jti, iat, and exp at most 300 seconds ahead, each iat later than the previous accepted poll's. Without such a proof the answer is 401 invalid_proof and reveals nothing. Otherwise 400 authorization_pending, slow_down (sooner than interval), access_denied or expired_token, or 200 with agent_id and kid once approved. The result is answered once; later polls answer expired_token."
+      security:
+        - {}
+      parameters:
+        - {"name": "project", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "enrollment", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentEnrollmentTokenRequest"}}}, "required": true}
+      responses:
+        '200': {"description": "OK", "headers": {"X-Request-ID": {"description": "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.", "schema": {"maxLength": 26, "minLength": 26, "type": "string"}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentEnrollmentTokenBody"}}}}
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/Unavailable' }
 components:
   securitySchemes:
     platformUser:
@@ -1548,12 +1875,15 @@ components:
       type: http
       scheme: basic
       description: A confidential service client from TS_AUTH_SERVICE_CLIENTS whose id is listed in TS_AUTH_PLATFORM_CLIENTS.
+    accountDeletionReceipt: {"type": "apiKey", "name": "X-TerraScale-Deletion-Receipt", "in": "header"}
+    mailAdmission: {"type": "http", "description": "Domain-separated ts-alerts admission credential; no dashboard or authentication authority.", "scheme": "bearer"}
   headers:
     Location:
       description: The created resource.
       schema: { type: string }
     RetryAfter:
-      description: Seconds to wait.
+      description: Minimum delay in whole seconds before retrying.
+      required: true
       schema: { type: integer }
   parameters:
     Organization:
@@ -1599,6 +1929,23 @@ components:
       description: The previous page's next.
       schema: { type: string }
   responses:
+    TooManyRequests:
+      description: rate_limited; retry after the Retry-After delay.
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: payload_too_large; the request body exceeds the operation's limit.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnsupportedMediaType:
+      description: unsupported_media_type; the request body is not application/json.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
       description: invalid_request, or name_taken-style input errors listed on the operation.
       content:
@@ -1649,7 +1996,7 @@ components:
       type: string
       minLength: 1
       maxLength: 128
-      description: Trimmed; contains a letter or digit and no control characters.
+      description: Trimmed after removing direction and zero-width characters; contains a letter or digit, no control, private-use or unassigned characters, none of \" < > @, and does not imitate TerraScale outside TerraScale's own organizations.
     Email:
       type: string
       format: email
@@ -2115,6 +2462,8 @@ components:
             - api_key.created
             - api_key.rotated
             - api_key.revoked
+            - api_key.scoped_created
+            - api_key.allowed_cidrs_changed
             - project.suspended
             - project.unsuspended
         target: { type: ['string', 'null'], description: 'A user id, email, project id or key id.' }
@@ -2219,3 +2568,30 @@ components:
         token_type: { type: string, const: Bearer }
         expires_in: { type: integer, maximum: 900 }
         scope: { type: string }
+    AccountDeletionHistory: {"required": ["erasureId", "requestedAt", "authLogicalVerifiedAt", "historyStatus", "historyCompletedAt"], "type": "object", "properties": {"erasureId": {"type": "string"}, "requestedAt": {"type": "string", "format": "date-time"}, "authLogicalVerifiedAt": {"type": ["null", "string"], "format": "date-time"}, "historyStatus": {"type": ["null", "string"]}, "historyCompletedAt": {"type": ["null", "string"], "format": "date-time"}}}
+    EmailChangeRequest: {"required": ["new_email"], "type": "object", "properties": {"new_email": {"type": "string"}}}
+    EmailChangeBody: {"required": ["new_email", "expires_at"], "type": "object", "properties": {"new_email": {"type": "string"}, "expires_at": {"type": "string", "format": "date-time"}}}
+    ConfirmEmailChangeRequest: {"required": ["code"], "type": "object", "properties": {"code": {"type": "string"}}}
+    LinkedProvidersBody: {"required": ["providers"], "type": "object", "properties": {"providers": {"type": "array", "items": {"type": "string"}}}}
+    UnlinkProviderRequest: {"required": ["code"], "type": "object", "properties": {"code": {"type": ["null", "string"]}}}
+    OAuthErrorBody: {"required": ["error", "error_description"], "type": "object", "properties": {"error": {"type": "string"}, "error_description": {"type": ["null", "string"]}}}
+    AgentIdClientPageBody: {"required": ["items"], "type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/AgentIdClientBody"}}}}
+    AgentIdClientBody: {"required": ["clientId", "name", "redirectUris", "createdAt"], "type": "object", "properties": {"clientId": {"type": "string"}, "name": {"type": "string"}, "redirectUris": {"type": "array", "items": {"type": "string"}}, "createdAt": {"type": "string", "format": "date-time"}, "previousSecretExpiresAt": {"type": ["null", "string"], "format": "date-time"}, "clientSecret": {"type": ["null", "string"]}}}
+    CreateAgentIdClientRequest: {"required": ["name", "redirectUris"], "type": "object", "properties": {"name": {"type": ["null", "string"]}, "redirectUris": {"type": ["null", "array"], "items": {"type": "string"}}}}
+    RotateAgentIdClientRequest: {"required": ["graceSeconds"], "type": "object", "properties": {"graceSeconds": {"pattern": "^-?(?:0|[1-9]\\d*)$", "type": ["null", "integer", "string"], "format": "int32"}}}
+    AgentIdClientSecretBody: {"required": ["clientId", "clientSecret", "previousSecretExpiresAt"], "type": "object", "properties": {"clientId": {"type": "string"}, "clientSecret": {"type": "string"}, "previousSecretExpiresAt": {"type": ["null", "string"], "format": "date-time"}}}
+    EmailAdmissionRequest: {"required": ["attemptId"], "type": "object", "properties": {"attemptId": {"type": "string"}}}
+    EmailAdmissionResponse: {"required": ["status", "sendBy"], "type": "object", "properties": {"status": {"type": "string"}, "sendBy": {"type": "string", "format": "date-time"}}}
+    AgentPageBody: {"required": ["items", "next"], "type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/AgentBody"}}, "next": {"type": ["null", "string"]}}}
+    AgentBody: {"required": ["id", "project_id", "owner_user_id", "name", "status", "allowed_scopes", "allow_self_subject", "keys", "created_at", "expires_at", "revoked_at", "last_used_at", "share_owner_email"], "type": "object", "properties": {"id": {"type": "string"}, "project_id": {"type": "string"}, "owner_user_id": {"type": "string"}, "name": {"type": "string"}, "status": {"type": "string"}, "allowed_scopes": {"type": "array", "items": {"type": "string"}}, "allow_self_subject": {"type": "boolean"}, "keys": {"type": "array", "items": {"$ref": "#/components/schemas/AgentKeyBody"}}, "created_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": ["null", "string"], "format": "date-time"}, "revoked_at": {"type": ["null", "string"], "format": "date-time"}, "last_used_at": {"type": ["null", "string"], "format": "date-time"}, "share_owner_email": {"type": "boolean"}}}
+    AgentKeyBody: {"required": ["kid", "thumbprint", "created_at", "revoked_at"], "type": "object", "properties": {"kid": {"type": "string"}, "thumbprint": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"}, "revoked_at": {"type": ["null", "string"], "format": "date-time"}}}
+    AgentSharingRequest: {"required": ["share_owner_email"], "type": "object", "properties": {"share_owner_email": {"type": ["null", "boolean"]}}}
+    StepUpRequest: {"required": ["purpose", "audience", "return_uri"], "type": "object", "properties": {"purpose": {"type": "string"}, "audience": {"type": "string"}, "return_uri": {"type": "string"}, "organization_id": {"type": ["null", "string"]}}}
+    StepUpBody: {"required": ["proof", "step_up_url", "expires_at"], "type": "object", "properties": {"proof": {"type": "string"}, "step_up_url": {"type": "string"}, "expires_at": {"type": "string", "format": "date-time"}}}
+    ConsumeStepUpRequest: {"required": ["proof", "purpose", "audience"], "type": "object", "properties": {"proof": {"type": "string"}, "purpose": {"type": "string"}, "audience": {"type": "string"}, "operation_receipt": {"type": ["null", "string"]}, "organization_id": {"type": ["null", "string"]}}}
+    StepUpGrantBody: {"required": ["operation_grant"], "type": "object", "properties": {"operation_grant": {"type": "string"}}}
+    StartAgentEnrollmentRequest: {"required": ["name", "requestedScopes", "publicJwk"], "type": "object", "properties": {"name": {"type": ["null", "string"]}, "requestedScopes": {"type": ["null", "array"], "items": {"type": "string"}}, "publicJwk": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/JsonElement"}]}, "allowSelfSubject": {"type": "boolean", "default": false}}}
+    JsonElement: {}
+    AgentEnrollmentBody: {"required": ["enrollmentId", "userCode", "verificationUri", "verificationUriComplete", "expiresIn", "interval"], "type": "object", "properties": {"enrollmentId": {"type": "string"}, "userCode": {"type": "string"}, "verificationUri": {"type": "string"}, "verificationUriComplete": {"type": "string"}, "expiresIn": {"pattern": "^-?(?:0|[1-9]\\d*)$", "type": ["integer", "string"], "format": "int32"}, "interval": {"pattern": "^-?(?:0|[1-9]\\d*)$", "type": ["integer", "string"], "format": "int32"}}}
+    AgentEnrollmentTokenRequest: {"required": ["proof"], "type": "object", "properties": {"proof": {"type": ["null", "string"]}}}
+    AgentEnrollmentTokenBody: {"required": ["agentId", "kid"], "type": "object", "properties": {"agentId": {"type": "string"}, "kid": {"type": "string"}}}

@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using Microsoft.OpenApi;
 using TerraScale.Endpoints.Binding;
 
 namespace TerraScale.Endpoints;
@@ -39,6 +40,8 @@ public abstract class EndpointBase : IEndpoint
     protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") =>
         Definition.Produces<T>(statusCode, contentType);
     protected EndpointDefinition Produces(int statusCode) => Definition.Produces(statusCode);
+    protected EndpointDefinition ProducesHeader(int statusCode, string name, string description, JsonSchemaType type) =>
+        Definition.ProducesHeader(statusCode, name, description, type);
     protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => Definition.ProducesSse(statusCode);
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => Definition.AllowAnonymous();

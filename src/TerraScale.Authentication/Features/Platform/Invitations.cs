@@ -12,11 +12,13 @@ using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-public sealed class Invitations(AuthData data, PlatformDirectory directory, Users users, SignInMail mail, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
+public sealed class Invitations(AuthData data, PlatformDirectory directory, Users users, SignInMail mail, AttemptLimiter limiter, EmailAdmission admission, AuthOptions options, TimeProvider clock)
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(7);
 
     public const int PerOrganizationPerHour = 100;
+
+    public const int PerUserPerDay = 50;
 
     private const string Instance = PlatformDirectory.Instance;
     private const string Prefix = "tsi_";
@@ -41,24 +43,29 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             {
                 var access = await directory.OrganizationAccessAsync(caller.Id, organizationId, cancellationToken);
                 PlatformDirectory.RequireRole(access, role == Roles.Owner ? Roles.Owner : Roles.Admin);
-                return ([PlatformDirectory.Authority(access), Change.Assert(access.Organization)], access.Organization.Value.Name);
+                return ([PlatformDirectory.Issuing(access), Change.Assert(access.Organization)], access.Organization.Value.Name);
             }
 
             var project = await directory.ProjectAccessAsync(caller.Id, organizationId, projectId, cancellationToken);
             PlatformDirectory.RequireRole(project, Roles.Admin);
-            return ([PlatformDirectory.Authority(project, Roles.Admin), Change.Assert(project.Organization), Change.Assert(project.Project)], project.Organization.Value.Name);
+            return ([PlatformDirectory.Issuing(project), PlatformDirectory.Authority(project, Roles.Admin), Change.Assert(project.Organization), Change.Assert(project.Project)], project.Organization.Value.Name);
         }
 
         _ = await AuthorizeAsync();
-        if (!await limiter.TryAcquireAsync(Instance, "invitation", organizationId, PerOrganizationPerHour, TimeSpan.FromHours(1), cancellationToken))
+        if (await limiter.AcquireAsync(Instance, "invitation", organizationId, PerOrganizationPerHour, TimeSpan.FromHours(1), cancellationToken) is { } organizationWait)
         {
-            throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "This organization sent too many invitations; retry within the hour.");
+            throw ApiException.RateLimited("This organization sent too many invitations; retry after the Retry-After delay.", organizationWait);
+        }
+
+        if (await limiter.AcquireAsync(Instance, "invitation-sender", caller.Id, PerUserPerDay, TimeSpan.FromDays(1), cancellationToken) is { } senderWait)
+        {
+            throw ApiException.RateLimited("You sent too many invitations today; retry after the Retry-After delay.", senderWait);
         }
 
         var dashboard = options.DashboardClient;
         using var reservation = dashboard is not null ? mail.Reserve() : null;
         cancellationToken.ThrowIfCancellationRequested();
-        var (invitation, token, organizationName) = await directory.CommitAsync(async () =>
+        var (invitation, token, outbox) = await directory.CommitAsync(async () =>
         {
             var (authority, organizationName) = await AuthorizeAsync();
             if (await this.AlreadyHasAsync(organizationId, projectId, email, role, cancellationToken))
@@ -83,21 +90,34 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
 
             operations.Add(Change.Insert(invitation));
             operations.Add(directory.Audit(organizationId, caller.Id, "invitation.created", email, projectId is null ? role : $"{projectId}/{role}"));
-            return new PlatformDirectory.Plan<(InvitationRecord, string, string)>(operations, (invitation, token, organizationName),
+            MailRow? outbox = null;
+            if (dashboard is not null && reservation is not null)
+            {
+                if (Refusal(await admission.DecideAsync(EmailPurpose.Invitation, organizationId, null, cancellationToken), clock.GetUtcNow()) is { } capacity)
+                {
+                    throw ApiException.RateLimited("This organization's invitation email capacity is used up; no invitation was created. Retry after the Retry-After delay.",
+                        capacity);
+                }
+
+                outbox = reservation.Stage(AuthEmailKind.Invitation, new AuthEmailValues(invitation.Email)
+                {
+                    Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
+                    ExpiresIn = Lifetime,
+                    Organization = organizationName,
+                    Tenant = organizationId,
+                    Inviter = caller.Email,
+                }, locale);
+                operations.Add(Change.Insert(outbox));
+            }
+
+            return new PlatformDirectory.Plan<(InvitationRecord, string, MailRow?)>(operations, (invitation, token, outbox),
                 async probe => await this.PendingAsync(organizationId, projectId, email, probe) is { } held && this.Status(held.Value) == "pending",
                 PendingConflict());
         }, cancellationToken);
 
-        if (dashboard is not null)
+        if (outbox is not null && reservation is not null)
         {
-            await reservation!.EnqueueEmailAsync(AuthEmailKind.Invitation, new AuthEmailValues(invitation.Email)
-            {
-                Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
-                ExpiresIn = Lifetime,
-                Organization = organizationName,
-                Tenant = organizationId,
-                Inviter = caller.Email,
-            }, locale);
+            reservation.Committed(outbox);
         }
 
         return (invitation, token);
@@ -178,6 +198,8 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
         {
             var invitation = await this.DecidableAsync(caller, token, cancellationToken);
             var record = invitation.Value;
+            var inviter = await directory.InviterAuthorityAsync(record, cancellationToken)
+                ?? throw PlatformDirectory.Conflict("not_pending", "The invitation is no longer pending.");
             List<Change> operations;
             if (record.ProjectId is { } projectId)
             {
@@ -196,6 +218,7 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
                 operations.Add(directory.Audit(record.OrganizationId, caller.Id, "member.joined", caller.Id, record.Role));
             }
 
+            operations.AddRange(inviter);
             operations.Add(this.Close(invitation, "accepted", caller.Id));
             operations.Add(directory.Audit(record.OrganizationId, caller.Id, "invitation.accepted", record.Email));
             return new PlatformDirectory.Plan<InvitationRecord>(operations, record);
@@ -209,6 +232,13 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             operations.Add(directory.Audit(invitation.Value.OrganizationId, caller.Id, "invitation.declined", invitation.Value.Email));
             return new PlatformDirectory.Plan<bool>(operations, true);
         }, cancellationToken);
+
+    private static TimeSpan? Refusal(EmailAdmissionDecision decision, DateTimeOffset now) => decision switch
+    {
+        EmailAdmitted => null,
+        EmailRefused refused => refused.RetryAfter,
+        EmailPaused paused => paused.Until > now ? paused.Until - now : TimeSpan.FromSeconds(1),
+    };
 
     private static ApiException PendingConflict() =>
         PlatformDirectory.Conflict("invitation_pending", "An invitation for this address is already pending.");
@@ -237,24 +267,10 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
     private Change Close(Versioned<InvitationRecord> invitation, string status, string userId) =>
         Change.Update(invitation, invitation.Value with { Status = status, DecidedAt = clock.GetUtcNow(), DecidedBy = userId });
 
-    private async Task<bool> AlreadyHasAsync(string organizationId, string? projectId, string email, string role, CancellationToken cancellationToken)
-    {
-        if (await users.FindByEmailAsync(Instance, email, cancellationToken) is not { } invitee)
-        {
-            return false;
-        }
-
-        try
-        {
-            return projectId is null
-                ? (await directory.OrganizationAccessAsync(invitee.Id, organizationId, cancellationToken)).Role is not null
-                : Roles.Rank((await directory.ProjectAccessAsync(invitee.Id, organizationId, projectId, cancellationToken)).Role) >= Roles.Rank(role);
-        }
-        catch (ApiException error) when (error.Status == StatusCodes.Status404NotFound)
-        {
-            return false;
-        }
-    }
+    private async Task<bool> AlreadyHasAsync(string organizationId, string? projectId, string email, string role, CancellationToken cancellationToken) =>
+        await users.FindByEmailAsync(Instance, email, cancellationToken) is { } invitee
+        && await directory.HeldRoleAsync(invitee.Id, organizationId, projectId, cancellationToken) is { } held
+        && (projectId is null || Roles.Rank(held) >= Roles.Rank(role));
 
     private async Task<Versioned<InvitationRecord>?> ByTokenAsync(string token, CancellationToken cancellationToken)
     {

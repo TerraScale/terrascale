@@ -1,3 +1,7 @@
+using System.Buffers;
+using System.Collections.Frozen;
+using System.Globalization;
+using System.Text;
 using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
@@ -53,10 +57,107 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     private const int Attempts = 4;
 
-    public static string? Name(string? value)
+    private const int ScopePage = 100;
+
+    public const string NameRule = "name must be 1 to 128 characters with a letter or digit, without \", <, >, @, control or private-use characters, and must not imitate TerraScale; direction and zero-width characters are removed.";
+
+    private static readonly SearchValues<char> NameReserved = SearchValues.Create("\"<>@");
+
+    private static readonly FrozenDictionary<char, char> Lookalikes = new Dictionary<char, char>
     {
-        var trimmed = value?.Trim();
-        return trimmed is { Length: >= 1 and <= 128 } && trimmed.Any(char.IsLetterOrDigit) && !trimmed.Any(char.IsControl) ? trimmed : null;
+        ['0'] = 'o',
+        ['1'] = 'l',
+        ['i'] = 'l',
+        ['|'] = 'l',
+        ['!'] = 'l',
+        ['3'] = 'e',
+        ['4'] = 'a',
+        ['5'] = 's',
+        ['$'] = 's',
+        ['7'] = 't',
+        ['+'] = 't',
+        ['\u0430'] = 'a',
+        ['\u0435'] = 'e',
+        ['\u043e'] = 'o',
+        ['\u0440'] = 'p',
+        ['\u0441'] = 'c',
+        ['\u0442'] = 't',
+        ['\u0455'] = 's',
+        ['\u0456'] = 'l',
+        ['\u04cf'] = 'l',
+        ['\u03b1'] = 'a',
+        ['\u03b5'] = 'e',
+        ['\u03bf'] = 'o',
+        ['\u03c1'] = 'p',
+        ['\u03c4'] = 't',
+        ['\u03b9'] = 'l',
+        ['\u0131'] = 'l',
+    }.ToFrozenDictionary();
+
+    public static string? Name(string? value) => Name(value, brand: false);
+
+    public static string? Name(string? value, bool brand)
+    {
+        var trimmed = Visible(value)?.Trim();
+        return trimmed is { Length: >= 1 and <= 128 } && trimmed.EnumerateRunes().Any(Rune.IsLetterOrDigit) && !trimmed.AsSpan().ContainsAny(NameReserved)
+            && (brand || !Imitates(trimmed))
+            ? trimmed
+            : null;
+    }
+
+    public static bool IsPlatformOrganization(string organizationId) => organizationId is PlatformBootstrap.OrganizationId or PlatformTenant.Id;
+
+    public static bool IsPlatformProject(string projectId) => projectId is PlatformTenant.Id or PlatformBootstrap.AuthProjectId or PlatformBootstrap.DashboardProjectId;
+
+    public static bool Imitates(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        var skeleton = new StringBuilder(name.Length);
+        foreach (var raw in name)
+        {
+            var lower = char.ToLowerInvariant(raw is >= '\uff01' and <= '\uff5e' ? (char)(raw - 0xfee0) : raw);
+            var folded = Lookalikes.GetValueOrDefault(lower, lower);
+            if (char.IsAsciiLetterOrDigit(folded))
+            {
+                skeleton.Append(folded);
+            }
+        }
+
+        return skeleton.ToString().Contains("terrascale", StringComparison.Ordinal);
+    }
+
+    private static string? Visible(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var text = value.AsSpan();
+        var visible = new StringBuilder(value.Length);
+        while (!text.IsEmpty)
+        {
+            if (Rune.DecodeFromUtf16(text, out var rune, out var consumed) != OperationStatus.Done)
+            {
+                return null;
+            }
+
+            var category = Rune.GetUnicodeCategory(rune);
+            if (category is UnicodeCategory.Control or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator or UnicodeCategory.PrivateUse
+                or UnicodeCategory.Surrogate or UnicodeCategory.OtherNotAssigned)
+            {
+                return null;
+            }
+
+            if (category != UnicodeCategory.Format)
+            {
+                visible.Append(text[..consumed]);
+            }
+
+            text = text[consumed..];
+        }
+
+        return visible.ToString();
     }
 
     public static bool IsId(string? value) =>
@@ -277,11 +378,13 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
             var updated = member.Value with { Role = role };
             var reshaped = Unoffered(organization with { Owners = count }, memberId, role);
+            var grants = await this.GrantRolesAsync(memberId, organizationId, cancellationToken);
             return new Plan<MembershipRecord>(
             [
                 Authority(access),
                 Change.Update(member, updated),
                 reshaped != organization ? Change.Update(access.Organization, reshaped) : Change.Assert(access.Organization),
+                .. await this.OutgrownAsync(organizationId, memberId, userId, project => Effective(role, project, grants), cancellationToken),
                 this.Audit(organizationId, userId, "member.role_changed", memberId, role),
             ], updated);
         }, cancellationToken);
@@ -324,6 +427,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             }
 
             changes.AddRange((await this.GrantsAsync(memberId, organizationId, cancellationToken)).Select(grant => Change.Delete(grant)));
+            changes.AddRange(await this.OutgrownAsync(organizationId, memberId, userId, _ => null, cancellationToken));
             changes.Add(this.Audit(organizationId, userId, leaving ? "member.left" : "member.removed", memberId));
             return new Plan<bool>(changes, true);
         }, cancellationToken);
@@ -331,13 +435,24 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
     internal async Task<(IReadOnlyList<string> Sole, IReadOnlyList<string> Shared)> AccountScopeAsync(string userId, CancellationToken cancellationToken)
     {
         var (sole, shared) = (new List<string>(), new List<string>());
-        var memberships = await data.ReadAsync(connection => connection.QueryAsync<MembershipScope>(
-            """
-            SELECT m.organization_id, m.role,
-                m.role IS NOT NULL AND EXISTS (SELECT 1 FROM memberships o WHERE o.organization_id = m.organization_id AND o.user_id <> @userId AND o.role IS NOT NULL) AS others,
-                (SELECT owners FROM organizations g WHERE g.id = m.organization_id) AS owners
-            FROM memberships m WHERE m.user_id = @userId
-            """, new { userId }), cancellationToken);
+        List<MembershipScope> memberships = [];
+        var from = string.Empty;
+        List<MembershipScope> page;
+        do
+        {
+            var after = from;
+            page = (await data.ReadAsync(connection => connection.QueryAsync<MembershipScope>(
+                """
+                SELECT m.organization_id, m.role,
+                    m.role IS NOT NULL AND EXISTS (SELECT 1 FROM memberships o WHERE o.organization_id = m.organization_id AND o.user_id <> @userId AND o.role IS NOT NULL) AS others,
+                    (SELECT owners FROM organizations g WHERE g.id = m.organization_id) AS owners
+                FROM memberships m WHERE m.user_id = @userId AND m.organization_id > @after ORDER BY m.organization_id LIMIT @ScopePage
+                """, new { userId, after, ScopePage }), cancellationToken)).AsList();
+            memberships.AddRange(page);
+            from = page.Count > 0 ? page[^1].OrganizationId : from;
+        }
+        while (page.Count == ScopePage);
+
         foreach (var row in memberships)
         {
             if (row.Role == Roles.Owner && !row.Others)
@@ -719,12 +834,14 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             }
 
             var grant = existing is null ? new ProjectMemberRecord(Instance, organizationId, projectId, memberId, role, clock.GetUtcNow()) : existing.Value with { Role = role };
+            var grants = new Dictionary<string, string>(await this.GrantRolesAsync(memberId, organizationId, cancellationToken), StringComparer.Ordinal) { [projectId] = role };
             return new Plan<ProjectMemberRecord>(
             [
                 Authority(access, Roles.Admin),
                 Change.Update(member, member.Value),
                 Change.Assert(access.Project),
                 existing is null ? Change.Insert(grant) : Change.Update(existing, grant),
+                .. lowers ? await this.OutgrownAsync(organizationId, memberId, userId, project => Effective(member.Value.Role, project, grants), cancellationToken) : [],
                 this.Audit(organizationId, userId, "project_member.role_set", memberId, $"{projectId}/{role}"),
             ], grant);
         }, cancellationToken);
@@ -747,6 +864,9 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
                     : Change.Update(member, member.Value));
             }
 
+            var grants = new Dictionary<string, string>(await this.GrantRolesAsync(memberId, organizationId, cancellationToken), StringComparer.Ordinal);
+            grants.Remove(projectId);
+            changes.AddRange(await this.OutgrownAsync(organizationId, memberId, userId, project => Effective(member?.Value.Role, project, grants), cancellationToken));
             changes.Add(this.Audit(organizationId, userId, "project_member.removed", memberId, projectId));
             return new Plan<bool>(changes, true);
         }, cancellationToken);
@@ -901,16 +1021,88 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
             await this.FenceAsync(organizationId, null, userId, cancellationToken);
             var owner = access.Membership.Value with { Role = Roles.Owner };
+            var starter = live.Starter.Value.UserId;
+            var grants = await this.GrantRolesAsync(starter, organizationId, cancellationToken);
             return new Plan<MembershipRecord>(
             [
                 Change.Update(access.Organization, access.Organization.Value with { Transfer = null }),
                 Change.Update(access.Membership, owner),
                 Change.Update(live.Starter, live.Starter.Value with { Role = Roles.Admin }),
+                .. await this.OutgrownAsync(organizationId, starter, userId, project => Effective(Roles.Admin, project, grants), cancellationToken),
                 this.Audit(organizationId, userId, "ownership.transfer_confirmed", userId),
             ], owner);
         }, cancellationToken);
         return (await this.WithEmailsAsync([confirmed], member => member.UserId, cancellationToken)).Single();
     }
+
+    internal async Task<string?> HeldRoleAsync(string userId, string organizationId, string? projectId, CancellationToken cancellationToken)
+    {
+        var organizationRole = await this.RoleAsync(organizationId, userId, cancellationToken);
+        return projectId is null
+            ? organizationRole
+            : Roles.Higher(Roles.Implied(organizationRole), (await this.ProjectMemberAsync(projectId, userId, cancellationToken))?.Value.Role);
+    }
+
+    private static string? Effective(string? organizationRole, string? projectId, IReadOnlyDictionary<string, string> grants) =>
+        projectId is null ? organizationRole : Roles.Higher(Roles.Implied(organizationRole), grants.GetValueOrDefault(projectId));
+
+    private async Task<IReadOnlyDictionary<string, string>> GrantRolesAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        (await this.GrantsAsync(userId, organizationId, cancellationToken)).ToDictionary(grant => grant.Value.ProjectId, grant => grant.Value.Role, StringComparer.Ordinal);
+
+    private async Task<IReadOnlyList<Change>> OutgrownAsync(string organizationId, string memberId, string actor, Func<string?, string?> roleAfter, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        var keys = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<ApiKeyRecord>(
+            "SELECT * FROM api_keys WHERE instance_id = @Instance AND organization_id = @organizationId AND created_by = @memberId AND parent_key_id IS NULL ORDER BY id",
+            new { Instance, organizationId, memberId }), cancellationToken));
+        var invitations = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<InvitationRecord>(
+            """
+            SELECT * FROM invitations WHERE instance_id = @Instance AND organization_id = @organizationId AND invited_by = @memberId
+                AND status = 'pending' AND expires_at > @now ORDER BY id
+            """, new { Instance, organizationId, memberId, now }), cancellationToken));
+        List<Change> changes = [];
+        foreach (var key in keys.Where(key => !ApiKeys.Covers(key.Value, roleAfter(key.Value.ProjectId))))
+        {
+            changes.Add(Change.Delete(key));
+            changes.Add(this.Audit(organizationId, actor, "api_key.revoked", key.Value.Id, "creator_access_changed"));
+        }
+
+        foreach (var invitation in invitations.Where(invitation => !Invites(invitation.Value, roleAfter(invitation.Value.ProjectId))))
+        {
+            changes.Add(Change.Update(invitation, invitation.Value with { Status = "revoked", DecidedAt = now, DecidedBy = actor }));
+            changes.Add(this.Audit(organizationId, actor, "invitation.revoked", invitation.Value.Email, "inviter_access_changed"));
+        }
+
+        return changes;
+    }
+
+    internal async Task<IReadOnlyList<Change>?> InviterAuthorityAsync(InvitationRecord invitation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(invitation);
+        var membership = await this.MembershipAsync(invitation.OrganizationId, invitation.InvitedBy, cancellationToken);
+        var grant = invitation.ProjectId is { } projectId ? await this.ProjectMemberAsync(projectId, invitation.InvitedBy, cancellationToken) : null;
+        var role = invitation.ProjectId is null ? membership?.Value.Role : Roles.Higher(Roles.Implied(membership?.Value.Role), grant?.Value.Role);
+        if (!Invites(invitation, role))
+        {
+            return null;
+        }
+
+        List<Change> assertions = [];
+        if (membership is not null)
+        {
+            assertions.Add(Change.Assert(membership));
+        }
+
+        if (grant is not null)
+        {
+            assertions.Add(Change.Assert(grant));
+        }
+
+        return assertions;
+    }
+
+    private static bool Invites(InvitationRecord invitation, string? role) =>
+        Roles.Rank(role) >= Roles.Rank(invitation.ProjectId is null && invitation.Role == Roles.Owner ? Roles.Owner : Roles.Admin);
 
     public async Task<Page<AuditEventRecord>> AuditEventsAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
     {
@@ -968,6 +1160,20 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return Roles.Rank(Roles.Implied(access.Membership?.Value.Role)) >= Roles.Rank(minimum)
             ? Change.Assert(access.Membership!)
             : Change.Assert(access.Grant!);
+    }
+
+    internal static Change Issuing(OrganizationAccess access)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+        return Change.Update(access.Membership, access.Membership.Value);
+    }
+
+    internal static Change Issuing(ProjectAccess access)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+        return access.Membership is { } membership ? Change.Update(membership, membership.Value)
+            : access.Grant is { } grant ? Change.Update(grant, grant.Value)
+            : throw new InvalidOperationException("Project access without a membership or grant.");
     }
 
     internal static string Cursor(string? after) =>

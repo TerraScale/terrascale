@@ -37,7 +37,7 @@ public sealed record UserApiKeyBody(string Id, string UserId, string Name, strin
     public override string ToString() => nameof(UserApiKeyBody);
 }
 
-public sealed record UserApiKeyPageBody(IReadOnlyList<UserApiKeyBody> Items);
+public sealed record UserApiKeyPageBody(IReadOnlyList<UserApiKeyBody> Items, string? Next);
 public sealed record VerifyUserApiKeyBody(bool Valid, string? UserId = null, IReadOnlyList<string>? Scopes = null, string? KeyId = null, DateTimeOffset? ExpiresAt = null);
 
 public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, WebhookOutbox outbox, AttemptLimiter limiter, TimeProvider clock)
@@ -150,11 +150,15 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         throw Conflict();
     }
 
-    public async Task<UserApiKeyPageBody> ListAsync(string project, string userId, CancellationToken cancellationToken)
+    public async Task<UserApiKeyPageBody> ListAsync(string project, string userId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var rows = await data.ReadAsync(connection => connection.QueryAsync<UserApiKeyRecord>(
-            "SELECT * FROM user_api_keys WHERE project_id = @project AND user_id = @userId ORDER BY id", new { project, userId }), cancellationToken);
-        return new([.. rows.Select(row => Body(row))]);
+        var from = PlatformDirectory.Cursor(after);
+        var take = limit + 1;
+        var rows = (await data.ReadAsync(connection => connection.QueryAsync<UserApiKeyRecord>(
+            "SELECT * FROM user_api_keys WHERE project_id = @project AND user_id = @userId AND id > @from ORDER BY id LIMIT @take", new { project, userId, from, take }),
+            cancellationToken)).AsList();
+        var page = PlatformDirectory.Paged(rows, limit, row => row.Id);
+        return new([.. page.Items.Select(row => Body(row))], page.Next);
     }
 
     public async Task RevokeAsync(string project, string userId, string id, string actor, CancellationToken cancellationToken)

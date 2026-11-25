@@ -9,8 +9,10 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.Email;
 
-public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSender> logger) : IEmailSender, IEmailProvider
+public sealed class SmtpEmailSender(SmtpEmailOptions email, AuthOptions options, ILogger<SmtpEmailSender> logger) : IEmailSender, IEmailProvider
 {
+    private readonly byte[] recipientKey = EmailOutcomeLog.Key(options);
+
     private const string SenderAddress = "no-reply@terrascale.tech";
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(30);
 
@@ -77,7 +79,7 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
         }
         finally
         {
-            EmailOutcomeLog.Write(logger, recipient, outcome);
+            EmailOutcomeLog.Write(logger, this.recipientKey, recipient, outcome);
         }
     }
 

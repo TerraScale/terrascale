@@ -282,19 +282,26 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
         AuthMetrics.EmailStage("prepare", Stopwatch.GetElapsedTime(preparing).TotalSeconds);
         var sendingAt = Stopwatch.GetTimestamp();
-        EmailDeliveryOutcome outcome;
+        EmailDelivery delivery;
         try
         {
-            outcome = await email.DeliverAsync(values.Email, message, CancellationToken.None);
+            delivery = await email.DeliverUnlessPausedAsync(values.Email, message, CancellationToken.None);
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
             logger.ZLogError(failure, $"Authentication email delivery failed");
-            outcome = EmailDeliveryOutcome.Unknown;
+            delivery = new EmailSent(EmailDeliveryOutcome.Unknown);
         }
         finally
         {
             AuthMetrics.EmailStage("send", Stopwatch.GetElapsedTime(sendingAt).TotalSeconds);
+        }
+
+        var (outcome, pausedUntil) = Settled(delivery);
+        if (pausedUntil is { } until)
+        {
+            await this.SaveAsync(row with { LeaseUntil = until }, sending.Version);
+            return;
         }
 
         await this.SaveAsync(outcome == EmailDeliveryOutcome.Retryable && row.Attempts + 1 < MaxAttempts
@@ -311,6 +318,12 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 Payload = null,
             }, sending.Version);
     }
+
+    private static (EmailDeliveryOutcome Outcome, DateTimeOffset? PausedUntil) Settled(EmailDelivery delivery) => delivery switch
+    {
+        EmailSent sent => (sent.Outcome, null),
+        EmailPaused paused => (EmailDeliveryOutcome.Retryable, paused.Until),
+    };
 
     private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.SocialLink is { } pending
         ? await passcodes.RequestSocialAsync(work.Tenant, pending, CancellationToken.None)
@@ -335,7 +348,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         var cutoff = clock.GetUtcNow() - Retention;
         var batchSize = SessionPruner.BatchSize;
         await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
-            "DELETE FROM mail_outbox WHERE id IN (SELECT id FROM mail_outbox WHERE created_at <= @cutoff ORDER BY created_at LIMIT @batchSize)", new { cutoff, batchSize }),
+            """
+            DELETE FROM mail_outbox WHERE id IN (SELECT id FROM mail_outbox WHERE created_at <= @cutoff
+                AND (state IN ('sent', 'rejected', 'failed', 'suppressed', 'unknown') OR lease_until <= @cutoff) ORDER BY created_at LIMIT @batchSize)
+            """, new { cutoff, batchSize }),
             CancellationToken.None);
     }
 
@@ -440,11 +456,17 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    private async Task WriteAsync(string state, MailWork work, string locale, TimeSpan? lifetime)
+    private MailRow Prepare(string state, MailWork work, string locale, TimeSpan? lifetime)
     {
         var now = clock.GetUtcNow();
         var id = AuthIds.New();
-        var row = new MailRow(id, state, locale, now, now, this.Seal(id, work)) { ExpiresAt = now + lifetime };
+        return new MailRow(id, state, locale, now, now, this.Seal(id, work)) { ExpiresAt = now + lifetime };
+    }
+
+    private async Task WriteAsync(string state, MailWork work, string locale, TimeSpan? lifetime)
+    {
+        var row = this.Prepare(state, work, locale, lifetime);
+        var id = row.Id;
         var written = false;
         try
         {
@@ -522,6 +544,19 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         {
             ArgumentNullException.ThrowIfNull(values);
             return this.Consume().WriteAsync("ready", new MailWork(values.Tenant, values.Email) { Kind = kind, Values = values }, locale, values.ExpiresIn);
+        }
+
+        public MailRow Stage(AuthEmailKind kind, AuthEmailValues values, string locale = AuthEmails.English)
+        {
+            ArgumentNullException.ThrowIfNull(values);
+            var mail = this.owner ?? throw new InvalidOperationException("The email reservation has already been consumed or released.");
+            return mail.Prepare("ready", new MailWork(values.Tenant, values.Email) { Kind = kind, Values = values }, locale, values.ExpiresIn);
+        }
+
+        public void Committed(MailRow row)
+        {
+            ArgumentNullException.ThrowIfNull(row);
+            this.Consume().FinishReservation(row.Id);
         }
 
         public void Dispose() => Interlocked.Exchange(ref this.owner, null)?.FinishReservation(null);

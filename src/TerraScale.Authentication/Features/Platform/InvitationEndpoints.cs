@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.OpenApi;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
@@ -71,8 +72,9 @@ public sealed class CreateInvitationEndpoint(Invitations invitations, PlatformAu
     public override void Configure()
     {
         Post($"{Organization}/invitations");
-        this.Describe("create_invitation", "Invite an email address", "Without project_id: an organization role; needs admin, and owner to invite an owner. With project_id: a role on that project; needs the project's admin role. ts-auth emails a link to the dashboard's accept page, <dashboard origin>/invitations/<token>; the token is also answered once. Valid 7 days, single use. 409 invitation_pending while an unexpired invitation for the email and target is pending, 409 already_member when the address's user already has it. 429 rate_limited past 100 invitations per organization per hour. A full or stopping email queue answers 503 before creating a pending invitation; failed creates release their reserved queue capacity.", "Invitations", typeof(CreateInvitationRequest), StatusCodes.Status201Created, typeof(InvitationCreatedBody), conflict: true);
+        this.Describe("create_invitation", "Invite an email address", "Without project_id: an organization role; needs admin, and owner to invite an owner. With project_id: a role on that project; needs the project's admin role. ts-auth emails a link to the dashboard's accept page, <dashboard origin>/invitations/<token>; the token is also answered once. Valid 7 days, single use. 409 invitation_pending while an unexpired invitation for the email and target is pending, 409 already_member when the address's user already has it. 429 rate_limited with Retry-After past 100 invitations per organization per hour or 50 per inviting user per day, or when the organization's share of invitation email capacity is used up; nothing is created. A full or stopping email queue answers 503 before creating a pending invitation; failed creates release their reserved queue capacity.", "Invitations", typeof(CreateInvitationRequest), StatusCodes.Status201Created, typeof(InvitationCreatedBody), conflict: true);
         Produces<Contracts.ErrorBody>(StatusCodes.Status429TooManyRequests);
+        ProducesHeader(StatusCodes.Status429TooManyRequests, "Retry-After", "Minimum delay in whole seconds before the binding limit admits another invitation.", JsonSchemaType.Integer);
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
