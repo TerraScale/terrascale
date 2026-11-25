@@ -1988,7 +1988,7 @@ components:
       type: string
       minLength: 1
       maxLength: 128
-      description: Trimmed; contains a letter or digit and no control characters.
+      description: Trimmed after removing direction and zero-width characters; contains a letter or digit, no control, private-use or unassigned characters, none of \" < > @, and does not imitate TerraScale outside TerraScale's own organizations.
     Email:
       type: string
       format: email

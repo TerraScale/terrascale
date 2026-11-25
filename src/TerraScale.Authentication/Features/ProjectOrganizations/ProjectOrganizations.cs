@@ -103,7 +103,7 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
     {
         var (project, org) = (current.Value.ProjectId, current.Value.Id);
         var invitations = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<ProjectOrganizationInvitation>(
-            "SELECT * FROM project_organization_invitations WHERE project_id = @project AND organization_id = @org AND status = 'pending' ORDER BY id LIMIT @RetireBatch",
+            "SELECT * FROM project_organization_invitations WHERE project_id = @project AND organization_id = @org ORDER BY id LIMIT @RetireBatch",
             new { project, org, RetireBatch }), cancellationToken));
         if (invitations.Count == 0)
         {

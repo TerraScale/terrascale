@@ -41,7 +41,7 @@ test('a member\'s API keys survive its own sign-out everywhere, but the keys and
     const ownerToken = await signInToken(page.request, 'platform-access-owner');
     const owner = { Authorization: 'Bearer ' + ownerToken };
 
-    for (const name of ['TerraScale Support', 'Terra Scale billing', 'Terrasca1e team', 'Acme <admin>', 'ops@acme', 'Quote " team', 'bad‮name', 'zero​width']) {
+    for (const name of ['TerraScale Support', 'Terra Scale billing', 'Terrasca1e team', 'Acme <admin>', 'ops@acme', 'Quote " team', 'Terra\u200bScale ops', 'private \ue000 use', 'line\u2028break']) {
       const refused = await page.request.post(auth + '/v1/terrascale/organizations', { headers: owner, data: { name } });
       expect(refused.status(), 'organization name ' + JSON.stringify(name)).toBe(400);
       expect((await refused.json()).error.code).toBe('invalid_request');

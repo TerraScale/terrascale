@@ -59,7 +59,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     private const int ScopePage = 100;
 
-    public const string NameRule = "name must be 1 to 128 characters with a letter or digit, without \", <, >, @, control or direction characters, and must not imitate TerraScale.";
+    public const string NameRule = "name must be 1 to 128 characters with a letter or digit, without \", <, >, @, control or private-use characters, and must not imitate TerraScale; direction and zero-width characters are removed.";
 
     private static readonly SearchValues<char> NameReserved = SearchValues.Create("\"<>@");
 
@@ -98,8 +98,9 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     public static string? Name(string? value, bool brand)
     {
-        var trimmed = value?.Trim();
-        return trimmed is { Length: >= 1 and <= 128 } && Visible(trimmed) && !trimmed.AsSpan().ContainsAny(NameReserved) && (brand || !Imitates(trimmed))
+        var trimmed = Visible(value)?.Trim();
+        return trimmed is { Length: >= 1 and <= 128 } && trimmed.EnumerateRunes().Any(Rune.IsLetterOrDigit) && !trimmed.AsSpan().ContainsAny(NameReserved)
+            && (brand || !Imitates(trimmed))
             ? trimmed
             : null;
     }
@@ -125,24 +126,38 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return skeleton.ToString().Contains("terrascale", StringComparison.Ordinal);
     }
 
-    private static bool Visible(string value)
+    private static string? Visible(string? value)
     {
+        if (value is null)
+        {
+            return null;
+        }
+
         var text = value.AsSpan();
-        var letterOrDigit = false;
+        var visible = new StringBuilder(value.Length);
         while (!text.IsEmpty)
         {
-            if (Rune.DecodeFromUtf16(text, out var rune, out var consumed) != OperationStatus.Done
-                || Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator
-                    or UnicodeCategory.PrivateUse or UnicodeCategory.Surrogate or UnicodeCategory.OtherNotAssigned)
+            if (Rune.DecodeFromUtf16(text, out var rune, out var consumed) != OperationStatus.Done)
             {
-                return false;
+                return null;
             }
 
-            letterOrDigit |= Rune.IsLetterOrDigit(rune);
+            var category = Rune.GetUnicodeCategory(rune);
+            if (category is UnicodeCategory.Control or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator or UnicodeCategory.PrivateUse
+                or UnicodeCategory.Surrogate or UnicodeCategory.OtherNotAssigned)
+            {
+                return null;
+            }
+
+            if (category != UnicodeCategory.Format)
+            {
+                visible.Append(text[..consumed]);
+            }
+
             text = text[consumed..];
         }
 
-        return letterOrDigit;
+        return visible.ToString();
     }
 
     public static bool IsId(string? value) =>
