@@ -1,4 +1,4 @@
-using System.Data;
+using System.Data.Common;
 using System.Text.Json;
 using Dapper;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -13,6 +13,7 @@ public static class McpRegistrations
 {
     public static readonly TimeSpan UnfinishedLifetime = TimeSpan.FromHours(24);
     public static readonly TimeSpan IdleLifetime = TimeSpan.FromDays(30);
+    private static readonly TimeSpan ActivityResolution = TimeSpan.FromMinutes(5);
 
     public static async Task<McpRegistration> CreateAsync(DashboardDb storage, string name, string[] redirectUris, DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -95,6 +96,11 @@ public static class McpRegistrations
                 return null;
             }
 
+            if (!expired && activity == Activity.Authenticated && now - row.LastActivityAt < ActivityResolution)
+            {
+                return Registration(row);
+            }
+
             if (expired)
             {
                 row.ClosedAt = now;
@@ -107,12 +113,26 @@ public static class McpRegistrations
 
             row.OriginalVersion = row.Version;
             row.Version = AccountService.NewId();
-            if (await connection.ExecuteAsync(DashboardSql.McpClients.Update, row) == 1)
+            if (await UpdateAsync(connection, row) == 1)
             {
                 return expired ? null : Registration(row);
             }
+
+            await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
         }
         throw new IOException("MCP registration changed concurrently.");
+    }
+
+    private static async Task<int> UpdateAsync(DbConnection connection, McpClientRow row)
+    {
+        try
+        {
+            return await connection.ExecuteAsync(DashboardSql.McpClients.Update, row);
+        }
+        catch (Exception error) when (DashboardDb.IsConflict(error))
+        {
+            return 0;
+        }
     }
 
     private static McpRegistration Registration(McpClientRow row)

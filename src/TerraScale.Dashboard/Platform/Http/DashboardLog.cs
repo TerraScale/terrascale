@@ -134,6 +134,9 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 39, Level = LogLevel.Warning, Message = "An allowance notification for organization {OrganizationId} could not be processed ({ErrorType}); other organizations continue.")]
         internal static partial void AnAllowanceNotificationForOrganizationCould(this ILogger logger, object? organizationId, object? errorType);
 
+        [LoggerMessage(EventId = 107, Level = LogLevel.Error, Message = "Project {ProjectId} was created in ts-auth but refused by the plan limit or storage, and deleting it failed ({ErrorType})")]
+        internal static partial void AbandonedProjectNotDeleted(this ILogger logger, string projectId, string errorType);
+
         [LoggerMessage(EventId = 40, Level = LogLevel.Warning, Message = "Revoke dashboard sessions after committed member removal for {UserId} ({ErrorType})")]
         internal static partial void RevokeDashboardSessionsAfterCommittedMember(this ILogger logger, object? userId, object? errorType);
 

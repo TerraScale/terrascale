@@ -18,7 +18,26 @@ namespace TerraScale.Dashboard.Features.Organizations
             }, cancellationToken);
         }
 
+        private static readonly SemaphoreSlim[] CreationGates = [.. Enumerable.Range(0, 64).Select(static _ => new SemaphoreSlim(1, 1))];
+        private static readonly TimeSpan AbandonDeadline = TimeSpan.FromSeconds(10);
+
         public async Task<ProjectRecord> CreateProjectAsync(AccountContext context, string name,
+            IReadOnlyList<string>? regions, CancellationToken cancellationToken)
+        {
+            var organizationId = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
+            var gate = CreationGates[(int)((uint)StringComparer.Ordinal.GetHashCode(organizationId) % (uint)CreationGates.Length)];
+            await gate.WaitAsync(cancellationToken);
+            try
+            {
+                return await CreateAdmittedProjectAsync(context, name, regions, cancellationToken);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        private async Task<ProjectRecord> CreateAdmittedProjectAsync(AccountContext context, string name,
             IReadOnlyList<string>? regions, CancellationToken cancellationToken)
         {
             context = await FreshManagerAsync(context, cancellationToken);
@@ -35,19 +54,32 @@ namespace TerraScale.Dashboard.Features.Organizations
                 CreatedAt = remote.CreatedAt,
                 Regions = chosen
             };
-            await accounts.UpdateOrganizationAsync(context, org =>
+            var kept = false;
+            try
             {
-                Manage(org, context.UserId);
-                if (!org.CanProvision(context.UserId))
+                await accounts.UpdateOrganizationAsync(context, org =>
                 {
-                    throw new AccountAccessException("Active billing is required to create projects.", 409);
-                }
+                    Manage(org, context.UserId);
+                    if (!org.CanProvision(context.UserId))
+                    {
+                        throw new AccountAccessException("Active billing is required to create projects.", 409);
+                    }
 
-                DemandProjectRoom(org, project.Id);
-                Duplicate(org, name, project.Id);
-                org.Projects[project.Id] = project;
-                org.AuditEvents.Add(Event(context, "project.created", name, "project"));
-            }, cancellationToken);
+                    DemandProjectRoom(org, project.Id);
+                    Duplicate(org, name, project.Id);
+                    org.Projects[project.Id] = project;
+                    org.AuditEvents.Add(Event(context, "project.created", name, "project"));
+                }, cancellationToken);
+                kept = true;
+            }
+            finally
+            {
+                if (!kept)
+                {
+                    await AbandonProjectAsync(context.Session, project.OrganizationId, project.Id);
+                }
+            }
+
             await accounts.UpdateAccountAsync(context.Session, account =>
             {
                 if (account.ActiveOrganizationId == project.OrganizationId && account.ActiveProjectId.Length == 0)
@@ -56,6 +88,22 @@ namespace TerraScale.Dashboard.Features.Organizations
                 }
             }, cancellationToken);
             return project;
+        }
+
+        private async Task AbandonProjectAsync(SessionRecord session, string organizationId, string projectId)
+        {
+            using var deadline = new CancellationTokenSource(AbandonDeadline);
+            try
+            {
+                if (!await platform.DeleteProjectAsync(session, organizationId, projectId, deadline.Token))
+                {
+                    logger.AbandonedProjectNotDeleted(projectId, "pending");
+                }
+            }
+            catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or OperationCanceledException)
+            {
+                logger.AbandonedProjectNotDeleted(projectId, error.GetType().Name);
+            }
         }
 
         public async Task UpdateProjectAsync(AccountContext context, string name,
