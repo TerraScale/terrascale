@@ -18,7 +18,7 @@ internal readonly union DisplayNameParse(string, InvalidInput);
 
 internal readonly union OwnedOrganizationLookup(OrganizationRecord, CredentialRejected, ResourceNotFound, BackendUnavailable);
 
-internal readonly union OrganizationCreation(OrganizationRecord, InvalidInput, CredentialRejected, CallerForbidden, StateConflict, BackendUnavailable);
+internal readonly union OrganizationCreation(OrganizationRecord, InvalidInput, CredentialRejected, StateConflict, BackendUnavailable);
 
 internal readonly union DatabaseCreateOutcome(DatabaseRecord, InvalidInput, CallerForbidden, StateConflict, BackendUnavailable);
 
@@ -26,19 +26,9 @@ internal readonly union DatabaseCopyOutcome(RestoreOperation, ResourceNotFound, 
 
 internal readonly union DatabaseRemovalOutcome(Completed, BackendUnavailable);
 
-internal readonly union DatabaseDeletionOutcome(Completed, StateConflict, BackendUnavailable);
-
 internal readonly union ProjectCloseOutcome(Completed, StateConflict, BackendUnavailable);
 
 internal readonly union DatabaseChangeOutcome(DatabaseRecord, InvalidInput, StateConflict, BackendUnavailable);
-
-internal readonly union DatabaseAllowance(Completed, StateConflict, BackendUnavailable);
-
-internal readonly union PlanLookup(string, BackendUnavailable);
-
-internal sealed record TombstoneRetained;
-
-internal readonly union TombstoneSweep(Completed, TombstoneRetained, BackendUnavailable);
 
 internal readonly union DatabaseBranchOutcome(DatabaseRecord, InvalidInput, CallerForbidden, ResourceNotFound, StateConflict, BackendUnavailable);
 
@@ -58,18 +48,7 @@ internal sealed class ManagementService(
 
     private const long MinTtlSeconds = 60;
 
-    private const int SweepPage = 64;
-
     private static readonly ResourceNotFound UnknownOrganization = new("the organization does not exist", "unknown_organization");
-
-    private static readonly CallerForbidden PlatformOnly =
-        new("organizations and projects are created and deleted through TerraScale accounts, not directly in TerraBase", "forbidden_caller");
-
-    public static CallerForbidden? DirectUser(Caller caller) => caller switch
-    {
-        UserCaller { ViaOperator: false } => PlatformOnly,
-        AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => null,
-    };
 
     public static PageLimit Limit(int? limit) =>
         limit is null ? DefaultLimit : limit is >= 1 and <= MaxLimit ? limit.Value : new InvalidInput("limit must be an integer between 1 and 100", "invalid_request");
@@ -112,7 +91,6 @@ internal sealed class ManagementService(
     {
         return caller switch
         {
-            UserCaller { ViaOperator: false } => PlatformOnly,
             UserCaller user => await CreateOwnedAsync(user, name, cancellationToken),
             AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or ProjectCaller or EndUserCaller =>
                 new CredentialRejected("creating an organization needs a ts-auth access token for a user", "unauthorized"),
@@ -154,10 +132,24 @@ internal sealed class ManagementService(
             return new InvalidInput("defaultConsistency is fast or strong", "invalid_consistency");
         }
 
-        var allowance = await DatabaseAllowanceAsync(project, cancellationToken);
-        if (allowance switch { Completed => null, StateConflict conflict => (DatabaseCreateOutcome?)conflict, BackendUnavailable unavailable => (DatabaseCreateOutcome?)unavailable } is { } refused)
+        if (project.OrganizationId != PlatformCatalog.OrganizationId)
         {
-            return refused;
+            var limitOutcome = await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken);
+            var limit = limitOutcome switch
+            {
+                OrganizationRecord organization => Plans.DatabaseLimit(project.Plan ?? organization.Plan),
+                ResourceNotFound or BackendUnavailable => Plans.DatabaseLimit(project.Plan ?? Plans.Hobby),
+            };
+            var countOutcome = await catalog.CountOrganizationDatabasesAsync(project.OrganizationId, cancellationToken);
+            var count = countOutcome switch
+            {
+                long value => value,
+                BackendUnavailable => 0,
+            };
+            if (count >= limit)
+            {
+                return new StateConflict("the organization's plan allows no more databases", "database_limit");
+            }
         }
 
         return regions.Check(input.Regions ?? (input.HomeRegion is { } home ? [home, .. input.ReplicaRegions ?? []] : input.ReplicaRegions)) switch
@@ -175,17 +167,6 @@ internal sealed class ManagementService(
         if (!DatabaseNames.IsValid(name))
         {
             return new InvalidInput("name must be a lowercase database name of at most 63 characters", "invalid_name");
-        }
-
-        if (ttlSeconds is < MinTtlSeconds)
-        {
-            return new InvalidInput("ttlSeconds is at least 60", "invalid_ttl");
-        }
-
-        var allowance = await DatabaseAllowanceAsync(project, cancellationToken);
-        if (allowance switch { Completed => null, StateConflict conflict => (DatabaseCopyOutcome?)conflict, BackendUnavailable unavailable => (DatabaseCopyOutcome?)unavailable } is { } refused)
-        {
-            return refused;
         }
 
         var record = Record(project, name, source.Regions, source.AllRegions, source.DefaultConsistency, source.Strict, ttlSeconds, source.Id, source.StorageLimit);
@@ -212,12 +193,7 @@ internal sealed class ManagementService(
         var outcome = await catalog.GetDatabaseAsync(databaseId, cancellationToken);
         return outcome switch
         {
-            DatabaseRecord record => await DeleteDatabaseAsync(record, cancellationToken) switch
-            {
-                Completed done => done,
-                StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
-                BackendUnavailable unavailable => unavailable,
-            },
+            DatabaseRecord record => await DeleteDatabaseAsync(record, cancellationToken),
             ResourceNotFound => new Completed(),
             BackendUnavailable unavailable => unavailable,
         };
@@ -259,7 +235,7 @@ internal sealed class ManagementService(
                 foreach (var database in page.Items)
                 {
                     var deleted = await DeleteDatabaseAsync(database, cancellationToken);
-                    if (deleted switch { Completed => null, StateConflict conflict => (ProjectCloseOutcome?)conflict, BackendUnavailable unavailable => unavailable } is { } deleteFailure)
+                    if (deleted switch { Completed => null, BackendUnavailable unavailable => unavailable } is { } deleteFailure)
                     {
                         return deleteFailure;
                     }
@@ -337,32 +313,21 @@ internal sealed class ManagementService(
         return await SaveAsync(current, current with { ExpiresAt = ttlSeconds is { } ttl ? Now().AddSeconds(ttl) : null }, cancellationToken);
     }
 
-    public async ValueTask<DatabaseDeletionOutcome> DeleteDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken)
+    public async ValueTask<DatabaseRemovalOutcome> DeleteDatabaseAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
-        var outcome = await catalog.DeleteDatabaseAsync(database, Now() + CatalogStore.TombstoneRetention, cancellationToken);
+        var outcome = await catalog.DeleteDatabaseAsync(database, cancellationToken);
         return outcome switch
         {
-            DatabaseTombstoned tombstoned => await RetireAsync(database, tombstoned.NameReused, cancellationToken) switch
-            {
-                Completed done => done,
-                BackendUnavailable unavailable => unavailable,
-            },
-            ResourceNotFound => await ShredAsync(database, cancellationToken) switch
-            {
-                Completed done => done,
-                BackendUnavailable unavailable => unavailable,
-            },
-            StateConflict conflict => conflict,
+            Completed => await ShredAsync(database, cancellationToken),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
     public async ValueTask<DatabaseBranchOutcome> BranchAsync(
-        ProjectRecord project, DatabaseRecord source, ISqlDatabaseSession session, string? name, long? ttlSeconds, CausalBookmark at, CancellationToken cancellationToken)
+        ProjectRecord project, DatabaseRecord source, string? name, long? ttlSeconds, CausalBookmark at, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(session);
         if (!DatabaseNames.IsValid(name))
         {
             return new InvalidInput("name must be a lowercase database name of at most 63 characters", "invalid_name");
@@ -373,19 +338,17 @@ internal sealed class ManagementService(
             return new InvalidInput("ttlSeconds is at least 60", "invalid_ttl");
         }
 
-        var allowance = await DatabaseAllowanceAsync(project, cancellationToken);
-        if (allowance switch { Completed => null, StateConflict conflict => (DatabaseBranchOutcome?)conflict, BackendUnavailable unavailable => (DatabaseBranchOutcome?)unavailable } is { } refused)
-        {
-            return refused;
-        }
-
         var record = Record(project, name, source.Regions, source.AllRegions, source.DefaultConsistency, source.Strict, ttlSeconds, source.Id, source.StorageLimit);
-        var branched = await databases.BranchAsync(session, record.Id, record.KeyId, at, cancellationToken);
-        return branched switch
+        var outcome = await databases.OpenOrCreateAsync(source.Id, source.KeyId, source.Strict, cancellationToken);
+        return outcome switch
         {
-            ISqlDatabaseSession => await PublishBranchAsync(record, cancellationToken),
-            ResourceNotFound missing => missing,
-            StateConflict conflict => conflict,
+            ISqlDatabaseSession session => await databases.BranchAsync(session, record.Id, record.KeyId, at, cancellationToken) switch
+            {
+                ISqlDatabaseSession => await PublishBranchAsync(record, cancellationToken),
+                ResourceNotFound missing => missing,
+                StateConflict conflict => conflict,
+                BackendUnavailable unavailable => unavailable,
+            },
             BackendUnavailable unavailable => unavailable,
         };
     }
@@ -413,36 +376,28 @@ internal sealed class ManagementService(
 
     public async ValueTask<int> SweepDeletedAsync(CancellationToken cancellationToken)
     {
-        var purged = 0;
-        string? after = null;
-        do
+        var deletedOutcome = await catalog.DeletedDatabasesAsync(64, cancellationToken);
+        var deleted = deletedOutcome switch
         {
-            var pageOutcome = await catalog.DeletedDatabasesAsync(after, SweepPage, cancellationToken);
-            var page = pageOutcome switch
+            IReadOnlyList<DatabaseRecord> records => records,
+            BackendUnavailable => [],
+        };
+        var shredded = 0;
+        foreach (var database in deleted)
+        {
+            shredded += await ShredAsync(database, cancellationToken) switch
             {
-                CatalogPage<DatabaseRecord> listed => listed,
-                BackendUnavailable => new CatalogPage<DatabaseRecord>([], null),
+                Completed => 1,
+                BackendUnavailable => 0,
             };
-            foreach (var database in page.Items)
-            {
-                purged += await SweepTombstoneAsync(database, cancellationToken) switch
-                {
-                    Completed => 1,
-                    TombstoneRetained or BackendUnavailable => 0,
-                };
-            }
-
-            after = page.Next;
         }
-        while (after is not null);
 
-        return purged;
+        return shredded;
     }
 
     public async ValueTask<int> SweepExpiredAsync(CancellationToken cancellationToken)
     {
-        var now = Now();
-        var expiredOutcome = await catalog.ExpiredDatabasesAsync(now, SweepPage, cancellationToken);
+        var expiredOutcome = await catalog.ExpiredDatabasesAsync(time.GetUtcNow(), 64, cancellationToken);
         var expired = expiredOutcome switch
         {
             IReadOnlyList<DatabaseRecord> records => records,
@@ -451,80 +406,14 @@ internal sealed class ManagementService(
         var deleted = 0;
         foreach (var database in expired)
         {
-            var claimed = await catalog.ExpireDatabaseAsync(database, now, now + CatalogStore.TombstoneRetention, cancellationToken);
-            deleted += claimed switch
+            deleted += await DeleteDatabaseAsync(database, cancellationToken) switch
             {
-                DatabaseTombstoned tombstoned => await RetireAsync(database, tombstoned.NameReused, cancellationToken) switch
-                {
-                    Completed or BackendUnavailable => 1,
-                },
-                StateConflict or BackendUnavailable => 0,
+                Completed => 1,
+                BackendUnavailable => 0,
             };
         }
 
         return deleted;
-    }
-
-    private async ValueTask<TombstoneSweep> SweepTombstoneAsync(DatabaseRecord database, CancellationToken cancellationToken)
-    {
-        var now = Now();
-        if (database.ExpiresAt is { } purgeAfter && purgeAfter > now)
-        {
-            var local = await databases.DeleteAsync(database.Id, cancellationToken);
-            return local switch
-            {
-                Completed => new TombstoneRetained(),
-                BackendUnavailable unavailable => unavailable,
-            };
-        }
-
-        var shredded = await ShredAsync(database, cancellationToken);
-        return shredded switch
-        {
-            Completed => await catalog.CleanupDatabaseAsync(database.Id, purged: true, cancellationToken) switch
-            {
-                Completed => await catalog.PurgeDatabaseAsync(database, now, cancellationToken) switch
-                {
-                    TombstonePurged => new Completed(),
-                    ResourceNotFound => new TombstoneRetained(),
-                    BackendUnavailable unavailable => unavailable,
-                },
-                BackendUnavailable unavailable => unavailable,
-            },
-            BackendUnavailable unavailable => unavailable,
-        };
-    }
-
-    public async ValueTask<PlanLookup> PlanAsync(ProjectRecord project, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(project);
-        var organizationOutcome = await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken);
-        return organizationOutcome switch
-        {
-            OrganizationRecord organization => project.Plan ?? organization.Plan,
-            ResourceNotFound => project.Plan ?? Plans.Hobby,
-            BackendUnavailable unavailable => new BackendUnavailable(string.Concat("the organization's plan could not be read; retry: ", unavailable.Message), "plan_unavailable"),
-        };
-    }
-
-    private async ValueTask<DatabaseAllowance> DatabaseAllowanceAsync(ProjectRecord project, CancellationToken cancellationToken)
-    {
-        if (project.OrganizationId == PlatformCatalog.OrganizationId)
-        {
-            return new Completed();
-        }
-
-        var planOutcome = await PlanAsync(project, cancellationToken);
-        return planOutcome switch
-        {
-            string plan => await catalog.CountOrganizationDatabasesAsync(project.OrganizationId, cancellationToken) switch
-            {
-                long count when count >= Plans.DatabaseLimit(plan) => new StateConflict("the organization's plan allows no more databases", "database_limit"),
-                long => new Completed(),
-                BackendUnavailable unavailable => unavailable,
-            },
-            BackendUnavailable unavailable => unavailable,
-        };
     }
 
     private async ValueTask<DatabaseCreateOutcome> CreatePlacedAsync(
@@ -569,7 +458,7 @@ internal sealed class ManagementService(
         var outcome = await DeleteDatabaseAsync(reserved, CancellationToken.None);
         return outcome switch
         {
-            Completed or StateConflict or BackendUnavailable => failure,
+            Completed or BackendUnavailable => failure,
         };
     }
 
@@ -588,25 +477,21 @@ internal sealed class ManagementService(
             AllRegions = allRegions,
             DefaultConsistency = mode,
             ExpiresAt = input.TtlSeconds is { } ttl ? Now().AddSeconds(ttl) : current.ExpiresAt,
-            Version = SamePlacement(current, ordered, allRegions) && (input.Name is null || input.Name == current.Name) ? current.Version : current.Version + 1,
+            Version = SamePlacement(current, ordered, allRegions) ? current.Version : current.Version + 1,
         };
     }
 
     private async ValueTask<DatabaseChangeOutcome> SaveAsync(DatabaseRecord current, DatabaseRecord updated, CancellationToken cancellationToken)
     {
         var savedOutcome = await catalog.UpdateDatabaseAsync(current, updated, cancellationToken);
-        return savedOutcome switch
+        var saved = savedOutcome switch
         {
-            DatabaseRecord record => Renamed(current, Published(record)),
+            DatabaseRecord record => (DatabaseChangeOutcome)Published(record),
             ResourceNotFound missing => new StateConflict(missing.Message, "database_changed"),
             StateConflict conflict => conflict,
             BackendUnavailable unavailable => unavailable,
         };
-    }
-
-    private DatabaseRecord Renamed(DatabaseRecord current, DatabaseRecord saved)
-    {
-        if (!string.Equals(current.Name, saved.Name, StringComparison.Ordinal))
+        if (current.Name != updated.Name)
         {
             atlas.Queue(current.ProjectId, current.Name, null);
         }
@@ -614,31 +499,9 @@ internal sealed class ManagementService(
         return saved;
     }
 
-    private async ValueTask<DatabaseRemovalOutcome> RetireAsync(DatabaseRecord database, bool nameReused, CancellationToken cancellationToken)
-    {
-        Withdraw(database, nameReused);
-        var shredded = await ShredAsync(database, cancellationToken);
-        return shredded switch
-        {
-            Completed => await catalog.CleanupDatabaseAsync(database.Id, purged: false, cancellationToken) switch
-            {
-                Completed done => done,
-                BackendUnavailable unavailable => unavailable,
-            },
-            BackendUnavailable unavailable => unavailable,
-        };
-    }
-
-    private void Withdraw(DatabaseRecord database, bool nameReused)
-    {
-        if (!nameReused)
-        {
-            atlas.Queue(database.ProjectId, database.Name, null);
-        }
-    }
-
     private async ValueTask<DatabaseRemovalOutcome> ShredAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
+        atlas.Queue(database.ProjectId, database.Name, null);
         await databases.EvictAsync(database.Id);
         var archivedOutcome = await continuity.CryptoShredAsync(database.Id, cancellationToken);
         var local = await databases.DeleteAsync(database.Id, cancellationToken);
@@ -651,6 +514,16 @@ internal sealed class ManagementService(
         return local switch
         {
             Completed when archived is { } failure => failure,
+            Completed => await PurgeAsync(database.Id, cancellationToken),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<DatabaseRemovalOutcome> PurgeAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var purged = await catalog.PurgeDatabaseAsync(databaseId, cancellationToken);
+        return purged switch
+        {
             Completed done => done,
             BackendUnavailable unavailable => unavailable,
         };

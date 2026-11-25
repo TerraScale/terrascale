@@ -26,17 +26,9 @@ internal sealed class DeleteDatabaseEndpoint(DatabaseAccess access, ManagementSe
 
 internal static class DatabaseDeletion
 {
-    private static readonly CallerForbidden AgentForbidden =
-        new("an agent acting for a user cannot delete a database; the user must delete it", "agent_action_forbidden");
-
     public static async ValueTask<DeleteDatabaseResponse> DeleteAsync(
         Caller caller, DatabaseAccess access, ManagementService management, DatabaseInput request, CancellationToken cancellationToken)
     {
-        if (caller is UserCaller { Delegated: true } or ProjectCaller { Delegated: true })
-        {
-            return AgentForbidden;
-        }
-
         var outcome = await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken);
         return outcome switch
         {
@@ -45,7 +37,6 @@ internal static class DatabaseDeletion
             ResolvedDatabase resolved => await management.DeleteDatabaseAsync(resolved.Database, cancellationToken) switch
             {
                 Completed done => done,
-                StateConflict conflict => conflict,
                 BackendUnavailable unavailable => unavailable,
             },
             InvalidInput invalid => invalid,

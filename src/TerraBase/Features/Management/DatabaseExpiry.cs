@@ -18,7 +18,7 @@ internal sealed class DatabaseExpiry(ManagementService management, TimeProvider 
             var shredded = await management.SweepDeletedAsync(stoppingToken);
             if (shredded > 0)
             {
-                logger.ZLogInformation($"Purged {shredded:@Shredded} database tombstones after every replica shredded them");
+                logger.ZLogInformation($"Finished {shredded:@Shredded} interrupted database deletions");
             }
         }
     }

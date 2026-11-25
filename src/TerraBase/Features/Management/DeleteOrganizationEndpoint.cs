@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal readonly union DeleteOrganizationResponse(Completed, CredentialRejected, CallerForbidden, ResourceNotFound, StateConflict, BackendUnavailable);
+internal readonly union DeleteOrganizationResponse(Completed, CredentialRejected, ResourceNotFound, StateConflict, BackendUnavailable);
 
 internal sealed class DeleteOrganizationEndpoint(ManagementService management, CatalogStore catalog)
     : Endpoint<RouteInput, DeleteOrganizationResponse>
@@ -23,11 +23,6 @@ internal sealed class DeleteOrganizationEndpoint(ManagementService management, C
     public override async ValueTask<DeleteOrganizationResponse> HandleAsync(RouteInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (ManagementService.DirectUser(HttpContext.Caller) is { } forbidden)
-        {
-            return forbidden;
-        }
-
         var outcome = await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken);
         return outcome switch
         {

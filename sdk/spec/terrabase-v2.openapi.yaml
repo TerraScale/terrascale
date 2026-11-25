@@ -210,11 +210,7 @@ paths:
       responses:
         '204':
           description: Deleted.
-        '403':
-          $ref: '#/components/responses/Error'
         '404':
-          $ref: '#/components/responses/Error'
-        '409':
           $ref: '#/components/responses/Error'
   /v1/projects/{project}/databases/{database}/regions:
     get:

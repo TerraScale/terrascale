@@ -14,9 +14,6 @@ internal sealed class RegionDirectory(TerraBaseOptions options, ControlSnapshots
 {
     public const int MaxRegions = 9;
 
-    private static readonly InvalidInput TooManyRegions =
-        new(string.Concat("regions can place a database in at most ", MaxRegions.ToString(CultureInfo.InvariantCulture), " regions"));
-
     public IReadOnlyList<string> List() =>
         [.. snapshots.Regions.Select(static region => region.Id)
             .Concat(coordinator.Peers.Select(static peer => peer.Peer.Region))
@@ -29,11 +26,6 @@ internal sealed class RegionDirectory(TerraBaseOptions options, ControlSnapshots
         if (requested is null || requested.Count == 0)
         {
             return Checked([options.Region]);
-        }
-
-        if (requested.Distinct(StringComparer.Ordinal).Count() > MaxRegions)
-        {
-            return TooManyRegions;
         }
 
         var known = List().ToHashSet(StringComparer.Ordinal);
@@ -56,7 +48,7 @@ internal sealed class RegionDirectory(TerraBaseOptions options, ControlSnapshots
 
         if (requested.Count > MaxRegions)
         {
-            return TooManyRegions;
+            return new InvalidInput(string.Concat("regions can place a database in at most ", MaxRegions.ToString(CultureInfo.InvariantCulture), " regions"));
         }
 
         var known = List().ToHashSet(StringComparer.Ordinal);

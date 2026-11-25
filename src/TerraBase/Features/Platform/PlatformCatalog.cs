@@ -74,17 +74,10 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
     private async ValueTask<string?> CreateAsync(PlatformDatabase platform, DateTimeOffset now, ConsistencyMode mode, CancellationToken cancellationToken)
     {
         var record = Record(platform, databases.ActiveKeyId, now);
-        var outcome = await catalog.UpsertDatabaseAsync(record, null, cancellationToken, mode);
+        var outcome = await catalog.UpsertDatabaseAsync(record, cancellationToken, mode);
         return outcome switch
         {
             Completed => await LocalAsync(record, cancellationToken),
-            TombstoneKept => "the platform database is deleted and awaits its purge",
-            StateConflict => await catalog.GetDatabaseAsync(platform.Id, cancellationToken) switch
-            {
-                DatabaseRecord existing => await LocalAsync(existing, cancellationToken),
-                ResourceNotFound missing => missing.Message,
-                BackendUnavailable error => error.Message,
-            },
             BackendUnavailable error => error.Message,
         };
     }

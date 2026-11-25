@@ -5,7 +5,6 @@ using TerraBase.Features.Platform;
 using TerraBase.Features.Rules;
 using TerraBase.Hosting;
 using TerraBase.Storage;
-using TerraScale.Contracts.Cluster;
 
 namespace TerraBase.Features.Catalog;
 
@@ -25,13 +24,9 @@ internal sealed class DatabaseAccess(
     ClusterOptions cluster,
     StorageEngineOptions storage,
     AntiEntropyService antiEntropy,
-    PeerHealthMonitor health,
     TimeProvider time)
 {
     private static readonly TimeSpan FirstOpenSyncBudget = TimeSpan.FromSeconds(5);
-
-    private static readonly BackendUnavailable SourceUnsynced =
-        new("the database could not be caught up from its home region; retry when the region is reachable", "source_unsynced");
 
     public static readonly ResourceNotFound UnknownDatabase = new("the database does not exist", "unknown_database");
 
@@ -60,11 +55,6 @@ internal sealed class DatabaseAccess(
         if (Foreign(caller, projectId) is { } refusal)
         {
             return refusal;
-        }
-
-        if (PlatformCatalog.IsPlatformProject(projectId) && IsCustomer(caller))
-        {
-            return UnknownDatabase;
         }
 
         if (caller is ServiceCaller service && !ServiceAllows(service, projectId, Scopes.SqlRead))
@@ -109,11 +99,6 @@ internal sealed class DatabaseAccess(
         if (Foreign(caller, projectId) is { } refusal)
         {
             return refusal;
-        }
-
-        if (PlatformCatalog.IsPlatformProject(projectId) && IsCustomer(caller))
-        {
-            return UnknownProject;
         }
 
         if (caller is ServiceCaller service && !ServiceAllows(service, projectId, scope))
@@ -180,76 +165,11 @@ internal sealed class DatabaseAccess(
         };
     }
 
-    public async ValueTask<ProjectResolution> CreatorAsync(
-        Caller caller, string? projectReference, string? databaseName, CancellationToken cancellationToken)
-    {
-        var outcome = await ProjectAsync(caller, projectReference, Scopes.DatabasesWrite, cancellationToken);
-        return outcome switch
-        {
-            ResolvedProject when !MayCreate(caller, databaseName) => NarrowedCreate,
-            ResolvedProject project => project,
-            InvalidInput invalid => invalid,
-            CredentialRejected unauthorized => unauthorized,
-            CallerForbidden forbidden => forbidden,
-            ResourceNotFound missing => missing,
-            BackendUnavailable unavailable => unavailable,
-        };
-    }
-
-    public async ValueTask<TenantReadyOutcome> CaughtUpAsync(DatabaseRecord database, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(database);
-        var home = database.Regions.Count > 0 ? database.Regions[0] : cluster.Region;
-        PeerNodeInfo[] homePeers = [.. cluster.Peers.Where(peer => string.Equals(peer.Region, home, StringComparison.Ordinal))];
-        if (!homePeers.Any(peer => health.IsReachable(peer.NodeId)))
-        {
-            return string.Equals(home, cluster.Region, StringComparison.Ordinal) ? await LocalHomeAsync(database, cancellationToken) : SourceUnsynced;
-        }
-
-        var outcome = await databases.OpenOrCreateAsync(database.Id, database.KeyId, database.Strict, cancellationToken);
-        return outcome switch
-        {
-            ISqlDatabaseSession session => await CaughtUpFromPeersAsync(database, session, homePeers, cancellationToken),
-            BackendUnavailable unavailable => unavailable,
-        };
-    }
-
-    private async ValueTask<TenantReadyOutcome> LocalHomeAsync(DatabaseRecord database, CancellationToken cancellationToken)
-    {
-        var opened = await databases.OpenAsync(database.Id, database.KeyId, cancellationToken);
-        return opened switch
-        {
-            ISqlDatabaseSession session => await ProvenAsync(database, session, cancellationToken),
-            ResourceNotFound => SourceUnsynced,
-            BackendUnavailable unavailable => unavailable,
-        };
-    }
-
-    private async ValueTask<TenantReadyOutcome> ProvenAsync(DatabaseRecord database, ISqlDatabaseSession session, CancellationToken cancellationToken)
-    {
-        PeerNodeInfo[] placedPeers = [.. cluster.Peers.Where(peer => database.PlacedIn(peer.Region))];
-        var report = await antiEntropy.SyncSessionAsync(session, placedPeers, FirstOpenSyncBudget, cancellationToken);
-        return !session.CurrentBookmark.IsEmpty || (report.Peers.Count == placedPeers.Length && report.Peers.All(static peer => peer.Complete))
-            ? new TenantReadyOutcome(session)
-            : new TenantReadyOutcome(SourceUnsynced);
-    }
-
-    private async ValueTask<TenantReadyOutcome> CaughtUpFromPeersAsync(
-        DatabaseRecord database, ISqlDatabaseSession session, PeerNodeInfo[] homePeers, CancellationToken cancellationToken)
-    {
-        PeerNodeInfo[] placedPeers = [.. cluster.Peers.Where(peer => database.PlacedIn(peer.Region) || homePeers.Contains(peer))];
-        var report = await antiEntropy.SyncSessionAsync(session, placedPeers, FirstOpenSyncBudget, cancellationToken);
-        var homeAnswered = report.Peers.Any(peer => peer is { Complete: true, HeadEmpty: false } && homePeers.Any(home => string.Equals(home.NodeId, peer.NodeId, StringComparison.Ordinal)));
-        var everyPlacedPeer = report.Peers.Count == placedPeers.Length && report.Peers.All(static peer => peer.Complete);
-        var localHomeCopy = string.Equals(database.Regions.Count > 0 ? database.Regions[0] : cluster.Region, cluster.Region, StringComparison.Ordinal)
-            && !session.CurrentBookmark.IsEmpty;
-        return homeAnswered || everyPlacedPeer || localHomeCopy ? new TenantReadyOutcome(session) : new TenantReadyOutcome(SourceUnsynced);
-    }
-
     public async ValueTask<TenantReadyOutcome> OpenAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
-        var existed = File.Exists(LocalPath(database));
+        var path = Path.Combine(storage.RootDirectory, database.Id.ToString(), string.Concat(database.Id.ToString(), ".db"));
+        var existed = File.Exists(path);
         var outcome = await databases.OpenOrCreateAsync(database.Id, database.KeyId, database.Strict, cancellationToken);
         var opened = outcome switch
         {
@@ -276,11 +196,6 @@ internal sealed class DatabaseAccess(
         Caller caller, ProjectRecord project, DatabaseRecord? database, string scope, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
-        if ((PlatformCatalog.IsPlatformProject(project.Id) || project.OrganizationId == PlatformCatalog.OrganizationId) && IsCustomer(caller))
-        {
-            return UnknownProject;
-        }
-
         return caller switch
         {
             AnonymousCaller => UnknownProject,
@@ -319,56 +234,16 @@ internal sealed class DatabaseAccess(
         };
     }
 
-    public static bool Reaches(Caller caller, DatabaseRecord database)
+    private static bool Reaches(Caller caller, DatabaseRecord database) => caller switch
     {
-        ArgumentNullException.ThrowIfNull(database);
-        return caller switch
-        {
-            ProjectCaller { Database: { } narrowed } => Matches(narrowed, database),
-            EndUserCaller { Database: { } narrowed } => Matches(narrowed, database),
-            ApiKeyCaller { Key.DatabaseId: { } narrowed } => narrowed == database.Id,
-            AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => true,
-        };
-    }
-
-    public static bool IsNarrowed(Caller caller) => caller switch
-    {
-        ProjectCaller { Database: not null } or EndUserCaller { Database: not null } or ApiKeyCaller { Key.DatabaseId: not null } => true,
-        AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => false,
-    };
-
-    public static bool MayRename(Caller caller, DatabaseRecord database, string? name)
-    {
-        ArgumentNullException.ThrowIfNull(database);
-        return name is null || string.Equals(name, database.Name, StringComparison.Ordinal) || caller switch
-        {
-            ProjectCaller { Database: { } narrowed } => IsId(narrowed),
-            EndUserCaller { Database: { } narrowed } => IsId(narrowed),
-            AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => true,
-        };
-    }
-
-    public static CallerForbidden NarrowedCreate { get; } =
-        new("the credential is narrowed to one database and cannot create another", "database_narrowed");
-
-    public static bool MayCreate(Caller caller, string? name) => caller switch
-    {
-        ProjectCaller { Database: { } narrowed } => !IsId(narrowed) && string.Equals(narrowed, name, StringComparison.Ordinal),
-        EndUserCaller { Database: not null } or ApiKeyCaller { Key.DatabaseId: not null } => false,
+        ProjectCaller { Database: { } narrowed } => Matches(narrowed, database),
+        EndUserCaller { Database: { } narrowed } => Matches(narrowed, database),
+        ApiKeyCaller { Key.DatabaseId: { } narrowed } => narrowed == database.Id,
         AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => true,
     };
 
     private static bool Matches(string narrowed, DatabaseRecord database) =>
-        IsId(narrowed) ? Ulid.Parse(narrowed) == database.Id : string.Equals(narrowed, database.Name, StringComparison.Ordinal);
-
-    private static bool IsCustomer(Caller caller) => caller switch
-    {
-        ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => true,
-        AnonymousCaller or PeerCaller or ServiceCaller => false,
-    };
-
-    private string LocalPath(DatabaseRecord database) =>
-        Path.Combine(storage.RootDirectory, database.Id.ToString(), string.Concat(database.Id.ToString(), ".db"));
+        string.Equals(narrowed, database.Id.ToString(), StringComparison.Ordinal) || string.Equals(narrowed, database.Name, StringComparison.Ordinal);
 
     private static bool CanWrite(Caller caller, ProjectRecord? project = null) => caller switch
     {

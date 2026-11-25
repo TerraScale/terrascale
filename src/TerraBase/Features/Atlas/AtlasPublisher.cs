@@ -114,10 +114,7 @@ internal sealed class AtlasPublisher(
         Dictionary<(string Project, string Database), AtlasPlacement> latest = [];
         foreach (var placement in batch)
         {
-            if (!latest.TryGetValue((placement.Project, placement.Database), out var known) || placement.Updated >= known.Updated)
-            {
-                latest[(placement.Project, placement.Database)] = placement;
-            }
+            latest[(placement.Project, placement.Database)] = placement;
         }
 
         return [.. latest.Values];

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
@@ -38,7 +37,6 @@ internal sealed class BranchFlow(DatabaseAccess access, ManagementService manage
         {
             ResolvedDatabase resolved when request.ExpectedId is { } expected && !string.Equals(expected, resolved.Database.Id.ToString(), StringComparison.Ordinal) =>
                 new DatabaseIdMismatch(),
-            ResolvedDatabase resolved when DatabaseAccess.IsNarrowed(resolved.Caller) => DatabaseAccess.NarrowedCreate,
             ResolvedDatabase resolved => Target(request.Target) switch
             {
                 NoTarget => await LocalAsync(resolved, request, CausalBookmark.Empty, cancellationToken),
@@ -70,19 +68,15 @@ internal sealed class BranchFlow(DatabaseAccess access, ManagementService manage
 
     private async ValueTask<BranchDatabaseResponse> LocalAsync(ResolvedDatabase source, DatabaseInput request, CausalBookmark at, CancellationToken cancellationToken)
     {
-        var ready = await access.CaughtUpAsync(source.Database, cancellationToken);
-        return ready switch
+        var outcome = await management.BranchAsync(source.Project, source.Database, request.Name, request.TtlSeconds, at, cancellationToken);
+        return outcome switch
         {
-            ISqlDatabaseSession session => await management.BranchAsync(source.Project, source.Database, session, request.Name, request.TtlSeconds, at, cancellationToken) switch
-            {
-                DatabaseRecord created => new Created<DatabaseBody>(string.Concat("/v1/projects/", created.ProjectId.ToString(), "/databases/", created.Name),
-                    DatabaseBody.From(created, options.Region, time.GetUtcNow())),
-                InvalidInput invalid => invalid,
-                CallerForbidden forbidden => forbidden,
-                ResourceNotFound missing => missing,
-                StateConflict conflict => conflict,
-                BackendUnavailable unavailable => unavailable,
-            },
+            DatabaseRecord created => new Created<DatabaseBody>(string.Concat("/v1/projects/", created.ProjectId.ToString(), "/databases/", created.Name),
+                DatabaseBody.From(created, options.Region, time.GetUtcNow())),
+            InvalidInput invalid => invalid,
+            CallerForbidden forbidden => forbidden,
+            ResourceNotFound missing => missing,
+            StateConflict conflict => conflict,
             BackendUnavailable unavailable => unavailable,
         };
     }

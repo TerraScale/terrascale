@@ -29,9 +29,7 @@ internal sealed class PutDatabaseEndpoint(DatabaseAccess access, CatalogStore ca
             ResolvedProject when request.Database is null => new InvalidInput("database names the database", "invalid_database"),
             ResolvedProject project => await catalog.FindDatabaseAsync(project.Project.Id, request.Database, cancellationToken) switch
             {
-                DatabaseRecord existing when DatabaseAccess.Reaches(HttpContext.Caller, existing) => DatabaseBody.From(existing, options.Region, time.GetUtcNow()),
-                DatabaseRecord => DatabaseAccess.UnknownDatabase,
-                ResourceNotFound when !DatabaseAccess.MayCreate(HttpContext.Caller, request.Database) => DatabaseAccess.NarrowedCreate,
+                DatabaseRecord existing => DatabaseBody.From(existing, options.Region, time.GetUtcNow()),
                 ResourceNotFound => await management.CreateDatabaseAsync(project.Project, request with { Name = request.Database }, cancellationToken) switch
                 {
                     DatabaseRecord created => new Created<DatabaseBody>(

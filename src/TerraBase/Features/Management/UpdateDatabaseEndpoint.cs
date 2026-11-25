@@ -36,8 +36,6 @@ internal static class DatabaseUpdates
         var outcome = await access.ManagedAsync(caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken);
         return outcome switch
         {
-            ResolvedDatabase resolved when !DatabaseAccess.MayRename(caller, resolved.Database, request.Name) =>
-                new CallerForbidden("a credential narrowed to a database name cannot rename that database", "database_narrowed"),
             ResolvedDatabase resolved => await management.UpdateDatabaseAsync(resolved.Database, request, cancellationToken) switch
             {
                 DatabaseRecord updated => DatabaseBody.From(updated, options.Region, time.GetUtcNow()),
