@@ -4,10 +4,12 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Storage;
 
-internal sealed record GuardedCommand(DbCommand Command, IReadOnlySet<int> Guards)
+internal sealed record GuardedCommand(DbCommand Command, IReadOnlySet<int> Guards, int? ExpectedRows)
 {
     public bool GuardFailed(Exception failure) =>
         failure is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.NotNullViolation } refused && Guards.Contains(refused.Statement);
+
+    public bool Lost(int affected) => ExpectedRows is { } expected && affected != expected;
 }
 
 internal sealed class WriteBatch
@@ -37,19 +39,20 @@ internal sealed class WriteBatch
     public IEnumerable<GuardedCommand> Commands(DbConnection connection, DbTransaction? transaction)
     {
         ArgumentNullException.ThrowIfNull(connection);
+        var counted = transaction is not null;
         List<string> chunk = [];
         HashSet<int> guards = [];
         foreach (var (sql, guarded) in units)
         {
-            if (chunk.Count + (guarded ? 2 : 1) > MaxStatements)
+            if (chunk.Count + (guarded && !counted ? 2 : 1) > MaxStatements)
             {
-                yield return new(Command(connection, transaction, chunk), guards);
+                yield return Chunk(connection, transaction, chunk, guards, counted);
                 chunk = [];
                 guards = [];
             }
 
             chunk.Add(sql);
-            if (guarded)
+            if (guarded && !counted)
             {
                 guards.Add(chunk.Count);
                 chunk.Add(Guard);
@@ -58,9 +61,12 @@ internal sealed class WriteBatch
 
         if (chunk.Count > 0)
         {
-            yield return new(Command(connection, transaction, chunk), guards);
+            yield return Chunk(connection, transaction, chunk, guards, counted);
         }
     }
+
+    private GuardedCommand Chunk(DbConnection connection, DbTransaction? transaction, List<string> chunk, HashSet<int> guards, bool counted) =>
+        new(Command(connection, transaction, chunk), guards, counted ? chunk.Count : null);
 
     private DbCommand Command(DbConnection connection, DbTransaction? transaction, IReadOnlyList<string> chunk)
     {

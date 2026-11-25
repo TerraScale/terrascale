@@ -213,17 +213,6 @@ public static partial class AuthTables
         ],
         static row => row.Version);
 
-    public static readonly Table<StorageProbe> StorageProbes = new(
-        "storage_probes",
-        ["id"],
-        ["id", "checked_at"],
-        static row =>
-        [
-            row.Id,
-            AuthDb.Instant(row.CheckedAt),
-        ],
-        static row => row.Version);
-
     public static readonly Table<SupportEmailDelivery> SupportDeliveries = new(
         "support_deliveries",
         ["request_id"],

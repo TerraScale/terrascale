@@ -327,9 +327,10 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         {
             return await this.GrantAsync(cancellationToken);
         }
-        catch (Exception error) when (AuthData.IsUnavailable(error) && !this.HttpContext.RequestAborted.IsCancellationRequested)
+        catch (Exception error) when ((AuthData.IsUnavailable(error) || AuthData.IsContention(error)) && !this.HttpContext.RequestAborted.IsCancellationRequested)
         {
-            var unavailable = error as ApiException ?? ApiException.Unavailable(error);
+            var unavailable = AuthData.Unavailable(error);
+            ErrorEnvelopeMiddleware.ApplyRetryAfter(this.HttpContext.Response, unavailable.RetryAfter);
             return TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }

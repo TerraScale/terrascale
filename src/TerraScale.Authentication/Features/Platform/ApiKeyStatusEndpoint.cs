@@ -1,11 +1,9 @@
 using Microsoft.AspNetCore.Http.HttpResults;
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text.Json.Serialization;
-using System.Threading.RateLimiting;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
@@ -19,13 +17,23 @@ namespace TerraScale.Authentication.Features.Platform;
 
 public sealed record ApiKeyStatusBody([property: JsonPropertyName("key_id")] string KeyId);
 
+internal sealed record KeyStatusChecked(string? Refusal);
+
+internal sealed record KeyStatusBusy;
+
+internal readonly union KeyStatusRead(KeyStatusChecked, KeyStatusBusy);
+
 public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
     private const int MaxTokenLength = 8 * 1024;
 
     private const int MaxInFlight = 512;
 
+    private const int MaxStorageReads = 64;
+
     private const int MaxCachedChecks = 16 * 1024;
+
+    private const int MaxTrackedPeers = 16 * 1024;
 
     private const int PeerChecksPerSecond = 100;
 
@@ -35,33 +43,32 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
 
     private static readonly TimeSpan CheckLifetime = TimeSpan.FromSeconds(1);
 
-    private static readonly ConcurrentDictionary<string, SharedCheck> Checks = new(StringComparer.Ordinal);
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(5);
 
-    private static readonly PartitionedRateLimiter<IPAddress> Peers = PartitionedRateLimiter.CreateChained(
-        PartitionedRateLimiter.Create<IPAddress, IPAddress>(static peer => RateLimitPartition.GetTokenBucketLimiter(peer, static _ => new TokenBucketRateLimiterOptions
-        {
-            TokenLimit = PeerBurst,
-            TokensPerPeriod = PeerChecksPerSecond,
-            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-            QueueLimit = 0,
-            AutoReplenishment = true,
-        })),
-        PartitionedRateLimiter.Create<IPAddress, IPAddress>(static peer => RateLimitPartition.GetConcurrencyLimiter(peer, static _ => new ConcurrencyLimiterOptions
-        {
-            PermitLimit = PeerConcurrency,
-            QueueLimit = 0,
-        })));
+    private static readonly TimeSpan WaitTimeout = ReadTimeout * 2;
+
+    private static readonly Lock CheckGate = new();
+
+    private static readonly Dictionary<string, SharedCheck> Checks = new(StringComparer.Ordinal);
+
+    private static readonly Lock PeerGate = new();
+
+    private static readonly Dictionary<IPAddress, PeerBudget> Peers = [];
+
+    private static readonly SemaphoreSlim StorageReads = new(MaxStorageReads, MaxStorageReads);
 
     private static int inFlight;
 
-    private static long nextSweep;
+    private static long nextCheckSweep;
+
+    private static long nextPeerSweep;
 
     public override void Configure()
     {
         Get("/v1/terrascale/api-keys/self");
         Name("get_api_key_status");
         Summary("Check an API key token");
-        Description("Bearer: an access token issued for an API key (client credentials). 200 while the key exists and is unexpired, the token's key string still works (a rotation's grace included), and its organization and project exist. 401 key_revoked or key_expired otherwise, invalid_token for any other token. Every region answers from strong storage reads; concurrent checks of one key token share one read and its answer is reused for at most 1 second, so a revocation shows within 1 second. 429 rate_limited past 100 checks a second (bursts of 200) or 32 concurrent checks from one address (IPv6 per /64), counted before the token is verified; 503 when storage does not answer or too many checks are in flight.");
+        Description("Bearer: an access token issued for an API key (client credentials). 200 while the key exists and is unexpired, the token's key string still works (a rotation's grace included), and its organization and project exist. 401 key_revoked or key_expired otherwise, invalid_token for any other token. Answered from strong-consistency reads of ts-auth's storage replica that serves the answering ts-auth instance, after every write that instance has seen; concurrent checks of one key token share one read and its answer is reused for at most 1 second after the read completes, so a revocation shows once it has replicated to that storage replica, plus at most 1 second. 429 rate_limited past 100 checks a second (bursts of 200) or 32 concurrent checks from one address (IPv6 per /64), counted before the token is verified, or while 16,384 other addresses are active; 503 when storage does not answer within 5 seconds or too many checks are in flight.");
         Tags("API keys");
         Produces<ApiKeyStatusBody>();
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
@@ -73,8 +80,8 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
-        using var admitted = Peers.AttemptAcquire(Peer(HttpContext.Connection.RemoteIpAddress));
-        if (!admitted.IsAcquired)
+        var peer = Peer(HttpContext.Connection.RemoteIpAddress);
+        if (!AdmitPeer(peer))
         {
             HttpContext.Response.Headers.RetryAfter = "1";
             return TypedResults.Json(new ErrorBody(new ErrorDetail("rate_limited", "Too many API key checks from this address; retry.")), PlatformApiJson.Default.ErrorBody,
@@ -83,18 +90,14 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
 
         try
         {
-            if (Interlocked.Increment(ref inFlight) > MaxInFlight)
-            {
-                HttpContext.Response.Headers.RetryAfter = "1";
-                return TypedResults.Json(new ErrorBody(new ErrorDetail("unavailable", "Too many API key checks in flight; retry.")), PlatformApiJson.Default.ErrorBody,
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
-
-            return await CheckAsync(cancellationToken);
+            return Interlocked.Increment(ref inFlight) > MaxInFlight
+                ? Busy("Too many API key checks in flight; retry.")
+                : await CheckAsync(cancellationToken);
         }
         finally
         {
             Interlocked.Decrement(ref inFlight);
+            ReleasePeer(peer);
         }
     }
 
@@ -129,54 +132,148 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
 
         var organization = Claim(claims, PlatformGrants.OrganizationClaim);
         var project = Claim(claims, PlatformGrants.ProjectClaim);
-        var refusal = await SharedRefusalAsync(string.Join('\n', keyId, generation, organization, project),
-            () => keys.RefusalAsync(keyId, generation, organization, project, CancellationToken.None), cancellationToken);
-        return refusal switch
+        var check = Share(string.Join('\n', keyId, generation, organization, project),
+            deadline => keys.RefusalAsync(keyId, generation, organization, project, deadline));
+        var status = await check.Read.Value.WaitAsync(WaitTimeout, clock, cancellationToken);
+        return status switch
         {
-            "key_expired" => Refuse(refusal, "The API key has expired."),
-            not null => Refuse(refusal, "The API key was revoked, rotated, or its organization or project was deleted."),
-            _ => TypedResults.Json(new ApiKeyStatusBody(keyId), PlatformApiJson.Default.ApiKeyStatusBody),
+            KeyStatusBusy => Busy("API key checks are waiting on storage; retry."),
+            KeyStatusChecked { Refusal: null } => TypedResults.Json(new ApiKeyStatusBody(keyId), PlatformApiJson.Default.ApiKeyStatusBody),
+            KeyStatusChecked { Refusal: "key_expired" } => Refuse("key_expired", "The API key has expired."),
+            KeyStatusChecked { Refusal: { } refusal } => Refuse(refusal, "The API key was revoked, rotated, or its organization or project was deleted."),
         };
     }
 
-    private async Task<string?> SharedRefusalAsync(string checkedKey, Func<Task<string?>> read, CancellationToken cancellationToken)
+    private SharedCheck Share(string checkedKey, Func<CancellationToken, Task<string?>> refusal)
     {
-        var candidate = new SharedCheck(new Lazy<Task<string?>>(read), clock.GetTimestamp());
-        var check = Checks.TryGetValue(checkedKey, out var current) && Fresh(current) ? current
-            : Checks.Count < MaxCachedChecks || Sweep() ? Checks.AddOrUpdate(checkedKey, candidate, (_, existing) => Fresh(existing) ? existing : candidate)
-            : candidate;
-        try
+        lock (CheckGate)
         {
-            return await check.Refusal.Value.WaitAsync(cancellationToken);
-        }
-        finally
-        {
-            if (check.Refusal.Value is { IsFaulted: true } or { IsCanceled: true })
+            var now = clock.GetTimestamp();
+            if (Checks.TryGetValue(checkedKey, out var current) && Live(current, now))
             {
-                Checks.TryRemove(KeyValuePair.Create(checkedKey, check));
+                return current;
             }
+
+            var started = new SharedCheck(check => ReadAsync(check, refusal));
+            if (current is not null || Checks.Count < MaxCachedChecks || SweepChecks(now))
+            {
+                Checks[checkedKey] = started;
+            }
+
+            return started;
         }
     }
 
-    private bool Fresh(SharedCheck check) => clock.GetElapsedTime(check.Started) < CheckLifetime;
-
-    private bool Sweep()
+    private async Task<KeyStatusRead> ReadAsync(SharedCheck check, Func<CancellationToken, Task<string?>> refusal)
     {
-        var now = clock.GetTimestamp();
-        var due = Interlocked.Read(ref nextSweep);
-        if (now >= due && Interlocked.CompareExchange(ref nextSweep, now + (long)(CheckLifetime.TotalSeconds * clock.TimestampFrequency), due) == due)
+        if (!await StorageReads.WaitAsync(ReadTimeout))
         {
-            foreach (var entry in Checks)
+            return new KeyStatusBusy();
+        }
+
+        try
+        {
+            using var deadline = new CancellationTokenSource(ReadTimeout, clock);
+            var read = refusal(deadline.Token);
+            await Task.WhenAny(read);
+            if (read.IsCanceled)
             {
-                if (!Fresh(entry.Value))
-                {
-                    Checks.TryRemove(entry);
-                }
+                return new KeyStatusBusy();
+            }
+
+            var answer = new KeyStatusChecked(await read);
+            check.Answer(clock.GetTimestamp());
+            return answer;
+        }
+        finally
+        {
+            StorageReads.Release();
+        }
+    }
+
+    private bool Live(SharedCheck check, long now) =>
+        check.AnsweredAt is >= 0 and var answered
+            ? clock.GetElapsedTime(answered, now) < CheckLifetime
+            : !check.Read.IsValueCreated || !check.Read.Value.IsCompleted;
+
+    private bool SweepChecks(long now)
+    {
+        if (now >= nextCheckSweep)
+        {
+            nextCheckSweep = now + Ticks(CheckLifetime);
+            foreach (var key in Checks.Where(entry => !Live(entry.Value, now)).Select(entry => entry.Key).ToList())
+            {
+                Checks.Remove(key);
             }
         }
 
         return Checks.Count < MaxCachedChecks;
     }
+
+    private bool AdmitPeer(IPAddress peer)
+    {
+        lock (PeerGate)
+        {
+            var now = clock.GetTimestamp();
+            if (!Peers.TryGetValue(peer, out var budget))
+            {
+                if (Peers.Count >= MaxTrackedPeers && !SweepPeers(now))
+                {
+                    return false;
+                }
+
+                budget = new PeerBudget(PeerBurst, now);
+                Peers.Add(peer, budget);
+            }
+
+            Refill(budget, now);
+            if (budget.Active >= PeerConcurrency || budget.Tokens < 1)
+            {
+                return false;
+            }
+
+            budget.Tokens--;
+            budget.Active++;
+            return true;
+        }
+    }
+
+    private static void ReleasePeer(IPAddress peer)
+    {
+        lock (PeerGate)
+        {
+            if (Peers.TryGetValue(peer, out var budget))
+            {
+                budget.Active--;
+            }
+        }
+    }
+
+    private bool SweepPeers(long now)
+    {
+        if (now >= nextPeerSweep)
+        {
+            nextPeerSweep = now + Ticks(CheckLifetime);
+            foreach (var (peer, budget) in Peers.ToList())
+            {
+                Refill(budget, now);
+                if (budget.Active == 0 && budget.Tokens >= PeerBurst)
+                {
+                    Peers.Remove(peer);
+                }
+            }
+        }
+
+        return Peers.Count < MaxTrackedPeers;
+    }
+
+    private void Refill(PeerBudget budget, long now)
+    {
+        budget.Tokens = Math.Min(PeerBurst, budget.Tokens + (clock.GetElapsedTime(budget.Refilled, now).TotalSeconds * PeerChecksPerSecond));
+        budget.Refilled = now;
+    }
+
+    private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * clock.TimestampFrequency);
 
     private static IPAddress Peer(IPAddress? address)
     {
@@ -208,11 +305,37 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
     private static string? Claim(IDictionary<string, object> claims, string name) =>
         claims.TryGetValue(name, out var value) && Convert.ToString(value, CultureInfo.InvariantCulture) is { Length: > 0 } text ? text : null;
 
+    private JsonHttpResult<ErrorBody> Busy(string message)
+    {
+        HttpContext.Response.Headers.RetryAfter = "1";
+        return TypedResults.Json(new ErrorBody(new ErrorDetail("unavailable", message)), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
     private JsonHttpResult<ErrorBody> Refuse(string code, string message)
     {
         HttpContext.Response.Headers.WWWAuthenticate = $"Bearer realm=\"ts-auth\", error=\"invalid_token\", error_description=\"{code}\"";
         return TypedResults.Json(new ErrorBody(new ErrorDetail(code, message)), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    private sealed record SharedCheck(Lazy<Task<string?>> Refusal, long Started);
+    private sealed class SharedCheck
+    {
+        private long answeredAt = -1;
+
+        public SharedCheck(Func<SharedCheck, Task<KeyStatusRead>> start) => Read = new(() => start(this));
+
+        public Lazy<Task<KeyStatusRead>> Read { get; }
+
+        public long AnsweredAt => Volatile.Read(ref answeredAt);
+
+        public void Answer(long at) => Volatile.Write(ref answeredAt, at);
+    }
+
+    private sealed class PeerBudget(double tokens, long refilled)
+    {
+        public double Tokens { get; set; } = tokens;
+
+        public long Refilled { get; set; } = refilled;
+
+        public int Active { get; set; }
+    }
 }

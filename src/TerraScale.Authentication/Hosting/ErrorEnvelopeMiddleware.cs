@@ -27,9 +27,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (ApiException failure) when (!context.Response.HasStarted)
         {
-            var error = failure is { Status: StatusCodes.Status503ServiceUnavailable, InnerException: { } cause } && AuthData.IsOutcomeUnknown(cause)
-                ? AuthData.OutcomeUnknown(cause)
-                : failure;
+            var error = failure.Status == StatusCodes.Status503ServiceUnavailable ? AuthData.Unavailable(failure) : failure;
             var level = error.Code == KeyRing.NoSigningKeysCode && schema.BootstrapPending ? LogLevel.Information : LogLevel.Error;
             Diagnose(context, error, () => logger.ZLog(level, error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
@@ -94,6 +92,15 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
     private static Task WriteAsync(HttpContext context, ApiException error) =>
         WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
 
+    public static void ApplyRetryAfter(HttpResponse response, TimeSpan? retryAfter)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        if (retryAfter is { } wait)
+        {
+            response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
     internal static Task WriteAsync(HttpContext context, int status, string code, string message, TimeSpan? retryAfter)
     {
         try
@@ -101,10 +108,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             context.Response.Clear();
             context.Response.StatusCode = status;
             context.Response.Headers.CacheControl = "no-store";
-            if (retryAfter is { } wait)
-            {
-                context.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
-            }
+            ApplyRetryAfter(context.Response, retryAfter);
 
             if (status >= 500 && SignInFlow.HostedPage(context))
             {

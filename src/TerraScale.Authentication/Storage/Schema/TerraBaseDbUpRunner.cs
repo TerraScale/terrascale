@@ -47,14 +47,19 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
             AuthUnavailable unavailable => unavailable,
             SchemaScriptChanged changed => changed,
         };
-        var recorded = journal switch
+        var applied = journal switch
+        {
+            AuthCompleted => await ApplyPendingAsync(connection, cancellationToken),
+            AuthUnavailable or SchemaScriptChanged => journal,
+        };
+        var recorded = applied switch
         {
             AuthCompleted => await BackfillAsync(connection, cancellationToken),
-            AuthUnavailable or SchemaScriptChanged => journal,
+            AuthUnavailable or SchemaScriptChanged => applied,
         };
         return recorded switch
         {
-            AuthCompleted => await ApplyPendingAsync(connection, cancellationToken),
+            AuthCompleted => await VerifyAsync(connection, cancellationToken),
             AuthUnavailable or SchemaScriptChanged => recorded,
         };
     }
@@ -88,24 +93,8 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
             return new AuthUnavailable("The schema journal could not be read.");
         }
 
-        foreach (var script in Scripts)
+        foreach (var script in Scripts.Where(script => journal.TryGetValue(script.Name, out var checksum) && checksum is null))
         {
-            if (!journal.TryGetValue(script.Name, out var checksum))
-            {
-                continue;
-            }
-
-            if (checksum is not null)
-            {
-                if (checksum != script.Checksum)
-                {
-                    logger.ZLogError($"Schema script {script.Name:@Script} changed after it was applied");
-                    return new SchemaScriptChanged(script.Name);
-                }
-
-                continue;
-            }
-
             var backfilled = await ExecuteAsync(connection, RecordChecksum, new { name = script.Name, checksum = script.Checksum }, script.Name, cancellationToken);
             var outcome = backfilled switch
             {
@@ -118,6 +107,30 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
             }
 
             logger.ZLogInformation($"Schema script {script.Name:@Script} checksum is recorded");
+        }
+
+        return new AuthCompleted();
+    }
+
+    private async Task<SchemaUpgrade> VerifyAsync(DbConnection connection, CancellationToken cancellationToken)
+    {
+        if (await JournalAsync(connection, cancellationToken) is not { } journal)
+        {
+            return new AuthUnavailable("The schema journal could not be read.");
+        }
+
+        foreach (var script in Scripts)
+        {
+            if (!journal.TryGetValue(script.Name, out var checksum) || checksum is null)
+            {
+                return new AuthUnavailable($"Schema script {script.Name} is not recorded with its checksum.");
+            }
+
+            if (checksum != script.Checksum)
+            {
+                logger.ZLogError($"Schema script {script.Name:@Script} changed after it was applied");
+                return new SchemaScriptChanged(script.Name);
+            }
         }
 
         return new AuthCompleted();

@@ -32,9 +32,18 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
     private const string WriteOutcomeUnknown = "write_outcome_unknown";
 
-    private const string LostConflict = "A conditional write lost to a concurrent change.";
+    internal const string LostConflict = "A conditional write lost to a concurrent change.";
+
+    private static readonly AsyncLocal<StorageWrites?> Tracked = new();
 
     private readonly AsyncLocal<WriteAudit?> audit = new();
+
+    public static StorageWrites TrackWrites()
+    {
+        var writes = new StorageWrites();
+        Tracked.Value = writes;
+        return writes;
+    }
 
     public async Task<T> AuditWritesAsync<T>(Change success, Func<CancellationToken, Task<T>> write, CancellationToken cancellationToken)
     {
@@ -185,10 +194,16 @@ public sealed class AuthData(AuthConnectionFactory connections)
     public static ApiException Unavailable(Exception failure)
     {
         ArgumentNullException.ThrowIfNull(failure);
-        return IsOutcomeUnknown(failure) ? OutcomeUnknown(failure) : ApiException.Unavailable(failure);
+        return failure switch
+        {
+            ApiException { Status: StatusCodes.Status503ServiceUnavailable, InnerException: { } cause } when IsOutcomeUnknown(cause) => OutcomeUnknown(cause),
+            ApiException { Status: StatusCodes.Status503ServiceUnavailable } unavailable => unavailable,
+            _ when IsOutcomeUnknown(failure) => OutcomeUnknown(failure),
+            _ => ApiException.Unavailable(failure),
+        };
     }
 
-    public static ApiException OutcomeUnknown(Exception cause) =>
+    public static ApiException OutcomeUnknown(Exception? cause) =>
         new(StatusCodes.Status503ServiceUnavailable, "temporarily_unavailable",
             "Storage did not confirm whether the change was saved; read the current state before repeating the request.", cause);
 
@@ -264,13 +279,20 @@ public sealed class AuthData(AuthConnectionFactory connections)
         {
             await using (guarded.Command)
             {
-                try
+                if (transaction is null)
                 {
-                    await guarded.Command.ExecuteNonQueryAsync(cancellationToken);
+                    Tracked.Value?.Dispatch();
                 }
-                catch (Exception failure) when (Refused(failure, guarded) is { } refusal)
+
+                var executed = await TerraBaseWrites.ExecuteAsync(guarded, transaction is not null, cancellationToken);
+                var stopped = executed switch
                 {
-                    return refusal;
+                    AuthCompleted => (AuthBatchWrite?)null,
+                    AuthConflict or AuthContended or AuthStorageDown or AuthOutcomeUnknown => executed,
+                };
+                if (stopped is { } outcome)
+                {
+                    return outcome;
                 }
             }
         }
@@ -278,25 +300,11 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return new AuthCompleted();
     }
 
-    private static async Task<AuthBatchWrite> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken)
+    private static Task<AuthBatchWrite> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken)
     {
-        try
-        {
-            await transaction.CommitAsync(cancellationToken);
-            return new AuthCompleted();
-        }
-        catch (Exception failure) when (Refused(failure, null) is { } refusal)
-        {
-            return refusal;
-        }
+        Tracked.Value?.Dispatch();
+        return TerraBaseWrites.CommitAsync(transaction, cancellationToken);
     }
-
-    private static AuthBatchWrite? Refused(Exception failure, GuardedCommand? guarded) =>
-        IsContention(failure) ? new AuthContended(failure)
-        : IsConflict(failure) || guarded?.GuardFailed(failure) == true ? new AuthConflict(LostConflict)
-        : IsOutcomeUnknown(failure) ? new AuthOutcomeUnknown(failure)
-        : IsUnavailable(failure) ? new AuthStorageDown(failure)
-        : null;
 
     private sealed class WriteAudit(Change success)
     {
@@ -304,6 +312,15 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
         public bool Committed { get; set; }
     }
+}
+
+public sealed class StorageWrites
+{
+    private int dispatched;
+
+    public bool Dispatched => Volatile.Read(ref dispatched) != 0;
+
+    internal void Dispatch() => Volatile.Write(ref dispatched, 1);
 }
 
 public sealed class AuthTransaction(DbConnection connection, DbTransaction transaction)

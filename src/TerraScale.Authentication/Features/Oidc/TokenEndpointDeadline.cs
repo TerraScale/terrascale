@@ -2,6 +2,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Storage;
 using ZLogger;
 using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -30,6 +31,7 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
         }
 
         var aborted = context.RequestAborted;
+        var writes = AuthData.TrackWrites();
         using var deadline = new CancellationTokenSource(Deadline, clock);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(aborted, deadline.Token);
         context.RequestAborted = bounded.Token;
@@ -55,10 +57,16 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
         context.Response.Clear();
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.Headers.CacheControl = "no-store";
-        context.Response.Headers.RetryAfter = "2";
+        var answer = writes.Dispatched ? AuthData.OutcomeUnknown(null) : ApiException.Unavailable();
+        if (!writes.Dispatched)
+        {
+            context.Response.Headers.RetryAfter = "2";
+        }
+
         if (token)
         {
-            await context.Response.WriteAsJsonAsync(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, "The token request did not complete in time; retry it."),
+            await context.Response.WriteAsJsonAsync(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable,
+                writes.Dispatched ? "The token request did not complete in time and may have taken effect; a repeated grant can answer invalid_grant." : "The token request did not complete in time; retry it."),
                 OidcJson.Default.OAuthErrorBody, cancellationToken: aborted);
         }
         else if (SignInFlow.HostedPage(context))
@@ -67,7 +75,7 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
         }
         else
         {
-            await context.Response.WriteAsJsonAsync(ApiException.Unavailable().ToBody(), cancellationToken: aborted);
+            await context.Response.WriteAsJsonAsync(answer.ToBody(), cancellationToken: aborted);
         }
 
         bool Expired() => deadline.IsCancellationRequested && !aborted.IsCancellationRequested && !context.Response.HasStarted;
