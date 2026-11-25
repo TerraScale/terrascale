@@ -91,7 +91,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             await RegisterAsync(state, cancellationToken);
             if (!state.Registered)
             {
-                _ = Record(state, success: false, TimeSpan.Zero, refused: false);
+                _ = Record(state, success: false, TimeSpan.Zero, refused: false, instanceId: 0, observedAt: 0);
                 return;
             }
         }
@@ -111,13 +111,12 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             QuicTimeout => (false, true, false, 0L),
             PongMessage or QuicUnavailable or QuicRemoteError => (false, false, false, 0L),
         };
-        var restarted = state.ObserveInstance(remoteInstanceId, started);
         if (timedOut)
         {
             client.ResetPeer(state.Info.NodeId);
         }
 
-        var (previous, next, failures, outboundRecovered) = Record(state, success, timeProvider.GetElapsedTime(started), refused);
+        var (restarted, previous, next, failures, outboundRecovered) = Record(state, success, timeProvider.GetElapsedTime(started), refused, remoteInstanceId, started);
         if (restarted || outboundRecovered || (previous == PeerStatus.Unreachable && next == PeerStatus.Healthy))
         {
             databases.OnPeerRecovered();
@@ -129,9 +128,9 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         }
     }
 
-    private (PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(PeerState state, bool success, TimeSpan roundTrip, bool refused)
+    private (bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(PeerState state, bool success, TimeSpan roundTrip, bool refused, long instanceId, long observedAt)
     {
-        var recorded = state.Record(success, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures);
+        var recorded = state.Record(success, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures, instanceId, observedAt);
         if (recorded.Previous != recorded.Next)
         {
             ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, recorded.Previous, recorded.Next);
@@ -264,11 +263,18 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
         }
 
-        public (PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter)
+        public (bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(
+            bool success, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter, long instanceId, long observedAt)
         {
             lock (_gate)
             {
                 var previous = _health.Status;
+                if (instanceId != 0 && _instanceId != 0 && instanceId != _instanceId && observedAt < _instanceObservedAt)
+                {
+                    return (false, previous, previous, _failures, false);
+                }
+
+                var restarted = AcceptInstance(instanceId, observedAt);
                 _failures = success ? 0 : _failures + 1;
                 var outboundRecovered = success && _inboundPromoted;
                 _inboundPromoted &= !success;
@@ -276,15 +282,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
                 _health = success
                     ? new PeerHealth(Info, status, roundTrip, now)
                     : _health with { Status = status };
-                return (previous, status, _failures, outboundRecovered);
-            }
-        }
-
-        public bool ObserveInstance(long instanceId, long observedAt)
-        {
-            lock (_gate)
-            {
-                return AcceptInstance(instanceId, observedAt);
+                return (restarted, previous, status, _failures, outboundRecovered);
             }
         }
 
