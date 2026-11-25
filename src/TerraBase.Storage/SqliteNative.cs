@@ -145,6 +145,9 @@ internal static unsafe partial class SqliteNative
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_stmt_readonly")]
     public static partial int StatementReadOnly(nint statement);
 
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_stmt_isexplain")]
+    public static partial int StatementIsExplain(nint statement);
+
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_bind_parameter_count")]
     public static partial int BindParameterCount(nint statement);
 

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace TerraBase.Storage;
@@ -5,6 +6,8 @@ namespace TerraBase.Storage;
 internal readonly union StatementOutcome(SqlResultSet, SqlError, StrongRequired);
 
 internal readonly union ReaderStatementOutcome(SqlResultSet, SqlError);
+
+internal readonly record struct OpenSavepoint(string Name, int DdlCount, CaptureSavepoint Capture);
 
 internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
 {
@@ -20,7 +23,7 @@ internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, Canc
 
     public List<string> Ddl { get; } = [];
 
-    public List<(string Name, int DdlCount)> Savepoints { get; } = [];
+    public List<OpenSavepoint> Savepoints { get; } = [];
 
     public HashSet<string> ScannedTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -102,8 +105,9 @@ internal sealed partial class DatabaseSession
                 tokens = SqlTokenizer.Tokenize(segment);
             }
 
-            var isDdl = info.IsDdl;
-            var savepoint = info.Savepoint;
+            var isExplain = SqliteConnection.IsExplain(handle);
+            var isDdl = !isExplain && info.IsDdl;
+            var savepoint = isExplain ? null : info.Savepoint;
             if (context.AnalyzeReads)
             {
                 CollectScannedTables(context, handle, segment);
@@ -191,49 +195,30 @@ internal sealed partial class DatabaseSession
     private void TrackSavepoint(WriteContext context, UserSavepoint savepoint)
     {
         var savepoints = context.Savepoints;
-        if (savepoint.Operation == SavepointOperation.Begin)
+        switch (savepoint.Operation)
         {
-            savepoints.Add((savepoint.Name, context.Ddl.Count));
-            return;
+            case SavepointOperation.Begin:
+                savepoints.Add(new OpenSavepoint(savepoint.Name, context.Ddl.Count, _capture.MarkSavepoint()));
+                break;
+            case SavepointOperation.Release when LastSavepoint(savepoints, savepoint.Name) is var released and >= 0:
+                savepoints.RemoveRange(released, savepoints.Count - released);
+                break;
+            case SavepointOperation.Rollback when LastSavepoint(savepoints, savepoint.Name) is var target and >= 0:
+                var open = savepoints[target];
+                context.Ddl.RemoveRange(open.DdlCount, context.Ddl.Count - open.DdlCount);
+                savepoints.RemoveRange(target + 1, savepoints.Count - target - 1);
+                _capture.RestoreSavepoint(open.Capture);
+                _ = _writer.ValidateSchemaCache();
+                break;
+            case SavepointOperation.Release or SavepointOperation.Rollback:
+                break;
+            default:
+                throw new UnreachableException();
         }
-
-        var index = savepoints.FindLastIndex(entry => SameSavepointName(entry.Name, savepoint.Name));
-        if (index < 0)
-        {
-            return;
-        }
-
-        if (savepoint.Operation == SavepointOperation.Release)
-        {
-            savepoints.RemoveRange(index, savepoints.Count - index);
-            return;
-        }
-
-        var kept = savepoints[index].DdlCount;
-        context.Ddl.RemoveRange(kept, context.Ddl.Count - kept);
-        savepoints.RemoveRange(index + 1, savepoints.Count - index - 1);
-        _ = _writer.ValidateSchemaCache();
     }
 
-    private static bool SameSavepointName(string left, string right)
-    {
-        if (left.Length != right.Length)
-        {
-            return false;
-        }
-
-        for (var index = 0; index < left.Length; index++)
-        {
-            var first = left[index];
-            var second = right[index];
-            if (first != second && !(char.IsAsciiLetter(first) && (first | 0x20) == (second | 0x20)))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    private static int LastSavepoint(List<OpenSavepoint> savepoints, string name) =>
+        savepoints.FindLastIndex(entry => AsciiIgnoreCaseComparer.Instance.Equals(entry.Name, name));
 
     private static bool CreatesPopulatedTable(List<SqlToken> tokens)
     {

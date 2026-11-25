@@ -472,7 +472,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
             if (rc == SqliteNative.Done)
             {
-                return IsWorkCanceled() ? Canceled : SqliteStatus.Success;
+                return SqliteStatus.Success;
             }
 
             if (rc != SqliteNative.Row)
@@ -582,6 +582,8 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     }
 
     public static bool IsReadOnly(nint statement) => SqliteNative.StatementReadOnly(statement) != 0;
+
+    public static bool IsExplain(nint statement) => SqliteNative.StatementIsExplain(statement) != 0;
 
     public static void FinalizeStatement(nint statement)
     {
