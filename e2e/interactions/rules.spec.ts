@@ -505,6 +505,7 @@ test('end-user SQL runs one ruled statement and every bypass of the rules is ref
     expect(await allowed(`SELECT rowid, body FROM ${notes} ORDER BY rowid`)).toEqual([[1, 'a1-edited'], [2, 'a2']]);
     expect(await allowed(`SELECT * FROM ${notes} ORDER BY rowid`)).toEqual([[1, alice, 'a1-edited'], [2, alice, 'a2']]);
     expect(await allowed(`SELECT rowid AS k, * FROM ${notes} ORDER BY rowid`)).toEqual([[1, 1, alice, 'a1-edited'], [2, 2, alice, 'a2']]);
+    expect(await allowed(`SELECT * FROM (${notes}) ORDER BY rowid`)).toEqual([[1, alice, 'a1-edited'], [2, alice, 'a2']]);
     expect(await allowed(`SELECT rowid AS k, title FROM ${tasks}`)).toEqual([[1, 't1']]);
     await allowed(`UPDATE ${tasks} SET title = 't1-edited' WHERE id = 1`);
     expect(await allowed(`SELECT * FROM ${tasks}`)).toEqual([[1, 't1-edited']]);
