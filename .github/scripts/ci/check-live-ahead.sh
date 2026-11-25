@@ -43,18 +43,32 @@ if ! jq -e '(.services | type == "array") and (.placements | type == "array") an
 fi
 
 if ! images=$(jq -r --arg service "$service" '
-  [
-    (.services[] | select(.name == $service) | .image),
-    (.placements[]
-      | select(.serviceName == $service and ((.state | IN("stopped", "failed", "unschedulable")) | not))
-      | .desiredImage, .activeImage, .candidateImage),
-    (.rollouts[]
-      | select(.serviceName == $service and ((.phase | IN("succeeded", "rolled_back", "failed")) | not))
-      | .targetImage)
-  ]
-  | map(select(type == "string" and length > 0))
+  def image_field($name; $required):
+    .[$name] as $value
+    | if $value == null or $value == "" then
+        if $required then error("\($name) is missing or empty") else empty end
+      elif ($value | type) != "string" then error("\($name) is not a string")
+      elif ($value | test("\\s")) then error("\($name) contains whitespace")
+      else $value
+      end;
+  def checked($field):
+    if (.[$field] | type) == "string" then . else error("\($field) is not a string") end;
+  if ([.services[], .placements[], .rollouts[]] | all(type == "object")) then . else error("non-object entry") end
+  | [
+      (.services[] | select(.name == $service) | image_field("image"; true)),
+      (.placements[]
+        | select(.serviceName == $service)
+        | checked("state")
+        | select(.state | IN("stopped", "failed", "unschedulable") | not)
+        | image_field("desiredImage"; true), image_field("activeImage"; false), image_field("candidateImage"; false)),
+      (.rollouts[]
+        | select(.serviceName == $service)
+        | checked("phase")
+        | select(.phase | IN("succeeded", "rolled_back", "failed") | not)
+        | image_field("targetImage"; true))
+    ]
   | unique[]' <<< "$status"); then
-  echo "::error::Cannot read the live ${service} images from ${orch_url}/api/status; refusing to release" >&2
+  echo "::error::${orch_url}/api/status lists an invalid live ${service} image; refusing to release" >&2
   exit 1
 fi
 live_images=()
@@ -80,16 +94,27 @@ inspect_revision() {
     echo "Inspecting the live ${service} image ${image} failed on attempt ${attempt}; retrying in 2s" >&2
     sleep 2
   done
-  live=$(jq -r '(
-      .config.Labels
-      // .["linux/arm64"].config.Labels
-      // .["linux/arm64/v8"].config.Labels
-      // .["linux/amd64"].config.Labels
-      // first(to_entries[]? | .value.config.Labels? // empty)
-      // {}
-    )["org.opencontainers.image.revision"] // empty' <<< "$config" 2> /dev/null) || live=''
+  live=$(jq -r '
+    def revision:
+      if type == "object" and (.config | type) == "object" and (.config.Labels | type) == "object" then
+        .config.Labels["org.opencontainers.image.revision"]
+      else
+        null
+      end
+      | if type == "string" and test("^[0-9a-f]{40}\\z") then . else error("missing or invalid revision") end;
+    def attestation:
+      .key == "unknown/unknown" or (if (.value | type) == "object" then (.value.os // "") == "unknown" else false end);
+    if type != "object" then
+      error("image config is not an object")
+    elif (.config | type) == "object" then
+      revision
+    else
+      [to_entries[] | select(attestation | not) | .value]
+      | if length == 0 then error("no platform configs") else map(revision) end
+      | if (unique | length) != 1 then error("conflicting platform revisions") else .[0] end
+    end' <<< "$config") || live=''
   if ! [[ $live =~ ^[0-9a-f]{40}$ ]]; then
-    echo "::error::Live ${service} image ${image} carries no valid org.opencontainers.image.revision label; refusing to release" >&2
+    echo "::error::Live ${service} image ${image} has no single valid org.opencontainers.image.revision label across its platforms; refusing to release" >&2
     return 1
   fi
   printf '%s\n' "$live"
