@@ -57,6 +57,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public const int MaxAllowedCidrs = 32;
 
     private const string Alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
+    private const string RetiredPrefix = "retired:";
     private const string Instance = PlatformDirectory.Instance;
 
     public static bool IsKeyId(string? value) =>
@@ -252,13 +253,15 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
             var now = clock.GetUtcNow();
             var secret = $"{keyId}_{RandomNumberGenerator.GetString(Alphabet, 52)}";
+            var keep = previousTtl > TimeSpan.Zero && !Retired(key.Value.SecretHash);
+            var carried = previousTtl > TimeSpan.Zero && Retired(key.Value.SecretHash) && key.Value.PreviousSecretHash is not null && key.Value.PreviousSecretExpiresAt > now;
             var rotated = key.Value with
             {
                 SecretHash = Tokens.Sha256Hex(secret),
-                PreviousSecretHash = previousTtl > TimeSpan.Zero ? key.Value.SecretHash : null,
-                PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null,
+                PreviousSecretHash = keep ? key.Value.SecretHash : carried ? key.Value.PreviousSecretHash : null,
+                PreviousSecretExpiresAt = keep ? now + previousTtl : carried ? key.Value.PreviousSecretExpiresAt : null,
                 SecretBindings = [],
-                PreviousSecretBindings = previousTtl > TimeSpan.Zero ? key.Value.SecretBindings : [],
+                PreviousSecretBindings = keep ? key.Value.SecretBindings : carried ? key.Value.PreviousSecretBindings : [],
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
                 [.. await this.RequirementsAsync(caller, cancellationToken), .. authority.Assertions, Change.Update(key, rotated),
@@ -277,8 +280,8 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             return null;
         }
 
-        var current = await this.HeldAsync(key.SecretBindings, cancellationToken);
-        var previous = key.PreviousSecretHash is not null && key.PreviousSecretExpiresAt > clock.GetUtcNow()
+        var current = !Retired(key.SecretHash) && await this.HeldAsync(key.SecretBindings, cancellationToken);
+        var previous = key.PreviousSecretHash is { } previousHash && !Retired(previousHash) && key.PreviousSecretExpiresAt > clock.GetUtcNow()
             && await this.HeldAsync(key.PreviousSecretBindings, cancellationToken);
         return current || previous ? key with { SecretHash = current ? key.SecretHash : string.Empty, PreviousSecretHash = previous ? key.PreviousSecretHash : null } : null;
     }
@@ -318,7 +321,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public IReadOnlyList<string> Digests(ApiKeyRecord key)
     {
         ArgumentNullException.ThrowIfNull(key);
-        return [.. new[] { key.SecretHash, key.PreviousSecretExpiresAt > clock.GetUtcNow() ? key.PreviousSecretHash : null }.Where(hash => !string.IsNullOrEmpty(hash)).Select(hash => hash!)];
+        return [.. new[] { key.SecretHash, key.PreviousSecretExpiresAt > clock.GetUtcNow() ? key.PreviousSecretHash : null }.OfType<string>().Where(hash => hash.Length > 0 && !Retired(hash))];
     }
 
     public async Task RecordUseAsync(ApiKeyRecord key, CancellationToken cancellationToken)
@@ -377,6 +380,8 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             && await this.FindAsync(parentId, cancellationToken) is { ParentKeyId: null } parent
             && parent.OrganizationId == key.OrganizationId
             && this.Digests(parent).Any(digest => digest.StartsWith(generation, StringComparison.Ordinal));
+
+    private static bool Retired(string hash) => hash.StartsWith(RetiredPrefix, StringComparison.Ordinal);
 
     private async Task<bool> HeldAsync(IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken)
     {

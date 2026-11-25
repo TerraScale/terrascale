@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Dapper;
 using TerraScale.Authentication.Contracts;
@@ -43,6 +44,20 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
 
     private static readonly TimeSpan AttemptRetry = TimeSpan.FromMinutes(1);
 
+    private static readonly TimeSpan MinimumWait = TimeSpan.FromSeconds(1);
+
+    private enum Quota
+    {
+        Attempt,
+        Pause,
+        Total,
+        Shared,
+        Tenant,
+        TenantPurpose,
+        Overflow,
+        TenantAuthentication,
+    }
+
     internal async Task<bool> AcquireAsync(EmailMessage message, CancellationToken cancellationToken, string? attemptId = null)
     {
         ArgumentNullException.ThrowIfNull(message);
@@ -83,26 +98,25 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
             """
             DELETE FROM email_reservations WHERE at <= @cutoff;
             SELECT (SELECT COUNT(*) FROM email_reservations) AS total,
-                (SELECT MIN(at) FROM email_reservations) AS total_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose = @authentication) AS authentication,
-                (SELECT MIN(at) FROM email_reservations WHERE purpose <> @authentication) AS shared_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose = @authentication AND tenant = @tenant) AS tenant_authentication,
-                (SELECT MIN(at) FROM email_reservations WHERE purpose = @authentication AND tenant = @tenant) AS tenant_authentication_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant) AS tenant,
-                (SELECT MIN(at) FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant) AS tenant_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose = @purposeValue AND tenant = @tenant) AS tenant_purpose,
-                (SELECT MIN(at) FROM email_reservations WHERE purpose = @purposeValue AND tenant = @tenant) AS tenant_purpose_oldest,
                 (SELECT COALESCE(SUM(used - @TenantFairShare), 0) FROM (SELECT COUNT(*) AS used FROM email_reservations WHERE purpose <> @authentication GROUP BY tenant) AS usage
                     WHERE used > @TenantFairShare) AS overflow,
-                (SELECT MIN(at) FROM email_reservations WHERE purpose <> @authentication AND tenant IN (
-                    SELECT tenant FROM email_reservations WHERE purpose <> @authentication GROUP BY tenant HAVING COUNT(*) > @TenantFairShare)) AS overflow_oldest,
                 @attemptId IS NOT NULL AND EXISTS (SELECT 1 FROM email_reservations WHERE attempt_id = @attemptId) AS attempt
             """, new { cutoff, authentication, purposeValue, tenant, attemptId, TenantFairShare }), cancellationToken);
         Observe(counts.Total, counts.Authentication);
-        var waits = Refusals(global.Value, counts, purpose, tenant, now).ToList();
-        if (waits.Count > 0)
+        var binding = Binding(global.Value, counts, purpose, tenant, now).ToList();
+        if (binding.Count > 0)
         {
             Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "refused"));
+            List<TimeSpan> waits = [];
+            foreach (var (quota, excess) in binding)
+            {
+                waits.Add(await this.WaitAsync(quota, excess, global.Value, purpose, tenant, now, cancellationToken));
+            }
+
             return new EmailRefused(waits.Max());
         }
 
@@ -111,29 +125,28 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         return new EmailAdmitted(reservation.Id, [Change.Update(global, global.Value), Change.Insert(reservation)]);
     }
 
-    private static IEnumerable<TimeSpan> Refusals(EmailBudgetRecord global, AdmissionCounts counts, EmailPurpose purpose, string tenant, DateTimeOffset now)
+    private static IEnumerable<(Quota Quota, int Excess)> Binding(EmailBudgetRecord global, AdmissionCounts counts, EmailPurpose purpose, string tenant, DateTimeOffset now)
     {
-        TimeSpan Until(DateTimeOffset? oldest) => oldest is { } at && at + Window > now ? at + Window - now : TimeSpan.FromSeconds(1);
         if (counts.Attempt)
         {
-            yield return AttemptRetry;
+            yield return (Quota.Attempt, 0);
         }
 
         if (global.PausedUntil > now)
         {
-            yield return global.PausedUntil - now;
+            yield return (Quota.Pause, 0);
         }
 
         if (counts.Total >= TotalLimit)
         {
-            yield return Until(counts.TotalOldest);
+            yield return (Quota.Total, counts.Total - TotalLimit);
         }
 
         if (purpose == EmailPurpose.Authentication)
         {
             if (tenant is not (OidcIssuer.InstanceId or DefaultTenant) && counts.TenantAuthentication >= TenantAuthenticationLimit)
             {
-                yield return Until(counts.TenantAuthenticationOldest);
+                yield return (Quota.TenantAuthentication, counts.TenantAuthentication - TenantAuthenticationLimit);
             }
 
             yield break;
@@ -141,24 +154,75 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
 
         if (counts.Total - counts.Authentication >= SharedLimit)
         {
-            yield return Until(counts.SharedOldest);
+            yield return (Quota.Shared, counts.Total - counts.Authentication - SharedLimit);
         }
 
         if (counts.Tenant >= TenantLimit)
         {
-            yield return Until(counts.TenantOldest);
+            yield return (Quota.Tenant, counts.Tenant - TenantLimit);
         }
 
-        if (counts.TenantPurpose >= (purpose == EmailPurpose.Test ? TestLimit : TenantLimit))
+        var purposeLimit = purpose == EmailPurpose.Test ? TestLimit : TenantLimit;
+        if (counts.TenantPurpose >= purposeLimit)
         {
-            yield return Until(counts.TenantPurposeOldest);
+            yield return (Quota.TenantPurpose, counts.TenantPurpose - purposeLimit);
         }
 
         if (counts.Tenant >= TenantFairShare && counts.Overflow >= OverflowLimit)
         {
-            yield return Until(counts.OverflowOldest);
+            yield return (Quota.Overflow, counts.Overflow - OverflowLimit);
         }
     }
+
+    private async Task<TimeSpan> WaitAsync(Quota quota, int excess, EmailBudgetRecord global, EmailPurpose purpose, string tenant, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var authentication = (long)EmailPurpose.Authentication;
+        var purposeValue = (long)purpose;
+        var freedAt = quota switch
+        {
+            Quota.Attempt => now + AttemptRetry - Window,
+            Quota.Pause => global.PausedUntil - Window,
+            Quota.Overflow => await this.OverflowFreedAsync(excess, cancellationToken),
+            Quota.Total => await this.NthOldestAsync("SELECT at FROM email_reservations ORDER BY at LIMIT 1 OFFSET @excess",
+                excess, authentication, purposeValue, tenant, cancellationToken),
+            Quota.Shared => await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose <> @authentication ORDER BY at LIMIT 1 OFFSET @excess",
+                excess, authentication, purposeValue, tenant, cancellationToken),
+            Quota.Tenant => await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
+                excess, authentication, purposeValue, tenant, cancellationToken),
+            Quota.TenantPurpose => await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose = @purposeValue AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
+                excess, authentication, purposeValue, tenant, cancellationToken),
+            Quota.TenantAuthentication => await this.NthOldestAsync(
+                "SELECT at FROM email_reservations WHERE purpose = @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
+                excess, authentication, purposeValue, tenant, cancellationToken),
+            _ => throw new UnreachableException(),
+        };
+        return freedAt is { } at && at + Window > now ? at + Window - now : MinimumWait;
+    }
+
+    private async Task<DateTimeOffset?> NthOldestAsync(string sql, int excess, long authentication, long purposeValue, string tenant, CancellationToken cancellationToken) =>
+        (await data.ReadAsync(connection => connection.QueryAsync<ReservationTime>(sql, new { excess, authentication, purposeValue, tenant }), cancellationToken))
+            .Select(row => (DateTimeOffset?)row.At).FirstOrDefault();
+
+    private async Task<DateTimeOffset?> OverflowFreedAsync(int excess, CancellationToken cancellationToken)
+    {
+        var authentication = (long)EmailPurpose.Authentication;
+        var rows = await data.ReadAsync(connection => connection.QueryAsync<TenantReservation>(
+            """
+            SELECT tenant, at FROM email_reservations WHERE purpose <> @authentication AND tenant IN (
+                SELECT tenant FROM email_reservations WHERE purpose <> @authentication GROUP BY tenant HAVING COUNT(*) > @TenantFairShare)
+            ORDER BY tenant, at
+            """, new { authentication, TenantFairShare }), cancellationToken);
+        return rows.GroupBy(row => row.Tenant, StringComparer.Ordinal)
+            .SelectMany(group => group.Take(group.Count() - TenantFairShare))
+            .Select(row => row.At)
+            .Order()
+            .Skip(excess)
+            .Select(at => (DateTimeOffset?)at)
+            .FirstOrDefault();
+    }
+
+    internal async Task<DateTimeOffset?> PausedUntilAsync(CancellationToken cancellationToken) =>
+        await this.BudgetAsync(cancellationToken) is { Value.PausedUntil: var until } && until > clock.GetUtcNow() ? until : null;
 
     private async Task<Versioned<EmailBudgetRecord>> GlobalAsync(CancellationToken cancellationToken)
     {
@@ -202,9 +266,11 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<EmailBudgetRecord>(
             "SELECT * FROM email_budgets WHERE \"key\" = @Key", new { Key }), cancellationToken));
 
-    internal sealed record AdmissionCounts(int Total, DateTimeOffset? TotalOldest, int Authentication, DateTimeOffset? SharedOldest, int TenantAuthentication,
-        DateTimeOffset? TenantAuthenticationOldest, int Tenant, DateTimeOffset? TenantOldest, int TenantPurpose, DateTimeOffset? TenantPurposeOldest, int Overflow,
-        DateTimeOffset? OverflowOldest, bool Attempt);
+    internal sealed record AdmissionCounts(int Total, int Authentication, int TenantAuthentication, int Tenant, int TenantPurpose, int Overflow, bool Attempt);
+
+    internal sealed record ReservationTime(DateTimeOffset At);
+
+    internal sealed record TenantReservation(string Tenant, DateTimeOffset At);
 }
 
 public sealed record EmailAdmitted(string ReservationId, IReadOnlyList<Change> Changes);
@@ -230,8 +296,14 @@ public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailS
         var outcome = EmailDeliveryOutcome.Retryable;
         try
         {
-            if (!(message.AdmissionId is { } admitted && await admission.ReservedAsync(admitted, cancellationToken))
-                && !await admission.AcquireAsync(message, cancellationToken))
+            var reserved = message.AdmissionId is { } admitted && await admission.ReservedAsync(admitted, cancellationToken);
+            if (reserved && await admission.PausedUntilAsync(cancellationToken) is not null)
+            {
+                AuthMetrics.Email("provider_paused");
+                return EmailDeliveryOutcome.Retryable;
+            }
+
+            if (!reserved && !await admission.AcquireAsync(message, cancellationToken))
             {
                 AuthMetrics.Email("capacity_refused");
                 return EmailDeliveryOutcome.Retryable;

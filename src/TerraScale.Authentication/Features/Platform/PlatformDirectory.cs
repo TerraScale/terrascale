@@ -1076,6 +1076,31 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return changes;
     }
 
+    internal async Task<IReadOnlyList<Change>?> InviterAuthorityAsync(InvitationRecord invitation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(invitation);
+        var membership = await this.MembershipAsync(invitation.OrganizationId, invitation.InvitedBy, cancellationToken);
+        var grant = invitation.ProjectId is { } projectId ? await this.ProjectMemberAsync(projectId, invitation.InvitedBy, cancellationToken) : null;
+        var role = invitation.ProjectId is null ? membership?.Value.Role : Roles.Higher(Roles.Implied(membership?.Value.Role), grant?.Value.Role);
+        if (!Invites(invitation, role))
+        {
+            return null;
+        }
+
+        List<Change> assertions = [];
+        if (membership is not null)
+        {
+            assertions.Add(Change.Assert(membership));
+        }
+
+        if (grant is not null)
+        {
+            assertions.Add(Change.Assert(grant));
+        }
+
+        return assertions;
+    }
+
     private static bool Invites(InvitationRecord invitation, string? role) =>
         Roles.Rank(role) >= Roles.Rank(invitation.ProjectId is null && invitation.Role == Roles.Owner ? Roles.Owner : Roles.Admin);
 

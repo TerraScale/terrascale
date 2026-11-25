@@ -54,7 +54,7 @@ public sealed class ListOrganizationApiKeysEndpoint(ApiKeys keys, PlatformAuthen
     public override void Configure()
     {
         Get($"{Organization}/api-keys");
-        this.Describe("list_organization_api_keys", "List organization API keys", "Needs admin. Unrevoked keys, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
+        this.Describe("list_organization_api_keys", "List organization API keys", "Needs admin. Keys that can still be used, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
     }
 
     protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) => this.ListAsync(caller, cancellationToken);
@@ -121,7 +121,7 @@ public sealed class ListProjectApiKeysEndpoint(ApiKeys keys, PlatformAuthenticat
     public override void Configure()
     {
         Get($"{Project}/api-keys");
-        this.Describe("list_project_api_keys", "List project API keys", "Needs the project's member role. Unrevoked keys, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
+        this.Describe("list_project_api_keys", "List project API keys", "Needs the project's member role. Keys that can still be used, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
     }
 
     protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) => this.ListAsync(caller, cancellationToken);

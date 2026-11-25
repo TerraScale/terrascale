@@ -20,7 +20,7 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.SignIn;
 
 public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, ProjectAuthSettings projects, PlatformDirectory platform,
-    AuthSchema schema, AuthData data, Passcodes passcodes, Users users, AuthOptions options, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
+    AuthSchema schema, AuthData data, Passcodes passcodes, Users users, EmailAdmission emailAdmission, AuthOptions options, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
 {
     public const int Capacity = 256;
 
@@ -274,6 +274,12 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
 
         var values = work.Values!;
+        if (values.AdmissionId is not null && await emailAdmission.PausedUntilAsync(CancellationToken.None) is { } pausedUntil)
+        {
+            await this.SaveAsync(row with { LeaseUntil = pausedUntil }, version);
+            return;
+        }
+
         var message = await emails.RenderAsync(work.Kind!.Value, row.Locale, values, await this.ConfigAsync(values.Tenant, work.Kind.Value), cancellationToken: CancellationToken.None);
         if (await this.SaveAsync(row with { State = "sending" }, version) is not { } sending)
         {

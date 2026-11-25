@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Dapper;
 using System.Buffers;
 using System.Security.Cryptography;
@@ -94,17 +93,10 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             MailRow? outbox = null;
             if (dashboard is not null && reservation is not null)
             {
-                var decision = await admission.DecideAsync(EmailPurpose.Invitation, organizationId, null, cancellationToken);
-                var (admitted, refusal) = Admission(decision);
-                if (refusal is { } capacity)
+                if (Refusal(await admission.DecideAsync(EmailPurpose.Invitation, organizationId, null, cancellationToken)) is { } capacity)
                 {
                     throw ApiException.RateLimited("This organization's invitation email capacity is used up; no invitation was created. Retry after the Retry-After delay.",
                         capacity);
-                }
-
-                if (admitted is null)
-                {
-                    throw new UnreachableException("An admission decision is either admitted or refused.");
                 }
 
                 outbox = reservation.Stage(AuthEmailKind.Invitation, new AuthEmailValues(invitation.Email)
@@ -114,9 +106,7 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
                     Organization = organizationName,
                     Tenant = organizationId,
                     Inviter = caller.Email,
-                    AdmissionId = admitted.ReservationId,
                 }, locale);
-                operations.AddRange(admitted.Changes);
                 operations.Add(Change.Insert(outbox));
             }
 
@@ -208,6 +198,8 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
         {
             var invitation = await this.DecidableAsync(caller, token, cancellationToken);
             var record = invitation.Value;
+            var inviter = await directory.InviterAuthorityAsync(record, cancellationToken)
+                ?? throw PlatformDirectory.Conflict("not_pending", "The invitation is no longer pending.");
             List<Change> operations;
             if (record.ProjectId is { } projectId)
             {
@@ -226,6 +218,7 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
                 operations.Add(directory.Audit(record.OrganizationId, caller.Id, "member.joined", caller.Id, record.Role));
             }
 
+            operations.AddRange(inviter);
             operations.Add(this.Close(invitation, "accepted", caller.Id));
             operations.Add(directory.Audit(record.OrganizationId, caller.Id, "invitation.accepted", record.Email));
             return new PlatformDirectory.Plan<InvitationRecord>(operations, record);
@@ -240,10 +233,10 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             return new PlatformDirectory.Plan<bool>(operations, true);
         }, cancellationToken);
 
-    private static (EmailAdmitted? Admitted, TimeSpan? Refusal) Admission(EmailAdmissionDecision decision) => decision switch
+    private static TimeSpan? Refusal(EmailAdmissionDecision decision) => decision switch
     {
-        EmailAdmitted granted => (granted, null),
-        EmailRefused refused => (null, refused.RetryAfter),
+        EmailAdmitted => null,
+        EmailRefused refused => refused.RetryAfter,
     };
 
     private static ApiException PendingConflict() =>
