@@ -23,6 +23,7 @@ internal sealed partial class SqliteConnection
         var status = ReadSchemaCookie(out var cookie);
         if (!status.IsOk)
         {
+            InvalidateSchemaCache();
             return status;
         }
 

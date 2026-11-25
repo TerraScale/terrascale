@@ -168,6 +168,7 @@ internal sealed partial class DatabaseSession
                 status = _writer.ReadSchemaCookie(out var cookieAfter);
                 if (!status.IsOk)
                 {
+                    _writer.InvalidateSchemaCache();
                     return status.ToSqlError(index);
                 }
 
@@ -179,6 +180,7 @@ internal sealed partial class DatabaseSession
                         status = _writer.CheckCreatedTable(populatedTable, _capture);
                         if (!status.IsOk)
                         {
+                            _writer.InvalidateSchemaCache();
                             return status.ToSqlError(index);
                         }
                     }
