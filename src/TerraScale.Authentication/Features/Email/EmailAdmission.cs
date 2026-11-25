@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Dapper;
@@ -179,24 +180,27 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
     {
         var authentication = (long)EmailPurpose.Authentication;
         var purposeValue = (long)purpose;
+        var fairShareExcess = counts.Tenant - TenantFairShare;
         var freedAt = quota switch
         {
             Quota.Attempt => now + AttemptRetry - Window,
             Quota.Pause => global.PausedUntil - Window,
-            Quota.Overflow => Earliest(await this.OverflowFreedAsync(excess, cancellationToken),
-                await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
-                    counts.Tenant - TenantFairShare, authentication, purposeValue, tenant, cancellationToken)),
-            Quota.Total => await this.NthOldestAsync("SELECT at FROM email_reservations ORDER BY at LIMIT 1 OFFSET @excess",
-                excess, authentication, purposeValue, tenant, cancellationToken),
-            Quota.Shared => await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose <> @authentication ORDER BY at LIMIT 1 OFFSET @excess",
-                excess, authentication, purposeValue, tenant, cancellationToken),
-            Quota.Tenant => await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
-                excess, authentication, purposeValue, tenant, cancellationToken),
-            Quota.TenantPurpose => await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose = @purposeValue AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
-                excess, authentication, purposeValue, tenant, cancellationToken),
-            Quota.TenantAuthentication => await this.NthOldestAsync(
+            Quota.Overflow => Earliest(await this.OverflowFreedAsync(excess, cancellationToken), await this.FirstAsync(connection => connection.QueryAsync<ReservationTime>(
+                "SELECT at FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @fairShareExcess",
+                new { authentication, tenant, fairShareExcess }), cancellationToken)),
+            Quota.Total => await this.FirstAsync(connection => connection.QueryAsync<ReservationTime>(
+                "SELECT at FROM email_reservations ORDER BY at LIMIT 1 OFFSET @excess", new { excess }), cancellationToken),
+            Quota.Shared => await this.FirstAsync(connection => connection.QueryAsync<ReservationTime>(
+                "SELECT at FROM email_reservations WHERE purpose <> @authentication ORDER BY at LIMIT 1 OFFSET @excess", new { authentication, excess }), cancellationToken),
+            Quota.Tenant => await this.FirstAsync(connection => connection.QueryAsync<ReservationTime>(
+                "SELECT at FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
+                new { authentication, tenant, excess }), cancellationToken),
+            Quota.TenantPurpose => await this.FirstAsync(connection => connection.QueryAsync<ReservationTime>(
+                "SELECT at FROM email_reservations WHERE purpose = @purposeValue AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
+                new { purposeValue, tenant, excess }), cancellationToken),
+            Quota.TenantAuthentication => await this.FirstAsync(connection => connection.QueryAsync<ReservationTime>(
                 "SELECT at FROM email_reservations WHERE purpose = @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
-                excess, authentication, purposeValue, tenant, cancellationToken),
+                new { authentication, tenant, excess }), cancellationToken),
             _ => throw new UnreachableException(),
         };
         return freedAt is { } at && at + Window > now ? at + Window - now : MinimumWait;
@@ -205,9 +209,8 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
     private static DateTimeOffset? Earliest(DateTimeOffset? first, DateTimeOffset? second) =>
         first is { } one && second is { } two ? (one < two ? one : two) : first ?? second;
 
-    private async Task<DateTimeOffset?> NthOldestAsync(string sql, int excess, long authentication, long purposeValue, string tenant, CancellationToken cancellationToken) =>
-        (await data.ReadAsync(connection => connection.QueryAsync<ReservationTime>(sql, new { excess, authentication, purposeValue, tenant }), cancellationToken))
-            .Select(row => (DateTimeOffset?)row.At).FirstOrDefault();
+    private async Task<DateTimeOffset?> FirstAsync(Func<DbConnection, Task<IEnumerable<ReservationTime>>> read, CancellationToken cancellationToken) =>
+        (await data.ReadAsync(read, cancellationToken)).Select(row => (DateTimeOffset?)row.At).FirstOrDefault();
 
     private async Task<DateTimeOffset?> OverflowFreedAsync(int excess, CancellationToken cancellationToken)
     {
