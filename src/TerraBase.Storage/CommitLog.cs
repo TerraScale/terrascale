@@ -91,6 +91,36 @@ internal static class CommitFrame
     public const int SequenceSize = 8;
     public const int CrcSize = 4;
     public const int MaxBodySize = 64 * 1024 * 1024;
+    public const int MaxEncodedSize = PrefixSize + MaxBodySize + CrcSize;
+
+    public static long EncodedSize(CommitMetadata commit) =>
+        PrefixSize + SequenceSize + CommitLogCipher.Overhead + 16 + sizeof(ushort)
+        + HlcTimestamp.EncodedSize + sizeof(ulong) + 1 + sizeof(uint) + sizeof(uint) + CrcSize
+        + (long)Encoding.UTF8.GetByteCount(commit.OriginRegion) + commit.DeltaPayload.Length + commit.Bookmark.GetBinarySize();
+
+    public static IEnumerable<IReadOnlyList<CommitMetadata>> Batches(IReadOnlyList<CommitMetadata> commits, long maxBytes)
+    {
+        List<CommitMetadata> batch = [];
+        var bytes = 0L;
+        foreach (var commit in commits)
+        {
+            var size = EncodedSize(commit);
+            if (batch.Count > 0 && bytes + size > maxBytes)
+            {
+                yield return batch;
+                batch = [];
+                bytes = 0;
+            }
+
+            batch.Add(commit);
+            bytes += size;
+        }
+
+        if (batch.Count > 0)
+        {
+            yield return batch;
+        }
+    }
 
     public static byte[] Encode(CommitMetadata commit, CommitLogCipher cipher)
     {
@@ -376,24 +406,19 @@ internal sealed class OriginLog : IDisposable
                     return SqliteStatus.Fail(string.Concat("commit log sequence gap for origin ", Origin));
                 }
 
-                if (commit.DeltaPayload.Length > CommitFrame.MaxBodySize)
+                var frameSize = CommitFrame.EncodedSize(commit);
+                if (frameSize > CommitFrame.MaxEncodedSize)
                 {
                     return SqliteStatus.Fail("commit log frame exceeds the maximum frame size");
                 }
 
-                var frame = CommitFrame.Encode(commit, _cipher);
-                if (frame.Length - CommitFrame.PrefixSize - CommitFrame.CrcSize > CommitFrame.MaxBodySize)
-                {
-                    return SqliteStatus.Fail("commit log frame exceeds the maximum frame size");
-                }
-
-                if (buffer.Length + frame.Length > SqliteCommitLog.MaxSegmentBytes)
+                if (buffer.Length + frameSize > SqliteCommitLog.MaxSegmentBytes)
                 {
                     return SqliteStatus.Fail("commit log batch exceeds the maximum segment size");
                 }
 
                 added.Add((buffer.Length, commit.Sequence));
-                buffer.Write(frame);
+                buffer.Write(CommitFrame.Encode(commit, _cipher));
             }
 
             if (added.Count == 0)

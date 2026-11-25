@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Text;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Unicode;
@@ -25,6 +26,12 @@ public sealed class CausalBookmark : IEquatable<CausalBookmark>
     public IReadOnlyList<KeyValuePair<string, long>> Entries => _entries;
 
     public bool IsEmpty => _entries.Length == 0;
+
+    public int GetBinarySize() => 1 + VarUIntSize((ulong)_entries.Length) + _entries.Sum(static entry =>
+    {
+        var bytes = Encoding.UTF8.GetByteCount(entry.Key);
+        return VarUIntSize((ulong)bytes) + bytes + VarUIntSize((ulong)entry.Value);
+    });
 
     public static CausalBookmark Create(IEnumerable<KeyValuePair<string, long>> entries)
     {
@@ -245,6 +252,8 @@ public sealed class CausalBookmark : IEquatable<CausalBookmark>
         span[written++] = (byte)value;
         writer.Advance(written);
     }
+
+    private static int VarUIntSize(ulong value) => 1 + (BitOperations.Log2(value) / 7);
 
     private static bool TryReadVarUInt(ref ReadOnlySpan<byte> source, out ulong value)
     {

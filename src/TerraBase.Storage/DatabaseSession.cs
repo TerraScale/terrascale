@@ -510,7 +510,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         return null;
     }
 
-    private static StorageBusy? CopyOriginHistory(OriginLog source, OriginLog destination, long last)
+    private StorageBusy? CopyOriginHistory(OriginLog source, OriginLog destination, long last)
     {
         using (destination)
         {
@@ -532,10 +532,13 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                     }, TimeSpan.Zero);
                 }
 
-                var appended = destination.Append(page, out _);
-                if (!appended.IsOk)
+                foreach (var chunk in CommitFrame.Batches(page, Options.SegmentMaxBytes))
                 {
-                    return appended.ToBusy();
+                    var appended = destination.Append(chunk, out _);
+                    if (!appended.IsOk)
+                    {
+                        return appended.ToBusy();
+                    }
                 }
 
                 next = page[^1].Sequence + 1;

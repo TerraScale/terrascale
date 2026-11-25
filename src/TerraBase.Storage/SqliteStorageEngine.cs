@@ -158,8 +158,6 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         var gate = Gate(request.BranchDatabaseId);
         await using var sourceLease = source;
         await gate.WaitAsync(cancellationToken);
-        DatabaseSession? branch = null;
-        IReadOnlyList<CommitMetadata> replay = [];
         try
         {
             if (Tracked(request.BranchDatabaseId) is not null || File.Exists(DatabasePath(request.BranchDatabaseId)))
@@ -231,11 +229,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return history;
             }
 
-            replay = entries;
             var opened = DatabaseSession.Open(branchContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync);
-            branch = opened switch
+            var branch = opened switch
             {
-                DatabaseSession session => Track(session),
+                DatabaseSession session => session,
                 StorageCorrupted or StorageBusy => null,
             };
             if (branch is null)
@@ -243,30 +240,53 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return new StorageBusy("branch database could not be opened", TimeSpan.FromSeconds(1));
             }
+
+            return await ReplayBranchAsync(branch, entries, target, cancellationToken);
         }
         finally
         {
             gate.Release();
         }
+    }
 
-        if (replay.Count > 0)
+    private async ValueTask<BranchDatabaseOutcome> ReplayBranchAsync(
+        DatabaseSession branch, IReadOnlyList<CommitMetadata> entries, CausalBookmark target, CancellationToken cancellationToken)
+    {
+        var complete = false;
+        try
         {
-            var replayed = await branch.ReplayAsync(replay, cancellationToken);
-            var failure = replayed switch
+            foreach (var chunk in CommitFrame.Batches(entries, _options.SegmentMaxBytes))
             {
-                RemoteApplyOutcome => null,
-                SchemaMismatch mismatch => new StorageBusy(string.Concat("branch replay schema mismatch at epoch ", mismatch.ActualEpoch.ToString(CultureInfo.InvariantCulture)), TimeSpan.Zero),
-                StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.Zero),
-                StorageBusy busy => busy,
-            };
-            if (failure is not null)
+                var replayed = await branch.ReplayAsync(chunk, cancellationToken);
+                var failure = replayed switch
+                {
+                    RemoteApplyOutcome => null,
+                    SchemaMismatch mismatch => new StorageBusy(string.Concat("branch replay schema mismatch at epoch ", mismatch.ActualEpoch.ToString(CultureInfo.InvariantCulture)), TimeSpan.Zero),
+                    StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.Zero),
+                    StorageBusy busy => busy,
+                };
+                if (failure is not null)
+                {
+                    return failure;
+                }
+            }
+
+            if (!branch.CurrentBookmark.Dominates(target))
             {
-                await branch.DisposeAsync();
-                return failure;
+                return new InvalidDatabaseRequest("branch replay did not reach the requested bookmark");
+            }
+
+            complete = true;
+            return Branch(Track(branch));
+        }
+        finally
+        {
+            if (!complete)
+            {
+                await branch.CloseAsync();
+                _ = FileIo.DeleteDirectory(branch.Directory);
             }
         }
-
-        return Branch(branch);
 
         static BranchDatabaseOutcome Branch(ISqlDatabaseSession session) => session;
     }
