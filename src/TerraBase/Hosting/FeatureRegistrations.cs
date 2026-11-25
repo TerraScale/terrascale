@@ -63,6 +63,7 @@ internal static class FeatureRegistrations
             services.AddHostedService(static provider => provider.GetRequiredService<UsageMeter>());
             services.AddSingleton<StorageOwnership>();
             services.AddSingleton<StorageLedger>();
+            services.AddSingleton<UsageCommits>();
             services.AddSingleton<StorageSampler>();
             services.AddHostedService(static provider => provider.GetRequiredService<StorageSampler>());
             services.AddSingleton<RequestLogRecorder>();

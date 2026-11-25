@@ -11,19 +11,17 @@ namespace TerraBase.Features.Management.Usage;
 
 internal readonly union StorageSampleOutcome(StorageSample, BackendUnavailable);
 
-internal readonly union StorageRecordOutcome(StorageRecorded, StorageContended, BackendUnavailable);
+internal readonly union StorageRecordOutcome(StorageRecorded, BackendUnavailable);
 
-internal readonly union StorageLastHoursOutcome(IReadOnlyDictionary<Ulid, long>, BackendUnavailable);
+internal readonly union StorageExistingOutcome(IReadOnlySet<Ulid>, BackendUnavailable);
 
-internal readonly union StorageCoverOutcome(Completed, StorageContended, BackendUnavailable);
+internal readonly union StorageCoverOutcome(Completed, BackendUnavailable);
 
-internal readonly union StorageCoverageOutcome(IReadOnlyDictionary<string, long>, BackendUnavailable);
+internal readonly union StorageCoverageOutcome(IReadOnlyDictionary<string, IReadOnlySet<long>>, BackendUnavailable);
 
 internal sealed record StorageSample(DateTimeOffset Boundary, string Month, int Databases, long ByteHours, bool Complete);
 
 internal sealed record StorageRecorded(int Databases, long ByteHours);
-
-internal sealed record StorageContended(string Reason);
 
 internal sealed record StoredDatabase(Ulid ProjectId, Ulid DatabaseId, long Bytes);
 
@@ -47,35 +45,28 @@ internal sealed class StorageOwnership(RegionDirectory regions, ClusterOptions c
 
 internal sealed class StorageLedger(SystemDatabase system)
 {
-    private const string LastScope = "storage-last:";
-
-    private const string RegionLastScope = "storage-region-last:";
-
-    private const string RegionScope = "storage-region:";
-
-    private const string Slot = "-";
-
-    private const string HourMetric = "hour";
-
-    private const string RegionMetric = "storage_hours";
+    private const string CoverPrefix = "storage-cover:";
 
     public static long HourIndex(DateTimeOffset at) => at.ToUnixTimeSeconds() / 3600;
 
-    public async ValueTask<StorageLastHoursOutcome> LastHoursAsync(IReadOnlyList<Ulid> databases, CancellationToken cancellationToken)
+    public async ValueTask<StorageExistingOutcome> ExistingAsync(long hour, string month, IReadOnlyList<DatabaseRecord> databases, CancellationToken cancellationToken)
     {
         if (databases.Count == 0)
         {
-            return new StorageLastHoursOutcome(new Dictionary<Ulid, long>());
+            return new StorageExistingOutcome(new HashSet<Ulid>());
         }
 
-        SqlValue[] arguments = [SqlBuild.Text(Slot), SqlBuild.Text(HourMetric), .. databases.Select(static id => SqlBuild.Text(string.Concat(LastScope, id.ToString())))];
-        var placeholders = string.Join(", ", Enumerable.Repeat("?", databases.Count));
+        SqlValue[] arguments =
+        [
+            SqlBuild.Text(month),
+            .. databases.SelectMany(database => new[] { SqlBuild.Text(UsageMeter.StorageScope(database.ProjectId)), SqlBuild.Text(UsageMeter.StorageMetric(database.Id, hour)) }),
+        ];
+        var pairs = string.Join(", ", Enumerable.Repeat("(?, ?)", databases.Count));
         var outcome = await system.QueryAsync(SqlBuild.Statement(
-            string.Concat("SELECT scope, value FROM usage_counters WHERE month = ? AND metric = ? AND scope IN (", placeholders, ")"), arguments), cancellationToken);
+            string.Concat("SELECT metric FROM usage_counters WHERE month = ? AND (scope, metric) IN (VALUES ", pairs, ")"), arguments), cancellationToken);
         return outcome switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> rows => (IReadOnlyDictionary<Ulid, long>)rows.ToDictionary(static row => Ulid.Parse(row.TextAt(0)[LastScope.Length..], CultureInfo.InvariantCulture),
-                static row => row.IntegerAt(1)),
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => (IReadOnlySet<Ulid>)rows.Select(static row => Ulid.TryParse(row.TextAt(0).Split(':')[0], out var id) ? id : Ulid.Empty).ToHashSet(),
             BackendUnavailable unavailable => unavailable,
         };
     }
@@ -87,62 +78,50 @@ internal sealed class StorageLedger(SystemDatabase system)
             return new StorageRecorded(0, 0);
         }
 
-        List<SqlStatement> statements = [];
-        foreach (var item in stored)
-        {
-            var last = string.Concat(LastScope, item.DatabaseId.ToString());
-            statements.Add(Guarded(UsageMeter.DatabaseScope(item.DatabaseId), month, UsageMetrics.StorageByteHours, item.Bytes, last, hour));
-            statements.Add(Guarded(UsageMeter.ProjectScope(item.ProjectId), month, UsageMetrics.StorageByteHours, item.Bytes, last, hour));
-            statements.Add(Advance(last, hour));
-        }
-
-        var outcome = await system.WriteAsync(statements, ConsistencyMode.Strong, cancellationToken);
+        SqlStatement[] statements = [.. stored.Select(item => Once(UsageMeter.StorageScope(item.ProjectId), month, UsageMeter.StorageMetric(item.DatabaseId, hour), item.Bytes))];
+        var outcome = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {
             SqlWriteResult written => Recorded(written, stored),
-            StateConflict conflict => new StorageContended(conflict.Code),
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
     public async ValueTask<StorageCoverOutcome> CoverAsync(string region, long hour, string month, CancellationToken cancellationToken)
     {
-        var last = string.Concat(RegionLastScope, region);
         var outcome = await system.WriteAsync(
-            [Guarded(string.Concat(RegionScope, region), month, RegionMetric, 1, last, hour), Advance(last, hour)], ConsistencyMode.Strong, cancellationToken);
+            Once(string.Concat(CoverPrefix, region), month, hour.ToString("D10", CultureInfo.InvariantCulture), 1), ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {
             SqlWriteResult => new Completed(),
-            StateConflict conflict => new StorageContended(conflict.Code),
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
     public async ValueTask<StorageCoverageOutcome> CoverageAsync(string month, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            "SELECT scope, value FROM usage_counters WHERE scope >= ?1 AND scope < ?2 AND month = ?3 AND metric = ?4",
-            SqlBuild.Text(RegionScope), SqlBuild.Text("storage-region;"), SqlBuild.Text(month), SqlBuild.Text(RegionMetric)), cancellationToken) switch
+            "SELECT scope, metric FROM usage_counters WHERE scope >= ?1 AND scope < ?2 AND month = ?3",
+            SqlBuild.Text(CoverPrefix), SqlBuild.Text("storage-cover;"), SqlBuild.Text(month)), cancellationToken) switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> rows => (IReadOnlyDictionary<string, long>)rows.ToDictionary(static row => row.TextAt(0)[RegionScope.Length..], static row => row.IntegerAt(1),
-                StringComparer.Ordinal),
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => Coverage(rows),
             BackendUnavailable unavailable => unavailable,
         };
 
-    private static SqlStatement Guarded(string scope, string month, string metric, long value, string last, long hour) => SqlBuild.Statement(
-        "INSERT INTO usage_counters (scope, month, metric, value) SELECT ?1, ?2, ?3, ?4 "
-        + "WHERE NOT EXISTS (SELECT 1 FROM usage_counters WHERE scope = ?5 AND month = ?6 AND metric = ?7 AND value >= ?8) "
-        + "ON CONFLICT (scope, month, metric) DO UPDATE SET value = value + excluded.value",
-        SqlBuild.Text(scope), SqlBuild.Text(month), SqlBuild.Text(metric), SqlBuild.Integer(value), SqlBuild.Text(last), SqlBuild.Text(Slot),
-        SqlBuild.Text(HourMetric), SqlBuild.Integer(hour));
+    private static StorageCoverageOutcome Coverage(IReadOnlyList<IReadOnlyList<SqlValue>> rows) =>
+        new(rows.GroupBy(static row => row.TextAt(0)[CoverPrefix.Length..], StringComparer.Ordinal).ToDictionary(
+            static group => group.Key,
+            static group => (IReadOnlySet<long>)group.Select(static row => long.TryParse(row.TextAt(1), CultureInfo.InvariantCulture, out var hour) ? hour : -1).ToHashSet(),
+            StringComparer.Ordinal));
 
-    private static SqlStatement Advance(string last, long hour) => SqlBuild.Statement(
-        "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?1, ?2, ?3, ?4) "
-        + "ON CONFLICT (scope, month, metric) DO UPDATE SET value = excluded.value WHERE excluded.value > usage_counters.value",
-        SqlBuild.Text(last), SqlBuild.Text(Slot), SqlBuild.Text(HourMetric), SqlBuild.Integer(hour));
+    private static SqlStatement Once(string scope, string month, string metric, long value) => SqlBuild.Statement(
+        "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?, ?, ?, ?) ON CONFLICT (scope, month, metric) DO NOTHING",
+        SqlBuild.Text(scope), SqlBuild.Text(month), SqlBuild.Text(metric), SqlBuild.Integer(value));
 
     private static StorageRecorded Recorded(SqlWriteResult written, IReadOnlyList<StoredDatabase> stored)
     {
-        var fresh = stored.Where((_, index) => written.ResultSets.Count > index * 3 && written.ResultSets[index * 3].RowsAffected > 0).ToArray();
+        var fresh = stored.Where((_, index) => written.ResultSets.Count > index && written.ResultSets[index].RowsAffected > 0).ToArray();
         return new StorageRecorded(fresh.Length, fresh.Sum(static item => item.Bytes));
     }
 }
@@ -183,46 +162,33 @@ internal sealed class StorageSampler(
             }
 
             List<DatabaseRecord> homed = [.. ownership.Homed(page)];
-            var lastOutcome = await ledger.LastHoursAsync([.. homed.Select(static database => database.Id)], cancellationToken);
-            var last = lastOutcome switch
+            var existingOutcome = await ledger.ExistingAsync(hour, month, homed, cancellationToken);
+            var existing = existingOutcome switch
             {
-                IReadOnlyDictionary<Ulid, long> hours => hours,
+                IReadOnlySet<Ulid> found => found,
                 BackendUnavailable => null,
             };
-            if (last is null)
+            if (existing is null)
             {
                 return new BackendUnavailable("the usage store is unavailable; storage was not sampled", "usage_unavailable");
             }
 
-            List<StoredDatabase> due = [.. homed.Where(database => last.GetValueOrDefault(database.Id, long.MinValue) < hour)
+            List<StoredDatabase> due = [.. homed.Where(database => !existing.Contains(database.Id))
                 .Select(database => new StoredDatabase(database.ProjectId, database.Id, checked(Bytes(database.Id) * SlotHours)))];
             complete &= due.All(static item => item.Bytes > 0);
             var recordedOutcome = await ledger.RecordAsync(hour, month, [.. due.Where(static item => item.Bytes > 0)], cancellationToken);
-            var failed = recordedOutcome switch
-            {
-                BackendUnavailable unavailable => unavailable,
-                StorageRecorded or StorageContended => null,
-            };
-            if (failed is not null)
-            {
-                return failed;
-            }
-
             var recorded = recordedOutcome switch
             {
                 StorageRecorded done => done,
-                StorageContended or BackendUnavailable => null,
+                BackendUnavailable => null,
             };
-            if (recorded is { } fresh)
+            if (recorded is null)
             {
-                databases += fresh.Databases;
-                byteHours = checked(byteHours + fresh.ByteHours);
-            }
-            else
-            {
-                complete = false;
+                return new BackendUnavailable("the usage store is unavailable; storage was not fully sampled", "usage_unavailable");
             }
 
+            databases += recorded.Databases;
+            byteHours = checked(byteHours + recorded.ByteHours);
             if (page.Count < CatalogPage)
             {
                 break;
@@ -240,7 +206,6 @@ internal sealed class StorageSampler(
         return covered switch
         {
             Completed => new StorageSample(boundary, month, databases, byteHours, Complete: true),
-            StorageContended => new StorageSample(boundary, month, databases, byteHours, Complete: false),
             BackendUnavailable unavailable => unavailable,
         };
     }

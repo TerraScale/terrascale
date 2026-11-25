@@ -87,6 +87,26 @@ internal static class OrganizationUsage
         UsageJourney.Require(!unsampled.Complete && unsampled.Gaps.SequenceEqual([UsageReports.StorageIncomplete]),
             "a month whose hours were never sampled is not complete: " + unsampled);
 
+        var clock = (UsageJourneyClock)services.GetRequiredService<TimeProvider>();
+        clock.Pin(UsageJourneyClock.Boundary.AddHours(2).AddMinutes(20));
+        if (await sampler.SampleAsync(UsageJourneyClock.Boundary.AddHours(3), cancellationToken) switch { StorageSample taken => taken, BackendUnavailable => null } is not { Complete: true })
+        {
+            throw new InvalidOperationException("a later hour is sampled while an earlier one was missed");
+        }
+
+        var skipped = await ReadAsync(peer, path, cancellationToken);
+        UsageJourney.Require(!skipped.Complete && skipped.Gaps.SequenceEqual([UsageReports.StorageIncomplete]),
+            "a missed earlier hour is incomplete even when a later hour brings the count up to the elapsed hours: " + skipped);
+        if (await sampler.SampleAsync(UsageJourneyClock.Boundary.AddHours(2), cancellationToken) switch { StorageSample taken => taken, BackendUnavailable => null } is not { Complete: true })
+        {
+            throw new InvalidOperationException("the missed hour is sampled late");
+        }
+
+        var filled = await ReadAsync(peer, path, cancellationToken);
+        UsageJourney.Require(filled.Complete && filled.Gaps.Count == 0 && filled.Totals[UsageMetrics.StorageByteHours] > stored.Totals[UsageMetrics.StorageByteHours],
+            "every elapsed hour sampled makes storage complete again: " + filled);
+        clock.Pin(UsageJourneyClock.Boundary);
+
         var future = await ReadAsync(peer, $"/v1/usage/organizations/{first.Organization}?month=9999-12", cancellationToken);
         UsageJourney.Require(future.Complete && future.Totals.All(static metric => metric.Value == 0), "the last representable month has no usage and no elapsed hours: " + future);
 
@@ -113,7 +133,7 @@ internal static class OrganizationUsage
         refusals.Add(await RefusedAsync(keyed, path, HttpStatusCode.Forbidden, "forbidden_caller", cancellationToken));
 
         return string.Create(CultureInfo.InvariantCulture,
-            $"projects=2 requests={metered.Totals[UsageMetrics.Requests]} writes={metered.Totals[UsageMetrics.Writes]} reads={metered.Totals[UsageMetrics.Reads]} complete={metered.Complete} storage counted once per hour, unsampled month incomplete, refusals={string.Join(',', refusals)}");
+            $"projects=2 requests={metered.Totals[UsageMetrics.Requests]} writes={metered.Totals[UsageMetrics.Writes]} reads={metered.Totals[UsageMetrics.Reads]} complete={metered.Complete} storage counted once per hour, unsampled month and missed hour incomplete, refusals={string.Join(',', refusals)}");
     }
 
     private static async Task<UsageTenant> ProjectAsync(HttpClient http, string organization, string name, CancellationToken cancellationToken)

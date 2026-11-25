@@ -122,17 +122,19 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         };
     }
 
-    public static long ExpectedStorageHours(string month, DateTimeOffset asOf)
+    public static IReadOnlyList<long> ExpectedStorageHours(string month, DateTimeOffset asOf)
     {
         var start = DateTimeOffset.ParseExact(string.Concat(month, "-01"), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
         if (start >= asOf)
         {
-            return 0;
+            return [];
         }
 
         var end = start.AddMonths(1);
         var horizon = asOf - SampleGrace < end ? asOf - SampleGrace : end;
-        return horizon > start ? (long)Math.Floor((horizon - start) / StorageSampler.Slot) : 0;
+        var count = horizon > start ? (long)Math.Floor((horizon - start) / StorageSampler.Slot) : 0;
+        var first = StorageLedger.HourIndex(start);
+        return [.. Enumerable.Range(0, (int)count).Select(offset => first + offset)];
     }
 
     private async ValueTask<OrganizationUsageResponse> OrganizationAsync(string organization, Ulid organizationId, string month, DateTimeOffset asOf, CancellationToken cancellationToken)
@@ -140,7 +142,7 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         var coverageOutcome = await ledger.CoverageAsync(month, cancellationToken);
         var coverage = coverageOutcome switch
         {
-            IReadOnlyDictionary<string, long> hours => hours,
+            IReadOnlyDictionary<string, IReadOnlySet<long>> hours => hours,
             BackendUnavailable => null,
         };
         if (coverage is null)
@@ -156,7 +158,7 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         };
     }
 
-    private OrganizationUsageBody Organization(string organization, string month, DateTimeOffset asOf, OrganizationCounters counters, IReadOnlyDictionary<string, long> coverage)
+    private OrganizationUsageBody Organization(string organization, string month, DateTimeOffset asOf, OrganizationCounters counters, IReadOnlyDictionary<string, IReadOnlySet<long>> coverage)
     {
         List<ProjectUsageBody> projects = [.. counters.Projects.Select(static project => ProjectUsageBody.From(project.ProjectId.ToString(), UsageTotalsBody.From(project.Metrics)))];
         List<string> gaps = [];
@@ -176,7 +178,7 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         }
 
         var expected = ExpectedStorageHours(month, asOf);
-        if (ownership.Regions().Any(region => coverage.GetValueOrDefault(region) < expected))
+        if (expected.Count > 0 && ownership.Regions().Any(region => coverage.GetValueOrDefault(region) is not { } covered || !expected.All(covered.Contains)))
         {
             gaps.Add(StorageIncomplete);
         }
@@ -190,20 +192,21 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
             DateTimeStyles.AssumeUniversal, out _) ? month
         : new InvalidInput("month is YYYY-MM", "invalid_month");
 
-    public async ValueTask<UsageOutcome> UsageAsync(string scope, string? month, CancellationToken cancellationToken) =>
+    public async ValueTask<UsageOutcome> UsageAsync(UsageSubject subject, string? month, CancellationToken cancellationToken) =>
         Month(month, time.GetUtcNow()) switch
         {
-            string checkedMonth => await usage.ReadAsync(scope, checkedMonth, cancellationToken) switch
+            string checkedMonth => await usage.ReadAsync(subject, checkedMonth, cancellationToken) switch
             {
-                IReadOnlyDictionary<string, long> metrics => new UsageBody(scope, checkedMonth, metrics),
+                IReadOnlyDictionary<string, long> metrics => new UsageBody(subject.Scope, checkedMonth, metrics),
                 BackendUnavailable unavailable => unavailable,
             },
             InvalidInput invalid => invalid,
         };
 
-    public async ValueTask<AnalyticsOutcome> AnalyticsAsync(string scope, CancellationToken cancellationToken)
+    public async ValueTask<AnalyticsOutcome> AnalyticsAsync(UsageSubject subject, CancellationToken cancellationToken)
     {
-        var monthsOutcome = await usage.MonthsAsync(scope, cancellationToken);
+        ArgumentNullException.ThrowIfNull(subject);
+        var monthsOutcome = await usage.MonthsAsync(subject, cancellationToken);
         var months = monthsOutcome switch
         {
             IReadOnlyList<string> found => found,
@@ -217,13 +220,13 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         List<UsageBody> bodies = [];
         foreach (var month in months.Append(UsageMeter.Month(time.GetUtcNow())).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
-            if (await usage.ReadAsync(scope, month, cancellationToken) switch { IReadOnlyDictionary<string, long> metrics => metrics, BackendUnavailable => null } is { } values)
+            if (await usage.ReadAsync(subject, month, cancellationToken) switch { IReadOnlyDictionary<string, long> metrics => metrics, BackendUnavailable => null } is { } values)
             {
-                bodies.Add(new UsageBody(scope, month, values));
+                bodies.Add(new UsageBody(subject.Scope, month, values));
             }
         }
 
-        return new AnalyticsBody(scope, bodies);
+        return new AnalyticsBody(subject.Scope, bodies);
     }
 
     public static AllowancesBody Allowances() => new([.. Plans.All.Select(static plan => new AllowanceBody(plan, Plans.DatabaseLimit(plan)))]);

@@ -23,7 +23,7 @@ internal sealed class GetDatabaseUsageEndpoint(DatabaseAccess access, UsageRepor
         var outcome = await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken);
         return outcome switch
         {
-            ResolvedDatabase resolved => await reports.UsageAsync(UsageMeter.DatabaseScope(resolved.Database.Id), request.Month, cancellationToken) switch
+            ResolvedDatabase resolved => await reports.UsageAsync(UsageSubject.Database(resolved.Project.Id, resolved.Database.Id), request.Month, cancellationToken) switch
             {
                 UsageBody usage => usage,
                 InvalidInput invalid => invalid,

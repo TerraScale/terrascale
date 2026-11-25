@@ -23,7 +23,7 @@ internal sealed class GetUsageProjectAnalyticsEndpoint(DatabaseAccess access, Us
         var outcome = await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesRead, cancellationToken);
         return outcome switch
         {
-            ResolvedProject resolved => await reports.AnalyticsAsync(UsageMeter.ProjectScope(resolved.Project.Id), cancellationToken) switch
+            ResolvedProject resolved => await reports.AnalyticsAsync(UsageSubject.Project(resolved.Project.Id), cancellationToken) switch
             {
                 AnalyticsBody analytics => analytics,
                 BackendUnavailable unavailable => unavailable,

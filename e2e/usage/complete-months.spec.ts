@@ -30,7 +30,7 @@ test('usage is metered per UTC month, persisted under the month it was recorded 
       + 'read at boundary in 2028-03, invalid month=400, flushed months 2028-01,2028-02,2028-03 passed');
     expect(stdout).toContain('usage sql metering journey: before=2028-03{requests=0,reads=0,writes=0,rows_read=0,rows_written=0,strong_commits=0,storage_byte_hours=0} '
       + 'after=2028-03{requests=4,reads=1,writes=3,rows_read=3,rows_written=4,strong_commits=2,storage_byte_hours=0} refused=400 allowance hobby=1 refusal=409 database_limit');
-    expect(stdout).toContain('usage organization journey: projects=2 requests=5 writes=4 reads=1 complete=True storage counted once per hour, unsampled month incomplete, refusals=400,400,400,400,400,401,403,403');
+    expect(stdout).toContain('usage organization journey: projects=2 requests=5 writes=4 reads=1 complete=True storage counted once per hour, unsampled month and missed hour incomplete, refusals=400,400,400,400,400,401,403,403');
   } finally {
     await rm(data, { recursive: true, force: true });
   }
