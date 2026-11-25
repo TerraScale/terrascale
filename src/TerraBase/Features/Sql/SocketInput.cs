@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraBase.Features.Sql;
 
-internal readonly record struct ArrivedMessage(long Started, long Completed);
+internal readonly record struct ArrivedMessage(long Started, long Completed, long Sequence);
 
 internal sealed class SocketInput(TimeProvider time)
 {
@@ -26,8 +26,9 @@ internal sealed class SocketInput(TimeProvider time)
     private bool _control;
     private bool _invalid;
     private long _arrivedAt;
+    private long _sequence;
 
-    public Action<long, int>? Progress
+    public Action<long, int, long>? Progress
     {
         get;
         set
@@ -37,7 +38,7 @@ internal sealed class SocketInput(TimeProvider time)
                 field = value;
                 if (_messages.TryPeek(out var first))
                 {
-                    field?.Invoke(first.Started, first.Received);
+                    field?.Invoke(first.Started, first.Received, first.Sequence);
                 }
             }
         }
@@ -81,10 +82,10 @@ internal sealed class SocketInput(TimeProvider time)
 
             if (_messages.TryPeek(out var next))
             {
-                Progress?.Invoke(next.Started, next.Received);
+                Progress?.Invoke(next.Started, next.Received, next.Sequence);
             }
 
-            return new ArrivedMessage(message.Started, message.Completed ?? time.GetTimestamp());
+            return new ArrivedMessage(message.Started, message.Completed ?? time.GetTimestamp(), message.Sequence);
         }
     }
 
@@ -115,7 +116,7 @@ internal sealed class SocketInput(TimeProvider time)
                         return;
                     }
 
-                    _current = new Message(_arrivedAt);
+                    _current = new Message(_arrivedAt, ++_sequence);
                     _messages.Enqueue(_current);
                     _message = true;
                 }
@@ -194,7 +195,7 @@ internal sealed class SocketInput(TimeProvider time)
         current.Received += bytes;
         if (_messages.TryPeek(out var first) && ReferenceEquals(first, current))
         {
-            Progress?.Invoke(current.Started, current.Received);
+            Progress?.Invoke(current.Started, current.Received, current.Sequence);
         }
     }
 
@@ -209,9 +210,11 @@ internal sealed class SocketInput(TimeProvider time)
         }
     }
 
-    private sealed class Message(long started)
+    private sealed class Message(long started, long sequence)
     {
         public long Started { get; } = started;
+
+        public long Sequence { get; } = sequence;
 
         public int Received { get; set; }
 

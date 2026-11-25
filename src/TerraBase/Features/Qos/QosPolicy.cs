@@ -45,7 +45,7 @@ internal sealed record Tenant(Ulid OrganizationId, string Plan)
 
     public static Tenant Unowned { get; } = new(Ulid.Empty, UnownedPlan);
 
-    public static Tenant Anonymous { get; } = new(new Ulid([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]), AnonymousPlan);
+    public static Tenant Anonymous { get; } = new(Ulid.MaxValue, AnonymousPlan);
 
     public QosPolicy Policy => QosPolicy.For(Plan);
 

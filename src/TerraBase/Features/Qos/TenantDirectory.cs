@@ -32,7 +32,13 @@ internal sealed class TenantDirectory(CatalogStore catalog)
         var project = await catalog.GetProjectAsync(projectId, cancellationToken);
         return project switch
         {
-            ProjectRecord record when record.OrganizationId == PlatformCatalog.OrganizationId => NoTenant.Instance,
+            ProjectRecord record when record.OrganizationId == PlatformCatalog.OrganizationId => await OwnedAsync(caller, record, cancellationToken) switch
+            {
+                Tenant => NoTenant.Instance,
+                NoTenant none => none,
+                ForeignProject foreign => foreign,
+                BackendUnavailable unavailable => unavailable,
+            },
             ProjectRecord record => await OwnedAsync(caller, record, cancellationToken),
             ResourceNotFound => ForeignProject.Instance,
             BackendUnavailable unavailable => unavailable,

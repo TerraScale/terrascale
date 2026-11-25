@@ -17,13 +17,18 @@ internal sealed class ReceiveDeadline : IDisposable
     private bool _finished;
     private bool _disposed;
 
-    public ReceiveDeadline(TimeProvider time, TimeSpan idle, Func<bool, Task> expire)
+    public ReceiveDeadline(TimeProvider time, TimeSpan idle, Func<bool, Task> expire, (long Started, int Bytes)? progress = null)
     {
         _time = time;
         _expire = expire;
         _armedAt = time.GetTimestamp();
-        _budget = idle < TimeSpan.Zero ? TimeSpan.Zero : idle;
-        _timer = time.CreateTimer(_ => Fire(), null, _budget, Timeout.InfiniteTimeSpan);
+        _budget = idle;
+        if (progress is { } initial)
+        {
+            _ = Advance(initial.Started, initial.Bytes);
+        }
+
+        _timer = time.CreateTimer(_ => Fire(), null, _finished ? Timeout.InfiniteTimeSpan : Due(), Timeout.InfiniteTimeSpan);
     }
 
     public CancellationToken Token => _stop.Token;
@@ -39,20 +44,29 @@ internal sealed class ReceiveDeadline : IDisposable
                 return;
             }
 
-            if (_time.GetElapsedTime(_armedAt, started) > _budget)
-            {
-                _finished = true;
-                _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-                Expiry = ExpireAsync(_partial);
-                return;
-            }
-
-            _partial = true;
-            _armedAt = started;
-            _budget = QosPolicy.MessageBudget(bytes);
-            var remaining = _budget - _time.GetElapsedTime(started);
-            _timer.Change(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+            _timer.Change(Advance(started, bytes) ? Due() : Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
+    }
+
+    private bool Advance(long started, int bytes)
+    {
+        if (_time.GetElapsedTime(_armedAt, started) > _budget)
+        {
+            _finished = true;
+            Expiry = ExpireAsync(_partial);
+            return false;
+        }
+
+        _partial = true;
+        _armedAt = started;
+        _budget = QosPolicy.MessageBudget(bytes);
+        return true;
+    }
+
+    private TimeSpan Due()
+    {
+        var remaining = _budget - _time.GetElapsedTime(_armedAt);
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
     }
 
     public bool Complete()

@@ -55,7 +55,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private Task _pump = Task.CompletedTask;
     private ReceiveDeadline? _waiting;
     private ReceiveDeadline? _inFlight;
-    private (long Started, int Bytes)? _partial;
+    private (long Started, int Bytes, long Sequence)? _partial;
     private long _pendingBytes;
     private int _terminal;
 
@@ -508,7 +508,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                 return null;
             }
 
-            var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp());
+            var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp(), 0);
             return deadline.Complete() ? new SocketMessage(payload, arrived.Started, arrived.Completed) : null;
         }
         finally
@@ -539,11 +539,11 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         return inbox.Reader;
     }
 
-    private void Progressed(long started, int bytes)
+    private void Progressed(long started, int bytes, long sequence)
     {
         lock (_progress)
         {
-            _partial = (started, bytes);
+            _partial = (started, bytes, sequence);
             _inFlight ??= new ReceiveDeadline(time, QosPolicy.MessageBudget(bytes) - time.GetElapsedTime(started), ExpirePartialAsync);
             _inFlight.Progress(started, bytes);
             _waiting?.Progress(started, bytes);
@@ -585,33 +585,29 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         {
             while (await ReadMessageAsync(buffer, MaxFrameBytes, "frames are at most 1 MiB", cancellationToken) is { } payload)
             {
-                (long Started, int Bytes)? settled;
-                lock (_progress)
-                {
-                    settled = _partial;
-                }
-
                 if (!await ArrivedOnTimeAsync())
                 {
                     return;
                 }
 
-                var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp());
+                var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp(), 0);
                 var message = new SocketMessage(payload, arrived.Started, arrived.Completed);
 
-                if (Interlocked.Add(ref _pendingBytes, message.Payload.Length) > MaxPendingBytes || !inbox.TryWrite(message))
+                bool published;
+                lock (_progress)
+                {
+                    published = Interlocked.Add(ref _pendingBytes, message.Payload.Length) <= MaxPendingBytes && inbox.TryWrite(message);
+                    if (published && _partial is { } partial && partial.Sequence == arrived.Sequence)
+                    {
+                        _partial = null;
+                    }
+                }
+
+                if (!published)
                 {
                     MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.PolicyViolation, "too many frames are waiting; wait for answers before sending more");
                     return;
-                }
-
-                lock (_progress)
-                {
-                    if (_partial == settled)
-                    {
-                        _partial = null;
-                    }
                 }
             }
         }
@@ -633,23 +629,21 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private async Task<SocketMessage?> NextAsync(ChannelReader<SocketMessage> inbox, CancellationToken cancellationToken)
     {
-        if (inbox.TryRead(out var ready))
-        {
-            Interlocked.Add(ref _pendingBytes, -ready.Payload.Length);
-            return Volatile.Read(ref _terminal) == 0 ? ready : null;
-        }
-
-        using var deadline = new ReceiveDeadline(time, IdleBudget(), ExpireAsync);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        ReceiveDeadline armed;
         lock (_progress)
         {
-            _waiting = deadline;
-            if (_partial is { } partial)
+            if (inbox.TryRead(out var ready))
             {
-                deadline.Progress(partial.Started, partial.Bytes);
+                Interlocked.Add(ref _pendingBytes, -ready.Payload.Length);
+                return Volatile.Read(ref _terminal) == 0 ? ready : null;
             }
+
+            armed = new ReceiveDeadline(time, IdleBudget(), ExpireAsync, _partial is { } partial ? (partial.Started, partial.Bytes) : null);
+            _waiting = armed;
         }
 
+        using var deadline = armed;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
             if (!await inbox.WaitToReadAsync(linked.Token) || !inbox.TryRead(out var message))
