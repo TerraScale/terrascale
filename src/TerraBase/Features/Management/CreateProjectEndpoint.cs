@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal readonly union CreateProjectResponse(Created<ProjectBody>, InvalidInput, CredentialRejected, ResourceNotFound, StateConflict, BackendUnavailable);
+internal readonly union CreateProjectResponse(Created<ProjectBody>, InvalidInput, CredentialRejected, CallerForbidden, ResourceNotFound, StateConflict, BackendUnavailable);
 
 internal sealed class CreateProjectEndpoint(ManagementService management, CatalogStore catalog, TimeProvider time)
     : Endpoint<NameInput, CreateProjectResponse>
@@ -24,6 +24,11 @@ internal sealed class CreateProjectEndpoint(ManagementService management, Catalo
         NameInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (ManagementService.DirectUser(HttpContext.Caller) is { } forbidden)
+        {
+            return forbidden;
+        }
+
         var outcome = await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken);
         return outcome switch
         {

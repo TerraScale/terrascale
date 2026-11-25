@@ -24,7 +24,7 @@ internal sealed class CreateDatabaseEndpoint(DatabaseAccess access, ManagementSe
     public override async ValueTask<CreateDatabaseResponse> HandleAsync(DatabaseInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var outcome = await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesWrite, cancellationToken);
+        var outcome = await access.CreatorAsync(HttpContext.Caller, request.Project, request.Name, cancellationToken);
         return outcome switch
         {
             ResolvedProject project => await management.CreateDatabaseAsync(project.Project, request, cancellationToken) switch

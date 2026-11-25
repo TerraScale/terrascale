@@ -357,6 +357,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return invalid;
         }
 
+        var delegated = jwt.TryGetPayloadValue<object>("act", out _);
         var projectId = jwt.TryGetPayloadValue<string>("project_id", out var project) ? project : null;
         var database = jwt.TryGetPayloadValue<string>("database", out var narrowed) ? narrowed : null;
         Ulid? projectUlid = projectId is not null && projectId.Length == 26 && Ulid.TryParse(projectId, out var parsed) ? parsed : null;
@@ -377,10 +378,10 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             var scopes = jwt.TryGetPayloadValue<string>("scope", out var scope) && scope.Length <= 4096
                 ? scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToFrozenSet(StringComparer.Ordinal)
                 : FrozenSet<string>.Empty;
-            return new ProjectCaller(subject, scopedProject, organizationUlid, database, scopes);
+            return new ProjectCaller(subject, scopedProject, organizationUlid, database, scopes) { Delegated = delegated };
         }
 
-        return subject.Length == 26 && Ulid.TryParse(subject, out _) ? new UserCaller(subject, ViaOperator: false) : invalid;
+        return subject.Length == 26 && Ulid.TryParse(subject, out _) ? new UserCaller(subject, ViaOperator: false) { Delegated = delegated } : invalid;
     }
 
     private static JsonDocument? Payload(JsonWebToken jwt)
