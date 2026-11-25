@@ -42,7 +42,7 @@ public sealed class ShapeObjectStore : IDisposable
 
     public bool IsConfigured => _client is not null;
 
-    public static string ObjectName(long offset, string digest) => $"{offset:D20}-{digest[..16]}.tbs1";
+    public static string ObjectName(long offset, string digest, string sealer) => $"{offset:D20}-{digest[..16]}-{sealer}.tbs1";
 
     public static string Key(string handle, string objectName) => $"v1/shapes/{handle}/{objectName}";
 

@@ -94,9 +94,9 @@ public sealed class ShapeSealer(
         var offset = shape.Head + 1;
         var chunk = new ShapeChunk(offset, shape.Head, snapshot.Digest, snapshot.Columns, snapshot.Rows, ops);
         var sealedChunk = crypto.Seal(shape.Handle, shape.Database, chunk);
-        var name = ShapeObjectStore.ObjectName(offset, snapshot.Digest);
-        var info = new ShapeChunkInfo(offset, name, sealedChunk.Sha256, sealedChunk.Bytes.LongLength, sealedChunk.Epoch, snapshot.Digest);
         var sealer = Ulid.NewUlid().ToString();
+        var name = ShapeObjectStore.ObjectName(offset, snapshot.Digest, sealer);
+        var info = new ShapeChunkInfo(offset, name, sealedChunk.Sha256, sealedChunk.Bytes.LongLength, sealedChunk.Epoch, snapshot.Digest);
         var guarded = await registry.GuardObjectAsync(shape.Handle, name, sealer, cancellationToken);
         return guarded switch
         {
@@ -119,24 +119,18 @@ public sealed class ShapeSealer(
             var outcome = await registry.CommitAsync(shape, info, snapshot.Rows.Count, sealer, cancellationToken);
             return outcome switch
             {
-                true => await PublishAsync(shape with { Head = offset, HeadDigest = snapshot.Digest }, chunk, sealedChunk.PlainBytes, sealer, cancellationToken),
+                true => await PublishAsync(shape with { Head = offset, HeadDigest = snapshot.Digest }, chunk, sealedChunk.PlainBytes, cancellationToken),
                 false => await RereadAsync(shape, cancellationToken),
                 PlatformUnavailable unavailable => unavailable,
             };
         }
     }
 
-    private async ValueTask<SyncShapeOutcome> PublishAsync(ShapeRecord shape, ShapeChunk chunk, long plainBytes, string sealer, CancellationToken cancellationToken)
+    private async ValueTask<SyncShapeOutcome> PublishAsync(ShapeRecord shape, ShapeChunk chunk, long plainBytes, CancellationToken cancellationToken)
     {
         metrics.ShapeChunk();
         _ = Remember(shape.Handle + ":" + chunk.Offset.ToString(CultureInfo.InvariantCulture), chunk, plainBytes);
-        var pointerName = ShapeRegistry.HeadPointer;
-        var pointer = JsonSerializer.SerializeToUtf8Bytes(
-            new ShapeHeadPointer(shape.Handle, chunk.Offset.ToString(CultureInfo.InvariantCulture), ShapeObjectStore.ObjectName(chunk.Offset, chunk.Digest)),
-            ShapesJsonContext.Default.ShapeHeadPointer);
-        var purge = new List<string> { objects.Url(shape.Handle, pointerName) };
-        var published = await objects.PutAsync(ShapeObjectStore.Key(shape.Handle, pointerName), pointer, "application/json", "public, max-age=1", cancellationToken);
-        var trimmedOutcome = await registry.TrimAsync(shape.Handle, chunk.Offset, sealer, cancellationToken);
+        var trimmedOutcome = await registry.TrimAsync(shape.Handle, chunk.Offset, cancellationToken);
         var trimmed = trimmedOutcome switch
         {
             ShapeChunks { Items: var retired } => retired,
@@ -147,13 +141,8 @@ public sealed class ShapeSealer(
             Forget(shape.Handle + ":" + retired.Offset.ToString(CultureInfo.InvariantCulture));
         }
 
-        await cdn.QueueAsync(purge, cancellationToken);
         notifier.Signal(shape.Database);
-        return published switch
-        {
-            ShapeObjectStored => shape,
-            PlatformUnavailable unavailable => unavailable,
-        };
+        return shape;
     }
 
     public void ForgetShapes(IReadOnlyList<string> handles)

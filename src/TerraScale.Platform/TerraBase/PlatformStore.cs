@@ -91,9 +91,6 @@ public sealed class PlatformSchema(
             PRIMARY KEY (handle, chunk_offset))
         """,
         """
-        CREATE TABLE IF NOT EXISTS platform_shape_database_retirements (database_id TEXT NOT NULL PRIMARY KEY, requested_at INTEGER NOT NULL)
-        """,
-        """
         CREATE TABLE IF NOT EXISTS platform_shape_object_deletions (
             id TEXT NOT NULL PRIMARY KEY, handle TEXT NOT NULL, name TEXT NOT NULL, due_at INTEGER NOT NULL)
         """,

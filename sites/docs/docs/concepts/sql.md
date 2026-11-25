@@ -104,6 +104,7 @@ A `where` clause may use the table's columns, literals, operators, `CASE`, `CAST
 `ifnull`, `iif`, `nullif`, `length`, `octet_length`, `lower`, `upper`, `trim`, `ltrim`, `rtrim`, `substr`, `substring`, `instr`, `round`,
 `ceil`, `ceiling`, `floor`, `sign`, `typeof`, `min`, `max`, `likely`, `unlikely`, `likelihood`, `like`, `glob`, `date`, `time`, `datetime`,
 `julianday`, `unixepoch`, `strftime`, `json_extract`, `json_type`, `json_valid` and `json_array_length`; anything else answers 400 `unsafe_where`.
+A shape that nobody reads for a day is retired with its retained changes; the next read starts a fresh snapshot under the same handle.
 
 ```jsx
 import { useQuery } from "@terrascale/sdk/react";

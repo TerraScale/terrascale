@@ -222,8 +222,6 @@ public sealed class ShapeMaterializerService(
             SqlFailure { Error.SqlState: "42P01" or "42703" } failure =>
                 Retire(shape.Handle, failure.Error.Message, await registry.RetireShapeAsync(shape.Handle, cancellationToken)),
             SqlFailure failure => failure.Error.Message,
-            PlatformNotFound { Code: "unknown_database" } missing =>
-                Retire(shape.Database.ToString(), missing.Message ?? "the database no longer exists", await registry.RetireDatabaseAsync(shape.Database, cancellationToken)),
             PlatformNotFound missing => missing.Message ?? "the database no longer exists",
             PlatformUnavailable unavailable => unavailable.Message,
         };
@@ -238,6 +236,11 @@ public sealed class ShapeMaterializerService(
 
     private string? Retired(string subject, string reason, ShapeRetirement retired)
     {
+        if (retired.Handles.Count == 0)
+        {
+            return null;
+        }
+
         sealer.ForgetShapes(retired.Handles);
         var handles = retired.Handles.ToHashSet(StringComparer.Ordinal);
         Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
@@ -261,6 +264,11 @@ public sealed class ShapeMaterializerService(
             {
                 logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");
             }
+        }
+
+        if (Retire("idle shapes", $"not read for {ShapeRegistry.KeptFor}", await registry.RetireIdleAsync(cancellationToken)) is { } idle)
+        {
+            logger.ZLogWarning($"Idle shapes were not retired: {idle}");
         }
 
         if (await sealer.DrainAsync(cancellationToken) is { } undrained)

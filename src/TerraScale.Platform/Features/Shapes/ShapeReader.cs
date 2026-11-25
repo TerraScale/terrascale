@@ -306,13 +306,12 @@ public sealed class ShapeReader(
             {
                 ResolvedShape resolved => resolved,
                 PlatformUnauthorized unauthorized => unauthorized,
-                PlatformNotFound missing => missing,
                 PlatformUnavailable unavailable => unavailable,
             };
         }
     }
 
-    private readonly union RegisterResolvedShapeOutcome(ResolvedShape, PlatformUnauthorized, PlatformNotFound, PlatformUnavailable);
+    private readonly union RegisterResolvedShapeOutcome(ResolvedShape, PlatformUnauthorized, PlatformUnavailable);
 
     private async ValueTask<RegisterResolvedShapeOutcome> RegisterAsync(
         ShapeRouteRequest route,
@@ -335,7 +334,6 @@ public sealed class ShapeReader(
         return outcome switch
         {
             ShapeRecord saved => await SyncAsync(saved),
-            PlatformNotFound missing => missing,
             PlatformUnavailable unavailable => unavailable,
         };
 
