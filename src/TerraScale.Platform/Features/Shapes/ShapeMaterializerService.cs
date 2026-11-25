@@ -266,11 +266,6 @@ public sealed class ShapeMaterializerService(
             }
         }
 
-        if (Retire("idle shapes", $"not read for {ShapeRegistry.KeptFor}", await registry.RetireIdleAsync(cancellationToken)) is { } idle)
-        {
-            logger.ZLogWarning($"Idle shapes were not retired: {idle}");
-        }
-
         if (await sealer.DrainAsync(cancellationToken) is { } undrained)
         {
             logger.ZLogWarning($"Shape object cleanup deferred: {undrained}");

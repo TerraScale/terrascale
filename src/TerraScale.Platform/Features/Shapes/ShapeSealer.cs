@@ -120,7 +120,17 @@ public sealed class ShapeSealer(
             return outcome switch
             {
                 true => await PublishAsync(shape with { Head = offset, HeadDigest = snapshot.Digest }, chunk, sealedChunk.PlainBytes, cancellationToken),
-                false => await RereadAsync(shape, cancellationToken),
+                false => await AbandonAsync(),
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+
+        async ValueTask<SyncShapeOutcome> AbandonAsync()
+        {
+            var requeued = await registry.GuardObjectAsync(shape.Handle, name, Ulid.NewUlid().ToString(), cancellationToken);
+            return requeued switch
+            {
+                ShapeDeletionsUpdated => await RereadAsync(shape, cancellationToken),
                 PlatformUnavailable unavailable => unavailable,
             };
         }

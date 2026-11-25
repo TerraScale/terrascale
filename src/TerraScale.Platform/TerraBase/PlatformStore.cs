@@ -94,7 +94,6 @@ public sealed class PlatformSchema(
         CREATE TABLE IF NOT EXISTS platform_shape_object_deletions (
             id TEXT NOT NULL PRIMARY KEY, handle TEXT NOT NULL, name TEXT NOT NULL, due_at INTEGER NOT NULL, claimed INTEGER NOT NULL DEFAULT 0)
         """,
-        "CREATE UNIQUE INDEX IF NOT EXISTS platform_shapes_shape_id ON platform_shapes (shape_id)",
     ];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

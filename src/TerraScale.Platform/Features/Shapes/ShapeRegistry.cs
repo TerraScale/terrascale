@@ -41,12 +41,10 @@ public readonly union UpdateShapeDeletionsOutcome(ShapeDeletionsUpdated, Platfor
 public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider)
 {
     public const long RetainedChunks = 128;
-    public const int RetireBatch = 128;
     public static readonly TimeSpan ActiveFor = TimeSpan.FromHours(1);
-    public static readonly TimeSpan KeptFor = TimeSpan.FromDays(1);
     private const string PointerObject = "head.json";
     private const int DatabasePage = 1000;
-    private static readonly TimeSpan ObjectSettle = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan ObjectSettle = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RolloutGrace = TimeSpan.FromDays(1);
 
     private const string RecordColumns =
@@ -64,7 +62,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
                 "INSERT INTO platform_shapes (handle, shape_id, organization_id, project_id, database_id, project_route, database_route, table_name, "
                 + "where_clause, columns, viewer_key, head, head_digest, sealer, owner, lease_until, last_read_at, created_at) "
                 + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', '', 0, ?, ?) "
-                + "ON CONFLICT (shape_id) DO UPDATE SET last_read_at = max(last_read_at, excluded.last_read_at), "
+                + "ON CONFLICT (handle) DO UPDATE SET last_read_at = max(last_read_at, excluded.last_read_at), "
                 + "project_route = excluded.project_route, database_route = excluded.database_route",
                 handle,
                 SqlValues.Text(shape.ShapeId),
@@ -79,7 +77,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
                 SqlValues.Text(shape.ViewerKey),
                 SqlValues.Number(now),
                 SqlValues.Number(now)),
-            SqlValues.Statement($"SELECT {RecordColumns} FROM platform_shapes WHERE shape_id = ?", SqlValues.Text(shape.ShapeId)),
+            SqlValues.Statement($"SELECT {RecordColumns} FROM platform_shapes WHERE handle = ?", handle),
         ];
         var outcome = await store.ExecuteAsync(statements, SqlContext.Fast, cancellationToken);
         return outcome switch
@@ -285,12 +283,6 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
 
     public ValueTask<RetireShapeOutcome> RetireShapeAsync(string handle, CancellationToken cancellationToken) =>
         RetireAsync("handle = ?", [SqlValues.Text(handle)], cancellationToken);
-
-    public ValueTask<RetireShapeOutcome> RetireIdleAsync(CancellationToken cancellationToken) =>
-        RetireAsync(
-            "handle IN (SELECT handle FROM platform_shapes WHERE last_read_at < ? ORDER BY handle LIMIT ?)",
-            [SqlValues.Number((timeProvider.GetUtcNow() - KeptFor).UnixMs()), SqlValues.Number(RetireBatch)],
-            cancellationToken);
 
     public async ValueTask<DueShapeDeletionsOutcome> DueDeletionsAsync(string after, int limit, CancellationToken cancellationToken)
     {

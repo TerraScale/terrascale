@@ -172,7 +172,7 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
     public (string Handle, string ShapeId) Lineage(Ulid organization, Ulid project, Ulid database, string viewerKey, IReadOnlyList<string> columns)
     {
         var fields = string.Join('\0', organization, project, database, Table, Encoded(Where), Encoded(Columns), viewerKey, string.Join(',', columns));
-        return ("h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Hash("TB-SHAPE-V4", fields, 16));
+        return ("h1-" + Hash("TB-SHAPE-HANDLE-V4", fields, 8), Hash("TB-SHAPE-V4", fields, 16));
     }
 
     private static string Encoded(string? value) => value is null ? "-" : "=" + value;

@@ -33,6 +33,8 @@ public sealed class ShapeObjectStore : IDisposable
         _client = new AmazonS3Client(new BasicAWSCredentials(shapes.AccessKeyId, shapes.SecretAccessKey), new AmazonS3Config
         {
             ServiceURL = shapes.Endpoint.AbsoluteUri,
+            Timeout = TimeSpan.FromSeconds(30),
+            MaxErrorRetry = 2,
             AuthenticationRegion = "auto",
             ForcePathStyle = true,
             RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
