@@ -271,11 +271,11 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         }
 
         var row = await this.ReadAsync(keyId, cancellationToken) is { } found
-            ? await data.ReadAsync(connection => connection.QuerySingleAsync<KeyScope>(new CommandDefinition(
+            ? await data.ReadAsync(connection => connection.QuerySingleAsync<KeyScope>(
                 """
                 SELECT EXISTS (SELECT 1 FROM organizations WHERE id = @organizationId) AS organization,
                     (SELECT organization_id FROM projects WHERE id = @projectId) AS project_organization
-                """, new { organizationId, projectId }, cancellationToken: cancellationToken)), cancellationToken) with
+                """, new { organizationId, projectId }), cancellationToken) with
             { Key = found }
             : null;
         if (row?.Key is not { } key)
@@ -379,8 +379,8 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             ?? throw PlatformDirectory.Conflict("authentication_conflict", "This sign-in lost a concurrent change in another region. Sign in again before issuing an API key secret.");
 
     private Task<ApiKeyRecord?> ReadAsync(string keyId, CancellationToken cancellationToken) =>
-        data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ApiKeyRecord>(new CommandDefinition(
-            "SELECT * FROM api_keys WHERE id = @keyId AND instance_id = @Instance", new { keyId, Instance }, cancellationToken: cancellationToken)), cancellationToken);
+        data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ApiKeyRecord>(
+            "SELECT * FROM api_keys WHERE id = @keyId AND instance_id = @Instance", new { keyId, Instance }), cancellationToken);
 
     private async Task<(string Role, Change[] Assertions)> AuthorizeAsync(UserRecord caller, string organizationId, string? projectId, CancellationToken cancellationToken)
     {

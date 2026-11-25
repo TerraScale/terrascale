@@ -41,7 +41,7 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
     public async Task<SchemaUpgrade> UpgradeAsync(CancellationToken cancellationToken)
     {
         await using var connection = await connections.OpenAsync(cancellationToken);
-        var journal = await ExecuteAsync(connection, CreateJournal, null, "schema journal", cancellationToken) switch
+        var journal = await ExecuteAsync(() => connection.ExecuteAsync(CreateJournal), "schema journal", cancellationToken) switch
         {
             AuthCompleted => await ChecksumColumnAsync(connection, cancellationToken),
             AuthUnavailable unavailable => unavailable,
@@ -78,7 +78,7 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
             return new AuthCompleted();
         }
 
-        var added = await ExecuteAsync(connection, AddChecksumColumn, null, "schema journal checksum", cancellationToken);
+        var added = await ExecuteAsync(() => connection.ExecuteAsync(AddChecksumColumn), "schema journal checksum", cancellationToken);
         return added switch
         {
             AuthCompleted or SchemaScriptChanged => added,
@@ -95,7 +95,7 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
 
         foreach (var script in Scripts.Where(script => journal.TryGetValue(script.Name, out var checksum) && checksum is null))
         {
-            var backfilled = await ExecuteAsync(connection, RecordChecksum, new { name = script.Name, checksum = script.Checksum }, script.Name, cancellationToken);
+            var backfilled = await ExecuteAsync(() => connection.ExecuteAsync(RecordChecksum, new { name = script.Name, checksum = script.Checksum }), script.Name, cancellationToken);
             var outcome = backfilled switch
             {
                 AuthCompleted => (SchemaUpgrade?)null,
@@ -146,8 +146,8 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
         foreach (var script in Scripts.Where(script => !applied.ContainsKey(script.Name)))
         {
             var sql = script.Contents.TrimEnd().TrimEnd(';') + ";\n" + RecordScript;
-            var appliedScript = await ExecuteAsync(connection, sql, new { name = script.Name, applied = clock.GetUtcNow(), checksum = script.Checksum }, script.Name,
-                cancellationToken);
+            var appliedScript = await ExecuteAsync(() => connection.ExecuteAsync(sql, new { name = script.Name, applied = clock.GetUtcNow(), checksum = script.Checksum }),
+                script.Name, cancellationToken);
             var refused = appliedScript switch
             {
                 AuthCompleted => (SchemaUpgrade?)null,
@@ -165,11 +165,11 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
         return new AuthCompleted();
     }
 
-    private async Task<SchemaUpgrade> ExecuteAsync(DbConnection connection, string sql, object? parameters, string step, CancellationToken cancellationToken)
+    private async Task<SchemaUpgrade> ExecuteAsync(Func<Task<int>> statement, string step, CancellationToken cancellationToken)
     {
         try
         {
-            await connection.ExecuteAsync(sql, parameters);
+            await statement();
             return new AuthCompleted();
         }
         catch (TerraBaseException failure) when (!cancellationToken.IsCancellationRequested)

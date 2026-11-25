@@ -1179,7 +1179,7 @@ paths:
         revocation reached that replica, and a completed check's answer is reused for at most 1 second. 401
         key_revoked, key_expired or invalid_token; 429 rate_limited past 100 checks a second (bursts of 200) or 32
         concurrent checks from one address (IPv6 per /64), counted before the token is verified, or while 16,384
-        other addresses are active; 503 when storage does not answer within 5 seconds, too many checks are in
+        other addresses are active; 503 when storage does not answer within 10 seconds, too many checks are in
         flight, or 16,384 distinct key tokens are being checked.
       security:
         - apiKeyToken: []
