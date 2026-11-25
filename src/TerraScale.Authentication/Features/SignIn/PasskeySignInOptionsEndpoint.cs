@@ -46,13 +46,19 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
 
     private async Task<UserRecord?> IdentifiedAsync(string tenant, SignInForm form, CancellationToken cancellationToken)
     {
-        if (form.Challenge is { Length: > 0 } sealedChallenge)
+        if (Users.NormalizeEmail(form.Email) is not { } email)
         {
-            return (await mfa.ChallengedAsync(tenant, sealedChallenge, "verification", cancellationToken))?.User;
+            return null;
         }
 
-        return Users.NormalizeEmail(form.Email) is { } email
-            && await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is { User: var user }
+        if (form.Challenge is { Length: > 0 } sealedChallenge)
+        {
+            return await mfa.ChallengedAsync(tenant, sealedChallenge, "verification", cancellationToken) is { User: var challenged }
+                && Users.NormalizeEmail(challenged.Email) == email
+                    ? challenged : null;
+        }
+
+        return await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is { User: var user }
             && Users.NormalizeEmail(user.Email) == email
                 ? user : null;
     }

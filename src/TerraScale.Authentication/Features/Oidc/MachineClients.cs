@@ -72,12 +72,13 @@ internal static class MachineClients
 
     public static async Task<IResult> GrantAsync(HttpContext context, OpenIddictRequest request, OidcApplication application, CancellationToken cancellationToken)
     {
-        if (Policy(application) is not { } policy || application.ClientType != ClientTypes.Confidential)
+        if (Policy(application) is not { } policy || application.ClientType != ClientTypes.Confidential
+            || application is not { InstanceId: { } instanceId, ClientId: { } clientId })
         {
             return OidcResults.Forbid(OidcErrors.UnauthorizedClient, "Only a machine app can use client_credentials.");
         }
 
-        if (await context.RequestServices.GetRequiredService<AttemptLimiter>().AcquireAsync(application.InstanceId!, "machine-token-client", application.ClientId!,
+        if (await context.RequestServices.GetRequiredService<AttemptLimiter>().AcquireAsync(instanceId, "machine-token-client", clientId,
             1000, TimeSpan.FromMinutes(1), cancellationToken) is { } wait)
         {
             return HostedAuth.TooMany(wait);

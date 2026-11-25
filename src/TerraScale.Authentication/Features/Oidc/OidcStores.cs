@@ -49,7 +49,7 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
     public async ValueTask UpdateAsync(OidcApplication application, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(application);
-        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
+        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, StoredId(application)));
         if (!await data.SaveAsync(Change.Update(application), cancellationToken))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
@@ -59,12 +59,15 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
     public async ValueTask DeleteAsync(OidcApplication application, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(application);
-        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
+        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, StoredId(application)));
         if (!await data.SaveAsync(Change.Delete(application), cancellationToken))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
         }
     }
+
+    private static string StoredId(OidcApplication application) =>
+        application.Id is { } id ? id : throw new InvalidOperationException("A stored client has no id.");
 
     public async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
     {

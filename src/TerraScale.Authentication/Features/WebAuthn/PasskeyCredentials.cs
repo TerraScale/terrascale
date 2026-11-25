@@ -191,7 +191,8 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             AllowedCredentials = [.. entries.Select(entry => new Fido2NetLib.Objects.PublicKeyCredentialDescriptor(Base64UrlDecode(entry.Value.CredentialId)))],
             UserVerification = Fido2NetLib.Objects.UserVerificationRequirement.Required,
         });
-        var challenge = new PasskeySignInChallenge(AuthIds.New(), clock.GetUtcNow() + ChallengeLifetime, assertion.ToJson());
+        var challenge = new PasskeySignInChallenge(AuthIds.New(), clock.GetUtcNow() + ChallengeLifetime, assertion.ToJson(),
+            identified?.Id, identified?.AuthEpoch, identified?.AuthStamp);
         return (assertion, SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, WebAuthnJson.Default.PasskeySignInChallenge),
             Context(instanceId)));
     }
@@ -217,7 +218,8 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         if (await credentials.IsClaimedAsync(instanceId, completion, cancellationToken)
             || await this.FindAsync(instanceId, credentialId, cancellationToken) is not { } entry
             || await users.GetAsync(instanceId, entry.Value.UserId, cancellationToken) is not { Disabled: false } user
-            || Users.NormalizeEmail(user.Email) is not { } owner || owner != Users.NormalizeEmail(address))
+            || Users.NormalizeEmail(user.Email) is not { } owner || owner != Users.NormalizeEmail(address)
+            || !Unchanged(challenge, user))
         {
             return null;
         }
@@ -246,6 +248,10 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             ? user with { MultiFactor = true, MfaMethod = "passkey", AuthenticationBindings = [completion] }
             : null;
     }
+
+    private static bool Unchanged(PasskeySignInChallenge challenge, UserRecord user) => challenge.UserId is { } bound
+        ? bound == user.Id && challenge.AuthEpoch == user.AuthEpoch && challenge.AuthStamp == user.AuthStamp
+        : Ulid.TryParse(challenge.Id, out var issued) && user.AuthStamp is { } current && Ulid.TryParse(current, out var stamp) && stamp.Time <= issued.Time;
 
     internal static AuthForbidden DeniedEnroll() => new("The passkey registration failed verification; start again.", "passkey_denied");
 
@@ -326,7 +332,10 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
 internal sealed record PasskeyChallenge(string Id, string UserId, long AuthEpoch, string AuthStamp, DateTimeOffset ExpiresAt, string OptionsJson);
 
-internal sealed record PasskeySignInChallenge(string Id, DateTimeOffset ExpiresAt, string OptionsJson);
+internal sealed record PasskeySignInChallenge(string Id, DateTimeOffset ExpiresAt, string OptionsJson,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? UserId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? AuthEpoch = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AuthStamp = null);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     RespectRequiredConstructorParameters = true)]

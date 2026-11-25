@@ -417,6 +417,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
                 || (!passcode.ResetsAuthentication && purpose is not PasscodePurpose.PasswordReset
                     && !await credentials.AreCurrentAsync(instanceId, passcode.IssuanceBindings, cancellationToken)))
             {
+                await this.DecoyProofAsync(instanceId, key, code, cancellationToken);
                 return null;
             }
 
@@ -500,11 +501,17 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         await data.ReadAsync(connection => connection.QueryAsync<string>(
             "SELECT subject FROM provider_links WHERE user_id = @key", new { key }), cancellationToken);
         await this.ReadAsync(instanceId, key, cancellationToken);
-        await credentials.AreCurrentAsync(instanceId, [Credentials.UserState(key, key)], cancellationToken);
-        _ = Tokens.FixedTimeEquals(this.Digest(instanceId, key, code), DecoyDigest);
-        await data.ReadAsync(connection => connection.ExecuteAsync(
-            "UPDATE passcodes SET failed_attempts = failed_attempts + 1 WHERE instance_id = @instanceId AND \"key\" = @key", new { instanceId, key }), cancellationToken);
+        await this.DecoyProofAsync(instanceId, key, code, cancellationToken);
         return null;
+    }
+
+    private async Task DecoyProofAsync(string instanceId, string key, string code, CancellationToken cancellationToken)
+    {
+        var decoy = AuthIds.Derived(instanceId, "passcode-decoy-proof", key);
+        await credentials.AreCurrentAsync(instanceId, [Credentials.UserState(decoy, decoy)], cancellationToken);
+        _ = Tokens.FixedTimeEquals(this.Digest(instanceId, decoy, code), DecoyDigest);
+        await data.ReadAsync(connection => connection.ExecuteAsync(
+            "UPDATE passcodes SET failed_attempts = failed_attempts + 1 WHERE instance_id = @instanceId AND \"key\" = @decoy", new { instanceId, decoy }), cancellationToken);
     }
 
     private string Digest(string instanceId, string userId, string code) =>
