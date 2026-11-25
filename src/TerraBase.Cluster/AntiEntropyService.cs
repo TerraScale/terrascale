@@ -282,6 +282,11 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
 
     private sealed record PeerSyncResult(int Fetched, int Applied, IReadOnlyList<string> Failures);
 
+    private const long CatchUpResponseBytes = QuicProtocol.MaxPayloadBytes / 2;
+
+    private static long EncodedSize(CommitMetadata commit) =>
+        commit.DeltaPayload.Length + (commit.OriginRegion.Length * 4L) + (commit.Bookmark.Entries.Count * 64L) + 96;
+
     private async ValueTask<QuicHandlerOutcome<CatchUpResponseMessage>> HandleCatchUpAsync(QuicCallContext context, CatchUpRequestMessage message, CancellationToken cancellationToken)
     {
         if (!topology.IsPeer(context, message.RequesterNodeId))
@@ -313,6 +318,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
                 .Where(entry => entry.Value > message.Have.Get(entry.Key))
                 .ToArray();
             List<CommitMetadata> entries = [];
+            long bytes = 0;
             var more = false;
             QuicRemoteError? refusal = null;
             for (var index = 0; index < lagging.Length; index++)
@@ -351,8 +357,25 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
                     CommitLogPage served => served.Entries,
                     CommitLogGap or StorageBusy => [],
                 };
-                entries.AddRange(page);
-                more |= page.Count > 0 && page[^1].Sequence < sequence;
+                var taken = 0;
+                foreach (var commit in page)
+                {
+                    var size = EncodedSize(commit);
+                    if (entries.Count > 0 && bytes + size > CatchUpResponseBytes)
+                    {
+                        break;
+                    }
+
+                    entries.Add(commit);
+                    bytes += size;
+                    taken++;
+                }
+
+                more |= taken < page.Count || (page.Count > 0 && page[^1].Sequence < sequence);
+                if (taken < page.Count)
+                {
+                    break;
+                }
             }
 
             return entries.Count == 0 && refusal is not null

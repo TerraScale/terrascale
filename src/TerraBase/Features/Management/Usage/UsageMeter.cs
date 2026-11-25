@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using TerraBase.Cluster;
 using TerraBase.Engine;
 using TerraBase.Hosting;
@@ -14,7 +14,7 @@ internal readonly union UsageMonthsOutcome(IReadOnlyList<string>, BackendUnavail
 
 internal readonly union OrganizationCountersOutcome(OrganizationCounters, BackendUnavailable);
 
-internal sealed record OrganizationCounters(IReadOnlyList<ProjectCounters> Projects, bool Truncated, bool Dropped);
+internal sealed record OrganizationCounters(IReadOnlyList<ProjectCounters> Projects, bool Truncated, bool Dropped, IReadOnlyDictionary<string, DateTimeOffset> Writers);
 
 internal sealed record ProjectCounters(Ulid ProjectId, IReadOnlyDictionary<string, long> Metrics);
 
@@ -50,13 +50,17 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
 {
     private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(10);
 
+    private static readonly TimeSpan BatchRetention = TimeSpan.FromMinutes(1);
+
     private const int OrganizationProjectLimit = 1000;
 
-    private const int RetainedBatches = 64;
-
-    private const string BatchSlot = "-";
+    private const string WriterSlot = "-";
 
     private const string BatchMetric = "batch";
+
+    private const string HeartbeatMetric = "at";
+
+    private const string WriterPrefix = "flush:";
 
     private const string BatchRow = "#batch";
 
@@ -66,30 +70,31 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
 
     private const string DroppedRow = "#dropped";
 
+    private const string WriterRow = "#writer";
+
     private const string DroppedScope = "usage-dropped";
 
     private const int MaxPendingCounters = 100_000;
 
     private const int MaxBatchCounters = 1000;
 
-    private readonly ConcurrentDictionary<(string Scope, string Month, string Metric), long> _pending = new();
+    private readonly Dictionary<(string Scope, string Month, string Metric), long> _pending = [];
+    private readonly HashSet<string> _droppedMonths = new(StringComparer.Ordinal);
     private readonly List<FlushBatch> _batches = [];
     private readonly Lock _gate = new();
-    private readonly ConcurrentDictionary<string, byte> _droppedMonths = new(StringComparer.Ordinal);
     private readonly Counter<long> _recorded = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.usage.recorded");
     private readonly Counter<long> _dropped = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.usage.dropped");
-    private long _pendingCounters;
+    private Task _flushing = Task.CompletedTask;
     private long _committed;
+    private long _evicted;
     private long _sequence;
     private bool _watermarkLoaded;
-    private CommitMetadata? _unconfirmed;
-    private volatile bool _flushFailing;
+    private volatile CommitMetadata? _unconfirmed;
+    private volatile bool _lastFailed;
 
-    public bool FlushFailing => _flushFailing;
+    public bool FlushFailing => _lastFailed || _unconfirmed is not null;
 
-    public bool DroppedLocally(string month) => _droppedMonths.ContainsKey(month);
-
-    private string BatchScope => string.Concat("flush:", cluster.NodeId);
+    private string WriterScope => string.Concat(WriterPrefix, cluster.NodeId);
 
     public static string DatabaseScope(Ulid databaseId) => string.Concat("db:", databaseId.ToString());
 
@@ -109,33 +114,25 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
         }
 
         var month = Month(time.GetUtcNow());
-        Add((DatabaseScope(databaseId), month, metric), value);
-        Add((ProjectScope(projectId), month, metric), value);
-        _recorded.Add(value, new KeyValuePair<string, object?>("metric", metric));
-    }
-
-    private void Add((string Scope, string Month, string Metric) key, long value)
-    {
-        if (_pending.TryGetValue(key, out _))
+        var database = (DatabaseScope(databaseId), month, metric);
+        var project = (ProjectScope(projectId), month, metric);
+        bool admitted;
+        lock (_gate)
         {
-            _pending.AddOrUpdate(key, value, (_, current) => current + value);
-            return;
+            var growth = (_pending.ContainsKey(database) ? 0 : 1) + (_pending.ContainsKey(project) ? 0 : 1);
+            admitted = _pending.Count + growth <= MaxPendingCounters;
+            if (admitted)
+            {
+                CollectionsMarshal.GetValueRefOrAddDefault(_pending, database, out _) += value;
+                CollectionsMarshal.GetValueRefOrAddDefault(_pending, project, out _) += value;
+            }
+            else
+            {
+                _droppedMonths.Add(month);
+            }
         }
 
-        if (Interlocked.Read(ref _pendingCounters) >= MaxPendingCounters)
-        {
-            _droppedMonths.TryAdd(key.Month, 0);
-            _dropped.Add(value, new KeyValuePair<string, object?>("metric", key.Metric));
-            return;
-        }
-
-        if (_pending.TryAdd(key, value))
-        {
-            Interlocked.Increment(ref _pendingCounters);
-            return;
-        }
-
-        _pending.AddOrUpdate(key, value, (_, current) => current + value);
+        (admitted ? _recorded : _dropped).Add(value, new KeyValuePair<string, object?>("metric", metric));
     }
 
     public async ValueTask<OrganizationCountersOutcome> OrganizationAsync(Ulid organizationId, string month, CancellationToken cancellationToken)
@@ -146,9 +143,11 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
             + "UNION ALL SELECT substr(s.scope, 9), ?4, sum(s.value) FROM usage_counters AS s WHERE s.month = ?3 "
             + "AND s.scope IN (SELECT 'storage:' || id FROM projects WHERE organization_id = ?1 ORDER BY id LIMIT ?2) GROUP BY s.scope "
             + "UNION ALL SELECT ?5, ?5, value FROM usage_counters WHERE scope = ?6 AND month = ?7 AND metric = ?8 "
-            + "UNION ALL SELECT ?9, ?9, count(*) FROM usage_counters WHERE scope = ?10 AND month = ?3",
+            + "UNION ALL SELECT ?9, ?9, count(*) FROM usage_counters WHERE scope = ?10 AND month = ?3 "
+            + "UNION ALL SELECT ?11, scope, value FROM usage_counters WHERE scope >= ?12 AND scope < ?13 AND month = ?7 AND metric = ?14",
             SqlBuild.Id(organizationId), SqlBuild.Integer(OrganizationProjectLimit + 1), SqlBuild.Text(month), SqlBuild.Text(StorageRow), SqlBuild.Text(BatchRow),
-            SqlBuild.Text(BatchScope), SqlBuild.Text(BatchSlot), SqlBuild.Text(BatchMetric), SqlBuild.Text(DroppedRow), SqlBuild.Text(DroppedScope)), cancellationToken);
+            SqlBuild.Text(WriterScope), SqlBuild.Text(WriterSlot), SqlBuild.Text(BatchMetric), SqlBuild.Text(DroppedRow), SqlBuild.Text(DroppedScope),
+            SqlBuild.Text(WriterRow), SqlBuild.Text(WriterPrefix), SqlBuild.Text("flush;"), SqlBuild.Text(HeartbeatMetric)), cancellationToken);
         return outcome switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Organization(rows, month),
@@ -163,13 +162,11 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
             "SELECT metric, value FROM usage_counters WHERE scope = ?1 AND month = ?2 "
             + "UNION ALL SELECT ?3, value FROM usage_counters WHERE scope = ?4 AND month = ?5 AND metric = ?6 "
             + "UNION ALL SELECT ?7, coalesce(sum(value), 0) FROM usage_counters WHERE scope = ?8 AND month = ?2 AND metric >= ?9 AND metric < ?10",
-            SqlBuild.Text(subject.Scope), SqlBuild.Text(month), SqlBuild.Text(BatchRow), SqlBuild.Text(BatchScope), SqlBuild.Text(BatchSlot), SqlBuild.Text(BatchMetric),
+            SqlBuild.Text(subject.Scope), SqlBuild.Text(month), SqlBuild.Text(BatchRow), SqlBuild.Text(WriterScope), SqlBuild.Text(WriterSlot), SqlBuild.Text(BatchMetric),
             SqlBuild.Text(StorageRow), SqlBuild.Text(subject.StorageScope), SqlBuild.Text(subject.StorageFrom), SqlBuild.Text(subject.StorageTo)), cancellationToken);
         return outcome switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> rows => (IReadOnlyDictionary<string, long>)Totals(
-                rows.Where(static row => row.TextAt(0) != BatchRow).Select(static row => (row.TextAt(0), row.IntegerAt(1))),
-                Unflushed(month, Committed(rows.Where(static row => row.TextAt(0) == BatchRow).Select(static row => row.IntegerAt(1)))), subject.Scope),
+            IReadOnlyList<IReadOnlyList<SqlValue>> rows => Subject(rows, subject, month),
             BackendUnavailable unavailable => unavailable,
         };
     }
@@ -203,7 +200,22 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
         await FlushAsync(cancellationToken);
     }
 
-    private async Task FlushAsync(CancellationToken cancellationToken)
+    private Task FlushAsync(CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            _flushing = AfterAsync(_flushing, cancellationToken);
+            return _flushing;
+        }
+    }
+
+    private async Task AfterAsync(Task previous, CancellationToken cancellationToken)
+    {
+        _ = await Task.WhenAny(previous);
+        await FlushOnceAsync(cancellationToken);
+    }
+
+    private async Task FlushOnceAsync(CancellationToken cancellationToken)
     {
         if (_unconfirmed is { } unconfirmed)
         {
@@ -219,7 +231,7 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
         if (!_watermarkLoaded)
         {
             var loaded = await system.QueryAsync(SqlBuild.Statement("SELECT value FROM usage_counters WHERE scope = ?1 AND month = ?2 AND metric = ?3",
-                SqlBuild.Text(BatchScope), SqlBuild.Text(BatchSlot), SqlBuild.Text(BatchMetric)), cancellationToken);
+                SqlBuild.Text(WriterScope), SqlBuild.Text(WriterSlot), SqlBuild.Text(BatchMetric)), cancellationToken);
             var persisted = loaded switch
             {
                 IReadOnlyList<IReadOnlyList<SqlValue>> rows => rows is [var row, ..] ? row.IntegerAt(0) : 0,
@@ -235,54 +247,91 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
             _watermarkLoaded = true;
         }
 
-        while (NextBatch() is { } batch)
+        var wrote = false;
+        while (!cancellationToken.IsCancellationRequested && NextBatch() is { } batch)
         {
             List<SqlStatement> statements =
             [
-                .. _droppedMonths.Keys.Select(month => SqlBuild.Statement(
-                    "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?1, ?2, ?3, 1) ON CONFLICT (scope, month, metric) DO NOTHING",
-                    SqlBuild.Text(DroppedScope), SqlBuild.Text(month), SqlBuild.Text(cluster.NodeId))),
                 .. batch.Counters.Select(item => SqlBuild.Statement(
                     "INSERT INTO usage_counters (scope, month, metric, value) SELECT ?1, ?2, ?3, ?4 "
                     + "WHERE NOT EXISTS (SELECT 1 FROM usage_counters WHERE scope = ?5 AND month = ?6 AND metric = ?7 AND value >= ?8) "
                     + "ON CONFLICT (scope, month, metric) DO UPDATE SET value = value + excluded.value",
-                    SqlBuild.Text(item.Key.Scope), SqlBuild.Text(item.Key.Month), SqlBuild.Text(string.Concat(item.Key.Metric, "@", cluster.NodeId)), SqlBuild.Integer(item.Value),
-                    SqlBuild.Text(BatchScope), SqlBuild.Text(BatchSlot), SqlBuild.Text(BatchMetric), SqlBuild.Integer(batch.Sequence))),
-                SqlBuild.Statement(
-                    "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?1, ?2, ?3, ?4) "
-                    + "ON CONFLICT (scope, month, metric) DO UPDATE SET value = excluded.value WHERE excluded.value > usage_counters.value",
-                    SqlBuild.Text(BatchScope), SqlBuild.Text(BatchSlot), SqlBuild.Text(BatchMetric), SqlBuild.Integer(batch.Sequence)),
+                    SqlBuild.Text(item.Key.Scope), SqlBuild.Text(item.Key.Month), SqlBuild.Text(item.Key.Metric), SqlBuild.Integer(item.Value),
+                    SqlBuild.Text(WriterScope), SqlBuild.Text(WriterSlot), SqlBuild.Text(BatchMetric), SqlBuild.Integer(batch.Sequence))),
+                Absolute(BatchMetric, batch.Sequence),
+                .. Heartbeat(),
             ];
-            var outcome = await commits.CommitLocalAsync(statements, CancellationToken.None);
-            var commit = outcome switch
+            if (!await CommitAsync(statements, batch.Sequence, cancellationToken))
             {
-                CommitMetadata committed => committed,
-                BackendUnavailable => null,
-            };
-            if (commit is null)
-            {
-                Fail("the usage batch did not commit and is retried");
                 return;
             }
 
-            Commit(batch.Sequence);
-            _unconfirmed = commit;
-            if (!await commits.FinalizeAsync(commit, cancellationToken))
-            {
-                Fail("the usage batch committed locally and its regional replication is confirmed again");
-                return;
-            }
-
-            _unconfirmed = null;
+            wrote = true;
         }
 
-        Interlocked.Exchange(ref _pendingCounters, _pending.Count);
-        _flushFailing = false;
+        if (!wrote && !cancellationToken.IsCancellationRequested && !await CommitAsync(Heartbeat(), null, cancellationToken))
+        {
+            return;
+        }
+
+        _lastFailed = false;
     }
+
+    private async ValueTask<bool> CommitAsync(IReadOnlyList<SqlStatement> statements, long? sequence, CancellationToken cancellationToken)
+    {
+        var outcome = await commits.CommitLocalAsync(statements, CancellationToken.None);
+        var commit = outcome switch
+        {
+            CommitMetadata committed => committed,
+            BackendUnavailable => null,
+        };
+        if (commit is null)
+        {
+            Fail("the usage batch did not commit and is retried");
+            return false;
+        }
+
+        _unconfirmed = commit;
+        if (sequence is { } committedSequence)
+        {
+            Commit(committedSequence);
+        }
+
+        if (!await commits.FinalizeAsync(commit, cancellationToken))
+        {
+            Fail("the usage batch committed locally and its regional replication is confirmed again");
+            return false;
+        }
+
+        _unconfirmed = null;
+        return true;
+    }
+
+    private List<SqlStatement> Heartbeat()
+    {
+        string[] months;
+        lock (_gate)
+        {
+            months = [.. _droppedMonths];
+        }
+
+        return
+        [
+            .. months.Select(month => SqlBuild.Statement(
+                "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?1, ?2, ?3, 1) ON CONFLICT (scope, month, metric) DO NOTHING",
+                SqlBuild.Text(DroppedScope), SqlBuild.Text(month), SqlBuild.Text(cluster.NodeId))),
+            Absolute(HeartbeatMetric, time.GetUtcNow().ToUnixTimeMilliseconds()),
+        ];
+    }
+
+    private SqlStatement Absolute(string metric, long value) => SqlBuild.Statement(
+        "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?1, ?2, ?3, ?4) "
+        + "ON CONFLICT (scope, month, metric) DO UPDATE SET value = excluded.value WHERE excluded.value > usage_counters.value",
+        SqlBuild.Text(WriterScope), SqlBuild.Text(WriterSlot), SqlBuild.Text(metric), SqlBuild.Integer(value));
 
     private void Fail(string reason)
     {
-        _flushFailing = true;
+        _lastFailed = true;
         logger.ZLogWarning($"Usage flush incomplete: {reason:@Reason}");
     }
 
@@ -304,31 +353,20 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
                 return retry;
             }
 
-            Dictionary<(string Scope, string Month, string Metric), long> drained = [];
-            foreach (var key in _pending.Keys)
-            {
-                if (drained.Count >= MaxBatchCounters)
-                {
-                    break;
-                }
-
-                if (_pending.TryRemove(key, out var value))
-                {
-                    Interlocked.Decrement(ref _pendingCounters);
-                    if (value > 0)
-                    {
-                        drained[key] = value;
-                    }
-                }
-            }
-
-            if (drained.Count == 0)
+            if (_pending.Count == 0)
             {
                 return null;
             }
 
+            Dictionary<(string Scope, string Month, string Metric), long> drained = [];
+            foreach (var key in _pending.Keys.Take(MaxBatchCounters).ToArray())
+            {
+                drained[key] = _pending[key];
+                _ = _pending.Remove(key);
+            }
+
             _sequence = Math.Max(_sequence, time.GetUtcNow().ToUnixTimeMilliseconds()) + 1;
-            var batch = new FlushBatch(_sequence, drained);
+            var batch = new FlushBatch(_sequence, drained, null);
             _batches.Add(batch);
             return batch;
         }
@@ -336,23 +374,37 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
 
     private void Commit(long sequence)
     {
+        var now = time.GetUtcNow();
         lock (_gate)
         {
             _committed = Math.Max(_committed, sequence);
-            var retired = _batches.Count(batch => batch.Sequence <= sequence) - RetainedBatches;
-            if (retired > 0)
+            for (var index = 0; index < _batches.Count; index++)
             {
-                _batches.RemoveRange(0, retired);
+                if (_batches[index] is { CommittedAt: null } batch && batch.Sequence <= sequence)
+                {
+                    _batches[index] = batch with { CommittedAt = now };
+                }
+            }
+
+            foreach (var expired in _batches.Where(batch => batch.CommittedAt is { } at && now - at > BatchRetention).ToArray())
+            {
+                _evicted = Math.Max(_evicted, expired.Sequence);
+                _ = _batches.Remove(expired);
             }
         }
     }
 
     private static long Committed(IEnumerable<long> rows) => rows.DefaultIfEmpty(0).Max();
 
-    private Dictionary<(string Scope, string Metric), long> Unflushed(string month, long committed)
+    private Dictionary<(string Scope, string Metric), long>? Unflushed(string month, long committed)
     {
         lock (_gate)
         {
+            if (committed < _evicted)
+            {
+                return null;
+            }
+
             Dictionary<(string Scope, string Metric), long> values = [];
             foreach (var (key, value) in _pending.Where(item => string.Equals(item.Key.Month, month, StringComparison.Ordinal)).Concat(
                 _batches.Where(batch => batch.Sequence > committed).SelectMany(static batch => batch.Counters)
@@ -365,11 +417,27 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
         }
     }
 
-    private OrganizationCounters Organization(IReadOnlyList<IReadOnlyList<SqlValue>> rows, string month)
+    private UsageTotalsOutcome Subject(IReadOnlyList<IReadOnlyList<SqlValue>> rows, UsageSubject subject, string month)
     {
-        var unflushed = Unflushed(month, Committed(rows.Where(static row => row.TextAt(0) == BatchRow).Select(static row => row.IntegerAt(2))));
+        if (Unflushed(month, Committed(rows.Where(static row => row.TextAt(0) == BatchRow).Select(static row => row.IntegerAt(1)))) is not { } unflushed)
+        {
+            return Stale();
+        }
+
+        return Totals(rows.Where(static row => row.TextAt(0) != BatchRow).Select(static row => (row.TextAt(0), row.IntegerAt(1))), unflushed, subject.Scope);
+    }
+
+    private OrganizationCountersOutcome Organization(IReadOnlyList<IReadOnlyList<SqlValue>> rows, string month)
+    {
+        if (Unflushed(month, Committed(rows.Where(static row => row.TextAt(0) == BatchRow).Select(static row => row.IntegerAt(2)))) is not { } unflushed)
+        {
+            return Stale();
+        }
+
         var dropped = rows.Any(static row => row.TextAt(0) == DroppedRow && row.IntegerAt(2) > 0);
-        var groups = rows.Where(static row => row.TextAt(0) != BatchRow && row.TextAt(0) != DroppedRow).GroupBy(static row => row.TextAt(0), StringComparer.Ordinal)
+        var writers = rows.Where(static row => row.TextAt(0) == WriterRow)
+            .ToDictionary(static row => row.TextAt(1)[WriterPrefix.Length..], static row => DateTimeOffset.FromUnixTimeMilliseconds(row.IntegerAt(2)), StringComparer.Ordinal);
+        var groups = rows.Where(static row => row.TextAt(0) is not (BatchRow or DroppedRow or WriterRow)).GroupBy(static row => row.TextAt(0), StringComparer.Ordinal)
             .OrderBy(static group => group.Key, StringComparer.Ordinal).ToArray();
         List<ProjectCounters> projects = [];
         foreach (var group in groups.Take(OrganizationProjectLimit))
@@ -378,8 +446,16 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
             projects.Add(new ProjectCounters(group.First().IdAt(0), Totals(stored, unflushed, string.Concat("project:", group.Key))));
         }
 
-        return new OrganizationCounters(projects, groups.Length > OrganizationProjectLimit, dropped || DroppedLocally(month));
+        bool droppedLocally;
+        lock (_gate)
+        {
+            droppedLocally = _droppedMonths.Contains(month);
+        }
+
+        return new OrganizationCounters(projects, groups.Length > OrganizationProjectLimit, dropped || droppedLocally, writers);
     }
+
+    private static BackendUnavailable Stale() => new("usage changed while it was read; retry", "usage_unavailable");
 
     private static Dictionary<string, long> Totals(IEnumerable<(string Metric, long Value)> stored, Dictionary<(string Scope, string Metric), long> unflushed, string scope)
     {
@@ -400,5 +476,5 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Cl
 
     private static UsageMonthsOutcome Months(IReadOnlyList<IReadOnlyList<SqlValue>> rows) => new([.. rows.Select(static row => row.TextAt(0))]);
 
-    private sealed record FlushBatch(long Sequence, IReadOnlyDictionary<(string Scope, string Month, string Metric), long> Counters);
+    private sealed record FlushBatch(long Sequence, IReadOnlyDictionary<(string Scope, string Month, string Metric), long> Counters, DateTimeOffset? CommittedAt);
 }

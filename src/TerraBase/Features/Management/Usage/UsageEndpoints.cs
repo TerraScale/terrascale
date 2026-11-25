@@ -80,6 +80,10 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
 
     public const string CountersDropped = "usage_counters_dropped";
 
+    public const string WriterStale = "usage_writer_stale";
+
+    private static readonly TimeSpan WriterFreshness = TimeSpan.FromMinutes(1);
+
     public const string StorageIncomplete = "storage_sample_incomplete";
 
     private static readonly TimeSpan SampleGrace = TimeSpan.FromMinutes(15);
@@ -182,6 +186,11 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         if (counters.Dropped)
         {
             gaps.Add(CountersDropped);
+        }
+
+        if (coordinator.Peers.Any(peer => !counters.Writers.TryGetValue(peer.Peer.NodeId, out var at) || asOf - at > WriterFreshness))
+        {
+            gaps.Add(WriterStale);
         }
 
         var expected = ExpectedStorageHours(month, asOf);

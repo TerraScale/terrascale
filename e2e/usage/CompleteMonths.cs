@@ -126,7 +126,7 @@ internal static class CompleteMonths
     {
         SqlStatement[] statements =
         [
-            .. new (string Metric, long Value)[] { (UsageMetrics.Requests, 37), (UsageMetrics.Writes, 37), (UsageMetrics.RowsWritten, 96) }.Select(seed => SqlBuild.Statement(
+            .. new (string Metric, long Value)[] { (UsageMetrics.Requests, 37), (UsageMetrics.Writes, 30), (UsageMetrics.Writes + "@journey-peer", 7), (UsageMetrics.RowsWritten, 96) }.Select(seed => SqlBuild.Statement(
                 "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?, ?, ?, ?)",
                 SqlBuild.Text(scope), SqlBuild.Text(History), SqlBuild.Text(seed.Metric), SqlBuild.Integer(seed.Value))),
         ];
