@@ -133,7 +133,7 @@ internal sealed partial class DatabaseSession
                 return Closing();
             }
 
-            var begun = reader.Exec("BEGIN;");
+            var begun = reader.Begin("BEGIN;");
             if (!begun.IsOk)
             {
                 ReturnReader(reader);
@@ -297,7 +297,7 @@ internal sealed partial class DatabaseSession
             };
             schemaTouched |= touched;
 
-            if (!_writer.InTransaction)
+            if (!_writer.InTransaction || _writeGroupBroken)
             {
                 var rolledBack = new StorageBusy("SQLite rolled back the write group; retry the request", TimeSpan.Zero);
                 foreach (var (pending, _, _) in completed)
@@ -305,6 +305,12 @@ internal sealed partial class DatabaseSession
                     _ = Fail(pending, rolledBack);
                 }
 
+                if (_writer.InTransaction)
+                {
+                    _ = _writer.Exec("ROLLBACK;");
+                }
+
+                _writeGroupBroken = false;
                 completed.Clear();
                 _writer.InvalidateSchemaCache();
                 schemaTouched = false;
@@ -671,6 +677,7 @@ internal sealed partial class DatabaseSession
         if (!rolledBack.IsOk && _writer.InTransaction)
         {
             _ = _writer.Exec("ROLLBACK;");
+            _writeGroupBroken |= _writer.InTransaction;
         }
 
         if (context.IsSchemaChange)
@@ -691,10 +698,11 @@ internal sealed partial class DatabaseSession
 
     private SqliteStatus BeginWrite(bool applying)
     {
+        _writeGroupBroken = false;
         var status = _writer.SetApplyMode(applying);
         if (status.IsOk)
         {
-            status = _writer.Exec("BEGIN IMMEDIATE;");
+            status = _writer.Begin("BEGIN IMMEDIATE;");
         }
 
         if (status.IsOk)

@@ -302,6 +302,7 @@ internal sealed unsafe partial class SqliteConnection
 
         const string missingFunction = "no such function: ";
         const string missingTable = "no such table: ";
+        status = ResourceStatus(status);
         if (status.Primary != SqliteNative.Error)
         {
             return status;
@@ -323,6 +324,13 @@ internal sealed unsafe partial class SqliteConnection
 
         return status;
     }
+
+    private static SqliteStatus ResourceStatus(SqliteStatus status) => status.Primary switch
+    {
+        SqliteNative.TooBig when status.Message == "string or blob too big" => status with { Message = "a value is at most 16 MiB" },
+        SqliteNative.NoMem => status with { Message = "the server ran short of memory for the statement; retry it, or simplify it if it keeps failing" },
+        _ => status,
+    };
 
     private static int Deny(StatementInfo? info, string reason)
     {

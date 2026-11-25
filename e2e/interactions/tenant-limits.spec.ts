@@ -226,6 +226,49 @@ test('data-modifying WITH requires write scope and read-only WITH returns data',
   }
 });
 
+test('SQL past the per-statement SQLite limits fails as a client error and the database keeps serving', async ({ request }) => {
+  const credential = await token(request, 'sql:read sql:write');
+  const execute = (sql: string) => request.post(api + path() + '/sql/execute', {
+    headers: { authorization: 'Bearer ' + credential }, data: { statements: [{ sql }] },
+  });
+  const rows = async (sql: string) => {
+    const response = await execute(sql);
+    expect(response.status(), sql.slice(0, 80)).toBe(200);
+    return (await response.json()).results[0].rows;
+  };
+  const refused = async (sql: string, status: number, code: string, sqlState: string) => {
+    const response = await execute(sql);
+    expect(response.status(), sql.slice(0, 80)).toBe(status);
+    expect((await response.json()).error, sql.slice(0, 80)).toMatchObject({ code, sqlState });
+  };
+  const negations = (depth: number) => 'SELECT ' + Array(depth).fill('-').join(' ') + ' 1';
+  const compound = (terms: number) => Array.from({ length: terms }, (_, index) => 'SELECT ' + index).join(' UNION ALL ');
+  const table = 'limit_cascade_tree';
+  expect(await rows('SELECT length(zeroblob(16777216))')).toEqual([[16777216]]);
+  await refused('SELECT length(zeroblob(1000000000))', 400, 'too_large', '54000');
+  await refused("SELECT length(replace(hex(zeroblob(4194304)), '0', '0000'))", 400, 'too_large', '54000');
+  expect(await rows(negations(150))).toEqual([[1]]);
+  await refused(negations(250), 400, 'sql_error', '54001');
+  expect(await rows('SELECT count(*) FROM (' + compound(50) + ')')).toEqual([[50]]);
+  await refused(compound(51), 400, 'sql_error', '54001');
+  expect(await rows(`SELECT 'a' LIKE '${'%'.repeat(1000)}'`)).toEqual([[1]]);
+  await refused(`SELECT 'a' LIKE '${'%'.repeat(1001)}'`, 400, 'sql_error', '54001');
+  await refused('SELECT max(' + Array.from({ length: 128 }, (_, index) => index).join(', ') + ')', 400, 'sql_error', '54023');
+  await refused('SELECT ?8193', 400, 'sql_error', '54023');
+  expect(await rows(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES ${table}(id) ON DELETE CASCADE)`)).toEqual([]);
+  try {
+    expect(await rows(`INSERT INTO ${table} WITH RECURSIVE levels(id) AS (VALUES(1) UNION ALL SELECT id + 1 FROM levels WHERE id < 40) `
+      + `SELECT id, CASE WHEN id > 1 THEN id - 1 END FROM levels`)).toEqual([]);
+    await refused(`DELETE FROM ${table} WHERE id = 1`, 400, 'sql_error', '54001');
+    expect(await rows(`SELECT count(*) FROM ${table}`)).toEqual([[40]]);
+    expect(await rows(`DELETE FROM ${table} WHERE id = 21`)).toEqual([]);
+    expect(await rows(`SELECT count(*) FROM ${table}`)).toEqual([[20]]);
+  } finally {
+    expect((await execute(`DROP TABLE ${table}`)).status()).toBe(200);
+  }
+  expect(await rows('SELECT length(hex(zeroblob(1500000)))')).toEqual([[3000000]]);
+});
+
 test('silent transactions close, roll back and return admission on both public protocols', async ({ request }) => {
   await onLocalStack(async () => {
     const credential = await token(request, 'sql:read sql:write');

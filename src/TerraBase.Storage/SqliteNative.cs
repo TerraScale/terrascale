@@ -13,6 +13,7 @@ internal static unsafe partial class SqliteNative
     public const int Internal = 2;
     public const int Busy = 5;
     public const int Locked = 6;
+    public const int NoMem = 7;
     public const int ReadOnly = 8;
     public const int Interrupt = 9;
     public const int IoError = 10;
@@ -89,6 +90,17 @@ internal static unsafe partial class SqliteNative
     public const int ActionFunction = 31;
     public const int ActionSavepoint = 32;
 
+    public const int LimitLength = 0;
+    public const int LimitSqlLength = 1;
+    public const int LimitExprDepth = 3;
+    public const int LimitCompoundSelect = 4;
+    public const int LimitVdbeOp = 5;
+    public const int LimitFunctionArg = 6;
+    public const int LimitAttached = 7;
+    public const int LimitLikePatternLength = 8;
+    public const int LimitVariableNumber = 9;
+    public const int LimitTriggerDepth = 10;
+
     public const int ConfigEnableTrigger = 1003;
     public const int ConfigEnableLoadExtension = 1005;
     public const int ConfigDefensive = 1010;
@@ -100,11 +112,20 @@ internal static unsafe partial class SqliteNative
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_libversion")]
     public static partial byte* LibVersion();
 
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_soft_heap_limit64")]
+    public static partial long SoftHeapLimit64(long limit);
+
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_hard_heap_limit64")]
+    public static partial long HardHeapLimit64(long limit);
+
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_open_v2")]
     public static partial int OpenV2(byte* filename, nint* db, int flags, byte* vfs);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_close_v2")]
     public static partial int CloseV2(nint db);
+
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_limit")]
+    public static partial int Limit(nint db, int id, int value);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_interrupt")]
     public static partial void InterruptQuery(nint db);
@@ -332,27 +353,32 @@ internal static class SqliteLibrary
 
     private static readonly Lock Gate = new();
     private static bool _registered;
+    private static bool _heapLimitsApplied;
 
     public static unsafe string Version
     {
         get
         {
-            EnsureRegistered();
+            EnsureInitialized();
             return SqliteNative.ReadUtf8(SqliteNative.LibVersion());
         }
     }
 
-    public static void EnsureRegistered()
+    public static void EnsureInitialized()
     {
         lock (Gate)
         {
-            if (_registered)
+            if (!_registered)
             {
-                return;
+                NativeLibrary.SetDllImportResolver(typeof(SqliteLibrary).Assembly, Resolve);
+                _registered = true;
             }
 
-            NativeLibrary.SetDllImportResolver(typeof(SqliteLibrary).Assembly, Resolve);
-            _registered = true;
+            if (!_heapLimitsApplied)
+            {
+                SqliteLimits.ApplyHeapLimits();
+                _heapLimitsApplied = true;
+            }
         }
     }
 
