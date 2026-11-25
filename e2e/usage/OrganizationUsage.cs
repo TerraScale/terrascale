@@ -4,9 +4,12 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
+using TerraScale.Contracts.ControlPlane;
 
 internal static class OrganizationUsage
 {
@@ -89,11 +92,20 @@ internal static class OrganizationUsage
 
         var clock = (UsageJourneyClock)services.GetRequiredService<TimeProvider>();
         clock.Pin(UsageJourneyClock.Boundary.AddHours(2).AddMinutes(20));
+        var ghost = new DatabaseRecord(Ulid.NewUlid(), Ulid.Parse(first.Project, CultureInfo.InvariantCulture), "usage-org-unwritten",
+            [services.GetRequiredService<TerraBaseOptions>().Region], false, ConsistencyMode.Fast, false, ControlDatabaseState.Active,
+            services.GetRequiredService<DatabaseKeyring>().ActiveKeyId, null, null, UsageJourneyClock.Boundary, null, 1, 0);
+        var inserted = await services.GetRequiredService<CatalogStore>().InsertDatabaseAsync(ghost, cancellationToken);
+        UsageJourney.Require(inserted switch { DatabaseRecord => true, StateConflict or BackendUnavailable => false },
+            "a database is registered in the catalog with no file on this node");
         if (await sampler.SampleAsync(UsageJourneyClock.Boundary.AddHours(3), cancellationToken) switch { StorageSample taken => taken, BackendUnavailable => null } is not { Complete: true })
         {
             throw new InvalidOperationException("a later hour is sampled while an earlier one was missed");
         }
 
+        var unwritten = await UsageJourney.UsageAsync(http, $"/v1/projects/{first.Project}/databases/{ghost.Id}/usage?month={Month}", cancellationToken);
+        UsageJourney.Require(unwritten[UsageMetrics.StorageByteHours] > 0,
+            "a home database without a local file is materialized and billed for the hour instead of making storage incomplete: " + unwritten);
         var skipped = await ReadAsync(peer, path, cancellationToken);
         UsageJourney.Require(!skipped.Complete && skipped.Gaps.SequenceEqual([UsageReports.StorageIncomplete]),
             "a missed earlier hour is incomplete even when a later hour brings the count up to the elapsed hours: " + skipped);

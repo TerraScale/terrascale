@@ -1,5 +1,6 @@
 using TerraBase.Cluster;
 using TerraBase.Engine;
+using TerraBase.Features.Health;
 using TerraBase.Hosting;
 using TerraScale.Contracts.Cluster;
 
@@ -7,8 +8,12 @@ namespace TerraBase.Features.Management.Usage;
 
 internal readonly union UsageCommitOutcome(CommitMetadata, BackendUnavailable);
 
-internal sealed class UsageCommits(SystemDatabase system, CommitFinalizer finalizer)
+internal sealed class UsageCommits(SystemDatabase system, CommitFinalizer finalizer, ClusterOptions cluster, NodeReadiness readiness)
 {
+    public string NodeId => cluster.NodeId;
+
+    public bool Ready => readiness.Blocked is null;
+
     public async ValueTask<UsageCommitOutcome> CommitLocalAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(SystemDatabase.Id, statements, SqlAccess.Write, ConsistencyMode.Fast, CausalBookmark.Empty);

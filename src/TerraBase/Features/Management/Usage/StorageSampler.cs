@@ -13,13 +13,18 @@ internal readonly union StorageSampleOutcome(StorageSample, BackendUnavailable);
 
 internal readonly union StorageRecordOutcome(StorageRecorded, BackendUnavailable);
 
+internal readonly union StorageMeasureOutcome(long, BackendUnavailable);
+
 internal readonly union StorageExistingOutcome(IReadOnlySet<Ulid>, BackendUnavailable);
 
 internal readonly union StorageCoverOutcome(Completed, BackendUnavailable);
 
 internal readonly union StorageCoverageOutcome(IReadOnlyDictionary<string, IReadOnlySet<long>>, BackendUnavailable);
 
-internal sealed record StorageSample(DateTimeOffset Boundary, string Month, int Databases, long ByteHours, bool Complete);
+internal sealed record StorageSample(DateTimeOffset Boundary, string Month, int Databases, long ByteHours, int Missing)
+{
+    public bool Complete => Missing == 0;
+}
 
 internal sealed record StorageRecorded(int Databases, long ByteHours);
 
@@ -43,8 +48,43 @@ internal sealed class StorageOwnership(RegionDirectory regions, ClusterOptions c
         database.AllRegions ? everywhere : database.Regions is [var home, ..] ? home : null;
 }
 
+internal sealed class StorageMeasure(DatabaseAccess access, StorageEngineOptions storage)
+{
+    public async ValueTask<StorageMeasureOutcome> BytesAsync(DatabaseRecord database, CancellationToken cancellationToken)
+    {
+        if (File.Exists(DatabaseFile(database.Id)))
+        {
+            return Bytes(database.Id);
+        }
+
+        var opened = await access.OpenAsync(database, cancellationToken);
+        return opened switch
+        {
+            ISqlDatabaseSession => Bytes(database.Id),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private string DatabaseFile(Ulid databaseId) =>
+        Path.Combine(storage.RootDirectory, databaseId.ToString(), string.Concat(databaseId.ToString(), ".db"));
+
+    private long Bytes(Ulid databaseId)
+    {
+        var file = DatabaseFile(databaseId);
+        return Length(file) + Length(string.Concat(file, "-wal"));
+    }
+
+    private static long Length(string path)
+    {
+        var info = new FileInfo(path);
+        return info.Exists ? info.Length : 0;
+    }
+}
+
 internal sealed class StorageLedger(SystemDatabase system)
 {
+    public const string MissingPrefix = "storage-missing:";
+
     private const string CoverPrefix = "storage-cover:";
 
     public static long HourIndex(DateTimeOffset at) => at.ToUnixTimeSeconds() / 3600;
@@ -71,14 +111,19 @@ internal sealed class StorageLedger(SystemDatabase system)
         };
     }
 
-    public async ValueTask<StorageRecordOutcome> RecordAsync(long hour, string month, IReadOnlyList<StoredDatabase> stored, CancellationToken cancellationToken)
+    public async ValueTask<StorageRecordOutcome> RecordAsync(
+        long hour, string month, IReadOnlyList<StoredDatabase> stored, IReadOnlyList<StoredDatabase> missing, CancellationToken cancellationToken)
     {
-        if (stored.Count == 0)
+        if (stored.Count == 0 && missing.Count == 0)
         {
             return new StorageRecorded(0, 0);
         }
 
-        SqlStatement[] statements = [.. stored.Select(item => Once(UsageMeter.StorageScope(item.ProjectId), month, UsageMeter.StorageMetric(item.DatabaseId, hour), item.Bytes))];
+        SqlStatement[] statements =
+        [
+            .. stored.Select(item => Once(UsageMeter.StorageScope(item.ProjectId), month, UsageMeter.StorageMetric(item.DatabaseId, hour), item.Bytes)),
+            .. missing.Select(item => Once(string.Concat(MissingPrefix, item.ProjectId.ToString()), month, UsageMeter.StorageMetric(item.DatabaseId, hour), 1)),
+        ];
         var outcome = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {
@@ -127,7 +172,7 @@ internal sealed class StorageLedger(SystemDatabase system)
 }
 
 internal sealed class StorageSampler(
-    CatalogStore catalog, StorageOwnership ownership, StorageLedger ledger, StorageEngineOptions storage, TimeProvider time, ILogger<StorageSampler> logger) : BackgroundService
+    CatalogStore catalog, StorageOwnership ownership, StorageLedger ledger, StorageMeasure measure, TimeProvider time, ILogger<StorageSampler> logger) : BackgroundService
 {
     public const int SlotHours = 1;
 
@@ -145,8 +190,8 @@ internal sealed class StorageSampler(
         var month = UsageMeter.Month(ended);
         var hour = StorageLedger.HourIndex(ended);
         var databases = 0;
+        var unmeasured = 0;
         long byteHours = 0;
-        var complete = true;
         string? after = null;
         while (true)
         {
@@ -173,10 +218,21 @@ internal sealed class StorageSampler(
                 return new BackendUnavailable("the usage store is unavailable; storage was not sampled", "usage_unavailable");
             }
 
-            List<StoredDatabase> due = [.. homed.Where(database => !existing.Contains(database.Id))
-                .Select(database => new StoredDatabase(database.ProjectId, database.Id, checked(Bytes(database.Id) * SlotHours)))];
-            complete &= due.All(static item => item.Bytes > 0);
-            var recordedOutcome = await ledger.RecordAsync(hour, month, [.. due.Where(static item => item.Bytes > 0)], cancellationToken);
+            List<StoredDatabase> measured = [];
+            List<StoredDatabase> missing = [];
+            foreach (var database in homed.Where(database => !existing.Contains(database.Id)))
+            {
+                var bytesOutcome = await measure.BytesAsync(database, cancellationToken);
+                var bytes = bytesOutcome switch
+                {
+                    long length => length,
+                    BackendUnavailable => -1,
+                };
+                (bytes < 0 ? missing : measured).Add(new StoredDatabase(database.ProjectId, database.Id, checked(Math.Max(bytes, 0) * SlotHours)));
+            }
+
+            unmeasured += missing.Count;
+            var recordedOutcome = await ledger.RecordAsync(hour, month, measured, missing, cancellationToken);
             var recorded = recordedOutcome switch
             {
                 StorageRecorded done => done,
@@ -197,15 +253,10 @@ internal sealed class StorageSampler(
             after = page[^1].Id.ToString();
         }
 
-        if (!complete)
-        {
-            return new StorageSample(boundary, month, databases, byteHours, Complete: false);
-        }
-
         var covered = await ledger.CoverAsync(ownership.Region, hour, month, cancellationToken);
         return covered switch
         {
-            Completed => new StorageSample(boundary, month, databases, byteHours, Complete: true),
+            Completed => new StorageSample(boundary, month, databases, byteHours, unmeasured),
             BackendUnavailable unavailable => unavailable,
         };
     }
@@ -225,7 +276,7 @@ internal sealed class StorageSampler(
             var failure = sampled switch
             {
                 StorageSample { Complete: true } => null,
-                StorageSample => "a database could not be sampled on this node",
+                StorageSample sample => string.Concat(sample.Missing.ToString(CultureInfo.InvariantCulture), " databases could not be measured on this node"),
                 BackendUnavailable unavailable => unavailable.Message,
             };
             if (failure is not null)
@@ -236,18 +287,5 @@ internal sealed class StorageSampler(
             var next = NextBoundary(time.GetUtcNow());
             boundary = next > boundary ? next : boundary.Add(Slot);
         }
-    }
-
-    private long Bytes(Ulid databaseId)
-    {
-        var directory = Path.Combine(storage.RootDirectory, databaseId.ToString());
-        var file = string.Concat(databaseId.ToString(), ".db");
-        return Length(Path.Combine(directory, file)) + Length(Path.Combine(directory, string.Concat(file, "-wal")));
-    }
-
-    private static long Length(string path)
-    {
-        var info = new FileInfo(path);
-        return info.Exists ? info.Length : 0;
     }
 }

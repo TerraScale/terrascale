@@ -194,7 +194,7 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         }
 
         var expected = ExpectedStorageHours(month, asOf);
-        if (expected.Count > 0 && ownership.Regions().Any(region => coverage.GetValueOrDefault(region) is not { } covered || !expected.All(covered.Contains)))
+        if (counters.StorageMissing || (expected.Count > 0 && ownership.Regions().Any(region => coverage.GetValueOrDefault(region) is not { } covered || !expected.All(covered.Contains))))
         {
             gaps.Add(StorageIncomplete);
         }
