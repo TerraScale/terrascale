@@ -101,6 +101,7 @@ internal static class CompleteMonths
 
         Console.WriteLine($"usage complete-month journey: history {History} writes=37, absent month=0, write at boundary-1tick in {Closed}, read at boundary in {Current}, invalid month=400, flushed months {History},{Closed},{Current} passed");
         Console.WriteLine("usage sql metering journey: " + await SqlMetering.RunAsync(http, cancellationToken));
+        Console.WriteLine("usage organization journey: " + await OrganizationUsage.RunAsync(services, http, cancellationToken));
     }
 
     private static async Task<IReadOnlyList<UsageReading>> FlushedAsync(HttpClient http, UsageTenant tenant, CancellationToken cancellationToken)
@@ -125,7 +126,7 @@ internal static class CompleteMonths
     {
         SqlStatement[] statements =
         [
-            .. new (string Metric, long Value)[] { (UsageMetrics.Requests, 37), (UsageMetrics.Writes, 37), (UsageMetrics.RowsWritten, 96) }.Select(seed => SqlBuild.Statement(
+            .. new (string Metric, long Value)[] { (UsageMetrics.Requests, 37), (UsageMetrics.Writes, 30), (UsageMetrics.Writes + "@journey-peer", 7), (UsageMetrics.RowsWritten, 96) }.Select(seed => SqlBuild.Statement(
                 "INSERT INTO usage_counters (scope, month, metric, value) VALUES (?, ?, ?, ?)",
                 SqlBuild.Text(scope), SqlBuild.Text(History), SqlBuild.Text(seed.Metric), SqlBuild.Integer(seed.Value))),
         ];

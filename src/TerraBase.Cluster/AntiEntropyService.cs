@@ -282,6 +282,45 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
 
     private sealed record PeerSyncResult(int Fetched, int Applied, IReadOnlyList<string> Failures);
 
+    private const long CatchUpResponseBytes = QuicProtocol.MaxPayloadBytes / 2;
+
+    private static List<CommitMetadata> CausalPage(Dictionary<string, Queue<CommitMetadata>> pages, CausalBookmark have)
+    {
+        Dictionary<string, long> applied = new(StringComparer.Ordinal);
+        long Applied(string origin) => applied.TryGetValue(origin, out var sequence) ? sequence : have.Get(origin);
+        List<CommitMetadata> entries = [];
+        long bytes = 0;
+        var progressed = true;
+        while (progressed)
+        {
+            progressed = false;
+            foreach (var (origin, queue) in pages)
+            {
+                if (!queue.TryPeek(out var head) || head.Sequence != Applied(origin) + 1
+                    || head.Bookmark.Entries.Any(dependency => !string.Equals(dependency.Key, origin, StringComparison.Ordinal) && Applied(dependency.Key) < dependency.Value))
+                {
+                    continue;
+                }
+
+                var size = EncodedSize(head);
+                if (entries.Count > 0 && bytes + size > CatchUpResponseBytes)
+                {
+                    return entries;
+                }
+
+                entries.Add(queue.Dequeue());
+                bytes += size;
+                applied[origin] = head.Sequence;
+                progressed = true;
+            }
+        }
+
+        return entries;
+    }
+
+    private static long EncodedSize(CommitMetadata commit) =>
+        commit.DeltaPayload.Length + (commit.OriginRegion.Length * 4L) + (commit.Bookmark.Entries.Count * 64L) + 96;
+
     private async ValueTask<QuicHandlerOutcome<CatchUpResponseMessage>> HandleCatchUpAsync(QuicCallContext context, CatchUpRequestMessage message, CancellationToken cancellationToken)
     {
         if (!topology.IsPeer(context, message.RequesterNodeId))
@@ -312,20 +351,15 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             var lagging = bookmark.Entries
                 .Where(entry => entry.Value > message.Have.Get(entry.Key))
                 .ToArray();
-            List<CommitMetadata> entries = [];
+            Dictionary<string, Queue<CommitMetadata>> pages = new(StringComparer.Ordinal);
+            var fetched = 0;
             var more = false;
             QuicRemoteError? refusal = null;
             for (var index = 0; index < lagging.Length; index++)
             {
                 var (origin, sequence) = lagging[index];
                 var from = message.Have.Get(origin) + 1;
-                var remainingBudget = budget - entries.Count;
-                if (remainingBudget <= 0)
-                {
-                    more = true;
-                    break;
-                }
-
+                var remainingBudget = budget - fetched;
                 var remainingOrigins = lagging.Length - index;
                 var share = Math.Max(1, remainingBudget / remainingOrigins);
                 var read = await session.ReadCommitLogAsync(origin, from, share, cancellationToken);
@@ -351,10 +385,13 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
                     CommitLogPage served => served.Entries,
                     CommitLogGap or StorageBusy => [],
                 };
-                entries.AddRange(page);
+                pages[origin] = new Queue<CommitMetadata>(page);
+                fetched += page.Count;
                 more |= page.Count > 0 && page[^1].Sequence < sequence;
             }
 
+            var entries = CausalPage(pages, message.Have);
+            more |= pages.Values.Any(static queue => queue.Count > 0);
             return entries.Count == 0 && refusal is not null
                 ? refusal
                 : new CatchUpResponseMessage(session.DatabaseId, true, bookmark, entries, more || refusal is not null);
