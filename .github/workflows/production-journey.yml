@@ -41,7 +41,7 @@ jobs:
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
           EXPECTED_SUITE: ${{ inputs.suite_sha }}
           RELEASE_STEPS: '["Deploy through ts-orch", "Deploy ts-auth through ts-orch", "Deploy ts-dashboard through ts-orch", "Verify and deploy the pinned arm64 digest through ts-orch"]'
-          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main", "main-fallback", "main-platform", "main-platform-fallback", "main-auth", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
+          RELEASE_JOBS: '{".github/workflows/ci.yml": ["main", "main-fallback", "main-platform", "main-platform-fallback", "main-auth", "main-auth-fallback", "main-dashboard-fallback", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
@@ -78,13 +78,40 @@ jobs:
             | .steps[]? | select((.name == "Verify and deploy the pinned arm64 digest through ts-orch" or .name == "Deploy through ts-orch") and .conclusion == "success")' <<< "$jobs" > /dev/null; then
             echo "terrabase=$COMMIT" >> "$GITHUB_OUTPUT"
           fi
-          if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release") | select(.conclusion == "success")
-            | .steps[]? | select((.name == "Deploy ts-auth through ts-orch" or .name == "Deploy ts-dashboard through ts-orch") and .conclusion == "success")' <<< "$jobs" > /dev/null; then
-            artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=deploy-revision&per_page=1" --jq '.artifacts[0].id // empty')
-            test -n "$artifact"
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/revision.zip"
-            COMMIT=$(unzip -p "$RUNNER_TEMP/revision.zip" deploy-revision)
-            [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
+          # Each service release job keeps its own receipt artifact, so concurrent auth and dashboard releases never race.
+          deployed() {
+            local step=$1
+            shift
+            jq -e --arg step "$step" '[.jobs[] | select(.name | IN($ARGS.positional[])) | select(.conclusion == "success")
+              | .steps[]? | select(.name == $step and .conclusion == "success")] | length > 0' --args "$@" <<< "$jobs" > /dev/null
+          }
+          receipts=()
+          receipt() {
+            local artifact revision
+            artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=$1&per_page=1" --jq '.artifacts[0].id // empty')
+            if [ -z "$artifact" ]; then
+              echo "::error::Run $RUN_ID released without its $1 receipt"
+              exit 1
+            fi
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/$1.zip"
+            revision=$(unzip -p "$RUNNER_TEMP/$1.zip" deploy-revision)
+            if ! [[ $revision =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::The $1 receipt holds no valid revision"
+              exit 1
+            fi
+            receipts+=("$revision")
+          }
+          if deployed "Deploy ts-auth through ts-orch" main-auth main-auth-fallback; then receipt deploy-revision-auth; fi
+          if deployed "Deploy ts-dashboard through ts-orch" main-dashboard-fallback; then receipt deploy-revision-dashboard; fi
+          if deployed "Deploy ts-dashboard through ts-orch" "Publish and release"; then receipt deploy-revision; fi
+          if [ "${#receipts[@]}" -gt 0 ]; then
+            for revision in "${receipts[@]}"; do
+              if [ "$revision" != "${receipts[0]}" ]; then
+                echo "::error::Run $RUN_ID released different revisions: ${receipts[*]}"
+                exit 1
+              fi
+            done
+            COMMIT=${receipts[0]}
             echo "receipt=$COMMIT" >> "$GITHUB_OUTPUT"
           fi
           echo "Run $RUN_ID released $COMMIT; run its production journey"

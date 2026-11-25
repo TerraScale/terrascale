@@ -44,7 +44,7 @@ runs:
                 "engine crash recovery (recovery)", "engine crash recovery (integrity)",
                 "engine crash recovery (isolation)", "engine crash recovery (lifecycle)", "engine crash recovery (idle)",
                 "keyring recovery and rotation", "replication frontier",
-                "journey desktop and paid", "journey phone and flows", "journey session limits", "journey write guarantees",
+                "journey desktop and paid", "journey phone pages and hosted", "journey phone interactions", "journey session limits", "journey write guarantees",
                 "journey multi-region faults"))] as $required
             | [.[].jobs[]] as $jobs
             | [$jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] as $unsuccessful

@@ -54,6 +54,7 @@ jobs:
     concurrency:
       group: ${{ needs.reset-check.outputs.group }}
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -106,6 +107,7 @@ jobs:
     concurrency:
       group: docs-deploy
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -164,6 +166,7 @@ jobs:
     concurrency:
       group: landing-deploy
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -227,6 +230,7 @@ jobs:
     concurrency:
       group: status-deploy-${{ matrix.worker }}
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:

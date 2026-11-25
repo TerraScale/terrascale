@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const [thing, ...args] = process.argv.slice(2);
 const { GITHUB_REPOSITORY: repo, CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: token } = process.env;
@@ -10,6 +11,11 @@ const bot = 'github-actions[bot]';
 const workerProbeNotePrefix = 'Last failed Worker probe: ';
 const runLink = `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
 const activeLimit = 2 * 60 * 60 * 1000;
+// A locked service job that runs after this push's all-green qualifies its own commit and must deploy or fail, never skip silently.
+const fallbackRequested = process.env.SITE_DEPLOY_GATE_FALLBACK === 'true';
+const fallback = fallbackRequested && process.env.GITHUB_EVENT_NAME === 'push';
+const fallbackAttempts = 7;
+const fallbackDelay = 10000;
 assert.ok(['all', 'docs', 'landing', 'status', 'terrabase', 'platform', ...Object.keys(services)].includes(thing));
 let reads = 0;
 const git = (...argv) => execFileSync('git', argv, { encoding: 'utf8' }).trim();
@@ -19,14 +25,18 @@ const report = (line) => {
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `- ${line}\n`);
 };
 
-async function github(path, method = 'GET', body) {
+function request(path, method = 'GET', body) {
   if (method === 'GET') reads++;
-  const response = await fetch(`https://api.github.com/repos/${repo}/${path}`, {
+  return fetch(`https://api.github.com/repos/${repo}/${path}`, {
     method,
     headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json' },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(30000),
   });
+}
+
+async function github(path, method = 'GET', body) {
+  const response = await request(path, method, body);
   const existingLabel = path === 'labels' && response.status === 422;
   assert.ok(response.ok || existingLabel, `GitHub ${method} ${path}: HTTP ${response.status}`);
   return response.status === 204 || existingLabel ? null : response.json();
@@ -122,21 +132,59 @@ async function target() {
   return null;
 }
 
+async function fallbackQualified(revision) {
+  for (let attempt = 1; ; attempt++) {
+    if (await qualified(revision)) return true;
+    if (attempt === fallbackAttempts) return false;
+    console.log(`${thing}: ${revision} is not yet qualified on attempt ${attempt} of ${fallbackAttempts}; retrying in ${fallbackDelay / 1000}s`);
+    await sleep(fallbackDelay);
+  }
+}
+
+async function prRunQualifies(revision, tree, run, checked) {
+  if (checked.has(run.id)) return false;
+  checked.add(run.id);
+  if (run.event !== 'pull_request' || run.status !== 'completed' || run.conclusion !== 'success' || run.head_repository?.full_name !== repo) return false;
+  const commit = await github(`commits/${run.head_sha}`);
+  assert.equal(commit.sha, run.head_sha, 'Unexpected PR head identity');
+  if (commit.commit.tree.sha !== tree) return false;
+  const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+  assert.ok(count <= 100, 'PR CI jobs exceed the qualification read bound');
+  if (!qualifiedJobs(jobs)) return false;
+  report(`${thing}: ${revision} tree ${tree} passed all-green and the journey as PR head ${run.head_sha} in ${run.html_url}`);
+  return true;
+}
+
+// The merged pull request names its head directly, so a burst of newer PR runs cannot push its match out of the recent scan.
+async function mergedPullQualifies(revision, tree, checked) {
+  const response = await request(`commits/${revision}/pulls?per_page=100`);
+  if (!response.ok) {
+    console.log(`${thing}: pull requests of ${revision} are unavailable (HTTP ${response.status}); scanning recent PR runs`);
+    return false;
+  }
+  const mergedHere = (pull) => (Boolean(pull.merged_at) && pull.merge_commit_sha === revision ? 0 : 1);
+  const pulls = (await response.json()).toSorted((left, right) => mergedHere(left) - mergedHere(right));
+  const seenHeads = new Set();
+  for (const pull of pulls) {
+    const head = pull.head?.sha ?? '';
+    if (pull.head?.repo?.full_name !== repo || !/^[0-9a-f]{40}$/.test(head) || seenHeads.has(head)) continue;
+    seenHeads.add(head);
+    const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${head}&event=pull_request&status=success&per_page=10`);
+    for (const run of runs) {
+      if (run.head_sha === head && await prRunQualifies(revision, tree, run, checked)) return true;
+    }
+  }
+  return false;
+}
+
 async function appQualified(revision) {
   if (await qualified(revision)) return true;
   const tree = git('rev-parse', `${revision}^{tree}`);
+  const checked = new Set();
+  if (await mergedPullQualifies(revision, tree, checked)) return true;
   const { workflow_runs: runs } = await github('actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=30');
   for (const run of runs) {
-    if (run.event !== 'pull_request' || run.status !== 'completed' || run.conclusion !== 'success' || run.head_repository?.full_name !== repo) continue;
-    const commit = await github(`commits/${run.head_sha}`);
-    assert.equal(commit.sha, run.head_sha, 'Unexpected PR head identity');
-    if (commit.commit.tree.sha !== tree) continue;
-    const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
-    assert.ok(count <= 100, 'PR CI jobs exceed the qualification read bound');
-    if (qualifiedJobs(jobs)) {
-      report(`${thing}: ${revision} tree ${tree} passed all-green and the journey as PR head ${run.head_sha} in ${run.html_url}`);
-      return true;
-    }
+    if (await prRunQualifies(revision, tree, run, checked)) return true;
   }
   return false;
 }
@@ -392,7 +440,17 @@ if (args[0] === '--qualify-main') {
     const own = process.env.GITHUB_SHA;
     assert.match(own ?? '', /^[0-9a-f]{40}$/, 'Missing or invalid run commit');
     const workerUnavailable = failure !== null && !services[kind];
-    const revision = !workerUnavailable && await (services[kind] ? appQualified(own) : qualified(own)) ? own : null;
+    const strict = fallback && Boolean(services[kind]);
+    if (fallbackRequested && !strict) {
+      const why = services[kind] ? `the ${process.env.GITHUB_EVENT_NAME} event (fallback mode is push-only)` : 'a non-service target (fallback mode is for auth and dashboard only)';
+      report(`${name}: SITE_DEPLOY_GATE_FALLBACK ignored for ${why}`);
+    }
+    const ownQualified = !workerUnavailable && await (strict ? fallbackQualified(own) : services[kind] ? appQualified(own) : qualified(own));
+    if (strict && !ownQualified) {
+      report(`${name}: ${own} passed all-green but its CI run is still not qualified after ${fallbackAttempts} reads`);
+      assert.fail(`${name}: ${own} passed all-green but is not qualified after ${fallbackAttempts} reads; refusing to skip its deploy silently`);
+    }
+    const revision = ownQualified ? own : null;
     let deploy = false;
     let clearProbeNote = !services[kind] && !workerUnavailable && alert !== null && alert.probeNote !== null;
     const liveStatus = failure === null ? deployed ?? 'absent' : 'unhealthy';
