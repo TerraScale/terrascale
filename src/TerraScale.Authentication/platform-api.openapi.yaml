@@ -1172,10 +1172,12 @@ paths:
       summary: Check an API key token
       description: |
         Whether the API key a bearer access token was issued for still acts: the key exists and is unexpired, the
-        token's key string still works (a rotation's grace included), and its organization and project exist. Read
-        from storage on every call and answered only by the GRU authority (503 elsewhere). TerraBase asks it in every
-        region (docs/terrabase/key-revocation.md). 401 key_revoked, key_expired or invalid_token; 429 rate_limited
-        past 20 checks per second for one key, key string and project.
+        token's key string still works (a rotation's grace included), and its organization and project exist. Every
+        region answers from strong storage reads; concurrent checks of one key token share one read and its answer is
+        reused for at most 1 second, so a revocation shows within 1 second. 401 key_revoked, key_expired or
+        invalid_token; 429 rate_limited past 100 checks a second (bursts of 200) or 32 concurrent checks from one
+        address (IPv6 per /64), counted before the token is verified; 503 when storage does not answer or too many
+        checks are in flight.
       security:
         - apiKeyToken: []
       responses:
@@ -1190,7 +1192,7 @@ paths:
                   key_id: { $ref: '#/components/schemas/Ulid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429':
-          description: rate_limited; too many checks for this key token.
+          description: rate_limited; too many checks from this address.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

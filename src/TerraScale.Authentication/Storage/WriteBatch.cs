@@ -1,17 +1,22 @@
 using System.Data.Common;
 using System.Globalization;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Storage;
+
+internal sealed record GuardedCommand(DbCommand Command, IReadOnlySet<int> Guards)
+{
+    public bool GuardFailed(Exception failure) =>
+        failure is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.NotNullViolation } refused && Guards.Contains(refused.Statement);
+}
 
 internal sealed class WriteBatch
 {
     public const int MaxStatements = 256;
 
-    public const string GuardColumn = "write_guards.expected";
-
     private const string Guard = "INSERT INTO write_guards (id, expected) SELECT 0, NULL WHERE changes() <> 1";
 
-    private readonly List<string> units = [];
+    private readonly List<(string Sql, bool Guarded)> units = [];
     private readonly List<object?> arguments = [];
     private int statements;
 
@@ -25,32 +30,35 @@ internal sealed class WriteBatch
 
     public void Statement(string sql, bool guarded)
     {
-        units.Add(guarded ? sql + ";\n" + Guard : sql);
+        units.Add((sql, guarded));
         statements += guarded ? 2 : 1;
     }
 
-    public IEnumerable<DbCommand> Commands(DbConnection connection, DbTransaction? transaction)
+    public IEnumerable<GuardedCommand> Commands(DbConnection connection, DbTransaction? transaction)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        var chunk = new List<string>();
-        var size = 0;
-        foreach (var unit in units)
+        List<string> chunk = [];
+        HashSet<int> guards = [];
+        foreach (var (sql, guarded) in units)
         {
-            var count = unit.Contains(Guard, StringComparison.Ordinal) ? 2 : 1;
-            if (size + count > MaxStatements)
+            if (chunk.Count + (guarded ? 2 : 1) > MaxStatements)
             {
-                yield return Command(connection, transaction, chunk);
+                yield return new(Command(connection, transaction, chunk), guards);
                 chunk = [];
-                size = 0;
+                guards = [];
             }
 
-            chunk.Add(unit);
-            size += count;
+            chunk.Add(sql);
+            if (guarded)
+            {
+                guards.Add(chunk.Count);
+                chunk.Add(Guard);
+            }
         }
 
         if (chunk.Count > 0)
         {
-            yield return Command(connection, transaction, chunk);
+            yield return new(Command(connection, transaction, chunk), guards);
         }
     }
 

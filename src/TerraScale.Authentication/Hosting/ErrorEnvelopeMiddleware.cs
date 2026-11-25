@@ -25,8 +25,11 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         {
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
-        catch (ApiException error) when (!context.Response.HasStarted)
+        catch (ApiException failure) when (!context.Response.HasStarted)
         {
+            var error = failure is { Status: StatusCodes.Status503ServiceUnavailable, InnerException: { } cause } && AuthData.IsOutcomeUnknown(cause)
+                ? AuthData.OutcomeUnknown(cause)
+                : failure;
             var level = error.Code == KeyRing.NoSigningKeysCode && schema.BootstrapPending ? LogLevel.Information : LogLevel.Error;
             Diagnose(context, error, () => logger.ZLog(level, error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
@@ -45,20 +48,9 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (Exception busy) when (!context.Response.HasStarted && busy is not ApiException && AuthData.IsUnavailable(busy))
         {
-            var error = ApiException.Unavailable(busy);
+            var error = AuthData.Unavailable(busy);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
-        }
-        catch (TerraBaseUnavailableException unavailable) when (!context.Response.HasStarted)
-        {
-            var error = ApiException.Unavailable(unavailable);
-            Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
-            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
-        }
-        catch (TimeoutException timeout) when (!context.Response.HasStarted)
-        {
-            Diagnose(context, timeout, () => logger.ZLogError(timeout, $"Storage did not answer in time"));
-            await WriteAsync(context, ApiException.Unavailable(timeout));
         }
         catch (Exception exception) when (!context.Response.HasStarted)
         {

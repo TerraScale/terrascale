@@ -9,10 +9,6 @@ public sealed class StorageTiming
 
     private long ticks;
 
-    private int calls;
-
-    private int writes;
-
     public static IApplicationBuilder Use(IApplicationBuilder app) => app.Use(async (HttpContext context, RequestDelegate next) =>
     {
         var token = HttpMethods.IsPost(context.Request.Method)
@@ -30,7 +26,7 @@ public sealed class StorageTiming
         context.Response.OnStarting(() =>
         {
             context.Response.Headers.Append("Server-Timing", string.Create(CultureInfo.InvariantCulture,
-                $"app;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}, storage;dur={TimeSpan.FromTicks(Interlocked.Read(ref timing.ticks)).TotalMilliseconds:F1};desc=\"{Volatile.Read(ref timing.calls)} calls, {Volatile.Read(ref timing.writes)} writes\""));
+                $"app;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}, storage;dur={TimeSpan.FromTicks(Interlocked.Read(ref timing.ticks)).TotalMilliseconds:F1}"));
             return Task.CompletedTask;
         });
         Scope.Value = timing;
@@ -56,11 +52,6 @@ public sealed class StorageTiming
             finally
             {
                 Interlocked.Add(ref timing.ticks, Stopwatch.GetElapsedTime(started).Ticks);
-                Interlocked.Increment(ref timing.calls);
-                if (request.Method != HttpMethod.Get && request.RequestUri?.AbsolutePath.EndsWith("/query", StringComparison.Ordinal) != true)
-                {
-                    Interlocked.Increment(ref timing.writes);
-                }
             }
         }
     }
