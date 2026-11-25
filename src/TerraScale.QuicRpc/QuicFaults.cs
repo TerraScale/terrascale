@@ -7,6 +7,7 @@ public sealed record QuicRemoteError(string Code, string Message)
     public const string UnmappedMessageType = "unmapped_message_type";
     public const string MalformedRequest = "malformed_request";
     public const string ProtocolViolation = "protocol_violation";
+    public const string StorageFormatMismatch = "storage_format_mismatch";
 }
 
 internal closed record class QuicFault(string Message);
@@ -22,6 +23,8 @@ internal sealed record class DeadlineExceeded(string Message) : QuicFault(Messag
 internal sealed record class TransportShutdown(string Message) : QuicFault(Message);
 
 internal sealed record class PeerRejected(string Message) : QuicFault(Message);
+
+internal sealed record class StorageFormatMismatch(string Message) : QuicFault(Message);
 
 internal sealed record class ProtocolFault(string Message) : QuicFault(Message);
 
@@ -41,6 +44,7 @@ internal static class QuicFaults
         DeadlineExceeded => false,
         TransportShutdown => false,
         PeerRejected => true,
+        StorageFormatMismatch => false,
         ProtocolFault => false,
         PeerUnknown => false,
     };
@@ -50,6 +54,7 @@ internal static class QuicFaults
         ConnectionLost => true,
         StreamReset => true,
         PeerRejected => true,
+        StorageFormatMismatch => false,
         LocalAbort => false,
         DeadlineExceeded => false,
         TransportShutdown => false,
@@ -66,6 +71,7 @@ internal static class QuicFaults
         DeadlineExceeded exceeded => new QuicUnavailable(exceeded.Message, "request_timeout"),
         TransportShutdown shutdown => new QuicUnavailable(shutdown.Message, "transport_shutdown"),
         PeerRejected rejected => new QuicUnavailable(rejected.Message, "peer_unauthenticated"),
+        StorageFormatMismatch mismatch => new QuicUnavailable(mismatch.Message, QuicRemoteError.StorageFormatMismatch),
         ProtocolFault protocol => new QuicUnavailable(protocol.Message, QuicRemoteError.ProtocolViolation),
         PeerUnknown unknown => new QuicUnavailable(unknown.Message, "peer_unknown"),
     };
@@ -74,12 +80,12 @@ internal static class QuicFaults
     {
         DeadlineExceeded exceeded => new QuicTimeout(exceeded.Message),
         ProtocolFault protocol => new QuicRemoteError(QuicRemoteError.ProtocolViolation, protocol.Message),
-        ConnectionLost or StreamReset or LocalAbort or TransportShutdown or PeerRejected or PeerUnknown => ToUnavailable(fault),
+        ConnectionLost or StreamReset or LocalAbort or TransportShutdown or PeerRejected or StorageFormatMismatch or PeerUnknown => ToUnavailable(fault),
     };
 
     public static QuicPushOutcome ToPushFailure(QuicFault fault) => fault switch
     {
         DeadlineExceeded exceeded => new QuicTimeout(exceeded.Message),
-        ConnectionLost or StreamReset or LocalAbort or TransportShutdown or PeerRejected or ProtocolFault or PeerUnknown => ToUnavailable(fault),
+        ConnectionLost or StreamReset or LocalAbort or TransportShutdown or PeerRejected or StorageFormatMismatch or ProtocolFault or PeerUnknown => ToUnavailable(fault),
     };
 }

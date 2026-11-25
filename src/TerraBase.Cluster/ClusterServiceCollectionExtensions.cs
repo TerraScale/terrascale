@@ -9,18 +9,23 @@ public static class ClusterServiceCollectionExtensions
 {
     extension(IServiceCollection services)
     {
-        public IServiceCollection AddTerraBaseCluster(ClusterOptions options, Func<IServiceProvider, DatabaseSessionResolver> resolver, HlcClock clock)
+        public IServiceCollection AddTerraBaseCluster(ClusterOptions options, Func<IServiceProvider, DatabaseSessionResolver> resolver, HlcClock clock, string storageFormatId)
         {
             ArgumentNullException.ThrowIfNull(options);
             ArgumentNullException.ThrowIfNull(resolver);
             ArgumentNullException.ThrowIfNull(clock);
+            ArgumentException.ThrowIfNullOrEmpty(storageFormatId);
             _ = options.Validate();
             _ = services.AddMetrics();
             services.TryAddSingleton(TimeProvider.System);
             _ = services.AddSingleton(options);
             _ = services.AddSingleton(resolver);
             _ = services.AddSingleton(clock);
-            _ = services.AddSingleton(options.ToMeshOptions());
+            _ = services.AddSingleton(options.ToMeshOptions() with
+            {
+                StorageFormatId = storageFormatId,
+                StorageFormatMismatchBackoff = options.PingInterval,
+            });
             _ = services.AddSingleton<QuicMeshMetrics>();
             _ = services.AddSingleton<QuicRpcHost>();
             _ = services.AddSingleton<QuicRpcClient>();

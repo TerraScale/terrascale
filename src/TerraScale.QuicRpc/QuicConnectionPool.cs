@@ -190,6 +190,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
     }
 
     public bool TryJoinOrStartConnect(
+        TimeSpan storageFormatMismatchBackoff,
         out QuicConnection? current,
         out Task<QuicConnectionOpenOutcome>? inFlight,
         out QuicFault? immediateFault,
@@ -220,8 +221,9 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             }
 
             if (_lastConnectFault is { } recentFault
-                && _lastConnectFailureTimestamp != 0
-                && timeProvider.GetElapsedTime(_lastConnectFailureTimestamp) < QuicMeshLimits.ConnectFailureBackoff)
+                && timeProvider.GetElapsedTime(_lastConnectFailureTimestamp) < (recentFault is StorageFormatMismatch
+                    ? storageFormatMismatchBackoff
+                    : QuicMeshLimits.ConnectFailureBackoff))
             {
                 immediateFault = recentFault;
                 return false;
@@ -233,8 +235,11 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
         }
     }
 
-    public void FinishConnect(TaskCompletionSource<QuicConnectionOpenOutcome> leader, QuicConnectionOpenOutcome outcome)
+    public (QuicFault? Failure, bool LogFailure) FinishConnect(
+        TaskCompletionSource<QuicConnectionOpenOutcome> leader, QuicPeer peer, QuicConnectionOpenOutcome outcome)
     {
+        var failure = outcome switch { QuicConnection => null, QuicFault fault => fault };
+        var logFailure = false;
         lock (_gate)
         {
             if (ReferenceEquals(_connecting, leader.Task))
@@ -242,14 +247,19 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
                 _connecting = null;
             }
 
-            if (outcome switch { QuicConnection => null, QuicFault fault => fault } is { } failure)
+            if (failure is not null)
             {
-                _lastConnectFault = failure;
-                _lastConnectFailureTimestamp = timeProvider.GetTimestamp();
+                logFailure = failure is not StorageFormatMismatch || failure != _lastConnectFault;
+                if (peer == _peer)
+                {
+                    _lastConnectFault = failure;
+                    _lastConnectFailureTimestamp = timeProvider.GetTimestamp();
+                }
             }
         }
 
         leader.TrySetResult(outcome);
+        return (failure, logFailure);
     }
 
     public OrderedPushChannel? GetOrAddChannel(string key, QuicConnectionPool pool)
@@ -308,6 +318,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 internal sealed class QuicConnectionPool
 {
     private readonly ConcurrentDictionary<string, PeerSlot> _slots = new(StringComparer.Ordinal);
+    private readonly QuicMeshOptions _options;
     private readonly QuicCertificateValidator _validator;
     private readonly QuicCertificateSource _certificates;
     private readonly ILogger _logger;
@@ -316,6 +327,7 @@ internal sealed class QuicConnectionPool
     public QuicConnectionPool(QuicMeshOptions options, QuicCertificateValidator validator, QuicMeshMetrics metrics,
         TimeProvider timeProvider, ILogger logger, CancellationToken shutdownToken)
     {
+        _options = options;
         _validator = validator;
         _logger = logger;
         _certificates = new QuicCertificateSource(options, timeProvider);
@@ -466,7 +478,7 @@ internal sealed class QuicConnectionPool
             return cached;
         }
 
-        if (!slot.TryJoinOrStartConnect(out var current, out var inFlight, out var immediateFault, out var leader))
+        if (!slot.TryJoinOrStartConnect(_options.StorageFormatMismatchBackoff, out var current, out var inFlight, out var immediateFault, out var leader))
         {
             if (current is not null)
             {
@@ -488,6 +500,8 @@ internal sealed class QuicConnectionPool
     private async Task<QuicConnectionOpenOutcome> ConnectAsLeaderAsync(PeerSlot slot, TaskCompletionSource<QuicConnectionOpenOutcome> leader)
     {
         QuicConnectionOpenOutcome result = new TransportShutdown("The QUIC client connect did not complete.");
+        var peer = slot.Peer;
+        (QuicFault? Failure, bool LogFailure) completed;
         try
         {
             if (slot.TakeStale() is { } stale)
@@ -496,18 +510,27 @@ internal sealed class QuicConnectionPool
                 await QuicIo.DisposeConnectionAsync(stale.Connection);
             }
 
-            var peer = slot.Peer;
+            peer = slot.Peer;
             using var dialScope = new CallScope(QuicMeshLimits.HandshakeTimeout, TimeProvider, ShutdownToken, CancellationToken.None);
             var outcome = await QuicIo.ConnectAsync(ConnectionOptions(peer), dialScope);
             result = outcome switch
             {
-                QuicConnection connection => await ActivateAsync(slot, peer, connection),
-                QuicFault fault => ConnectFailed(peer, fault),
+                QuicConnection connection => await NegotiateAndActivateAsync(slot, peer, connection, dialScope),
+                QuicFault fault => fault,
             };
         }
         finally
         {
-            slot.FinishConnect(leader, result);
+            completed = slot.FinishConnect(leader, peer, result);
+        }
+
+        if (completed.Failure is { } failure)
+        {
+            Metrics.Error(QuicSide.Client, failure);
+            if (completed.LogFailure)
+            {
+                QuicRpcLog.ClientConnectFailed(_logger, peer.NodeId, peer.EndPoint, failure.Message);
+            }
         }
 
         return result;
@@ -525,6 +548,18 @@ internal sealed class QuicConnectionPool
         return await wait;
     }
 
+    private async ValueTask<QuicConnectionOpenOutcome> NegotiateAndActivateAsync(PeerSlot slot, QuicPeer peer, QuicConnection connection, CallScope scope)
+    {
+        if (_options.StorageFormatId is { } localFormat && connection.NegotiatedApplicationProtocol == QuicStorageHandshake.Protocol
+            && await QuicStorageHandshake.OfferAsync(connection, localFormat, scope) is { } fault)
+        {
+            await QuicIo.DisposeConnectionAsync(connection);
+            return fault;
+        }
+
+        return await ActivateAsync(slot, peer, connection);
+    }
+
     private async ValueTask<QuicConnectionOpenOutcome> ActivateAsync(PeerSlot slot, QuicPeer peer, QuicConnection connection)
     {
         if (!slot.TryActivate(new ActiveConnection(peer, connection), out var reconnect))
@@ -536,13 +571,6 @@ internal sealed class QuicConnectionPool
         Metrics.ConnectionOpened(QuicSide.Client, reconnect);
         QuicRpcLog.ClientConnected(_logger, peer.NodeId, peer.EndPoint, reconnect);
         return connection;
-    }
-
-    private QuicFault ConnectFailed(QuicPeer peer, QuicFault fault)
-    {
-        Metrics.Error(QuicSide.Client, fault);
-        QuicRpcLog.ClientConnectFailed(_logger, peer.NodeId, peer.EndPoint, fault.Message);
-        return fault;
     }
 
     private QuicClientConnectionOptions ConnectionOptions(QuicPeer peer) => new()
@@ -557,7 +585,7 @@ internal sealed class QuicConnectionPool
         MaxInboundUnidirectionalStreams = 0,
         ClientAuthenticationOptions = new SslClientAuthenticationOptions
         {
-            ApplicationProtocols = [new SslApplicationProtocol(QuicProtocol.ApplicationProtocol)],
+            ApplicationProtocols = QuicStorageHandshake.Protocols(_options.StorageFormatId),
             TargetHost = peer.NodeId,
             ClientCertificateContext = _certificates.Current(),
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck,

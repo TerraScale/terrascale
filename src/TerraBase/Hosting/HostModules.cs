@@ -48,7 +48,7 @@ internal static class HostModules
         public IServiceCollection AddClusterAndContinuity(ClusterOptions cluster, ContinuityOptions continuity, HlcClock clock)
         {
             services.AddSingleton<ClusterSessions>();
-            services.AddTerraBaseCluster(cluster, static provider => provider.GetRequiredService<ClusterSessions>().ResolveAsync, clock);
+            services.AddTerraBaseCluster(cluster, static provider => provider.GetRequiredService<ClusterSessions>().ResolveAsync, clock, StorageFormat.Id);
             services.AddSingleton<ArchiveCatchUp>(static provider => provider.GetRequiredService<ClusterSessions>().CatchUpFromArchiveAsync);
             services.AddSingleton<ChangefeedPeerAuthorization>(static provider =>
             {

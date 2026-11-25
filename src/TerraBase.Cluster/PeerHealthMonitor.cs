@@ -73,7 +73,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             await RegisterAsync(state, cancellationToken);
             if (!state.Registered)
             {
-                Record(state, success: false, TimeSpan.Zero);
+                Record(state, success: false, TimeSpan.Zero, refused: false);
                 return;
             }
         }
@@ -85,13 +85,13 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             new PingMessage(options.NodeId, options.Region, started, _instanceId),
             options.PingTimeout,
             cancellationToken);
-        var (success, timedOut, remoteInstanceId) = response switch
+        var (success, timedOut, refused, remoteInstanceId) = response switch
         {
             PongMessage pong when string.Equals(pong.NodeId, state.Info.NodeId, StringComparison.Ordinal)
-                && string.Equals(pong.Region, state.Info.Region, StringComparison.Ordinal) => (true, false, pong.InstanceId),
-            PongMessage => (false, false, 0L),
-            QuicTimeout => (false, true, 0L),
-            QuicUnavailable or QuicRemoteError => (false, false, 0L),
+                && string.Equals(pong.Region, state.Info.Region, StringComparison.Ordinal) => (true, false, false, pong.InstanceId),
+            QuicUnavailable { Code: QuicRemoteError.StorageFormatMismatch } => (false, false, true, 0L),
+            QuicTimeout => (false, true, false, 0L),
+            PongMessage or QuicUnavailable or QuicRemoteError => (false, false, false, 0L),
         };
         if (remoteInstanceId != 0)
         {
@@ -103,17 +103,17 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             client.ResetPeer(state.Info.NodeId);
         }
 
-        var failures = Record(state, success, timeProvider.GetElapsedTime(started));
-        if (!success && failures >= options.UnreachableAfterFailures && failures % options.UnreachableAfterFailures == 0 && !IPAddress.TryParse(state.Info.Host, out _))
+        var failures = Record(state, success, timeProvider.GetElapsedTime(started), refused);
+        if (!success && !refused && failures >= options.UnreachableAfterFailures && failures % options.UnreachableAfterFailures == 0 && !IPAddress.TryParse(state.Info.Host, out _))
         {
             await RefreshAddressAsync(state, cancellationToken);
         }
     }
 
-    private int Record(PeerState state, bool success, TimeSpan roundTrip)
+    private int Record(PeerState state, bool success, TimeSpan roundTrip, bool refused)
     {
         var previous = state.Health.Status;
-        var (next, failures) = state.Record(success, roundTrip, timeProvider.GetUtcNow(), options.UnreachableAfterFailures);
+        var (next, failures) = state.Record(success, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures);
         if (previous != next)
         {
             ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);

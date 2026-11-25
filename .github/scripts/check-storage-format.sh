@@ -15,7 +15,12 @@ import subprocess
 import sys
 
 format_file = "src/TerraBase/Engine/StorageFormat.cs"
-storage = re.compile(r"^(src/TerraBase\.Storage/|src/TerraBase/Engine/|native/native-pin\.env$|native/build-native\.sh$)")
+storage = re.compile(
+    r"^(src/TerraBase\.(Storage|Cluster|Continuity)/|src/TerraBase/Engine/"
+    r"|src/TerraScale\.Contracts/Consistency/CausalBookmark\.cs$"
+    r"|src/TerraScale\.QuicRpc/Wire(Reader|Writer)\.cs$"
+    r"|native/native-pin\.env$|native/build-native\.sh$)"
+)
 base = sys.argv[1]
 
 

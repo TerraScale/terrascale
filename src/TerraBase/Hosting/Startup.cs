@@ -3,6 +3,7 @@ using TerraBase.Configuration;
 using TerraBase.Continuity;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
+using TerraBase.Storage;
 
 namespace TerraBase.Hosting;
 
@@ -18,21 +19,32 @@ internal static class Startup
     public static StartupPreparation Prepare(IReadOnlyList<string> args) =>
         TerraBaseOptions.FromProcess(args) switch
         {
-            TerraBaseOptions options => InternalCredential.FromProcess(options) switch
+            TerraBaseOptions options => Prepare(options),
+            ConfigurationError error => error,
+        };
+
+    private static StartupPreparation Prepare(TerraBaseOptions options) =>
+        InternalCredential.FromProcess(options) switch
+        {
+            InternalCredential credential => CallerRegistry.FromProcess(TimeProvider.System) switch
             {
-                InternalCredential credential => CallerRegistry.FromProcess(TimeProvider.System) switch
+                CallerRegistry callers => StorageFormatMarker.CheckOrCreate(options.DataDirectory, StorageFormat.Id) switch
                 {
-                    CallerRegistry callers => DatabaseKeyring.Create(options) switch
-                    {
-                        DatabaseKeyring keyring => Cluster(options, credential) switch
-                        {
-                            ClusterOptions cluster => new PreparedStartup(options, credential, callers, keyring, cluster, Continuity(options)),
-                            ConfigurationError error => error,
-                        },
-                        ConfigurationError error => error,
-                    },
-                    ConfigurationError error => error,
+                    StorageFormatAccepted => PrepareStorage(options, credential, callers),
+                    StoredFormatMismatch mismatch => new ConfigurationError($"storage_format_mismatch: data directory records storage format '{mismatch.Recorded}', but this binary requires '{mismatch.Expected}'."),
+                    StorageFormatMarkerUnavailable unavailable => new ConfigurationError($"could not verify the data directory storage format: {unavailable.Message}"),
                 },
+                ConfigurationError error => error,
+            },
+            ConfigurationError error => error,
+        };
+
+    private static StartupPreparation PrepareStorage(TerraBaseOptions options, InternalCredential credential, CallerRegistry callers) =>
+        DatabaseKeyring.Create(options) switch
+        {
+            DatabaseKeyring keyring => Cluster(options, credential) switch
+            {
+                ClusterOptions cluster => new PreparedStartup(options, credential, callers, keyring, cluster, Continuity(options)),
                 ConfigurationError error => error,
             },
             ConfigurationError error => error,
