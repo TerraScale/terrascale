@@ -41,59 +41,41 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
 
     internal const int TestLimit = 20;
 
+    private static readonly TimeSpan AttemptRetry = TimeSpan.FromMinutes(1);
+
     internal async Task<bool> AcquireAsync(EmailMessage message, CancellationToken cancellationToken, string? attemptId = null)
     {
         ArgumentNullException.ThrowIfNull(message);
-        var purpose = message.Purpose;
-        var critical = purpose == EmailPurpose.Authentication;
         for (var attempt = 0; attempt < 16; attempt++)
         {
-            var now = clock.GetUtcNow();
-            if (await this.StateAsync(purpose, message.Tenant, attemptId, now, cancellationToken) is not { } state)
+            var decision = await this.DecideAsync(message.Purpose, message.Tenant, attemptId, cancellationToken);
+            var admitted = decision switch
             {
-                continue;
-            }
-
-            Observe(state.Counts.Total, state.Counts.Authentication);
-            if (state.Counts.Attempt || !Allows(state, purpose, message.Tenant, now))
+                EmailAdmitted granted => granted,
+                EmailRefused => null,
+            };
+            if (admitted is null)
             {
-                Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "refused"));
                 return false;
             }
 
-            var reservation = Change.Insert(new EmailReservationRecord(AuthIds.New(), now, purpose, message.Tenant, attemptId));
-            if (!await data.SaveAsync(critical ? [reservation] : [Change.Update(state.Partition, state.Partition.Value), reservation], cancellationToken))
+            if (await data.SaveAsync(admitted.Changes, cancellationToken))
             {
-                continue;
+                return true;
             }
-
-            Observe(state.Counts.Total + 1, state.Counts.Authentication + (critical ? 1 : 0));
-            Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "admitted"));
-            return true;
         }
 
         return false;
     }
 
-    internal async Task<TimeSpan?> RefusalAsync(EmailPurpose purpose, string tenant, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 16; attempt++)
-        {
-            var now = clock.GetUtcNow();
-            if (await this.StateAsync(purpose, tenant, null, now, cancellationToken) is { } state)
-            {
-                return Allows(state, purpose, tenant, now) ? null
-                    : state.Global.Value.PausedUntil > now ? state.Global.Value.PausedUntil - now
-                    : state.Counts.Oldest is { } oldest ? oldest + Window - now
-                    : Window;
-            }
-        }
+    internal Task<bool> ReservedAsync(string reservationId, CancellationToken cancellationToken) =>
+        data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM email_reservations WHERE id = @reservationId)", new { reservationId }), cancellationToken);
 
-        throw ApiException.Unavailable();
-    }
-
-    private async Task<AdmissionState?> StateAsync(EmailPurpose purpose, string tenant, string? attemptId, DateTimeOffset now, CancellationToken cancellationToken)
+    internal async Task<EmailAdmissionDecision> DecideAsync(EmailPurpose purpose, string tenant, string? attemptId, CancellationToken cancellationToken)
     {
+        var global = await this.GlobalAsync(cancellationToken);
+        var now = clock.GetUtcNow();
         var cutoff = now - Window;
         var authentication = (long)EmailPurpose.Authentication;
         var purposeValue = (long)purpose;
@@ -101,47 +83,97 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
             """
             DELETE FROM email_reservations WHERE at <= @cutoff;
             SELECT (SELECT COUNT(*) FROM email_reservations) AS total,
+                (SELECT MIN(at) FROM email_reservations) AS total_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose = @authentication) AS authentication,
+                (SELECT MIN(at) FROM email_reservations WHERE purpose <> @authentication) AS shared_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose = @authentication AND tenant = @tenant) AS tenant_authentication,
+                (SELECT MIN(at) FROM email_reservations WHERE purpose = @authentication AND tenant = @tenant) AS tenant_authentication_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant) AS tenant,
+                (SELECT MIN(at) FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant) AS tenant_oldest,
                 (SELECT COUNT(*) FROM email_reservations WHERE purpose = @purposeValue AND tenant = @tenant) AS tenant_purpose,
+                (SELECT MIN(at) FROM email_reservations WHERE purpose = @purposeValue AND tenant = @tenant) AS tenant_purpose_oldest,
                 (SELECT COALESCE(SUM(used - @TenantFairShare), 0) FROM (SELECT COUNT(*) AS used FROM email_reservations WHERE purpose <> @authentication GROUP BY tenant) AS usage
                     WHERE used > @TenantFairShare) AS overflow,
-                (SELECT MIN(at) FROM email_reservations WHERE tenant = @tenant) AS oldest,
+                (SELECT MIN(at) FROM email_reservations WHERE purpose <> @authentication AND tenant IN (
+                    SELECT tenant FROM email_reservations WHERE purpose <> @authentication GROUP BY tenant HAVING COUNT(*) > @TenantFairShare)) AS overflow_oldest,
                 @attemptId IS NOT NULL AND EXISTS (SELECT 1 FROM email_reservations WHERE attempt_id = @attemptId) AS attempt
             """, new { cutoff, authentication, purposeValue, tenant, attemptId, TenantFairShare }), cancellationToken);
-        var global = await this.BudgetAsync(Key, cancellationToken);
-        var partitionKey = PartitionKey(tenant);
-        var partition = purpose == EmailPurpose.Authentication ? global : await this.BudgetAsync(partitionKey, cancellationToken);
-        if (global is null || partition is null)
+        Observe(counts.Total, counts.Authentication);
+        var waits = Refusals(global.Value, counts, purpose, tenant, now).ToList();
+        if (waits.Count > 0)
         {
-            await data.SaveAsync(Change.Insert(new EmailBudgetRecord(global is null ? Key : partitionKey, DateTimeOffset.UnixEpoch)), cancellationToken);
-            return null;
+            Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "refused"));
+            return new EmailRefused(waits.Max());
         }
 
-        return new AdmissionState(global, partition, counts);
+        var reservation = new EmailReservationRecord(AuthIds.New(), now, purpose, tenant, attemptId);
+        Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "admitted"));
+        return new EmailAdmitted(reservation.Id, [Change.Update(global, global.Value), Change.Insert(reservation)]);
     }
 
-    private static bool Allows(AdmissionState state, EmailPurpose purpose, string tenant, DateTimeOffset now)
+    private static IEnumerable<TimeSpan> Refusals(EmailBudgetRecord global, AdmissionCounts counts, EmailPurpose purpose, string tenant, DateTimeOffset now)
     {
-        var counts = state.Counts;
-        if (state.Global.Value.PausedUntil > now || counts.Total >= TotalLimit)
+        TimeSpan Until(DateTimeOffset? oldest) => oldest is { } at && at + Window > now ? at + Window - now : TimeSpan.FromSeconds(1);
+        if (counts.Attempt)
         {
-            return false;
+            yield return AttemptRetry;
+        }
+
+        if (global.PausedUntil > now)
+        {
+            yield return global.PausedUntil - now;
+        }
+
+        if (counts.Total >= TotalLimit)
+        {
+            yield return Until(counts.TotalOldest);
         }
 
         if (purpose == EmailPurpose.Authentication)
         {
-            return tenant is OidcIssuer.InstanceId or DefaultTenant || counts.TenantAuthentication < TenantAuthenticationLimit;
+            if (tenant is not (OidcIssuer.InstanceId or DefaultTenant) && counts.TenantAuthentication >= TenantAuthenticationLimit)
+            {
+                yield return Until(counts.TenantAuthenticationOldest);
+            }
+
+            yield break;
         }
 
-        return counts.Total - counts.Authentication < SharedLimit
-            && counts.Tenant < TenantLimit
-            && counts.TenantPurpose < (purpose == EmailPurpose.Test ? TestLimit : TenantLimit)
-            && (counts.Tenant < TenantFairShare || counts.Overflow < OverflowLimit);
+        if (counts.Total - counts.Authentication >= SharedLimit)
+        {
+            yield return Until(counts.SharedOldest);
+        }
+
+        if (counts.Tenant >= TenantLimit)
+        {
+            yield return Until(counts.TenantOldest);
+        }
+
+        if (counts.TenantPurpose >= (purpose == EmailPurpose.Test ? TestLimit : TenantLimit))
+        {
+            yield return Until(counts.TenantPurposeOldest);
+        }
+
+        if (counts.Tenant >= TenantFairShare && counts.Overflow >= OverflowLimit)
+        {
+            yield return Until(counts.OverflowOldest);
+        }
     }
 
-    private static string PartitionKey(string tenant) => "tenant:" + tenant;
+    private async Task<Versioned<EmailBudgetRecord>> GlobalAsync(CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            if (await this.BudgetAsync(cancellationToken) is { } global)
+            {
+                return global;
+            }
+
+            await data.SaveAsync(Change.Insert(new EmailBudgetRecord(Key, DateTimeOffset.UnixEpoch)), cancellationToken);
+        }
+
+        throw ApiException.Unavailable();
+    }
 
     private static void Observe(int total, int authentication)
     {
@@ -156,7 +188,7 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         until = until <= now ? now + TimeSpan.FromMinutes(1) : until > now + Window ? now + Window : until;
         for (var attempt = 0; attempt < 16; attempt++)
         {
-            var budget = await this.BudgetAsync(Key, cancellationToken) ?? throw new InvalidOperationException("Missing mail admission record.");
+            var budget = await this.GlobalAsync(cancellationToken);
             if (budget.Value.PausedUntil >= until || await data.SaveAsync(Change.Update(budget, budget.Value with { PausedUntil = until }), cancellationToken))
             {
                 return;
@@ -166,14 +198,20 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         throw new InvalidOperationException("Mail provider pause could not be persisted.");
     }
 
-    private async Task<Versioned<EmailBudgetRecord>?> BudgetAsync(string key, CancellationToken cancellationToken) =>
+    private async Task<Versioned<EmailBudgetRecord>?> BudgetAsync(CancellationToken cancellationToken) =>
         Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<EmailBudgetRecord>(
-            "SELECT * FROM email_budgets WHERE \"key\" = @key", new { key }), cancellationToken));
+            "SELECT * FROM email_budgets WHERE \"key\" = @Key", new { Key }), cancellationToken));
 
-    internal sealed record AdmissionCounts(int Total, int Authentication, int TenantAuthentication, int Tenant, int TenantPurpose, int Overflow, DateTimeOffset? Oldest, bool Attempt);
-
-    private sealed record AdmissionState(Versioned<EmailBudgetRecord> Global, Versioned<EmailBudgetRecord> Partition, AdmissionCounts Counts);
+    internal sealed record AdmissionCounts(int Total, DateTimeOffset? TotalOldest, int Authentication, DateTimeOffset? SharedOldest, int TenantAuthentication,
+        DateTimeOffset? TenantAuthenticationOldest, int Tenant, DateTimeOffset? TenantOldest, int TenantPurpose, DateTimeOffset? TenantPurposeOldest, int Overflow,
+        DateTimeOffset? OverflowOldest, bool Attempt);
 }
+
+public sealed record EmailAdmitted(string ReservationId, IReadOnlyList<Change> Changes);
+
+public sealed record EmailRefused(TimeSpan RetryAfter);
+
+public readonly union EmailAdmissionDecision(EmailAdmitted, EmailRefused);
 
 public sealed record EmailBudgetRecord(string Key, DateTimeOffset PausedUntil)
 {
@@ -192,7 +230,8 @@ public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailS
         var outcome = EmailDeliveryOutcome.Retryable;
         try
         {
-            if (!await admission.AcquireAsync(message, cancellationToken))
+            if (!(message.AdmissionId is { } admitted && await admission.ReservedAsync(admitted, cancellationToken))
+                && !await admission.AcquireAsync(message, cancellationToken))
             {
                 AuthMetrics.Email("capacity_refused");
                 return EmailDeliveryOutcome.Retryable;

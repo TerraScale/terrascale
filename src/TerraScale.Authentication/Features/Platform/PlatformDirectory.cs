@@ -99,8 +99,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
     public static string? Name(string? value, bool brand)
     {
         var trimmed = value?.Trim();
-        return trimmed is { Length: >= 1 and <= 128 } && trimmed.Any(char.IsLetterOrDigit) && !trimmed.AsSpan().ContainsAny(NameReserved)
-            && !trimmed.Any(Invisible) && (brand || !Imitates(trimmed))
+        return trimmed is { Length: >= 1 and <= 128 } && Visible(trimmed) && !trimmed.AsSpan().ContainsAny(NameReserved) && (brand || !Imitates(trimmed))
             ? trimmed
             : null;
     }
@@ -126,9 +125,25 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return skeleton.ToString().Contains("terrascale", StringComparison.Ordinal);
     }
 
-    private static bool Invisible(char value) =>
-        char.IsControl(value)
-        || CharUnicodeInfo.GetUnicodeCategory(value) is UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator or UnicodeCategory.PrivateUse;
+    private static bool Visible(string value)
+    {
+        var text = value.AsSpan();
+        var letterOrDigit = false;
+        while (!text.IsEmpty)
+        {
+            if (Rune.DecodeFromUtf16(text, out var rune, out var consumed) != OperationStatus.Done
+                || Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator
+                    or UnicodeCategory.PrivateUse or UnicodeCategory.Surrogate or UnicodeCategory.OtherNotAssigned)
+            {
+                return false;
+            }
+
+            letterOrDigit |= Rune.IsLetterOrDigit(rune);
+            text = text[consumed..];
+        }
+
+        return letterOrDigit;
+    }
 
     public static bool IsId(string? value) =>
         TerraScaleIds.IsValid(value);
@@ -1105,6 +1120,20 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return Roles.Rank(Roles.Implied(access.Membership?.Value.Role)) >= Roles.Rank(minimum)
             ? Change.Assert(access.Membership!)
             : Change.Assert(access.Grant!);
+    }
+
+    internal static Change Issuing(OrganizationAccess access)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+        return Change.Update(access.Membership, access.Membership.Value);
+    }
+
+    internal static Change Issuing(ProjectAccess access)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+        return access.Membership is { } membership ? Change.Update(membership, membership.Value)
+            : access.Grant is { } grant ? Change.Update(grant, grant.Value)
+            : throw new InvalidOperationException("Project access without a membership or grant.");
     }
 
     internal static string Cursor(string? after) =>

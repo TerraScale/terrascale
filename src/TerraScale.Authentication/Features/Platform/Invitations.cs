@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dapper;
 using System.Buffers;
 using System.Security.Cryptography;
@@ -43,18 +44,18 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             {
                 var access = await directory.OrganizationAccessAsync(caller.Id, organizationId, cancellationToken);
                 PlatformDirectory.RequireRole(access, role == Roles.Owner ? Roles.Owner : Roles.Admin);
-                return ([PlatformDirectory.Authority(access), Change.Assert(access.Organization)], access.Organization.Value.Name);
+                return ([PlatformDirectory.Issuing(access), Change.Assert(access.Organization)], access.Organization.Value.Name);
             }
 
             var project = await directory.ProjectAccessAsync(caller.Id, organizationId, projectId, cancellationToken);
             PlatformDirectory.RequireRole(project, Roles.Admin);
-            return ([PlatformDirectory.Authority(project, Roles.Admin), Change.Assert(project.Organization), Change.Assert(project.Project)], project.Organization.Value.Name);
+            return ([PlatformDirectory.Issuing(project), PlatformDirectory.Authority(project, Roles.Admin), Change.Assert(project.Organization), Change.Assert(project.Project)], project.Organization.Value.Name);
         }
 
         _ = await AuthorizeAsync();
-        if (!await limiter.TryAcquireAsync(Instance, "invitation", organizationId, PerOrganizationPerHour, TimeSpan.FromHours(1), cancellationToken))
+        if (await limiter.AcquireAsync(Instance, "invitation", organizationId, PerOrganizationPerHour, TimeSpan.FromHours(1), cancellationToken) is { } organizationWait)
         {
-            throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "This organization sent too many invitations; retry within the hour.");
+            throw ApiException.RateLimited("This organization sent too many invitations; retry after the Retry-After delay.", organizationWait);
         }
 
         if (await limiter.AcquireAsync(Instance, "invitation-sender", caller.Id, PerUserPerDay, TimeSpan.FromDays(1), cancellationToken) is { } senderWait)
@@ -63,14 +64,9 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
         }
 
         var dashboard = options.DashboardClient;
-        if (dashboard is not null && await admission.RefusalAsync(EmailPurpose.Invitation, organizationId, cancellationToken) is { } emailWait)
-        {
-            throw ApiException.RateLimited("This organization's invitation email capacity is used up; retry after the Retry-After delay.", emailWait);
-        }
-
         using var reservation = dashboard is not null ? mail.Reserve() : null;
         cancellationToken.ThrowIfCancellationRequested();
-        var (invitation, token, organizationName) = await directory.CommitAsync(async () =>
+        var (invitation, token, outbox) = await directory.CommitAsync(async () =>
         {
             var (authority, organizationName) = await AuthorizeAsync();
             if (await this.AlreadyHasAsync(organizationId, projectId, email, role, cancellationToken))
@@ -95,21 +91,43 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
 
             operations.Add(Change.Insert(invitation));
             operations.Add(directory.Audit(organizationId, caller.Id, "invitation.created", email, projectId is null ? role : $"{projectId}/{role}"));
-            return new PlatformDirectory.Plan<(InvitationRecord, string, string)>(operations, (invitation, token, organizationName),
+            MailRow? outbox = null;
+            if (dashboard is not null && reservation is not null)
+            {
+                var decision = await admission.DecideAsync(EmailPurpose.Invitation, organizationId, null, cancellationToken);
+                var (admitted, refusal) = Admission(decision);
+                if (refusal is { } capacity)
+                {
+                    throw ApiException.RateLimited("This organization's invitation email capacity is used up; no invitation was created. Retry after the Retry-After delay.",
+                        capacity);
+                }
+
+                if (admitted is null)
+                {
+                    throw new UnreachableException("An admission decision is either admitted or refused.");
+                }
+
+                outbox = reservation.Stage(AuthEmailKind.Invitation, new AuthEmailValues(invitation.Email)
+                {
+                    Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
+                    ExpiresIn = Lifetime,
+                    Organization = organizationName,
+                    Tenant = organizationId,
+                    Inviter = caller.Email,
+                    AdmissionId = admitted.ReservationId,
+                }, locale);
+                operations.AddRange(admitted.Changes);
+                operations.Add(Change.Insert(outbox));
+            }
+
+            return new PlatformDirectory.Plan<(InvitationRecord, string, MailRow?)>(operations, (invitation, token, outbox),
                 async probe => await this.PendingAsync(organizationId, projectId, email, probe) is { } held && this.Status(held.Value) == "pending",
                 PendingConflict());
         }, cancellationToken);
 
-        if (dashboard is not null)
+        if (outbox is not null && reservation is not null)
         {
-            await reservation!.EnqueueEmailAsync(AuthEmailKind.Invitation, new AuthEmailValues(invitation.Email)
-            {
-                Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
-                ExpiresIn = Lifetime,
-                Organization = organizationName,
-                Tenant = organizationId,
-                Inviter = caller.Email,
-            }, locale);
+            reservation.Committed(outbox);
         }
 
         return (invitation, token);
@@ -221,6 +239,12 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             operations.Add(directory.Audit(invitation.Value.OrganizationId, caller.Id, "invitation.declined", invitation.Value.Email));
             return new PlatformDirectory.Plan<bool>(operations, true);
         }, cancellationToken);
+
+    private static (EmailAdmitted? Admitted, TimeSpan? Refusal) Admission(EmailAdmissionDecision decision) => decision switch
+    {
+        EmailAdmitted granted => (granted, null),
+        EmailRefused refused => (null, refused.RetryAfter),
+    };
 
     private static ApiException PendingConflict() =>
         PlatformDirectory.Conflict("invitation_pending", "An invitation for this address is already pending.");

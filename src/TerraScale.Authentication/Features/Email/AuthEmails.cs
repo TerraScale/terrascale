@@ -53,6 +53,8 @@ public sealed record AuthEmailValues(string Email)
 
     public string? Inviter { get; init; }
 
+    public string? AdmissionId { get; init; }
+
     public string? Device { get; init; }
 
     public string? Location { get; init; }
@@ -393,6 +395,7 @@ public sealed partial class AuthEmails(AuthOptions options)
                 ? organization + " (" + brandName + ")" : brand.SenderName,
             ReplyTo = brand.ReplyTo,
             Tenant = values.Tenant,
+            AdmissionId = values.AdmissionId,
             Purpose = kind is AuthEmailKind.SignInCode or AuthEmailKind.SocialLinkCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.MfaCode or AuthEmailKind.StepUpCode
                 ? EmailPurpose.Authentication : kind == AuthEmailKind.Invitation ? EmailPurpose.Invitation : EmailPurpose.Notification
         };

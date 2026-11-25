@@ -440,11 +440,17 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    private async Task WriteAsync(string state, MailWork work, string locale, TimeSpan? lifetime)
+    private MailRow Prepare(string state, MailWork work, string locale, TimeSpan? lifetime)
     {
         var now = clock.GetUtcNow();
         var id = AuthIds.New();
-        var row = new MailRow(id, state, locale, now, now, this.Seal(id, work)) { ExpiresAt = now + lifetime };
+        return new MailRow(id, state, locale, now, now, this.Seal(id, work)) { ExpiresAt = now + lifetime };
+    }
+
+    private async Task WriteAsync(string state, MailWork work, string locale, TimeSpan? lifetime)
+    {
+        var row = this.Prepare(state, work, locale, lifetime);
+        var id = row.Id;
         var written = false;
         try
         {
@@ -522,6 +528,19 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         {
             ArgumentNullException.ThrowIfNull(values);
             return this.Consume().WriteAsync("ready", new MailWork(values.Tenant, values.Email) { Kind = kind, Values = values }, locale, values.ExpiresIn);
+        }
+
+        public MailRow Stage(AuthEmailKind kind, AuthEmailValues values, string locale = AuthEmails.English)
+        {
+            ArgumentNullException.ThrowIfNull(values);
+            var mail = this.owner ?? throw new InvalidOperationException("The email reservation has already been consumed or released.");
+            return mail.Prepare("ready", new MailWork(values.Tenant, values.Email) { Kind = kind, Values = values }, locale, values.ExpiresIn);
+        }
+
+        public void Committed(MailRow row)
+        {
+            ArgumentNullException.ThrowIfNull(row);
+            this.Consume().FinishReservation(row.Id);
         }
 
         public void Dispose() => Interlocked.Exchange(ref this.owner, null)?.FinishReservation(null);

@@ -20,6 +20,8 @@ public sealed record EmailMessage(string Subject, string Text, string? Html = nu
 
     public string? ReplyTo { get; init; }
 
+    public string? AdmissionId { get; init; }
+
     public override string ToString() => nameof(EmailMessage);
 }
 

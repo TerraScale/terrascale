@@ -475,6 +475,10 @@ paths:
   /v1/terrascale/account:
     delete:
       operationId: delete_account
+      parameters:
+        - {"name": "X-TerraScale-Step-Up-Proof", "in": "header", "description": "Fresh approved single-use ts-auth audience proof for this operation's purpose. Account deletion alternatively accepts its exact preauthorized deletion receipt continuation.", "schema": {"maxLength": 70, "minLength": 70, "type": "string"}}
+        - {"name": "X-TerraScale-Deletion-Receipt", "in": "header", "description": "Status-only capability: 32 random bytes in canonical unpadded base64url. Never put it in a URL or logs.", "schema": {"maxLength": 43, "minLength": 43, "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$", "type": "string"}}
+        - {"name": "X-TerraScale-Deletion-Authorization", "in": "header", "description": "Secret acknowledgement returned only after timely proof consumption; required with the exact receipt for continuation. Never put it in a URL or logs.", "schema": {"maxLength": 43, "minLength": 43, "type": "string"}}
       tags: [Members]
       summary: Delete your account
       description: |
@@ -991,6 +995,8 @@ paths:
       - $ref: '#/components/parameters/Key'
     post:
       operationId: rotate_organization_api_key
+      parameters:
+        - {"name": "X-TerraScale-Step-Up-Proof", "in": "header", "description": "Fresh approved single-use ts-auth audience proof for this operation's purpose. Account deletion alternatively accepts its exact preauthorized deletion receipt continuation.", "required": true, "schema": {"maxLength": 70, "minLength": 70, "type": "string"}}
       tags: [API keys]
       summary: Rotate an organization API key
       description: "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid."
@@ -1126,6 +1132,8 @@ paths:
       - $ref: '#/components/parameters/Key'
     post:
       operationId: rotate_project_api_key
+      parameters:
+        - {"name": "X-TerraScale-Step-Up-Proof", "in": "header", "description": "Fresh approved single-use ts-auth audience proof for this operation's purpose. Account deletion alternatively accepts its exact preauthorized deletion receipt continuation.", "required": true, "schema": {"maxLength": 70, "minLength": 70, "type": "string"}}
       tags: [API keys]
       summary: Rotate a project API key
       description: "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid."
@@ -1545,6 +1553,8 @@ paths:
   /v1/terrascale/account/deletion/history:
     get:
       operationId: account_deletion_history
+      parameters:
+        - {"name": "organization", "in": "query", "required": false, "description": "Candidate organization ULID covered by the deletion receipt.", "schema": {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"}}
       tags: [Account]
       summary: "Read your deletion's history request metadata"
       description: "Requires the existing generation-specific deletion receipt capability. Optional organization ULID must be a candidate covered by that receipt. Returns only the opaque erasure id, immutable request time and auth worker progress after logical deletion; 404 when no history job is available (including retirement), never completion evidence. Does not advance cleanup, settlement or erasure and returns no subject ids, records or tokens. Read the peer-only TerraBase inspection separately for holder metadata."
@@ -1770,7 +1780,7 @@ paths:
       operationId: request_step_up
       tags: [Account]
       summary: "Start purpose-bound reauthentication"
-      description: "Creates a pending five-minute proof bound to the account, authentication epoch/state, purpose and audience. Supported: delete_account (ts-auth or ts-dashboard), create_pat (ts-dashboard), delete_organization, start_ownership_transfer, change_plan, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, create_webhook_endpoint, rotate_webhook_secret, change_email, add_passkey, delete_passkey and start_impersonation (ts-auth). organization_id is required for, and binds the proof to, delete_organization, start_ownership_transfer and change_plan. For start_impersonation it must be the project ULID, a colon, and the target user ULID. It is refused for every other purpose. Keep proof on the backend; send the browser only to step_up_url. return_uri must be /auth/step-up/callback on a registered dashboard redirect origin, without query or fragment. Fresh primary credentials and active MFA are mandatory; an existing session never approves it."
+      description: "Creates a pending five-minute proof bound to the account, authentication epoch/state, purpose and audience. Supported: delete_account (ts-auth or ts-dashboard), create_pat (ts-dashboard), delete_organization, start_ownership_transfer, change_plan, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, the event endpoint creation and secret rotation purposes, change_email, add_passkey, delete_passkey and start_impersonation (ts-auth). organization_id is required for, and binds the proof to, delete_organization, start_ownership_transfer and change_plan. For start_impersonation it must be the project ULID, a colon, and the target user ULID. It is refused for every other purpose. Keep proof on the backend; send the browser only to step_up_url. return_uri must be /auth/step-up/callback on a registered dashboard redirect origin, without query or fragment. Fresh primary credentials and active MFA are mandatory; an existing session never approves it."
       security:
         - platformUser: []
       requestBody: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/StepUpRequest"}}}, "required": true}

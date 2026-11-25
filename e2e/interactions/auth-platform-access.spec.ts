@@ -11,15 +11,18 @@ import { saveSecret } from '../support/state';
 const ui = auth + '/ui/terrascale';
 const origin = { Origin: auth };
 
+function present<T>(value: T | null | undefined, what: string): T {
+  if (value === null || value === undefined) throw new Error('Missing ' + what);
+  return value;
+}
+
 async function signUpMember(member: APIRequestContext, email: string, password: string): Promise<void> {
   const started = await member.post(ui + '/sign-up', { headers: origin, form: { email, password } });
   expect(started.status()).toBe(200);
-  const pending = /name="pending_token" value="([^"]+)"/.exec(await started.text())?.[1];
-  expect(pending).toBeTruthy();
-  saveSecret('platform-access-member-pending', pending!);
-  const code = /^\s*(\d{6})\s*$/m.exec((await nextMail(email, 0)).text)?.[1];
-  expect(code).toBeTruthy();
-  const verified = await member.post(ui + '/sign-up/verify', { headers: origin, form: { email, code: code!, pending_token: pending! } });
+  const pending = present(/name="pending_token" value="([^"]+)"/.exec(await started.text())?.[1], 'the sign-up pending token');
+  saveSecret('platform-access-member-pending', pending);
+  const code = present(/^\s*(\d{6})\s*$/m.exec((await nextMail(email, 0)).text)?.[1], 'the sign-up code');
+  const verified = await member.post(ui + '/sign-up/verify', { headers: origin, form: { email, code, pending_token: pending } });
   expect(verified.status()).toBe(200);
 }
 
@@ -47,9 +50,34 @@ test('a member\'s API keys survive its own sign-out everywhere, but the keys and
     for (const limit of ['0', '101']) {
       expect((await page.request.get(auth + '/v1/' + current.projectId + '/clients?limit=' + limit, { headers: owner })).status()).toBe(400);
     }
-    const clients = await page.request.get(auth + '/v1/' + current.projectId + '/clients?limit=1', { headers: owner });
-    expect(clients.status()).toBe(200);
-    expect(((await clients.json()).items as unknown[]).length).toBeLessThanOrEqual(1);
+    const clients = auth + '/v1/' + current.projectId + '/clients';
+    const createdClients: string[] = [];
+    for (const name of ['Access paging one', 'Access paging two']) {
+      const proof = await stepUp(page.request, ownerToken, 'create_oauth_client', current.password);
+      const client = await page.request.post(clients, {
+        headers: { ...owner, 'X-TerraScale-Step-Up-Proof': proof }, data: { name, type: 'public', redirect_uris: ['https://app.example.com/callback'] },
+      });
+      expect(client.status()).toBe(201);
+      createdClients.push((await client.json()).client_id as string);
+    }
+    const listed: string[] = [];
+    let after: string | null = null;
+    let pages = 0;
+    do {
+      const response = await page.request.get(clients + '?limit=1' + (after === null ? '' : '&after=' + encodeURIComponent(after)), { headers: owner });
+      expect(response.status()).toBe(200);
+      const body = await response.json() as { items: { client_id: string }[]; next: string | null };
+      expect(body.items.length).toBeLessThanOrEqual(1);
+      listed.push(...body.items.map(item => item.client_id));
+      after = body.next;
+      pages += 1;
+    } while (after !== null && pages < 50);
+    expect(after, 'the client pages end').toBeNull();
+    expect(pages).toBeGreaterThanOrEqual(2);
+    expect(new Set(listed).size).toBe(listed.length);
+    for (const id of createdClients) {
+      expect(listed, 'client ' + id + ' across pages of one').toContain(id);
+    }
 
     await signUpMember(member, memberEmail, memberPassword);
     let memberToken = await signInToken(member, 'platform-access-member');
@@ -62,7 +90,7 @@ test('a member\'s API keys survive its own sign-out everywhere, but the keys and
     })).status()).toBe(200);
     const members = await page.request.get(organization + '/members', { headers: owner });
     expect(members.status()).toBe(200);
-    const memberId = ((await members.json()).items as { user_id: string; email: string }[]).find(item => item.email === memberEmail)!.user_id;
+    const memberId = present(((await members.json()).items as { user_id: string; email: string }[]).find(item => item.email === memberEmail), 'the member').user_id;
 
     const created = await member.post(projectKeys, {
       headers: { Authorization: 'Bearer ' + memberToken }, data: { name: 'member admin key', scopes: ['auth:read', 'auth:write'] },

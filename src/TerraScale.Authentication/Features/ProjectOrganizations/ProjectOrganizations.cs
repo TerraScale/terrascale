@@ -14,6 +14,15 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
 {
     private const int RetireBatch = 64;
 
+    private const int RetireConflicts = 8;
+
+    private enum RetireStep
+    {
+        Progressed,
+        Conflicted,
+        Finished,
+    }
+
     public static ProjectOrganizationBody Body(ProjectOrganizationRecord org) => new(org.Id, org.Name, org.Slug, org.ImageUrl,
         org.PublicMetadata, org.PrivateMetadata, org.MaxMembers, org.DomainJoin, org.CreatedAt);
 
@@ -54,54 +63,59 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
     public async Task DeleteAsync(string project, string id, CancellationToken cancellationToken)
     {
         var org = (await this.ReadAsync(project, id, cancellationToken)).Value.Id;
-        for (var remaining = true; remaining;)
+        for (var conflicts = 0; conflicts < RetireConflicts;)
         {
-            remaining = await this.RetireMembersAsync(project, org, cancellationToken) || await this.RetireInvitationsAsync(project, org, cancellationToken);
+            var current = await this.ReadAsync(project, org, cancellationToken);
+            var step = await this.RetireMembersAsync(current, cancellationToken) ?? await this.RetireInvitationsAsync(current, cancellationToken)
+                ?? (await data.SaveAsync([Change.Delete(current), this.Event(current.Value, "organization.deleted")], cancellationToken) ? RetireStep.Finished : RetireStep.Conflicted);
+            if (step == RetireStep.Finished)
+            {
+                return;
+            }
+
+            conflicts = step == RetireStep.Conflicted ? conflicts + 1 : 0;
         }
 
-        var current = await this.ReadAsync(project, org, cancellationToken);
-        await this.CommitAsync([Change.Delete(current), this.Event(current.Value, "organization.deleted")], cancellationToken);
+        throw Conflict("version_conflict", "The organization kept changing while it was being deleted; try again.");
     }
 
-    private async Task<bool> RetireMembersAsync(string project, string org, CancellationToken cancellationToken)
+    private async Task<RetireStep?> RetireMembersAsync(Versioned<ProjectOrganizationRecord> current, CancellationToken cancellationToken)
     {
-        var current = await this.ReadAsync(project, org, cancellationToken);
+        var (project, org) = (current.Value.ProjectId, current.Value.Id);
         var members = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<ProjectOrganizationMembership>(
             "SELECT * FROM project_organization_memberships WHERE project_id = @project AND organization_id = @org ORDER BY user_id LIMIT @RetireBatch",
             new { project, org, RetireBatch }), cancellationToken));
         if (members.Count == 0)
         {
-            return false;
+            return null;
         }
 
         var admins = members.Count(member => member.Value.Role == "admin");
-        await this.CommitAsync(
+        return await data.SaveAsync(
         [
             Change.Update(current, current.Value with { Members = current.Value.Members - members.Count, Admins = current.Value.Admins - admins }),
             .. members.Select(member => Change.Delete(member)),
             .. members.Select(member => this.Event(current.Value, "organizationMembership.deleted", member.Value.UserId, member.Value.Role)),
-        ], cancellationToken);
-        return true;
+        ], cancellationToken) ? RetireStep.Progressed : RetireStep.Conflicted;
     }
 
-    private async Task<bool> RetireInvitationsAsync(string project, string org, CancellationToken cancellationToken)
+    private async Task<RetireStep?> RetireInvitationsAsync(Versioned<ProjectOrganizationRecord> current, CancellationToken cancellationToken)
     {
-        var current = await this.ReadAsync(project, org, cancellationToken);
+        var (project, org) = (current.Value.ProjectId, current.Value.Id);
         var invitations = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<ProjectOrganizationInvitation>(
             "SELECT * FROM project_organization_invitations WHERE project_id = @project AND organization_id = @org AND status = 'pending' ORDER BY id LIMIT @RetireBatch",
             new { project, org, RetireBatch }), cancellationToken));
         if (invitations.Count == 0)
         {
-            return false;
+            return null;
         }
 
-        await this.CommitAsync(
+        return await data.SaveAsync(
         [
             Change.Update(current, current.Value),
             .. invitations.Select(invite => Change.Delete(invite)),
             .. invitations.Select(invite => this.Event(current.Value, "organizationInvitation.revoked", invite.Value.Id)),
-        ], cancellationToken);
-        return true;
+        ], cancellationToken) ? RetireStep.Progressed : RetireStep.Conflicted;
     }
 
     public async Task<ProjectMembershipPage> MembersAsync(string project, string id, int limit, string? after, CancellationToken cancellationToken)
