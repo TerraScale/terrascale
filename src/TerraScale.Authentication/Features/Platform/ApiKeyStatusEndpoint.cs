@@ -68,7 +68,7 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         Get("/v1/terrascale/api-keys/self");
         Name("get_api_key_status");
         Summary("Check an API key token");
-        Description("Bearer: an access token issued for an API key (client credentials). 200 while the key exists and is unexpired, the token's key string still works (a rotation's grace included), and its organization and project exist. 401 key_revoked or key_expired otherwise, invalid_token for any other token. Answered from strong-consistency reads of ts-auth's storage replica that serves the answering ts-auth instance, after every write that instance has seen; concurrent checks of one key token share one read and its answer is reused for at most 1 second after the read completes, so a revocation shows once it has replicated to that storage replica, plus at most 1 second. 429 rate_limited past 100 checks a second (bursts of 200) or 32 concurrent checks from one address (IPv6 per /64), counted before the token is verified, or while 16,384 other addresses are active; 503 when storage does not answer within 5 seconds or too many checks are in flight.");
+        Description("Bearer: an access token issued for an API key (client credentials). 200 while the key exists and is unexpired, the token's key string still works (a rotation's grace included), and its organization and project exist. 401 key_revoked or key_expired otherwise, invalid_token for any other token. Each check makes several strong-consistency reads of the storage replica serving the answering ts-auth instance, after every write that instance has seen, so it reflects what that replica held while the check ran. A call can join a check of the same key token that is still running, which may have started before a revocation reached that replica, and a completed check's answer is reused for at most 1 second. 429 rate_limited past 100 checks a second (bursts of 200) or 32 concurrent checks from one address (IPv6 per /64), counted before the token is verified, or while 16,384 other addresses are active; 503 when storage does not answer within 5 seconds, too many checks are in flight, or 16,384 distinct key tokens are being checked.");
         Tags("API keys");
         Produces<ApiKeyStatusBody>();
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
@@ -132,8 +132,12 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
 
         var organization = Claim(claims, PlatformGrants.OrganizationClaim);
         var project = Claim(claims, PlatformGrants.ProjectClaim);
-        var check = Share(string.Join('\n', keyId, generation, organization, project),
-            deadline => keys.RefusalAsync(keyId, generation, organization, project, deadline));
+        if (Share(string.Join('\n', keyId, generation, organization, project), deadline => keys.RefusalAsync(keyId, generation, organization, project, deadline))
+            is not { } check)
+        {
+            return Busy("Too many distinct API key checks are in progress; retry.");
+        }
+
         var status = await check.Read.Value.WaitAsync(WaitTimeout, clock, cancellationToken);
         return status switch
         {
@@ -144,7 +148,7 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         };
     }
 
-    private SharedCheck Share(string checkedKey, Func<CancellationToken, Task<string?>> refusal)
+    private SharedCheck? Share(string checkedKey, Func<CancellationToken, Task<string?>> refusal)
     {
         lock (CheckGate)
         {
@@ -154,12 +158,13 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
                 return current;
             }
 
-            var started = new SharedCheck(check => ReadAsync(check, refusal));
-            if (current is not null || Checks.Count < MaxCachedChecks || SweepChecks(now))
+            if (current is null && Checks.Count >= MaxCachedChecks && !SweepChecks(now))
             {
-                Checks[checkedKey] = started;
+                return null;
             }
 
+            var started = new SharedCheck(check => ReadAsync(check, refusal));
+            Checks[checkedKey] = started;
             return started;
         }
     }

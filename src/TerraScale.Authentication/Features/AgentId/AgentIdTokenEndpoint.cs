@@ -9,7 +9,6 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
-using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
 using TerraScale.Endpoints;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -40,16 +39,7 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
         this.HttpContext.Response.Headers.Pragma = "no-cache";
-        try
-        {
-            return await this.GrantAsync(cancellationToken);
-        }
-        catch (Exception error) when ((AuthData.IsUnavailable(error) || AuthData.IsContention(error)) && !this.HttpContext.RequestAborted.IsCancellationRequested)
-        {
-            var unavailable = AuthData.Unavailable(error);
-            ErrorEnvelopeMiddleware.ApplyRetryAfter(this.HttpContext.Response, unavailable.RetryAfter);
-            return TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
-        }
+        return await this.GrantAsync(cancellationToken);
     }
 
     private async Task<IResult> GrantAsync(CancellationToken cancellationToken)

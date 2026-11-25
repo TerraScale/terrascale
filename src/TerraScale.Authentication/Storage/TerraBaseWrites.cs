@@ -7,6 +7,8 @@ namespace TerraScale.Authentication.Storage;
 
 internal static class TerraBaseWrites
 {
+    private const string InvalidResponseCode = "invalid_response";
+
     public static async Task<AuthBatchWrite> ExecuteAsync(GuardedCommand guarded, bool uncommitted, CancellationToken cancellationToken)
     {
         int affected;
@@ -39,22 +41,28 @@ internal static class TerraBaseWrites
     private static AuthBatchWrite? Uncommitted(Exception failure) =>
         AuthData.IsContention(failure) ? new AuthContended(failure)
         : AuthData.IsConflict(failure) ? new AuthConflict(AuthData.LostConflict)
-        : AuthData.IsUnavailable(failure) ? new AuthStorageDown(failure)
+        : AuthData.IsUnavailable(failure) || InvalidResponse(failure) ? new AuthStorageDown(failure)
         : null;
 
     private static AuthBatchWrite? Sent(Exception failure, GuardedCommand? guarded) =>
         AuthData.IsContention(failure) ? new AuthContended(failure)
         : AuthData.IsConflict(failure) || guarded?.GuardFailed(failure) == true ? new AuthConflict(AuthData.LostConflict)
-        : AuthData.IsOutcomeUnknown(failure) ? new AuthOutcomeUnknown(failure)
-        : AuthData.IsUnavailable(failure) ? Refused(failure) || NeverConnected(failure) ? new AuthStorageDown(failure) : new AuthOutcomeUnknown(failure)
+        : RetrySafeRefusal(failure) || NeverConnected(failure) ? new AuthStorageDown(failure)
+        : AuthData.IsUnavailable(failure) || InvalidResponse(failure) ? new AuthOutcomeUnknown(failure)
         : null;
 
-    private static bool Refused(Exception failure) => failure switch
+    private static bool RetrySafeRefusal(Exception failure) => failure switch
     {
-        TerraBaseException { ErrorCode: not null } or TerraBaseException { StatusCode: not null } => true,
-        _ when failure.InnerException is { } inner => Refused(inner),
+        TerraBaseException
+        {
+            ErrorCode: TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable or TerraBaseSqlErrorCodes.TransactionRolledBack
+                or AuthData.StorageBusy or AuthData.StrongQuorumUnreachable,
+        } => true,
+        _ when failure.InnerException is { } inner => RetrySafeRefusal(inner),
         _ => false,
     };
+
+    private static bool InvalidResponse(Exception failure) => failure is TerraBaseException { ErrorCode: InvalidResponseCode };
 
     private static bool NeverConnected(Exception failure) => failure switch
     {

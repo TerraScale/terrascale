@@ -15,14 +15,20 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
 
     private const string TokenPath = "/" + OidcIssuer.Slug + "/oauth/token";
 
+    public static bool IsTokenRequest(HttpRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return HttpMethods.IsPost(request.Method)
+            && (request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
+                || request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
+                || TokenRateLimitMiddleware.IsProjectTokenPath(request.Path))
+            || AgentIdIssuer.Guarded(request.Path);
+    }
+
     public async Task InvokeAsync(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var token = HttpMethods.IsPost(context.Request.Method)
-            && (context.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
-                || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
-                || TokenRateLimitMiddleware.IsProjectTokenPath(context.Request.Path))
-            || AgentIdIssuer.Guarded(context.Request.Path);
+        var token = IsTokenRequest(context.Request);
         var hosted = !token && context.Request.Path.StartsWithSegments("/ui", StringComparison.OrdinalIgnoreCase);
         if (!token && !hosted)
         {
@@ -51,14 +57,14 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
             context.RequestAborted = aborted;
         }
 
-        var segments = context.Request.Path.Value!.Split('/');
+        string[] segments = context.Request.Path.Value is { } path ? path.Split('/') : [];
         var tenant = segments.Length > (token ? 1 : 2) ? segments[token ? 1 : 2] : string.Empty;
         logger.ZLogWarning($"{(token ? "Token" : "Hosted page"):@Kind} request {context.TraceIdentifier:@RequestId} for {tenant:@Tenant} did not complete within {Deadline.TotalSeconds:@Seconds} seconds; answered 503");
         context.Response.Clear();
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.Headers.CacheControl = "no-store";
-        var answer = writes.Dispatched ? AuthData.OutcomeUnknown(null) : ApiException.Unavailable();
-        if (!writes.Dispatched)
+        var answer = writes.MayHaveCommitted ? AuthData.OutcomeUnknown(null) : ApiException.Unavailable();
+        if (!writes.MayHaveCommitted)
         {
             context.Response.Headers.RetryAfter = "2";
         }
@@ -66,7 +72,7 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
         if (token)
         {
             await context.Response.WriteAsJsonAsync(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable,
-                writes.Dispatched ? "The token request did not complete in time and may have taken effect; a repeated grant can answer invalid_grant." : "The token request did not complete in time; retry it."),
+                writes.MayHaveCommitted ? "The token request did not complete in time and may have taken effect; a repeated grant can answer invalid_grant." : "The token request did not complete in time; retry it."),
                 OidcJson.Default.OAuthErrorBody, cancellationToken: aborted);
         }
         else if (SignInFlow.HostedPage(context))

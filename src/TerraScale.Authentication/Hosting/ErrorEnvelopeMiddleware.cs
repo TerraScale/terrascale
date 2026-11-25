@@ -1,6 +1,7 @@
 using System.Globalization;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Storage;
@@ -25,22 +26,21 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         {
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
-        catch (ApiException failure) when (!context.Response.HasStarted)
+        catch (ApiException error) when (!context.Response.HasStarted)
         {
-            var error = failure.Status == StatusCodes.Status503ServiceUnavailable ? AuthData.Unavailable(failure) : failure;
             var level = error.Code == KeyRing.NoSigningKeysCode && schema.BootstrapPending ? LogLevel.Information : LogLevel.Error;
             Diagnose(context, error, () => logger.ZLog(level, error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (TerraBaseException conflict) when (!context.Response.HasStarted && AuthData.IsConflict(conflict))
         {
-            var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
+            var error = Conflict(context, conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (OpenIddictExceptions.ConcurrencyException conflict) when (!context.Response.HasStarted)
         {
-            var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
+            var error = Conflict(context, conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
@@ -68,6 +68,11 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
     }
 
+    private static ApiException Conflict(HttpContext context, Exception conflict) =>
+        TokenEndpointDeadline.IsTokenRequest(context.Request)
+            ? new(StatusCodes.Status503ServiceUnavailable, "temporarily_unavailable", "A concurrent change won; retry the request.", conflict) { RetryAfter = TimeSpan.FromSeconds(1) }
+            : new(StatusCodes.Status409Conflict, "conflict", "A concurrent change won; retry the request.", conflict);
+
     private static void Diagnose(HttpContext context, Exception exception, Action log)
     {
         try
@@ -92,9 +97,8 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
     private static Task WriteAsync(HttpContext context, ApiException error) =>
         WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
 
-    public static void ApplyRetryAfter(HttpResponse response, TimeSpan? retryAfter)
+    private static void ApplyRetryAfter(HttpResponse response, TimeSpan? retryAfter)
     {
-        ArgumentNullException.ThrowIfNull(response);
         if (retryAfter is { } wait)
         {
             response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
@@ -109,6 +113,13 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             context.Response.StatusCode = status;
             context.Response.Headers.CacheControl = "no-store";
             ApplyRetryAfter(context.Response, retryAfter);
+
+            if (status >= 500 && TokenEndpointDeadline.IsTokenRequest(context.Request))
+            {
+                return context.Response.WriteAsJsonAsync(new OAuthErrorBody(
+                    status == StatusCodes.Status503ServiceUnavailable ? OpenIddictConstants.Errors.TemporarilyUnavailable : OpenIddictConstants.Errors.ServerError, message),
+                    OidcJson.Default.OAuthErrorBody, cancellationToken: context.RequestAborted);
+            }
 
             if (status >= 500 && SignInFlow.HostedPage(context))
             {

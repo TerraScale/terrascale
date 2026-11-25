@@ -22,9 +22,9 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
     private const string SerializationFailureState = "40001";
 
-    private const string StorageBusy = "storage_busy";
+    internal const string StorageBusy = "storage_busy";
 
-    private const string StrongQuorumUnreachable = "strong_quorum_unreachable";
+    internal const string StrongQuorumUnreachable = "strong_quorum_unreachable";
 
     private const string InRegionQuorumUnconfirmed = "in_region_quorum_unconfirmed";
 
@@ -124,7 +124,8 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return outcome switch
         {
             AuthCompleted => Committed(currentAudit, true),
-            AuthConflict or AuthContended => false,
+            AuthConflict => false,
+            AuthContended contended => throw ApiException.Unavailable(contended.Cause),
             AuthStorageDown down => throw ApiException.Unavailable(down.Cause),
             AuthOutcomeUnknown unknown => throw OutcomeUnknown(unknown.Cause),
         };
@@ -153,7 +154,7 @@ public sealed class AuthData(AuthConnectionFactory connections)
         {
             AuthCompleted => Committed(currentAudit, result),
             AuthConflict conflict => conflict,
-            AuthContended => new AuthConflict(LostConflict),
+            AuthContended contended => throw ApiException.Unavailable(contended.Cause),
             AuthStorageDown down => throw ApiException.Unavailable(down.Cause),
             AuthOutcomeUnknown unknown => throw OutcomeUnknown(unknown.Cause),
         };
@@ -185,6 +186,7 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
     public static bool IsOutcomeUnknown(Exception failure) => failure switch
     {
+        ApiException => false,
         TerraBaseException { ErrorCode: WriteOutcomeUnknown or InRegionQuorumUnconfirmed or RequestTimeout or TerraBaseSqlErrorCodes.QueryCanceled } => true,
         TerraBaseException { StatusCode: HttpStatusCode.GatewayTimeout } => true,
         _ when failure.InnerException is { } inner => IsOutcomeUnknown(inner),
@@ -196,7 +198,6 @@ public sealed class AuthData(AuthConnectionFactory connections)
         ArgumentNullException.ThrowIfNull(failure);
         return failure switch
         {
-            ApiException { Status: StatusCodes.Status503ServiceUnavailable, InnerException: { } cause } when IsOutcomeUnknown(cause) => OutcomeUnknown(cause),
             ApiException { Status: StatusCodes.Status503ServiceUnavailable } unavailable => unavailable,
             _ when IsOutcomeUnknown(failure) => OutcomeUnknown(failure),
             _ => ApiException.Unavailable(failure),
@@ -279,12 +280,9 @@ public sealed class AuthData(AuthConnectionFactory connections)
         {
             await using (guarded.Command)
             {
-                if (transaction is null)
-                {
-                    Tracked.Value?.Dispatch();
-                }
-
-                var executed = await TerraBaseWrites.ExecuteAsync(guarded, transaction is not null, cancellationToken);
+                var executed = transaction is null
+                    ? await SendAsync(() => TerraBaseWrites.ExecuteAsync(guarded, false, cancellationToken))
+                    : await TerraBaseWrites.ExecuteAsync(guarded, true, cancellationToken);
                 var stopped = executed switch
                 {
                     AuthCompleted => (AuthBatchWrite?)null,
@@ -300,10 +298,25 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return new AuthCompleted();
     }
 
-    private static Task<AuthBatchWrite> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken)
+    private static Task<AuthBatchWrite> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken) =>
+        SendAsync(() => TerraBaseWrites.CommitAsync(transaction, cancellationToken));
+
+    private static async Task<AuthBatchWrite> SendAsync(Func<Task<AuthBatchWrite>> send)
     {
-        Tracked.Value?.Dispatch();
-        return TerraBaseWrites.CommitAsync(transaction, cancellationToken);
+        var writes = Tracked.Value;
+        writes?.Dispatch();
+        var outcome = await send();
+        var settled = outcome switch
+        {
+            AuthConflict or AuthContended or AuthStorageDown => true,
+            AuthCompleted or AuthOutcomeUnknown => false,
+        };
+        if (settled)
+        {
+            writes?.Settle();
+        }
+
+        return outcome;
     }
 
     private sealed class WriteAudit(Change success)
@@ -316,11 +329,13 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
 public sealed class StorageWrites
 {
-    private int dispatched;
+    private int inDoubt;
 
-    public bool Dispatched => Volatile.Read(ref dispatched) != 0;
+    public bool MayHaveCommitted => Volatile.Read(ref inDoubt) > 0;
 
-    internal void Dispatch() => Volatile.Write(ref dispatched, 1);
+    internal void Dispatch() => Interlocked.Increment(ref inDoubt);
+
+    internal void Settle() => Interlocked.Decrement(ref inDoubt);
 }
 
 public sealed class AuthTransaction(DbConnection connection, DbTransaction transaction)
