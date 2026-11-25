@@ -77,7 +77,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
                     {
                         Type = SecuritySchemeType.ApiKey,
                         In = ParameterLocation.Cookie,
-                        Name = "ts-dashboard-session",
+                        Name = DashboardSessions.Cookie,
                         Description = "Server-managed HttpOnly session cookie. Obtain by signing in through ts-auth's hosted pages (GET /login)."
                     };
                     foreach (var path in openApi.Paths.Values)

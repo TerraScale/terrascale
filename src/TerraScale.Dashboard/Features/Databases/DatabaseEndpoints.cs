@@ -23,7 +23,7 @@ public static class DatabaseEndpoints
         return services
         .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
         .AddSingleton<DatabaseConflicts>().AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>()
-        .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
+        .AddSingleton<ApiKeyService>().AddSingleton<ApiKeyExpiryNotifications>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
         .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
         .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions().AddDatabaseRules();
     }

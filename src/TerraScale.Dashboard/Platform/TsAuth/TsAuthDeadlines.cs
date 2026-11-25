@@ -8,7 +8,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     {
         internal Task<T> GetMetadataAsync<T>(string route, JsonTypeInfo<T> responseType, CancellationToken caller)
         {
-            return WithDeadlineAsync(token => GetMetadataCoreAsync(route, responseType, token), caller);
+            return WithDeadlineAsync(token => GetMetadataCoreAsync(route, responseType, MaxResponseBytes, token), caller);
+        }
+
+        internal Task<T> GetKeySetAsync<T>(string route, JsonTypeInfo<T> responseType, CancellationToken caller)
+        {
+            return WithDeadlineAsync(token => GetMetadataCoreAsync(route, responseType, MaxKeySetBytes, token), caller);
         }
 
         internal Task<T> SendOAuthFormAsync<T>(string route, IReadOnlyList<KeyValuePair<string, string>> values,

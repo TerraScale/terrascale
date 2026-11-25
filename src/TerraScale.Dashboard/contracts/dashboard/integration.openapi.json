@@ -1099,7 +1099,7 @@
       "dashboardSession": {
         "type": "apiKey",
         "description": "Server-managed HttpOnly session cookie. Obtain by signing in through ts-auth's hosted pages (GET /login).",
-        "name": "ts-dashboard-session",
+        "name": "__Host-ts-dashboard-session",
         "in": "cookie"
       }
     }

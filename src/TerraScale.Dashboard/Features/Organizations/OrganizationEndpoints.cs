@@ -71,8 +71,10 @@ namespace TerraScale.Dashboard.Features.Organizations
             var requestedWizard = wizardOverride ?? http.Request.Query["newOrganization"].ToString();
             var regionsRead = tab == "projects" || requestedWizard == "project" || openCreateProject
                 ? placement.RegionsAsync(http.RequestAborted) : null;
-            var accessRead = context.Organization is not null && tab is not ("projects" or "billing")
-                ? http.RequestServices.GetRequiredService<IOrganizationAccess>().ReadAsync(context, http.RequestAborted) : null;
+            var organizationAccess = http.RequestServices.GetRequiredService<IOrganizationAccess>();
+            var accessRead = context.Organization is null || tab is "projects" or "billing" ? null
+                : tab == "audit" ? organizationAccess.ReadAuditAsync(context, OrganizationFilters.For(http), http.RequestAborted)
+                : organizationAccess.ReadAsync(context, http.RequestAborted);
             IReadOnlyList<string> regions = regionsRead is null ? [] : await regionsRead;
             var access = accessRead is null ? null : await accessRead;
             var wizard = requestedWizard;

@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
             }
 
             var filter = OrganizationFilters.For(http);
-            var snapshot = await access.ReadAsync(context, http.RequestAborted);
+            var snapshot = await access.ReadAuditAsync(context, filter, http.RequestAborted);
             var events = filter.ApplyAudit(snapshot.AuditEvents, snapshot.AuditRetentionDays);
             var pageSize = int.TryParse(http.Request.Query["pageSize"], out var size) ? Math.Clamp(size, 1, 100) : 50;
             var pages = Math.Max(1, (events.Count + pageSize - 1) / pageSize);
@@ -31,6 +31,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
             {
                 retentionDays = snapshot.AuditRetentionDays,
                 total = events.Count,
+                omitted = snapshot.AuditOmitted,
                 page,
                 pageCount = pages,
                 filters = new { filter.Action, filter.Search, filter.Range, filter.Severity },

@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Globalization;
+using System.Text;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -69,7 +71,15 @@ public sealed class ServiceTransport(HttpClient http)
 
     public static HttpContent Json<T>(T body, JsonTypeInfo<T> typeInfo) => JsonContent.Create(body, typeInfo);
 
-    public static string Segment(string value) => Uri.EscapeDataString(value);
+    public static string Segment(string value)
+    {
+        if (value is "." or "..")
+        {
+            throw new ArgumentException("Path segments cannot be dot segments.", nameof(value));
+        }
+
+        return Uri.EscapeDataString(value);
+    }
 
     public static string Query(params ReadOnlySpan<(string Name, string? Value)> pairs)
     {
@@ -108,9 +118,9 @@ public sealed class ServiceTransport(HttpClient http)
         {
             value = JsonSerializer.Deserialize(answer.Body, typeInfo);
         }
-        catch (JsonException error)
+        catch (JsonException)
         {
-            return refused(TerraBaseRefusal.Invalid(string.Concat("The service answered invalid JSON: ", error.Message)));
+            return refused(TerraBaseRefusal.Invalid("The service answered invalid JSON."));
         }
 
         return value is { } parsed ? accepted(parsed) : refused(TerraBaseRefusal.Invalid("The service answered an empty JSON payload."));
@@ -139,14 +149,38 @@ public sealed class ServiceTransport(HttpClient http)
                 return TerraBaseRefusal.Invalid("The service answer is too large.");
             }
 
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            var buffer = new ArrayBufferWriter<byte>();
+            await using (var stream = await response.Content.ReadAsStreamAsync(cancellationToken))
+            {
+                int read;
+                do
+                {
+                    try
+                    {
+                        read = await stream.ReadAsync(buffer.GetMemory(16 * 1024), cancellationToken);
+                    }
+                    catch (IOException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        return TerraBaseRefusal.Unreachable("The service answer was cut off.");
+                    }
+
+                    buffer.Advance(read);
+                    if (buffer.WrittenCount > MaxResponseBytes)
+                    {
+                        return TerraBaseRefusal.Invalid("The service answer is too large.");
+                    }
+                }
+                while (read > 0);
+            }
+
+            var body = Encoding.UTF8.GetString(buffer.WrittenSpan);
             var status = (int)response.StatusCode;
             var answer = new RawAnswer(status, response.Content.Headers.ContentType?.ToString(), body, FunctionResponse(response));
             return status is >= 200 and < 300 || RetryAfter(response) is not { } wait ? answer : Refusal(answer) with { RetryAfter = wait };
         }
-        catch (HttpRequestException error)
+        catch (HttpRequestException)
         {
-            return TerraBaseRefusal.Unreachable(string.Concat("The service is unreachable: ", error.Message));
+            return TerraBaseRefusal.Unreachable("The service is unreachable.");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

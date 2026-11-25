@@ -216,6 +216,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
                             }
                         }
                         var name = Text("name");
+                        if (tool is not ("deploy_function" or "list_functions"))
+                        {
+                            FunctionBackend.CheckName(name);
+                        }
+
                         switch (tool)
                         {
                             case "deploy_function":

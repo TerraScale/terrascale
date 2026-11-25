@@ -6,7 +6,7 @@
     var portal = Model.CanManage && (subscribed || Model.Binding?.CustomerId is { Length: > 0 });
 }
 <section class="ts-card ts-card-boxed" id="billing-payment" aria-labelledby="billing-payment-title">
-    <header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-payment-title">Payment method</h2></div>@if (portal) { <div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@TerraScale.Dashboard.Common.Accounts.WorkspaceUrl.For(Model.Shell.Context, "/billing/portal")">Manage payment</a></div> }</header>
+    <header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-payment-title">Payment method</h2></div>@if (portal) { <div class="ts-card-actions"><form method="post" action="@TerraScale.Dashboard.Common.Accounts.WorkspaceUrl.For(Model.Shell.Context, "/billing/portal")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Manage payment</button></form></div> }</header>
     <div class="ts-card-body">
         @if (Model.PaymentMethodUnavailable) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Payment method could not be loaded. Reload billing to retry.</p></div> }
         <dl class="ts-billing-facts ts-billing-facts-stacked">

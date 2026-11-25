@@ -29,13 +29,13 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
     private const string ByToken = DashboardSql.Sessions.Select + " WHERE token_hash = @TokenHash AND kind = @Browser";
     private const string ById = DashboardSql.Sessions.Select + " WHERE id = @Id AND kind = @Credential";
 
-    internal const string Cookie = "ts-dashboard-session";
+    internal const string Cookie = "__Host-ts-dashboard-session";
     private const int MaxBrowserSessions = 1000;
     private static readonly TimeSpan RenewBeforeExpiry = TimeSpan.FromSeconds(30);
 
     public async Task StartAsync(HttpContext context, SessionRecord record)
     {
-        if (context.Request.Cookies.ContainsKey(Cookie))
+        if (DashboardCookies.Read(context, Cookie) is not null)
         {
             await EndAsync(context);
         }
@@ -375,6 +375,11 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 }
 
                 try { await auth.RevokeAsync(record, cancellationToken); }
+                catch (Exception error) when (error is TsAuthException { StatusCode: HttpStatusCode.NotFound } or TsAuthException { ErrorCode: "invalid_grant" or "invalid_token" })
+                {
+                    await RemoveAsync(row, "already-revoked", cancellationToken);
+                    continue;
+                }
                 catch (Exception error) when (error is HttpRequestException or TimeoutException)
                 {
                     logger.RevokingAnExpiredSessionFailed(row.Id, error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
@@ -438,14 +443,14 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
     private static string? BrowserToken(HttpContext context)
     {
-        return context.Request.Cookies[Cookie] is { Length: 64 } token && token.All(char.IsAsciiHexDigitLower) ? token : null;
+        return DashboardCookies.Read(context, Cookie) is { Length: 64 } token && token.All(char.IsAsciiHexDigitLower) ? token : null;
     }
 
     private static void Clear(HttpContext context)
     {
         if (!context.Response.HasStarted)
         {
-            context.Response.Cookies.Delete(Cookie, DashboardCookies.Private(context, SameSiteMode.Lax));
+            DashboardCookies.Delete(context, Cookie, SameSiteMode.Lax);
         }
 
         Csrf.Bind(context, null);

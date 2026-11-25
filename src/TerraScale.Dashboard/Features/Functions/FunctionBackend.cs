@@ -233,7 +233,7 @@ namespace TerraScale.Dashboard.Features.Functions
             return new(function.Name, function.Source, function.Cron, function.CreatedAt, function.UpdatedAt);
         }
 
-        private static void CheckName(string name)
+        internal static void CheckName(string name)
         {
             if (!ValidName(name))
             {
@@ -280,7 +280,7 @@ namespace TerraScale.Dashboard.Features.Functions
 
         private static readonly string[] WriteScopes = ["sql:read", "sql:write"];
 
-        [GeneratedRegex("^[a-z0-9][a-z0-9_-]{0,62}$")]
+        [GeneratedRegex(@"\A[a-z0-9][a-z0-9_-]{0,62}\z")]
         private static partial Regex NamePattern();
 
         [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]

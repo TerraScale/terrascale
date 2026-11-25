@@ -60,8 +60,8 @@ namespace TerraScale.Dashboard.Platform.Identity
 
         private static string Sign(HttpContext context, string nonce)
         {
-            var session = context.Items[BindingKey] as string ?? context.Request.Cookies[DashboardSessions.Cookie];
-            var deletion = context.Request.Cookies[AccountDeletion.Cookie];
+            var session = context.Items[BindingKey] as string ?? DashboardCookies.Read(context, DashboardSessions.Cookie);
+            var deletion = DashboardCookies.Read(context, AccountDeletion.Cookie);
             var binding = Hex(session) ? session : Hex(deletion) ? deletion : "";
             var credentials = context.RequestServices.GetRequiredService<IDashboardIdentity>().Current;
             var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, Convert.FromBase64String(credentials.SessionEncryptionKey), 32, info: "ts-dashboard/csrf"u8.ToArray());

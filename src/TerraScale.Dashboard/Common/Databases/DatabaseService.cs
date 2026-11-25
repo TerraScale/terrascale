@@ -1,12 +1,21 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Platform.Clients;
+using TerraScale.Dashboard.Platform.Http;
 using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
-    public sealed partial class DatabaseService(AccountService accounts, IDatabaseBackend backend)
+    public sealed partial class DatabaseService(AccountService accounts, IDatabaseBackend backend, TimeProvider time, ILogger<DatabaseService> logger)
     {
+        private const int MaxRemembered = 10_000;
+        private static readonly TimeSpan UnknownDatabaseMemory = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan RememberedSyncLifetime = TimeSpan.FromMinutes(5);
+        private readonly ConcurrentDictionary<string, Task> syncing = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, long> synced = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, long> unknown = new(StringComparer.Ordinal);
+
         public static DatabaseScope Scope(AccountContext context)
         {
             return new(context.UserId, context.Session.AccessToken,
@@ -480,6 +489,60 @@ namespace TerraScale.Dashboard.Common.Databases
                 return;
             }
 
+            var key = context.UserId + ":" + project.Id;
+            var owned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var running = syncing.GetOrAdd(key, owned.Task);
+            if (running != owned.Task)
+            {
+                await running.WaitAsync(cancellationToken);
+                return;
+            }
+
+            try
+            {
+                await SyncNowAsync(context, project, true, cancellationToken);
+                Remember(synced, key, RememberedSyncLifetime);
+            }
+            finally
+            {
+                syncing.TryRemove(new(key, owned.Task));
+                owned.SetResult();
+            }
+        }
+
+        public Task SyncIfStaleAsync(AccountContext context, TimeSpan freshness, CancellationToken cancellationToken)
+        {
+            return context.Project is { } project && synced.TryGetValue(context.UserId + ":" + project.Id, out var at) && time.GetElapsedTime(at) < freshness
+                ? Task.CompletedTask : SyncAsync(context, cancellationToken);
+        }
+
+        private void Remember(ConcurrentDictionary<string, long> memory, string key, TimeSpan lifetime)
+        {
+            if (memory.Count >= MaxRemembered)
+            {
+                foreach (var (stale, at) in memory)
+                {
+                    if (time.GetElapsedTime(at) >= lifetime)
+                    {
+                        memory.TryRemove(stale, out _);
+                    }
+                }
+            }
+
+            if (memory.Count < MaxRemembered || memory.ContainsKey(key))
+            {
+                memory[key] = time.GetTimestamp();
+            }
+        }
+
+        public Task ViewRemoteAsync(AccountContext context, CancellationToken cancellationToken)
+        {
+            return context.Project is not { } project || PlatformDatabases.IsPlatform(context.Organization?.Id)
+                ? Task.CompletedTask : SyncNowAsync(context, project, false, cancellationToken);
+        }
+
+        private async Task SyncNowAsync(AccountContext context, ProjectRecord project, bool persist, CancellationToken cancellationToken)
+        {
             try
             {
                 var scope = Scope(context);
@@ -518,7 +581,10 @@ namespace TerraScale.Dashboard.Common.Databases
                             refreshed.Add(record);
                         }
                     }
-                    catch (Exception error) when (error is HttpRequestException or TerraBaseException) { }
+                    catch (Exception error) when (error is HttpRequestException or TerraBaseException)
+                    {
+                        logger.DatabaseSyncPlacementSkipped(database.Id, error.GetType().Name);
+                    }
                 }
                 var renamed = remote.Where(database => observed.TryGetValue(database.Id, out var before) &&
                     (before.Name != database.Name || before.PreviousName != database.PreviousName || before.ConflictOf != database.ConflictOf)).ToArray();
@@ -573,7 +639,7 @@ namespace TerraScale.Dashboard.Common.Databases
                         target.Databases[record.Id] = record;
                     }
                 }
-                if (!context.Organization!.ContainsMember(context.UserId))
+                if (!persist || context.Organization is not { } owner || !owner.ContainsMember(context.UserId))
                 {
                     Apply(project);
                     return;
@@ -588,7 +654,10 @@ namespace TerraScale.Dashboard.Common.Databases
                     project.Databases = saved.Databases;
                 }
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TerraBaseException or HttpRequestException or JsonException || DatabaseResults.KnownFailure(error))) { }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TerraBaseException or HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)))
+            {
+                logger.DatabaseSyncSkipped(project.Id, error.GetType().Name);
+            }
         }
 
         public static string ValidName(string name)

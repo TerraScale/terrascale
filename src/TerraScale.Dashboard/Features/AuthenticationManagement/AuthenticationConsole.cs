@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -293,7 +294,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         await projects.RevokeUserApiKeyAsync(session, project, id, keyId, cancel);
                         return HttpRedirects.SeeOther("/auth/users?user=" + Uri.EscapeDataString(id) + "&saved=1");
                     case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
-                    case ["users", var id, var action]: await projects.SetUserDisabledAsync(session, project, id, action == "disable", cancel); break;
+                    case ["users", var id, "disable" or "enable"]: await projects.SetUserDisabledAsync(session, project, id, parts[2] == "disable", cancel); break;
                 }
             }
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException)
@@ -655,12 +656,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         break;
                     case "webhooks":
                         var hooks = context.CanManageProject ? await projects.ListWebhookEndpointsAsync(session, project, cancel) : [];
-                        Dictionary<string, IReadOnlyList<TsAuthWebhookDelivery>> deliveries = [];
-                        foreach (var hook in hooks)
-                        {
-                            deliveries.Add(hook.Id, await projects.ListWebhookDeliveriesAsync(session, project, hook.Id, cancel));
-                        }
-                        page = page with { Webhooks = hooks, Deliveries = deliveries };
+                        var deliveries = new ConcurrentDictionary<string, IReadOnlyList<TsAuthWebhookDelivery>>(StringComparer.Ordinal);
+                        await Parallel.ForEachAsync(hooks.Select(hook => hook.Id).Distinct(StringComparer.Ordinal),
+                            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancel },
+                            async (hookId, token) => deliveries[hookId] = await projects.ListWebhookDeliveriesAsync(session, project, hookId, token));
+                        page = page with { Webhooks = hooks, Deliveries = deliveries.ToDictionary(StringComparer.Ordinal) };
                         break;
                     default: page = page with { Settings = await projects.GetSettingsAsync(session, project, cancel) }; break;
                 }

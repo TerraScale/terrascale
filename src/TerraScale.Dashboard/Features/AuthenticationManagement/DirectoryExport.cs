@@ -49,9 +49,14 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     throw new IOException("ts-auth returned an oversized directory page.");
                 }
 
-                if (!string.IsNullOrEmpty(page.Next))
+                if (page.Next is { Length: > 0 } next)
                 {
-                    http.Response.Headers["X-Export-Next"] = page.Next;
+                    if (next.Length > 8192 || next.Any(character => character is < '!' or > '~'))
+                    {
+                        throw new IOException("ts-auth returned an invalid directory cursor.");
+                    }
+
+                    http.Response.Headers["X-Export-Next"] = next;
                 }
 
                 http.Response.Headers["X-Export-Created-Before"] = page.CreatedBefore.ToString("O", CultureInfo.InvariantCulture);

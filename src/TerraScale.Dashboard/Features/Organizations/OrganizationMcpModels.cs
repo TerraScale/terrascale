@@ -30,5 +30,6 @@ namespace TerraScale.Dashboard.Features.Organizations
         [property: Description("Matching events whose severity the provider does not report.")] int Unknown,
         int Page, int PageCount, string Range, string Severity,
         [property: Description("Action codes present in the retained history, for the action filter.")] IReadOnlyList<string> Actions,
-        [property: Description("The plan's audit window in days: older events are not listed or exported.")] int RetentionDays);
+        [property: Description("The plan's audit window in days: older events are not listed or exported.")] int RetentionDays,
+        [property: Description("Older matching dashboard events left out because the range holds more than 10,000; narrow the range, action or severity to reach them.")] long Omitted);
 }

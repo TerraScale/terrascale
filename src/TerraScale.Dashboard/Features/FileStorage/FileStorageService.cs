@@ -114,6 +114,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             }
 
             ArgumentNullException.ThrowIfNull(upload);
+            RequireIds(bucket);
             if (upload.Size is < 1 or > 100 * 1024 * 1024)
             {
                 throw new ArgumentOutOfRangeException(nameof(upload), "File size must be 1–104857600 bytes.");
@@ -134,6 +135,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 return new DashboardForbidden("Write access is required.");
             }
 
+            RequireIds(bucket, file);
             await write.CompleteFileUploadAsync(write.ProjectId, bucket, file);
             return new Done();
         }
@@ -145,12 +147,14 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 return new DashboardForbidden("Write access is required.");
             }
 
+            RequireIds(bucket, file);
             await write.DeleteBucketFileAsync(write.ProjectId, bucket, file);
             return new Done();
         }
 
         public async Task<TerraBaseFileUrl> DownloadAsync(AccountContext context, string bucket, string file, CancellationToken token)
         {
+            RequireIds(bucket, file);
             var client = await ReadClientAsync(context, token);
             var signed = await client.CreateFileDownloadAsync(client.ProjectId, bucket, file);
             if (!Uri.TryCreate(signed.Url, UriKind.Absolute, out var url) || url.Scheme != "https" || url.UserInfo.Length > 0
@@ -160,6 +164,14 @@ namespace TerraScale.Dashboard.Features.FileStorage
             }
 
             return signed;
+        }
+
+        private static void RequireIds(string bucket, string? file = null)
+        {
+            if (!TerraScaleIds.IsValid(bucket) || file is not null && !TerraScaleIds.IsValid(file))
+            {
+                throw new AccountAccessException("Bucket and file IDs are 26-character uppercase ULIDs.", 422);
+            }
         }
 
         private async Task<FileClient> ReadClientAsync(AccountContext context, CancellationToken token)

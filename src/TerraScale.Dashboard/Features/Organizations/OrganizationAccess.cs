@@ -5,10 +5,16 @@ using TerraScale.Dashboard.Platform.TsAuth;
 namespace TerraScale.Dashboard.Features.Organizations
 {
     public sealed record OrganizationAccessView(IReadOnlyList<MemberRecord> Members, IReadOnlyList<InvitationRecord> Invitations,
-        IReadOnlyList<AuditRecord> AuditEvents, OwnershipTransferRecord? PendingTransfer = null, int? AuditRetentionDays = null);
+        IReadOnlyList<AuditRecord> AuditEvents, OwnershipTransferRecord? PendingTransfer = null, int? AuditRetentionDays = null)
+    {
+        public IReadOnlyList<string> AuditActions { get; init; } = [];
+
+        public long AuditOmitted { get; init; }
+    }
     public interface IOrganizationAccess
     {
         Task<OrganizationAccessView> ReadAsync(AccountContext context, CancellationToken cancellationToken);
+        Task<OrganizationAccessView> ReadAuditAsync(AccountContext context, OrganizationFilters filter, CancellationToken cancellationToken);
         Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, string? projectId, CancellationToken cancellationToken);
         Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken);
         Task ChangeRoleAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken);
@@ -16,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         Task TransferAsync(AccountContext context, string operation, string? userId, string? stepUpProof, CancellationToken cancellationToken);
     }
 
-    public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizationAccess
+    public sealed class TsOrganizationAccess(ITsAuthPlatform platform, OrganizationStore organizations, TimeProvider time) : IOrganizationAccess
     {
         private static string Organization(AccountContext context)
         {
@@ -54,11 +60,33 @@ namespace TerraScale.Dashboard.Features.Organizations
                     new AuditRecord(item.Id, item.Actor, item.Action, item.Target ?? "", item.Detail ?? "", item.OccurredAt, Source: "ts-auth")));
             }
             var transfer = await transferRead;
-            IReadOnlyList<AuditRecord> local = context.CanManage ? context.Organization!.AuditEvents : [];
-            audit.RemoveAll(item => local.Any(own => own.Action == item.Action && own.Target == item.Target && (own.OccurredAt - item.OccurredAt).Duration() < TimeSpan.FromMinutes(5)));
-            return new(members, invitations, [.. audit.Concat(local).OrderByDescending(item => item.OccurredAt)],
+            return new(members, invitations, [.. audit.OrderByDescending(item => item.OccurredAt)],
                 transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt),
-                context.CanManage ? Audit.OrganizationAudit.RetentionDays(context.Organization!) : null);
+                context.CanManage && context.Organization is { } managed ? Audit.OrganizationAudit.RetentionDays(managed) : null);
+        }
+
+        public async Task<OrganizationAccessView> ReadAuditAsync(AccountContext context, OrganizationFilters filter, CancellationToken cancellationToken)
+        {
+            var view = await ReadAsync(context, cancellationToken);
+            if (view.AuditRetentionDays is not { } retention)
+            {
+                return view;
+            }
+
+            var id = Organization(context);
+            var retained = time.GetUtcNow().AddDays(-Math.Min(retention, (int)OrganizationStore.AuditRetentionCap.TotalDays));
+            var sliceRead = organizations.QueryAuditAsync(id, filter.AuditSince(retention), filter.Action, filter.Severity, cancellationToken);
+            var actionsRead = organizations.AuditActionsAsync(id, retained, cancellationToken);
+            var local = await sliceRead;
+            var owned = local.Items.ToLookup(item => (item.Action, item.Target));
+            var remote = view.AuditEvents.Where(item => !owned[(item.Action, item.Target)].Any(own => (own.OccurredAt - item.OccurredAt).Duration() < TimeSpan.FromMinutes(5)));
+            return view with
+            {
+                AuditEvents = [.. remote.Concat(local.Items).OrderByDescending(item => item.OccurredAt)],
+                AuditActions = [.. (await actionsRead).Concat(view.AuditEvents.Where(item => item.OccurredAt >= retained).Select(item => item.Action))
+                    .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
+                AuditOmitted = local.Omitted,
+            };
         }
         public async Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, string? projectId, CancellationToken cancellationToken)
         {

@@ -27,14 +27,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
         [McpServerTool(Name = "get_context", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Get your account, accessible organizations and current project selection.")]
         public async Task<DashboardMcpContext> Context()
         {
-            var account = Account();
-            var session = account.Session;
-            var completion = account.Agent is not null || http.HttpContext is not { } current ? new OrganizationCheckoutCompletion()
-                : await current.RequestServices.GetRequiredService<StripeBilling>().ResumeOrganizationAsync(session, current);
+            var session = Account().Session;
             var context = await accounts.GetContextAsync(session, Cancellation);
             return new(new(context.UserId, context.Account.Name, context.Account.Email, null),
                 new(context.Account.ActiveOrganizationId, context.Account.ActiveProjectId),
-                [.. context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null }))], completion.Notice);
+                [.. context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null }))]);
         }
 
         [McpAccess(McpAccess.Read)]

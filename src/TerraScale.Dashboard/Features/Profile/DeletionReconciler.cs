@@ -26,7 +26,10 @@ namespace TerraScale.Dashboard.Features.Profile
             DELETE FROM stripe_customers WHERE organization_id = @OrganizationId
             """;
 
+        private static readonly TimeSpan AuditPruneInterval = TimeSpan.FromHours(1);
         private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
+        private readonly HashSet<string> reported = new(StringComparer.Ordinal);
+        private long auditPrunedAt;
         private readonly DeletionCleanupJournal journal = new(storage, organizations, clock);
         private readonly DeletionProjectRecords projectRecords = new(storage);
         private readonly DeletionRelatedRecords related = new(storage, accounts);
@@ -54,13 +57,30 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 var failed = new Dictionary<string, string>(StringComparer.Ordinal);
                 var cleaned = new HashSet<string>(StringComparer.Ordinal);
+                var seen = new HashSet<string>(StringComparer.Ordinal);
                 try
                 {
-                    foreach (var entry in await journal.ListAsync(token))
+                    await journal.PruneAsync(token);
+                    await AccountDeletion.WipeExpiredAsync(storage, clock, token);
+                    if (auditPrunedAt == 0 || clock.GetElapsedTime(auditPrunedAt) >= AuditPruneInterval)
+                    {
+                        auditPrunedAt = clock.GetTimestamp();
+                        await organizations.PruneAuditAsync(token);
+                    }
+
+                    var pending = await journal.ListPendingAsync(token);
+                    foreach (var id in pending.Malformed)
+                    {
+                        if (Report(seen, "row:" + id))
+                        {
+                            logger.DashboardDeletionJournalRowMalformed(id);
+                        }
+                    }
+
+                    foreach (var entry in pending.Entries)
                     {
                         try
                         {
-                            Validate(entry.Proof);
                             var started = clock.GetUtcNow().UtcDateTime;
                             await CleanAsync(entry, token);
                             await SettleAsync(entry, started, token);
@@ -70,21 +90,23 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
                 }
                 catch (Exception error) when (Retryable(error, token)) { Retry(error); }
-                IReadOnlyList<TsAuthDeletionProof> proofs;
-                try
+                IReadOnlyList<TsAuthDeletionItem> items;
+                try { items = await deletions.ListAsync(token); }
+                catch (Exception error) when (Retryable(error, token)) { Retry(error); items = []; }
+                var proofs = new List<TsAuthDeletionProof>(items.Count);
+                foreach (var item in items)
                 {
-                    proofs = await deletions.ListAsync(token);
-                    if (proofs.Count > 20 || proofs.Any(proof => proof is null) || proofs.Select(proof => proof.Id).Distinct(StringComparer.Ordinal).Count() != proofs.Count)
+                    var accepted = item switch
                     {
-                        throw new IOException("ts-auth returned an invalid deletion page.");
-                    }
-
-                    foreach (var proof in proofs)
+                        TsAuthDeletionProof proof => proof,
+                        TsAuthRejectedDeletion rejected => Reject(seen, rejected),
+                    };
+                    if (accepted is not null)
                     {
-                        Validate(proof);
+                        proofs.Add(accepted);
                     }
                 }
-                catch (Exception error) when (Retryable(error, token)) { Retry(error); proofs = []; }
+
                 foreach (var proof in proofs)
                 {
                     try
@@ -98,6 +120,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     catch (Exception error) when (Retryable(error, token)) { Fail(failed, proof, error); }
                 }
 
+                reported.IntersectWith(seen);
                 cleaned.ExceptWith(failed.Keys);
                 foreach (var id in cleaned)
                 {
@@ -154,6 +177,21 @@ namespace TerraScale.Dashboard.Features.Profile
                     await journal.BillingSettledAsync(entry.Proof.Id, cancellationToken);
                     break;
             }
+        }
+
+        private TsAuthDeletionProof? Reject(HashSet<string> seen, TsAuthRejectedDeletion rejected)
+        {
+            if (Report(seen, "proof:" + rejected.Id + ":" + rejected.Reason))
+            {
+                logger.DashboardDeletionProofRejected(rejected.Id, rejected.Reason);
+            }
+
+            return null;
+        }
+
+        private bool Report(HashSet<string> seen, string key)
+        {
+            return seen.Add(key) && reported.Add(key);
         }
 
         private void Fail(Dictionary<string, string> failed, TsAuthDeletionProof proof, Exception error)
@@ -244,20 +282,6 @@ namespace TerraScale.Dashboard.Features.Profile
             await DropProjectAsync(proof, cancellationToken);
             await projectRecords.CleanAsync(proof.OrganizationId!, proof.SubjectId, cancellationToken);
             await related.CleanProjectAsync(proof.OrganizationId!, proof.SubjectId, cancellationToken);
-        }
-
-        private static void Validate(TsAuthDeletionProof proof)
-        {
-            if (!TerraScaleIds.IsValid(proof.Id) || !TerraScaleIds.IsValid(proof.SubjectId) || (proof.Scope switch
-            {
-                "account" => proof.OrganizationId is not null,
-                "organization" => proof.OrganizationId != proof.SubjectId,
-                "project" => !TerraScaleIds.IsValid(proof.OrganizationId),
-                _ => true
-            }))
-            {
-                throw new IOException("ts-auth returned an invalid deletion proof.");
-            }
         }
 
         private async Task DropProjectAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)

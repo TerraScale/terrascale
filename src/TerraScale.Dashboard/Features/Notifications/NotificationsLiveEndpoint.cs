@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Notifications;
 
-public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, AccountService accounts, TimeProvider time, IHostApplicationLifetime applicationLifetime) : EndpointWithoutRequest<IResult>
+public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, AccountService accounts, LiveView live, ApiKeyExpiryNotifications expiry) : EndpointWithoutRequest<IResult>
 {
     public override void Configure() => Get("/notifications/live");
 
@@ -21,7 +21,6 @@ public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, Accoun
             return TypedResults.BadRequest();
         }
 
-        var live = new LiveView(time, applicationLifetime);
         async Task<LiveFragment> ReadAsync(CancellationToken cancellationToken)
         {
             try
@@ -33,7 +32,7 @@ public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, Accoun
                 }
 
                 context = await NotificationCommands.RefreshAsync(accounts, context, cancellationToken);
-                await ApiKeyExpiryNotifications.RefreshAsync(http, context);
+                await expiry.RefreshAsync(context, cancellationToken);
                 var page = NotificationEndpoints.Page(http, context, view == "dialog");
                 return new(view == "shell" ? NotificationShellPatch.Create(page.Shell) : NotificationRegion.Create(page));
             }
@@ -48,7 +47,6 @@ public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, Accoun
             }
         }
 
-        await live.StreamAsync(http, ReadAsync, live.ChangesAsync(cancellationToken), cancellationToken);
-        return TypedResults.Empty;
+        return await live.StreamAsync(http, ReadAsync, live.ChangesAsync(cancellationToken), cancellationToken);
     }
 }

@@ -222,7 +222,8 @@ namespace TerraScale.Dashboard.Features.Backups
                 (409, "name_taken") => "That database name is already in use. Choose a different name for the restored database.",
                 (404, "not_found") when path == "restore" => "That snapshot could not be opened. Refresh the backup list and try again. If it is still listed, contact support.",
                 (429 or 503, "capacity") => "Backup capacity is temporarily unavailable. Wait a moment, then try again.",
-                (400, "invalid_request") when path == "backup-policy" => "Set snapshot retention from 1 to 35 days and use a valid 5-field UTC cron schedule.",
+                (400, "invalid_retention") => "TerraBase did not accept that retention. Choose a whole number of days within your plan's limit.",
+                (400, "invalid_request") when path == "backup-policy" => "Set snapshot retention within your plan and use a valid 5-field UTC cron schedule.",
                 (400, "invalid_request") when path == "restore" => "Choose a valid name for the restored database. " + DatabaseService.NameHint + " Leave the name blank to choose it automatically.",
                 _ => null
             };

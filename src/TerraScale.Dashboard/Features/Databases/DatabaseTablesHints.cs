@@ -6,6 +6,7 @@ using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
+using TerraScale.Dashboard.Common.Live;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Databases;
@@ -13,6 +14,7 @@ namespace TerraScale.Dashboard.Features.Databases;
 public static partial class DatabaseTablesHints
 {
     private const string Protocol = "terrascale.shape.v1";
+    private static readonly TimeSpan HintedPollInterval = TimeSpan.FromSeconds(6);
     private static readonly SearchValues<char> Hex = SearchValues.Create("0123456789abcdef");
 
     public static async IAsyncEnumerable<DateTimeOffset> ChangesAsync(HttpContext http,
@@ -22,7 +24,7 @@ public static partial class DatabaseTablesHints
         var logger = http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(DatabaseTablesHints));
         yield return time.GetUtcNow();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);
+        using var timer = new PeriodicTimer(LiveView.PollInterval, time);
         Task<ClientWebSocket?>? opening = OpenAsync(http, logger, stop.Token);
         ClientWebSocket? socket = null;
         Task<bool>? hint = null;
@@ -38,6 +40,7 @@ public static partial class DatabaseTablesHints
                     socket = await opening;
                     opening = null;
                     hint = socket is null ? null : ReadAsync(socket, logger, stop.Token);
+                    timer.Period = hint is null ? LiveView.PollInterval : HintedPollInterval;
                     continue;
                 }
 
@@ -48,6 +51,7 @@ public static partial class DatabaseTablesHints
                     if (!changed)
                     {
                         socket?.Dispose();
+                        timer.Period = LiveView.PollInterval;
                         continue;
                     }
                 }

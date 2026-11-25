@@ -3,7 +3,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class NotificationsPageEndpoint(DashboardSessions sessions, AccountService accounts) : EndpointWithoutRequest<IResult>
+    public sealed class NotificationsPageEndpoint(DashboardSessions sessions, AccountService accounts, ApiKeyExpiryNotifications expiry) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Get("/notifications");
 
@@ -17,7 +17,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
 
             context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted);
-            await ApiKeyExpiryNotifications.RefreshAsync(http, context);
+            await expiry.RefreshAsync(context, http.RequestAborted);
             return NotificationView.Create(NotificationEndpoints.Page(http, context));
         }
     }

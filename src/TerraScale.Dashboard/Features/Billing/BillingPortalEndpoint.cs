@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class BillingPortalEndpoint(DashboardSessions sessions, AccountService accounts, StripeBilling billing) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/billing/portal");
+        public override void Configure() => Post("/billing/portal");
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
@@ -19,6 +19,12 @@ namespace TerraScale.Dashboard.Features.Billing
             if (context is null)
             {
                 return AccountEndpoints.LoginRedirect(http);
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return RequestError.FormExpired(http, "/organization?tab=billing", TypedResults.StatusCode(403));
             }
 
             try

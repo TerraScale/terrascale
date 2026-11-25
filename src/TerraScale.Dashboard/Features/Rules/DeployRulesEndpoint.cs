@@ -6,7 +6,10 @@ namespace TerraScale.Dashboard.Features.Rules
     {
         public override void Configure() => Post("/api/v1/dashboard/rules/deploy");
 
-        public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-            new(RulesEndpoints.DeployAsync(HttpContext, sessions, accounts, rules));
+        public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+        {
+            RequestBodies.Allow(HttpContext, RequestBodies.SourceForm);
+            return new(RulesEndpoints.DeployAsync(HttpContext, sessions, accounts, rules));
+        }
     }
 }

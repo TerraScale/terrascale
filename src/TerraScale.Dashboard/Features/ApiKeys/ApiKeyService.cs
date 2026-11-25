@@ -9,6 +9,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time, TsAuthClient authClient)
     {
         public const int IssuerPageSize = 100;
+        private const int MaxIssuerPages = 50;
+        private const int MaxResponseBytes = 1024 * 1024;
 
         public async Task<ApiKeyListPage> ListPageAsync(AccountContext context, string? cursor, int limit, CancellationToken cancellationToken)
         {
@@ -64,6 +66,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             var result = new List<ProjectCredential>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
+            var cursors = new HashSet<string>(StringComparer.Ordinal);
             string? next = null;
             var pages = 0;
             do
@@ -77,7 +80,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     }
                 }
                 next = page.NextCursor;
-            } while (next is not null && seen.Count < IssuerPageSize * ++pages);
+            } while (next is not null && cursors.Add(next) && ++pages < MaxIssuerPages);
             return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
         }
 
@@ -252,6 +255,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 throw new AccountAccessException("Project member access is required.");
             }
 
+            if (!TerraScaleIds.IsValid(keyId))
+            {
+                throw new AccountAccessException("The key is unavailable.", 404);
+            }
+
             if (previousSecretTtl is < 0 or > MaxPreviousSecretTtl)
             {
                 throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
@@ -370,15 +378,17 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         {
             using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, path)) { Content = content };
             request.Headers.Authorization = new("Bearer", context.Session.AccessToken);
-            using var response = await http.CreateClient("platform").SendAsync(request, cancellationToken);
-            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            if (bytes.Length > 1024 * 1024)
+            using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (response.Content.Headers.ContentLength > MaxResponseBytes)
             {
                 throw new HttpRequestException("ts-auth answered an oversized body.");
             }
 
+            using var bytes = new BoundedHttpBodyStream(MaxResponseBytes, () => new HttpRequestException("ts-auth answered an oversized body."), cancellationToken);
+            await response.Content.CopyToAsync(bytes, cancellationToken);
+
             JsonElement body = default;
-            try { using var document = JsonDocument.Parse(bytes); body = document.RootElement.Clone(); }
+            try { using var document = JsonDocument.Parse(bytes.Written); body = document.RootElement.Clone(); }
             catch (JsonException)
             {
                 if (response.IsSuccessStatusCode)

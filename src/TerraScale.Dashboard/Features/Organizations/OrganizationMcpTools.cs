@@ -165,10 +165,12 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             var context = await FreshAsync(organizationId, projectId);
             var members = (await access.ReadAsync(context, Cancellation)).Members.Where(member => member.Status == "active").ToArray();
+            var organizationMember = context.Role.Length > 0;
+            string Visible(MemberRecord member, string value) => organizationMember || member.UserId == context.UserId ? value : "";
             var matching = members.Where(member => (role is "" or "all" || member.Role == role) &&
-                (search.Trim().Length == 0 || member.Name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase) || member.Email.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase)))
+                (search.Trim().Length == 0 || Visible(member, member.Name).Contains(search.Trim(), StringComparison.OrdinalIgnoreCase) || Visible(member, member.Email).Contains(search.Trim(), StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(member => member.Name).ThenBy(member => member.UserId)
-                .Select(member => new OrganizationMemberView(member.UserId, member.Name, member.Email, member.Role,
+                .Select(member => new OrganizationMemberView(member.UserId, Visible(member, member.Name), Visible(member, member.Email), member.Role,
                     member.UserId == context.Organization!.OwnerUserId || member.Role == "owner", member.UserId == context.UserId,
                     context.CanManage && member.UserId != context.UserId && member.Role != "owner",
                     member.CreatedAt != DateTimeOffset.MinValue ? member.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd") : member.JoinedOn?.ToString("yyyy-MM-dd") ?? "")).ToArray();
@@ -301,23 +303,22 @@ namespace TerraScale.Dashboard.Features.Organizations
                 throw new AccountAccessException("Organization management is required.");
             }
 
-            var snapshot = await access.ReadAsync(context, Cancellation);
-            var retention = snapshot.AuditRetentionDays is >= 1 ? snapshot.AuditRetentionDays.Value
-                : throw new IOException("Audit retention policy is unavailable.");
             range = range is "24h" or "30d" or "90d" or "365d" ? range : "7d";
             severity = severity is "info" or "warn" or "critical" or "unknown" ? severity : "all";
             var filter = new OrganizationFilters(Search: search.Trim(), Action: action.Length == 0 ? "all" : action, Severity: severity, Range: range, Now: time.GetUtcNow());
+            var snapshot = await access.ReadAuditAsync(context, filter, Cancellation);
+            var retention = snapshot.AuditRetentionDays is >= 1 ? snapshot.AuditRetentionDays.Value
+                : throw new IOException("Audit retention policy is unavailable.");
             var matches = filter.ApplyAudit(snapshot.AuditEvents, retention);
             var pages = Math.Max(1, (matches.Count + pageSize - 1) / pageSize);
             page = Math.Clamp(page, 1, pages);
-            var retained = snapshot.AuditEvents.Where(item => item.OccurredAt == DateTimeOffset.MinValue || item.OccurredAt >= time.GetUtcNow().AddDays(-retention));
             var rows = matches.Skip((page - 1) * pageSize).Take(pageSize).Select(item => new OrganizationAuditEventView(item.Id, item.OccurredAt,
                 item.Actor, OrganizationFilters.AuditActorType(item), item.Action, OrganizationFilters.AuditActionLabel(item), item.Target,
                 item.TargetType, item.Source, OrganizationFilters.AuditSeverity(item), OrganizationFilters.AuditOutcome(item), item.Ip ?? "")).ToArray();
             return new OrganizationAuditEvents(rows, matches.Count, matches.Count(item => OrganizationFilters.AuditSeverity(item) == "critical"),
                 matches.Count(item => OrganizationFilters.AuditSeverity(item) == "warn"), matches.Count(item => OrganizationFilters.AuditSeverity(item) == "info"),
                 matches.Count(item => OrganizationFilters.AuditSeverity(item) == "unknown"),
-                page, pages, range, severity, [.. retained.Select(item => item.Action).Distinct().Order()], retention);
+                page, pages, range, severity, snapshot.AuditActions, retention, snapshot.AuditOmitted);
         });
         }
 

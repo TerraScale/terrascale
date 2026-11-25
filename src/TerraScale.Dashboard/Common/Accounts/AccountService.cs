@@ -81,7 +81,11 @@ namespace TerraScale.Dashboard.Common.Accounts
                 {
                     using var release = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                     try { await UpdateAccountAsync(session, current => { if (current.PersonalOrganizationId.Length == 0) { current.PersonalClaimUntil = null; } }, release.Token); }
-                    catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or OperationCanceledException) { }
+                    catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or OperationCanceledException)
+                    {
+                        logger.PersonalWorkspaceClaimNotReleased(error.GetType().Name);
+                    }
+
                     throw;
                 }
                 return await UpdateAccountAsync(session, current =>
@@ -267,11 +271,13 @@ namespace TerraScale.Dashboard.Common.Accounts
                         Projects = org.Projects.ToDictionary(item => item.Key, item => CollaboratorProject(item.Value))
                     };
                 }
-                await plans.PublishAsync(org, cancellationToken);
                 if (platformOrg)
                 {
                     try { await PlatformDatabases.HydrateAsync(org, control, session, cancellationToken); }
-                    catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
+                    catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException)
+                    {
+                        logger.PlatformDatabasesUnavailable(error.GetType().Name);
+                    }
                 }
                 if (!org.ContainsMember(session.UserId))
                 {

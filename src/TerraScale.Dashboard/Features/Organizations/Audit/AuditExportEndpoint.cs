@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Endpoints;
@@ -23,9 +24,10 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
             }
 
             var filter = OrganizationFilters.For(http);
-            var snapshot = await access.ReadAsync(context, http.RequestAborted);
+            var snapshot = await access.ReadAuditAsync(context, filter, http.RequestAborted);
             var events = filter.ApplyAudit(snapshot.AuditEvents, snapshot.AuditRetentionDays);
             http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers["X-Audit-Omitted"] = snapshot.AuditOmitted.ToString(CultureInfo.InvariantCulture);
             var name = "terrascale-audit-" + time.GetUtcNow().ToString("yyyy-MM-ddTHH-mm-ssZ");
             var format = http.Request.Query["format"].ToString();
             if (format == "json")
@@ -35,6 +37,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
                     projectId = context.Project?.Id,
                     exportedAt = time.GetUtcNow(),
                     count = events.Count,
+                    omitted = snapshot.AuditOmitted,
                     retentionDays = snapshot.AuditRetentionDays,
                     filters = new { filter.Action, filter.Search, filter.Range, filter.Severity },
                     events = events.Select(AuditEventRow.From)

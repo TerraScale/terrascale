@@ -167,6 +167,33 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 48, Level = LogLevel.Warning, Message = "Dashboard deletion cleanup of {Scope} {SubjectId} (proof {ProofId}) failed with {ErrorType} {ErrorCode}; retrying every 30 seconds, logged again when the error changes.")]
         internal static partial void DashboardDeletionCleanupFailed(this ILogger logger, string proofId, string scope, string subjectId, string errorType, string errorCode);
 
+        [LoggerMessage(EventId = 130, Level = LogLevel.Warning, Message = "Dashboard deletion cleanup skipped a ts-auth deletion proof {ProofId} ({Reason}); the rest of the page continues.")]
+        internal static partial void DashboardDeletionProofRejected(this ILogger logger, string? proofId, string reason);
+
+        [LoggerMessage(EventId = 131, Level = LogLevel.Warning, Message = "Dashboard deletion cleanup skipped malformed journal row {ProofId}; the rest of the journal continues.")]
+        internal static partial void DashboardDeletionJournalRowMalformed(this ILogger logger, string proofId);
+
+        [LoggerMessage(EventId = 132, Level = LogLevel.Warning, Message = "API key expiry reminders for project {ProjectId} could not be refreshed ({ErrorType}); the next view retries.")]
+        internal static partial void ApiKeyExpiryRefreshFailed(this ILogger logger, string projectId, string errorType);
+
+        [LoggerMessage(EventId = 133, Level = LogLevel.Warning, Message = "Database list sync for project {ProjectId} was skipped ({ErrorType}); the stored list stays until the next sync.")]
+        internal static partial void DatabaseSyncSkipped(this ILogger logger, string projectId, string errorType);
+
+        [LoggerMessage(EventId = 134, Level = LogLevel.Warning, Message = "Database sync could not read the placement of database {DatabaseId} ({ErrorType}); it is retried on the next sync.")]
+        internal static partial void DatabaseSyncPlacementSkipped(this ILogger logger, string databaseId, string errorType);
+
+        [LoggerMessage(EventId = 135, Level = LogLevel.Warning, Message = "Platform database inventory could not be loaded ({ErrorType}); the platform organization shows its stored databases.")]
+        internal static partial void PlatformDatabasesUnavailable(this ILogger logger, string errorType);
+
+        [LoggerMessage(EventId = 136, Level = LogLevel.Warning, Message = "A failed personal workspace setup could not release its claim ({ErrorType}); the claim expires within a minute.")]
+        internal static partial void PersonalWorkspaceClaimNotReleased(this ILogger logger, string errorType);
+
+        [LoggerMessage(EventId = 137, Level = LogLevel.Warning, Message = "Project {ProjectId} was created after its plan slot lapsed; deleted it so the organization stays within its project limit.")]
+        internal static partial void ProjectCreationWithdrawn(this ILogger logger, string projectId);
+
+        [LoggerMessage(EventId = 138, Level = LogLevel.Error, Message = "Project {ProjectId} was created after its plan slot lapsed and could not be deleted ({ErrorType}); remove it manually.")]
+        internal static partial void ProjectCreationNotWithdrawn(this ILogger logger, string projectId, string errorType);
+
         [LoggerMessage(EventId = 49, Level = LogLevel.Warning, Message = "Account deletion did not end the billing of organization {OrganizationId} with {ErrorType} {ErrorCode}; the deletion cleanup retries it.")]
         internal static partial void AccountDeletionDidNotEndBilling(this ILogger logger, string organizationId, string errorType, string errorCode);
 

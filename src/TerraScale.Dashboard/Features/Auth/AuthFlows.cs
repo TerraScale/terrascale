@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.Features.Auth
         private const string ByToken = DashboardSql.AuthFlows.Select + " WHERE token_hash = @TokenHash AND purpose = @Purpose";
         private const string RemoveToken = "DELETE FROM auth_flows WHERE token_hash = @TokenHash AND purpose = @Purpose";
 
-        private const string OidcCookiePrefix = "ts-dashboard-oidc-";
+        private const string OidcCookiePrefix = "__Host-ts-dashboard-oidc-";
         public static readonly TimeSpan OidcLifetime = TimeSpan.FromHours(1);
 
         public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, McpAuthorization? mcp = null, StepUpIntent? stepUp = null)
@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
             var cookie = OidcCookie(returnedState);
             var stored = await ReadAsync<OidcFlow>(context, cookie, AuthFlowRow.OidcPurpose);
-            context.Response.Cookies.Delete(cookie, Options(context));
+            DashboardCookies.Delete(context, cookie, SameSiteMode.Lax);
             if (stored is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(returnedState), Encoding.UTF8.GetBytes(stored.Value.State)))
             {
                 return new OidcTake.Unknown();
@@ -95,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private async Task<AuthFlowRow?> FindAsync(HttpContext context, string cookie, string purpose)
         {
-            var token = context.Request.Cookies[cookie];
+            var token = DashboardCookies.Read(context, cookie);
             if (!IsToken(token))
             {
                 return null;
@@ -120,12 +120,12 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public async Task<AlertSecretHandoff?> TakeAlertSecretAsync(HttpContext context, AccountContext account)
         {
-            if (!context.Request.Cookies.ContainsKey(AlertSecretCookie))
+            if (DashboardCookies.Read(context, AlertSecretCookie) is null)
             {
                 return null;
             }
 
-            context.Response.Cookies.Delete(AlertSecretCookie, Options(context));
+            DashboardCookies.Delete(context, AlertSecretCookie, SameSiteMode.Lax);
             var row = await FindAsync(context, AlertSecretCookie, AuthFlowRow.AlertSecretPurpose);
             if (row is null || !await TakeAsync(row, context.RequestAborted))
             {
@@ -142,18 +142,18 @@ namespace TerraScale.Dashboard.Features.Auth
                 value.Browser == StepUpFlow.Browser(context) && value.ProjectId == account.Project?.Id ? value : null;
         }
 
-        private const string AlertSecretCookie = "ts-dashboard-alert-secret";
+        private const string AlertSecretCookie = "__Host-ts-dashboard-alert-secret";
 
         private async Task EndAsync(HttpContext context, string cookie, string purpose)
         {
-            var token = context.Request.Cookies[cookie];
+            var token = DashboardCookies.Read(context, cookie);
             if (IsToken(token))
             {
                 var hash = Key(token);
                 await using var connection = await storage.OpenAsync(context.RequestAborted);
                 await connection.ExecuteAsync(RemoveToken, new { TokenHash = hash, Purpose = purpose });
             }
-            context.Response.Cookies.Delete(cookie, Options(context));
+            DashboardCookies.Delete(context, cookie, SameSiteMode.Lax);
         }
 
         private static (byte[] Nonce, byte[] Ciphertext, byte[] Tag) Seal<T>(T value, string key, string purpose)
