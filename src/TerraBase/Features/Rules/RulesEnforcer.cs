@@ -26,6 +26,10 @@ internal delegate ValueTask<SqlReadOutcome> CatalogReader(IReadOnlyList<SqlState
 
 internal sealed record LiveTable(IReadOnlyList<string> Names, IReadOnlyList<string> Declared, string? RowIdAlias, string? RowIdSource, long SchemaVersion);
 
+internal sealed record MissingTable(long SchemaVersion);
+
+internal readonly union LiveTableOutcome(LiveTable, MissingTable, SqlRefusal);
+
 internal sealed record GuardPlan(string Name, string Table, IReadOnlyList<string>? Readable, CompiledCondition Condition, LiveTable? Live, List<string> Keys);
 
 internal sealed record RuleSource(int Group, string? Table, string Alias);
@@ -218,13 +222,15 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         }
 
         IReadOnlyList<string>? effective = rule.Read is null ? [] : rule.Columns is { Count: > 0 } listed ? listed : null;
-        var targetAlias = targetAt + 2 < tokens.Count && tokens[targetAt + 1].Is("AS") && tokens[targetAt + 2].IsName ? tokens[targetAt + 2].Value : table;
+        var targetAlias = targetAt + 2 < tokens.Count && tokens[targetAt + 1].Is("AS") && (tokens[targetAt + 2].IsName || tokens[targetAt + 2].Kind == SqlTokenKind.String)
+            ? tokens[targetAt + 2].Value
+            : table;
         var written = AssignedPositions(tokens, targetAt);
         List<long> versions = [];
-        var targetLive = catalog is null ? null : await LiveTableAsync(catalog, table, cancellationToken);
-        if (targetLive is not null)
+        LiveTable? targetLive = null;
+        if (catalog is not null && Track(await LiveTableAsync(catalog, table, index, cancellationToken), versions, out targetLive) is { } targetFailure)
         {
-            versions.Add(targetLive.SchemaVersion);
+            return targetFailure;
         }
 
         if (Unreadable(tokens, targetAt, targetAlias, effective, targetLive, written) is { } hidden)
@@ -369,9 +375,17 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             var aliasAt = !aliased ? -1 : tokens[at + 1].Is("AS") ? at + 2 : at + 1;
             var alias = aliasAt >= 0 && aliasAt < tokens.Count ? tokens[aliasAt].Value : table;
             var closeAt = aliasAt >= 0 ? aliasAt + 1 : at + 1;
-            if (start > 0 && tokens[start - 1].Kind == SqlTokenKind.Open && closeAt < tokens.Count && tokens[closeAt].Kind == SqlTokenKind.Close)
+            var openAt = start - 1;
+            var outerClose = closeAt;
+            while (openAt >= 0 && outerClose < tokens.Count && tokens[openAt].Kind == SqlTokenKind.Open && tokens[outerClose].Kind == SqlTokenKind.Close)
             {
-                var outerAt = closeAt + 1 < tokens.Count && tokens[closeAt + 1].Is("AS") ? closeAt + 2 : closeAt + 1;
+                openAt--;
+                outerClose++;
+            }
+
+            if (outerClose > closeAt)
+            {
+                var outerAt = outerClose < tokens.Count && tokens[outerClose].Is("AS") ? outerClose + 1 : outerClose;
                 if (outerAt < tokens.Count && (tokens[outerAt].Kind == SqlTokenKind.String
                     || (tokens[outerAt].IsName && !(tokens[outerAt].Kind == SqlTokenKind.Word && ClauseEnds.Contains(tokens[outerAt].Value)))))
                 {
@@ -389,10 +403,14 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 return SqlRefusal.RuleDenied(string.Concat("the rules do not allow reading ", table), index, "read", table);
             }
 
-            var live = plans.TryGetValue(table, out var existing) ? existing.Live : catalog is null ? null : await LiveTableAsync(catalog, table, cancellationToken);
-            if (live is not null)
+            LiveTable? live = null;
+            if (plans.TryGetValue(table, out var existing))
             {
-                versions.Add(live.SchemaVersion);
+                live = existing.Live;
+            }
+            else if (catalog is not null && Track(await LiveTableAsync(catalog, table, index, cancellationToken), versions, out live) is { } liveFailure)
+            {
+                return liveFailure;
             }
 
             var liveNames = live?.Declared;
@@ -462,7 +480,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
             var columns = string.Join(", ", [.. plan.Keys.Select(key => string.Concat(plan.Live?.RowIdSource ?? key, " AS ", RulesCompiler.Quote(key))),
                 .. plan.Readable is null ? ["*"] : plan.Readable.Select(RulesCompiler.Quote)]);
-            definitions.Add(string.Concat(RulesCompiler.Quote(plan.Name), " AS (SELECT ", columns, " FROM ", RulesCompiler.Quote(plan.Table), " WHERE ",
+            definitions.Add(string.Concat(RulesCompiler.Quote(plan.Name), " AS (SELECT ", columns, " FROM main.", RulesCompiler.Quote(plan.Table), " WHERE ",
                 RulesCompiler.Render(plan.Condition, auth, renderTime), ")"));
             HashSet<string>? visible = null;
             if (plan.Readable is not null)
@@ -700,7 +718,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
     public static CatalogReader Catalog(ISqlTransaction transaction) => transaction.ReadCatalogAsync;
 
-    private static async ValueTask<LiveTable?> LiveTableAsync(CatalogReader catalog, string table, CancellationToken cancellationToken)
+    private static async ValueTask<LiveTableOutcome> LiveTableAsync(CatalogReader catalog, string table, int index, CancellationToken cancellationToken)
     {
         var name = RulesCompiler.Literal(table);
         var outcome = await catalog(
@@ -711,14 +729,25 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 new SqlStatement("PRAGMA schema_version", [], SqlBuild.NoNamed),
             ],
             cancellationToken);
-        IReadOnlyList<SqlResultSet> results = outcome switch
+        return outcome switch
         {
-            SqlReadResult read => read.ResultSets,
-            SqlError or StorageBusy or StorageTimeout => [],
+            SqlReadResult read => Describe(read.ResultSets, index),
+            SqlError error => SqlRefusal.From(error),
+            StorageBusy busy => SqlRefusal.From(busy),
+            StorageTimeout timeout => SqlRefusal.From(timeout),
         };
-        if (results is not [{ Rows: { Count: > 0 } columns }, { Rows: [var kind] }, { Rows: [var keyIndexes] }, { Rows: [[var version]] }] || !version.TryGetIntegral(out var schemaVersion))
+    }
+
+    private static LiveTableOutcome Describe(IReadOnlyList<SqlResultSet> results, int index)
+    {
+        if (results is not [{ Rows: var columns }, { Rows: var kinds }, { Rows: [var keyIndexes] }, { Rows: [[var version]] }] || !version.TryGetIntegral(out var schemaVersion))
         {
-            return null;
+            return SqlRefusal.RuleDenied("the table schema could not be read", index);
+        }
+
+        if (columns.Count == 0 || kinds is not [var kind])
+        {
+            return new MissingTable(schemaVersion);
         }
 
         var hasRowId = SqlBuild.Format(kind[0]) == "table" && kind[1].TryGetIntegral(out var withoutRowId) && withoutRowId == 0;
@@ -731,6 +760,22 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         var source = hasRowId ? RowIdOrder.FirstOrDefault(implicitName => !declared.Contains(implicitName, AsciiIgnoreCaseComparer.Instance)) : null;
         string[] names = [.. columns.Where(static row => !(row[3].TryGetIntegral(out var hidden) && hidden == 1)).Select(static row => SqlBuild.Format(row[0]))];
         return new LiveTable(names, declared, alias, source, schemaVersion);
+    }
+
+    private static SqlRefusal? Track(LiveTableOutcome outcome, List<long> versions, out LiveTable? live)
+    {
+        (live, var version, var failure) = outcome switch
+        {
+            LiveTable table => (table, (long?)table.SchemaVersion, (SqlRefusal?)null),
+            MissingTable missing => ((LiveTable?)null, (long?)missing.SchemaVersion, (SqlRefusal?)null),
+            SqlRefusal refusal => ((LiveTable?)null, (long?)null, refusal),
+        };
+        if (version is { } schemaVersion)
+        {
+            versions.Add(schemaVersion);
+        }
+
+        return failure;
     }
 
     private static readonly string[] RowIdOrder = ["rowid", "_rowid_", "oid"];
@@ -937,7 +982,8 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             {
                 break;
             }
-            else if (depth == 0 && (token.IsName || token.Kind == SqlTokenKind.String) && at + 1 < tokens.Count && tokens[at + 1] is { Kind: SqlTokenKind.Symbol, Value: "=" })
+            else if (depth == 0 && (at == setAt + 1 || tokens[at - 1].Kind == SqlTokenKind.Comma) && (token.IsName || token.Kind == SqlTokenKind.String)
+                && at + 1 < tokens.Count && tokens[at + 1] is { Kind: SqlTokenKind.Symbol, Value: "=" })
             {
                 positions.Add(at);
             }
