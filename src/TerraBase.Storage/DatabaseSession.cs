@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
@@ -369,73 +371,113 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         return ValueTask.FromResult(result);
     }
 
-    public async ValueTask<ReadArchivedSegmentOutcome> ReadArchivedSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken)
+    public async ValueTask<ReadArchivedSegmentOutcome> ReadArchivedSegmentAsync(
+        CommitLogSegment segment, Stream content, ReplayArchivedCommitBatch replay, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(segment);
         ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(replay);
         if (segment.DatabaseId != DatabaseId || !StorageEngineOptions.IsValidRegion(segment.OriginRegion) || string.Equals(segment.OriginRegion, Region, StringComparison.Ordinal))
         {
             return new InvalidSegment("segment does not belong to a remote origin of this database");
         }
 
-        if (segment.SizeBytes is <= 0 or > SqliteCommitLog.MaxSegmentBytes)
+        if (segment.SizeBytes <= 0 || !content.CanSeek || content.Length - content.Position != segment.SizeBytes)
         {
-            return new InvalidSegment("segment size is outside the import limit");
+            return new InvalidSegment("segment size does not match the manifest");
         }
 
-        if (segment.FirstSequence <= 0 || segment.LastSequence < segment.FirstSequence
-            || segment.LastSequence - segment.FirstSequence >= Math.Min(Options.MaxPendingRemoteCommits, int.MaxValue - 1))
+        if (segment.FirstSequence <= 0 || segment.LastSequence < segment.FirstSequence)
         {
-            return new InvalidSegment("segment sequence range is outside the import limit");
+            return new InvalidSegment("segment sequence range is invalid");
         }
 
-        using var buffer = new MemoryStream();
-        using var chunk = MemoryPool<byte>.Shared.Rent(1 << 16);
-        while (true)
+        var start = content.Position;
+        var validation = await ReadArchivedFramesAsync(segment, content, replay: null, cancellationToken);
+        return validation switch
         {
-            var remaining = segment.SizeBytes - buffer.Length;
-            var read = await content.ReadAsync(chunk.Memory[..(int)Math.Min(remaining + 1, chunk.Memory.Length)], cancellationToken);
-            if (read == 0)
+            ArchivedSegmentRead => await ReplayValidatedSegmentAsync(segment, content, start, replay, cancellationToken),
+            ArchivedSegmentReplayStopped => throw new UnreachableException(),
+            InvalidSegment invalid => invalid,
+            StorageCorrupted corrupted => corrupted,
+        };
+    }
+
+    private ValueTask<ReadArchivedSegmentOutcome> ReplayValidatedSegmentAsync(
+        CommitLogSegment segment, Stream content, long start, ReplayArchivedCommitBatch replay, CancellationToken cancellationToken)
+    {
+        content.Position = start;
+        return ReadArchivedFramesAsync(segment, content, replay, cancellationToken);
+    }
+
+    private async ValueTask<ReadArchivedSegmentOutcome> ReadArchivedFramesAsync(
+        CommitLogSegment segment, Stream content, ReplayArchivedCommitBatch? replay, CancellationToken cancellationToken)
+    {
+        var prefix = new byte[CommitFrame.PrefixSize];
+        var remaining = segment.SizeBytes;
+        var through = segment.FirstSequence - 1;
+        var batchBytes = 0L;
+        var maxEntries = Math.Min(Options.MaxPendingRemoteCommits, HistoryPageSize);
+        List<CommitMetadata> batch = [];
+        while (remaining > 0)
+        {
+            if (remaining < prefix.Length
+                || await content.ReadAtLeastAsync(prefix, prefix.Length, throwOnEndOfStream: false, cancellationToken) != prefix.Length)
             {
-                break;
+                return new InvalidSegment("segment ended inside a commit log frame");
             }
 
-            if (read > remaining)
+            var bodySize = BinaryPrimitives.ReadUInt32LittleEndian(prefix);
+            var frameSize = prefix.Length + (long)bodySize + CommitFrame.CrcSize;
+            if (bodySize > CommitFrame.MaxBodySize || frameSize > remaining)
             {
-                return new InvalidSegment("segment content exceeds its declared size");
+                return new InvalidSegment("segment contains a frame outside its declared size");
             }
 
-            buffer.Write(chunk.Memory.Span[..read]);
-        }
+            var length = (int)bodySize + CommitFrame.CrcSize;
+            using var buffer = MemoryPool<byte>.Shared.Rent(length);
+            var frame = buffer.Memory[..length];
+            if (await content.ReadAtLeastAsync(frame, length, throwOnEndOfStream: false, cancellationToken) != length
+                || !CommitFrame.TryDecodeChecked(frame.Span, segment.OriginRegion, _cipher, out var commit))
+            {
+                return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
+            }
 
-        if (buffer.Length != segment.SizeBytes)
-        {
-            return new InvalidSegment("segment content does not match its declared size");
-        }
-
-        List<CommitMetadata> commits = [];
-        var expectedCommits = (int)(segment.LastSequence - segment.FirstSequence + 1);
-        if (!CommitFrame.TryParseAll(buffer.GetBuffer().AsSpan(0, (int)buffer.Length), segment.OriginRegion, _cipher, commits, maxEntries: expectedCommits + 1))
-        {
-            return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
-        }
-
-        for (var index = 0; index < commits.Count; index++)
-        {
-            if (commits[index].Sequence != segment.FirstSequence + index)
+            if (through >= segment.LastSequence || commit.Sequence != through + 1)
             {
                 return new InvalidSegment("segment sequences are not contiguous");
             }
+
+            remaining -= frameSize;
+            through = commit.Sequence;
+            if (replay is null)
+            {
+                continue;
+            }
+
+            if (batch.Count > 0 && (batch.Count >= maxEntries || batchBytes + frameSize > Options.SegmentMaxBytes))
+            {
+                if (!await replay(batch, cancellationToken))
+                {
+                    return new ArchivedSegmentReplayStopped();
+                }
+
+                batch = [];
+                batchBytes = 0;
+            }
+
+            batch.Add(commit);
+            batchBytes += frameSize;
         }
 
-        if (commits.Count != expectedCommits)
+        if (through != segment.LastSequence)
         {
             return new InvalidSegment("segment range does not match its content");
         }
 
-        return AsSegment(commits);
-
-        static ReadArchivedSegmentOutcome AsSegment(IReadOnlyList<CommitMetadata> entries) => entries;
+        return replay is not null && batch.Count > 0 && !await replay(batch, cancellationToken)
+            ? new ArchivedSegmentReplayStopped()
+            : new ArchivedSegmentRead();
     }
 
     internal OriginLog? Log(string origin)

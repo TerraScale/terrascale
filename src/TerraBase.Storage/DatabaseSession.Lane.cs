@@ -435,8 +435,8 @@ internal sealed partial class DatabaseSession
         {
             nextSequence = savedSequence;
             epoch = savedEpoch;
-            RollbackItemSchema(context);
-            return finished.ToSqlError(-1);
+            var rolledBack = RollbackItemSchema(context);
+            return (rolledBack.IsOk ? finished : rolledBack).ToSqlError(-1);
         }
 
         var bytes = commit is null ? 0 : CommitFrame.EncodedSize(commit);
@@ -447,7 +447,6 @@ internal sealed partial class DatabaseSession
             var rolledBack = RollbackItemSchema(context);
             if (!rolledBack.IsOk)
             {
-                _ = _writer.Exec("ROLLBACK;");
                 return rolledBack.ToSqlError(-1);
             }
 
@@ -461,8 +460,8 @@ internal sealed partial class DatabaseSession
         {
             nextSequence = savedSequence;
             epoch = savedEpoch;
-            RollbackItemSchema(context);
-            return released.ToSqlError(-1);
+            var rolledBack = RollbackItemSchema(context);
+            return (rolledBack.IsOk ? released : rolledBack).ToSqlError(-1);
         }
 
         return new LocalItemPrepared(commit, bytes);
@@ -471,8 +470,8 @@ internal sealed partial class DatabaseSession
     private LocalItemOutcome AbortItem(WriteContext context, LocalItemOutcome failure)
     {
         _capture.End();
-        RollbackItemSchema(context);
-        return failure;
+        var rolledBack = RollbackItemSchema(context);
+        return rolledBack.IsOk ? failure : rolledBack.ToSqlError(-1);
     }
 
     private StatementOutcome ExecuteStatements(WriteContext context, IReadOnlyList<SqlStatement> statements)
@@ -513,13 +512,18 @@ internal sealed partial class DatabaseSession
             if (failure is not null)
             {
                 _capture.End();
-                RollbackItemSchema(context);
-                return (failure, context.IsSchemaChange);
+                var reverted = RollbackItemSchema(context);
+                return (reverted.IsOk ? failure : reverted.ToSqlError(-1), context.IsSchemaChange);
             }
         }
 
         var finished = FinishStage(context, out var descriptor);
-        RollbackItemSchema(context);
+        var rolledBack = RollbackItemSchema(context);
+        if (!rolledBack.IsOk)
+        {
+            return (rolledBack.ToSqlError(-1), context.IsSchemaChange);
+        }
+
         if (!finished.IsOk || descriptor is null)
         {
             return (finished.ToSqlError(-1), context.IsSchemaChange);
@@ -659,6 +663,10 @@ internal sealed partial class DatabaseSession
     private SqliteStatus RollbackItemSchema(WriteContext context)
     {
         var rolledBack = _writer.InTransaction ? _writer.Exec(RollbackItem) : SqliteStatus.Success;
+        if (!rolledBack.IsOk && _writer.InTransaction)
+        {
+            _ = _writer.Exec("ROLLBACK;");
+        }
 
         if (context.IsSchemaChange)
         {

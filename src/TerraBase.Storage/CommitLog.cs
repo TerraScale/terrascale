@@ -249,6 +249,14 @@ internal static class CommitFrame
         return true;
     }
 
+    public static bool TryDecodeChecked(ReadOnlySpan<byte> bodyAndCrc, string origin, CommitLogCipher cipher, out CommitMetadata commit)
+    {
+        commit = Empty;
+        var body = bodyAndCrc[..^CrcSize];
+        return BinaryPrimitives.ReadUInt32LittleEndian(bodyAndCrc[^CrcSize..]) == Crc32.HashToUInt32(Crc32ParameterSet.Crc32C, body)
+            && TryDecode(body, origin, cipher, out commit);
+    }
+
     private static CommitMetadata Empty { get; } = new(Ulid.Empty, string.Empty, 0, HlcTimestamp.Zero, 0, ConsistencyMode.Fast, CausalBookmark.Empty, ReadOnlyMemory<byte>.Empty);
 
     private static byte[] Associated(long sequence, string origin)
@@ -426,7 +434,7 @@ internal sealed class OriginLog : IDisposable
                 return SqliteStatus.Success;
             }
 
-            if (_frames.Count > 0 && _length + buffer.Length > _options.SegmentMaxBytes)
+            if (_frames.Count > 0 && _length + buffer.Length > SqliteCommitLog.MaxSegmentBytes)
             {
                 SealIfDue(force: true);
                 if (_frames.Count > 0)

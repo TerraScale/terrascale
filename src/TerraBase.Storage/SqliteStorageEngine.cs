@@ -9,6 +9,7 @@ internal readonly union CollectBranchReplayOutcome(IReadOnlyList<CommitMetadata>
 public sealed class SqliteStorageEngine : ISqlStorageEngine
 {
     private const string SnapshotDirectory = "snapshots";
+    private const string BranchStagingDirectory = ".branches";
 
     private readonly StorageEngineOptions _options;
     private readonly TimeProvider _time;
@@ -49,6 +50,14 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         {
             sqlite.SealCommittedLogs();
         }
+    }
+
+    public static StorageBusy? RecoverBranchStaging(string rootDirectory)
+    {
+        var staging = Path.Combine(rootDirectory, BranchStagingDirectory);
+        return Directory.Exists(staging) && FileIo.DeleteDirectory(staging) is { } error
+            ? new StorageBusy(error, TimeSpan.FromSeconds(1))
+            : null;
     }
 
     public static StorageBusy? CopyHistory(ISqlDatabaseSession source, string targetDirectory, Ulid targetDatabaseId, ReadOnlyMemory<byte> targetRawKey, CausalBookmark through)
@@ -158,6 +167,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         var gate = Gate(request.BranchDatabaseId);
         await using var sourceLease = source;
         await gate.WaitAsync(cancellationToken);
+        var branchContext = Context(request.BranchDatabaseId, request.BranchRawKey);
+        var stagingRoot = Path.Combine(_options.RootDirectory, BranchStagingDirectory);
+        var staging = Path.Combine(stagingRoot, request.BranchDatabaseId.ToString());
+        var stagingContext = branchContext with { Directory = staging, DatabasePath = Path.Combine(staging, Path.GetFileName(branchContext.DatabasePath)) };
         try
         {
             if (Tracked(request.BranchDatabaseId) is not null || File.Exists(DatabasePath(request.BranchDatabaseId)))
@@ -172,22 +185,23 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return new InvalidDatabaseRequest("branch bookmark is ahead of the source database");
             }
 
-            if (FileIo.CreateDirectory(DatabaseDirectory(request.BranchDatabaseId)) is { } error)
+            if ((FileIo.CreateDirectory(stagingRoot) ?? FileIo.CreateDirectory(staging)) is { } error)
             {
                 return new StorageBusy(error, TimeSpan.FromSeconds(1));
             }
 
-            var branchContext = Context(request.BranchDatabaseId, request.BranchRawKey);
-            if (SqliteConnection.OpenOrNull(ConnectionOptions(branchContext)) is not { } destination)
+            if (SqliteConnection.OpenOrNull(ConnectionOptions(stagingContext)) is not { } destination)
             {
-                _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return new StorageBusy("branch database could not be created", TimeSpan.FromSeconds(1));
             }
 
-            var copied = target.Dominates(current)
-                ? await CopyLiveAsync(source, destination, cancellationToken)
-                : CopySnapshot(source, destination, target);
-            destination.Dispose();
+            CausalBookmark? copied;
+            using (destination)
+            {
+                copied = target.Dominates(current)
+                    ? await CopyLiveAsync(source, destination, cancellationToken)
+                    : CopySnapshot(source, destination, target);
+            }
             var createEmpty = false;
             CausalBookmark baseline;
             if (copied is { } snapshotBaseline)
@@ -196,8 +210,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
             else if (source.HasFullHistory(target))
             {
-                _ = FileIo.DeleteDirectory(branchContext.Directory);
-                if (FileIo.CreateDirectory(branchContext.Directory) is { } recreateError)
+                if ((FileIo.DeleteDirectory(staging) ?? FileIo.CreateDirectory(staging)) is { } recreateError)
                 {
                     return new StorageBusy(recreateError, TimeSpan.FromSeconds(1));
                 }
@@ -207,7 +220,6 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
             else
             {
-                _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return new InvalidDatabaseRequest("no snapshot precedes the requested bookmark");
             }
 
@@ -219,17 +231,15 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             };
             if (missingReplay is not null)
             {
-                _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return missingReplay;
             }
 
-            if (!createEmpty && source.CopyHistoryTo(branchContext, baseline) is { } history)
+            if (!createEmpty && source.CopyHistoryTo(stagingContext, baseline) is { } history)
             {
-                _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return history;
             }
 
-            var opened = DatabaseSession.Open(branchContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync);
+            var opened = DatabaseSession.Open(stagingContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync);
             var branch = opened switch
             {
                 DatabaseSession session => session,
@@ -237,22 +247,25 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             };
             if (branch is null)
             {
-                _ = FileIo.DeleteDirectory(branchContext.Directory);
                 return new StorageBusy("branch database could not be opened", TimeSpan.FromSeconds(1));
             }
 
-            return await ReplayBranchAsync(branch, entries, target, cancellationToken);
+            return await ReplayBranchAsync(branch, branchContext, entries, target, cancellationToken);
         }
         finally
         {
+            if (Directory.Exists(staging))
+            {
+                _ = FileIo.DeleteDirectory(staging);
+            }
+
             gate.Release();
         }
     }
 
     private async ValueTask<BranchDatabaseOutcome> ReplayBranchAsync(
-        DatabaseSession branch, IReadOnlyList<CommitMetadata> entries, CausalBookmark target, CancellationToken cancellationToken)
+        DatabaseSession branch, SessionContext destination, IReadOnlyList<CommitMetadata> entries, CausalBookmark target, CancellationToken cancellationToken)
     {
-        var complete = false;
         try
         {
             foreach (var chunk in CommitFrame.Batches(entries, _options.SegmentMaxBytes))
@@ -276,17 +289,24 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return new InvalidDatabaseRequest("branch replay did not reach the requested bookmark");
             }
 
-            complete = true;
-            return Branch(Track(branch));
         }
         finally
         {
-            if (!complete)
-            {
-                await branch.CloseAsync();
-                _ = FileIo.DeleteDirectory(branch.Directory);
-            }
+            await branch.CloseAsync();
         }
+
+        if (FileIo.MoveDirectory(branch.Directory, destination.Directory) is { } moveError)
+        {
+            return new StorageBusy(moveError, TimeSpan.FromSeconds(1));
+        }
+
+        var opened = DatabaseSession.Open(destination, create: false, strict: false, ReleaseAsync);
+        return opened switch
+        {
+            DatabaseSession session => Branch(Track(session)),
+            StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.Zero),
+            StorageBusy busy => busy,
+        };
 
         static BranchDatabaseOutcome Branch(ISqlDatabaseSession session) => session;
     }

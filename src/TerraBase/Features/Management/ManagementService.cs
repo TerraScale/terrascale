@@ -342,18 +342,34 @@ internal sealed class ManagementService(
         var outcome = await databases.OpenOrCreateAsync(source.Id, source.KeyId, source.Strict, cancellationToken);
         return outcome switch
         {
-            ISqlDatabaseSession session => await catalog.InsertDatabaseAsync(record, cancellationToken) switch
+            ISqlDatabaseSession session => await databases.BranchAsync(session, record.Id, record.KeyId, at, cancellationToken) switch
             {
-                DatabaseRecord reserved => await databases.BranchAsync(session, reserved.Id, reserved.KeyId, at, cancellationToken) switch
-                {
-                    ISqlDatabaseSession => Published(reserved),
-                    ResourceNotFound missing => await DiscardAsync(reserved, missing),
-                    StateConflict conflict => await DiscardAsync(reserved, conflict),
-                    BackendUnavailable unavailable => await DiscardAsync(reserved, unavailable),
-                },
+                ISqlDatabaseSession => await PublishBranchAsync(record, cancellationToken),
+                ResourceNotFound missing => missing,
                 StateConflict conflict => conflict,
                 BackendUnavailable unavailable => unavailable,
             },
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<DatabaseBranchOutcome> PublishBranchAsync(DatabaseRecord record, CancellationToken cancellationToken)
+    {
+        var published = await catalog.InsertDatabaseAsync(record, cancellationToken);
+        return published switch
+        {
+            DatabaseRecord branch => Published(branch),
+            StateConflict conflict => await DiscardUnpublishedBranchAsync(record.Id, conflict),
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<DatabaseBranchOutcome> DiscardUnpublishedBranchAsync(Ulid databaseId, StateConflict conflict)
+    {
+        var deleted = await databases.DeleteAsync(databaseId, CancellationToken.None);
+        return deleted switch
+        {
+            Completed => conflict,
             BackendUnavailable unavailable => unavailable,
         };
     }

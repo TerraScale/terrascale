@@ -74,16 +74,6 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         };
     }
 
-    internal async ValueTask<ArchiveManifestOutcome> RefreshAsync(Ulid databaseId, CancellationToken cancellationToken)
-    {
-        var loaded = await FetchRemoteAsync(databaseId, cancellationToken);
-        return loaded switch
-        {
-            CachedManifest fresh => fresh.Manifest,
-            ContinuityUnavailable unavailable => unavailable,
-        };
-    }
-
     internal ValueTask<ArchiveManifestOutcome> UpdateAsync(
         Ulid databaseId,
         Func<ArchiveManifest, ArchiveManifest> transform,

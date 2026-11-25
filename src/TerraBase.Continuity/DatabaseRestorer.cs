@@ -222,7 +222,7 @@ public sealed class DatabaseRestorer(
         RestoreTarget target,
         CancellationToken cancellationToken)
     {
-        var loaded = await manifests.RefreshAsync(sourceId, cancellationToken);
+        var loaded = await manifests.ReadCurrentAsync(sourceId, cancellationToken);
         return loaded switch
         {
             ArchiveManifest manifest => await BuildFromManifestAsync(operationId, manifest, sourceId, sourceKey, targetId, targetKey, target, cancellationToken),
@@ -364,8 +364,8 @@ public sealed class DatabaseRestorer(
                 }
 
                 var path = StorageLayout.SegmentFileIn(staging, sourceId, origin, segment.FirstSequence, segment.LastSequence);
-                var segmentDownload = await manifests.Store.DownloadToFileAsync(segment.Key, path, SqliteCommitLog.MaxSegmentBytes, cancellationToken);
-                if (Downloaded(segmentDownload) is { } failure)
+                var segmentDownload = await manifests.Store.DownloadToFileAsync(segment.Key, path, segment.SizeBytes, cancellationToken);
+                if (Downloaded(segmentDownload, segment.SizeBytes) is { } failure)
                 {
                     return failure;
                 }
@@ -564,8 +564,9 @@ public sealed class DatabaseRestorer(
         ContinuityIoFailure failure => new OperationFailed(failure.Message),
     };
 
-    private static OperationFailed? Downloaded(ArchiveDownloadOutcome result) => result switch
+    private static OperationFailed? Downloaded(ArchiveDownloadOutcome result, long? expectedBytes = null) => result switch
     {
+        long length when expectedBytes is { } expected && length != expected => new OperationFailed("archived segment size does not match its manifest"),
         long => null,
         ArchiveObjectMissing missing => new OperationFailed(string.Concat("archived object is missing: ", missing.Message)),
         ArchiveObjectTooLarge oversized => new OperationFailed(string.Concat("archived segment exceeds the download limit: ", oversized.Key)),
@@ -573,7 +574,7 @@ public sealed class DatabaseRestorer(
         ArchiveTimedOut timeout => new OperationFailed(timeout.Message),
     };
 
-    private void Cleanup(string staging)
+    internal void Cleanup(string staging)
     {
         var cleaned = ContinuityFiles.DeleteDirectory(staging);
         var reason = cleaned switch

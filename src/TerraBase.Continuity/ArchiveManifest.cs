@@ -131,7 +131,7 @@ internal static class ManifestCodec
             || decoded.Snapshots.Any(snapshot => snapshot is null || !CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark)
                 || snapshot.Key != ArchiveKeys.Snapshot(databaseId, snapshot.TakenAtUtc, bookmark))
             || decoded.Segments.Any(segment => segment is null || segment.Origin is not { } origin || !StorageEngineOptions.IsValidRegion(origin)
-                || segment.FirstSequence <= 0 || segment.LastSequence < segment.FirstSequence
+                || segment.SizeBytes <= 0 || segment.FirstSequence <= 0 || segment.LastSequence < segment.FirstSequence
                 || segment.Key != ArchiveKeys.Segment(databaseId, origin, segment.FirstSequence, segment.LastSequence)))
         {
             return new ArchiveManifestCorrupted("archive manifest does not describe this database", "archive_manifest_corrupted");

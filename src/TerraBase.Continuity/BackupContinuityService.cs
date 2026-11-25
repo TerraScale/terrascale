@@ -65,7 +65,7 @@ public sealed class BackupContinuityService(
             return Disabled;
         }
 
-        var loaded = await manifests.RefreshAsync(databaseId, cancellationToken);
+        var loaded = await manifests.ReadCurrentAsync(databaseId, cancellationToken);
         return loaded switch
         {
             ArchiveManifest manifest => await StatusAsync(manifest, databaseId, cancellationToken),
@@ -375,26 +375,66 @@ public sealed class BackupContinuityService(
     private async ValueTask<ContinuityUnavailable?> ReplayArchivedSegmentAsync(
         ISqlDatabaseSession session, ArchivedSegment segment, ReplayArchiveSegment replay, CancellationToken cancellationToken)
     {
-        var fetched = await manifests.Store.GetBytesAsync(segment.Key, cancellationToken);
-        return fetched switch
+        var staging = restorer.Layout.StagingDirectory(Ulid.NewUlid(timeProvider.GetUtcNow()));
+        var created = ContinuityFiles.CreateDirectory(staging);
+        if (created switch
         {
-            byte[] bytes => await ReadAndReplayAsync(bytes, cancellationToken),
-            ArchiveObjectMissing missing => new ContinuityUnavailable(missing.Message, missing.Code),
-            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
-            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
+            ContinuityFilesChanged => null,
+            ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
+        } is { } createFailure)
+        {
+            return createFailure;
+        }
+
+        try
+        {
+            var path = Path.Combine(staging, "segment.tblog");
+            var fetched = await manifests.Store.DownloadToFileAsync(segment.Key, path, segment.SizeBytes, cancellationToken);
+            return fetched switch
+            {
+                long bytes when bytes == segment.SizeBytes => await ReplayDownloadedSegmentAsync(session, segment, path, replay, cancellationToken),
+                long => new ContinuityUnavailable("archived segment size does not match its manifest", "invalid_segment"),
+                ArchiveObjectTooLarge => new ContinuityUnavailable("archived segment exceeds its declared size", "invalid_segment"),
+                ArchiveObjectMissing missing => new ContinuityUnavailable(missing.Message, missing.Code),
+                ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
+                ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
+            };
+        }
+        finally
+        {
+            restorer.Cleanup(staging);
+        }
+    }
+
+    private static async ValueTask<ContinuityUnavailable?> ReplayDownloadedSegmentAsync(
+        ISqlDatabaseSession session, ArchivedSegment segment, string path, ReplayArchiveSegment replay, CancellationToken cancellationToken)
+    {
+        var opened = ContinuityFiles.OpenRead(path);
+        return opened switch
+        {
+            Stream content => await ReadAndReplayAsync(content, cancellationToken),
+            ContinuityIoFailure failure => new ContinuityUnavailable(failure.Message, failure.Code),
         };
 
-        async ValueTask<ContinuityUnavailable?> ReadAndReplayAsync(byte[] bytes, CancellationToken token)
+        async ValueTask<ContinuityUnavailable?> ReadAndReplayAsync(Stream content, CancellationToken token)
         {
-            using var content = new MemoryStream(bytes, writable: false);
-            var descriptor = new CommitLogSegment(session.DatabaseId, segment.Origin, segment.FirstSequence, segment.LastSequence, segment.SizeBytes, segment.SealedAtUtc);
-            var result = await session.ReadArchivedSegmentAsync(descriptor, content, token);
-            return result switch
+            await using (content)
             {
-                IReadOnlyList<CommitMetadata> entries => await replay(session, entries, token),
-                InvalidSegment invalid => new ContinuityUnavailable(invalid.Message, invalid.Code),
-                StorageCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, "storage_corrupted"),
-            };
+                ContinuityUnavailable? replayFailure = null;
+                var descriptor = new CommitLogSegment(session.DatabaseId, segment.Origin, segment.FirstSequence, segment.LastSequence, segment.SizeBytes, segment.SealedAtUtc);
+                var result = await session.ReadArchivedSegmentAsync(descriptor, content, async (entries, batchToken) =>
+                {
+                    replayFailure = await replay(session, entries, batchToken);
+                    return replayFailure is null;
+                }, token);
+                return result switch
+                {
+                    ArchivedSegmentRead => null,
+                    ArchivedSegmentReplayStopped => replayFailure,
+                    InvalidSegment invalid => new ContinuityUnavailable(invalid.Message, invalid.Code),
+                    StorageCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, "storage_corrupted"),
+                };
+            }
         }
     }
 
