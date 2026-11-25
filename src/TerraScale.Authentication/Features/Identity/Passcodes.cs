@@ -516,12 +516,14 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         var decoy = AuthIds.Derived(instanceId, "passcode-decoy-proof", key);
         if (lineage)
         {
-            await credentials.AreCurrentAsync(instanceId, [Credentials.UserState(decoy, decoy)], cancellationToken);
+            await credentials.AreCurrentAsync(instanceId, [Credentials.New("passcode-issuance", decoy)], cancellationToken);
         }
 
-        _ = Tokens.FixedTimeEquals(this.Digest(instanceId, decoy, code), DecoyDigest);
-        await data.ReadAsync(connection => connection.ExecuteAsync(
-            "UPDATE passcodes SET failed_attempts = failed_attempts + 1 WHERE instance_id = @instanceId AND \"key\" = @decoy", new { instanceId, decoy }), cancellationToken);
+        var digest = this.Digest(instanceId, decoy, code);
+        _ = Tokens.FixedTimeEquals(digest, DecoyDigest);
+        var now = clock.GetUtcNow();
+        var charged = new PasscodeRecord(instanceId, decoy, decoy, digest, 0, now, 1, false, now, 1) { Key = decoy, IssueId = decoy };
+        await data.SaveAsync(Change.Update(charged, decoy), cancellationToken);
     }
 
     private string Digest(string instanceId, string userId, string code) =>

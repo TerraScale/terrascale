@@ -89,7 +89,7 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
         {
             return await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken) switch
             {
-                PasskeyCredentialEntry entry => await Enrolled(this.HttpContext, sessions, caller, entry, pending is not null, cancellationToken),
+                PasskeyEnrolled enrolled => await Enrolled(this.HttpContext, sessions, enrolled.User, enrolled.Entry, pending is not null, cancellationToken),
                 AuthForbidden error => ErrorResults.ToResult(error),
             };
         }

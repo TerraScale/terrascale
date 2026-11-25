@@ -19,7 +19,9 @@ namespace TerraScale.Authentication.Features.WebAuthn;
 
 public readonly union PasskeyRenameResult(PasskeyCredentialEntry, AuthForbidden, AuthNotFound, AuthConflict);
 public readonly union PasskeyDeleteResult(PasskeyCredentialEntry, AuthForbidden, AuthNotFound, AuthConflict);
-public readonly union PasskeyVerifyResult(PasskeyCredentialEntry, AuthForbidden);
+public sealed record PasskeyEnrolled(PasskeyCredentialEntry Entry, UserRecord User);
+
+public readonly union PasskeyVerifyResult(PasskeyEnrolled, AuthForbidden);
 
 public readonly union WriteCheck(AuthCompleted, AuthConflict);
 
@@ -32,7 +34,6 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan StateClockSkew = TimeSpan.FromSeconds(1);
 
     public async Task<(CredentialCreateOptions Options, string Challenge)?> OptionsAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
@@ -98,7 +99,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             return new AuthNotFound("No passkey with this id is enrolled for the account.", "passkey_not_found");
         }
 
-        return await this.WriteAsync([Change.Assert(user), Change.Delete(entry)], cancellationToken) switch
+        return await this.WriteAsync([Change.Update(user), Change.Delete(entry)], cancellationToken) switch
         {
             AuthCompleted => entry.Value,
             AuthConflict conflict => conflict,
@@ -163,7 +164,8 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             InstanceId = user.InstanceId,
             UserId = user.Id,
         };
-        List<Change> changes = [.. lineage, Change.Assert(user), Change.Insert(entry), Credentials.Claim(user.InstanceId, completion)];
+        var advanced = Change.Update(user);
+        List<Change> changes = [.. lineage, advanced, Change.Insert(entry), Credentials.Claim(user.InstanceId, completion)];
         if (signIn is not null)
         {
             if (signIn.ExpiresAt <= clock.GetUtcNow())
@@ -180,7 +182,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         }
 
         await FactorEnrollmentNotice.SendAsync(email, user, cancellationToken);
-        return entry;
+        return new PasskeyEnrolled(entry, caller with { Version = advanced.Version });
     }
 
     public async Task<(AssertionOptions Options, string Challenge)> SignInOptionsAsync(string instanceId, UserRecord? identified, CancellationToken cancellationToken = default)
@@ -252,8 +254,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
     private static bool Unchanged(PasskeySignInChallenge challenge, UserRecord user) => challenge.UserId is { } bound
         ? bound == user.Id && challenge.AuthEpoch == user.AuthEpoch && challenge.AuthStamp == user.AuthStamp
-        : Ulid.TryParse(challenge.Id, out var issued) && user.Version is { } version && Ulid.TryParse(version, out var written)
-            && written.Time < issued.Time - StateClockSkew;
+        : user.Version is { } version && string.CompareOrdinal(version, challenge.Id) < 0;
 
     internal static AuthForbidden DeniedEnroll() => new("The passkey registration failed verification; start again.", "passkey_denied");
 
