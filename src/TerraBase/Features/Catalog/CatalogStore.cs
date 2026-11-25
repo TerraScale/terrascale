@@ -50,7 +50,7 @@ internal readonly union DatabaseDeleteOutcome(DatabaseTombstoned, ResourceNotFou
 
 internal readonly union TombstonePurgeOutcome(TombstonePurged, ResourceNotFound, BackendUnavailable);
 
-internal readonly union DatabaseUpsertOutcome(Completed, TombstoneKept, BackendUnavailable);
+internal readonly union DatabaseUpsertOutcome(Completed, TombstoneKept, StateConflict, BackendUnavailable);
 
 internal readonly union DatabaseForgetOutcome(Completed, ResourceNotFound, StateConflict, BackendUnavailable);
 
@@ -60,6 +60,8 @@ internal sealed class CatalogStore(SystemDatabase system)
 {
     private const string DatabaseColumns =
         "id, project_id, name, regions, all_regions, default_consistency, strict, state, key_id, branched_from, previous_name, created_at, expires_at, version, storage_limit";
+
+    private const int CleanupChunk = 256;
 
     public static readonly TimeSpan TombstoneRetention = TimeSpan.FromDays(7);
 
@@ -318,30 +320,41 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public async ValueTask<DatabaseUpsertOutcome> UpsertDatabaseAsync(
         DatabaseRecord database,
-        string? previousName,
+        DatabaseRecord? existing,
         CancellationToken cancellationToken,
         ConsistencyMode mode = ConsistencyMode.Strong)
     {
         ArgumentNullException.ThrowIfNull(database);
-        List<SqlStatement> statements =
-        [
-            SqlBuild.Statement("DELETE FROM databases WHERE id = ? AND state <> 'deleted'", SqlBuild.Id(database.Id)),
-            Insert(database, "INSERT OR IGNORE"),
-            SqlBuild.Statement("INSERT OR REPLACE INTO database_names (project_id, name, database_id) SELECT project_id, name, id FROM databases WHERE id = ? AND state <> 'deleted'",
-                SqlBuild.Id(database.Id)),
-        ];
-        if (previousName is { } previous && !string.Equals(previous, database.Name, StringComparison.Ordinal))
+        List<SqlStatement> statements = [];
+        if (existing is not null)
+        {
+            statements.Add(SqlBuild.Statement("DELETE FROM databases WHERE id = ? AND version = ? AND name = ? AND state <> 'deleted'",
+                SqlBuild.Id(existing.Id), SqlBuild.Integer(existing.Version), SqlBuild.Text(existing.Name)));
+        }
+
+        var inserted = statements.Count;
+        statements.Add(Insert(database, "INSERT OR IGNORE"));
+        statements.Add(SqlBuild.Statement(
+            "INSERT OR REPLACE INTO database_names (project_id, name, database_id) SELECT project_id, name, id FROM databases WHERE id = ? AND version = ? AND name = ? AND state <> 'deleted'",
+            SqlBuild.Id(database.Id), SqlBuild.Integer(database.Version), SqlBuild.Text(database.Name)));
+        if (existing is not null && !string.Equals(existing.Name, database.Name, StringComparison.Ordinal))
         {
             statements.Add(SqlBuild.Statement(
-                "DELETE FROM database_names WHERE project_id = ? AND name = ? AND database_id = ? AND EXISTS (SELECT 1 FROM databases WHERE id = ? AND name = ? AND state <> 'deleted')",
-                SqlBuild.Id(database.ProjectId), SqlBuild.Text(previous), SqlBuild.Id(database.Id), SqlBuild.Id(database.Id), SqlBuild.Text(database.Name)));
+                "DELETE FROM database_names WHERE project_id = ? AND name = ? AND database_id = ? AND EXISTS (SELECT 1 FROM databases WHERE id = ? AND name = ? AND version = ? AND state <> 'deleted')",
+                SqlBuild.Id(existing.ProjectId), SqlBuild.Text(existing.Name), SqlBuild.Id(database.Id), SqlBuild.Id(database.Id), SqlBuild.Text(database.Name),
+                SqlBuild.Integer(database.Version)));
         }
 
         var outcome = await system.WriteAsync(statements, mode, cancellationToken);
         return outcome switch
         {
-            SqlWriteResult { ResultSets: [_, { RowsAffected: > 0 }, ..] } => new Completed(),
-            SqlWriteResult => new TombstoneKept(),
+            SqlWriteResult written when written.ResultSets.Count > inserted && written.ResultSets[inserted].RowsAffected > 0 => new Completed(),
+            SqlWriteResult => await GetDatabaseAsync(database.Id, cancellationToken) switch
+            {
+                DatabaseRecord => new StateConflict("the database changed concurrently; retry", "database_changed"),
+                ResourceNotFound => new TombstoneKept(),
+                BackendUnavailable unavailable => unavailable,
+            },
             StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
             BackendUnavailable unavailable => unavailable,
         };
@@ -519,13 +532,21 @@ internal sealed class CatalogStore(SystemDatabase system)
             .. hashes.Select(static row => SqlBuild.Statement("DELETE FROM api_key_hashes WHERE hash = ?", SqlBuild.Text(row.TextAt(0)))),
             .. keys.Select(static row => SqlBuild.Statement("DELETE FROM api_keys WHERE id = ?", SqlBuild.Text(row.TextAt(0)))),
         ];
-        var owned = await system.WriteAsync(statements, ConsistencyMode.Strong, cancellationToken);
-        return owned switch
+        foreach (var chunk in statements.Chunk(CleanupChunk))
         {
-            SqlWriteResult => await CleanupTelemetryAsync(id, purged, cancellationToken),
-            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
-            BackendUnavailable unavailable => unavailable,
-        };
+            var owned = await system.WriteAsync(chunk, ConsistencyMode.Strong, cancellationToken);
+            if (owned switch
+            {
+                SqlWriteResult => null,
+                StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
+                BackendUnavailable unavailable => unavailable,
+            } is { } failure)
+            {
+                return failure;
+            }
+        }
+
+        return await CleanupTelemetryAsync(id, purged, cancellationToken);
     }
 
     private async ValueTask<CatalogWriteOutcome> CleanupTelemetryAsync(Ulid id, bool purged, CancellationToken cancellationToken)

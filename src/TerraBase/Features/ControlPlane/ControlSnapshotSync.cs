@@ -183,11 +183,12 @@ internal sealed class ControlSnapshotSync(
         }
 
         var record = desired with { Version = existing is null ? 1 : existing.Version + 1 };
-        var outcome = await catalog.UpsertDatabaseAsync(record, existing?.Name, cancellationToken);
+        var outcome = await catalog.UpsertDatabaseAsync(record, existing, cancellationToken);
         return outcome switch
         {
             Completed => await OpenAsync(record, cancellationToken),
             TombstoneKept => null,
+            StateConflict conflict => new BackendUnavailable(conflict.Message, conflict.Code),
             BackendUnavailable error => error,
         };
     }
