@@ -137,6 +137,9 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 107, Level = LogLevel.Warning, Message = "Project creation in ts-auth could not be confirmed ({ErrorType}); answered reload-first and kept the reserved slot until it is bound or expires")]
         internal static partial void ProjectCreationUnconfirmed(this ILogger logger, string errorType);
 
+        [LoggerMessage(EventId = 108, Level = LogLevel.Warning, Message = "Project {ProjectId} was created but could not become the active project ({Reason})")]
+        internal static partial void ActiveProjectNotSelected(this ILogger logger, string projectId, string reason);
+
         [LoggerMessage(EventId = 40, Level = LogLevel.Warning, Message = "Revoke dashboard sessions after committed member removal for {UserId} ({ErrorType})")]
         internal static partial void RevokeDashboardSessionsAfterCommittedMember(this ILogger logger, object? userId, object? errorType);
 

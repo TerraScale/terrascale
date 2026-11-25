@@ -20,6 +20,10 @@ public sealed class AccountStore(DashboardDb storage, TimeProvider time)
     private const string NotificationsOf = DashboardSql.Notifications.Select + " WHERE account_id = @AccountId ORDER BY created_at, id";
     private const string RemoveNotifications = "DELETE FROM notifications WHERE organization_id = @OrganizationId AND (@ProjectId IS NULL OR project_id = @ProjectId)";
     private const string RemoveAccountNotifications = "DELETE FROM notifications WHERE account_id = @AccountId";
+    private const string SetActiveProject = """
+        UPDATE accounts SET active_project_id = @ProjectId, version = @Next
+        WHERE subject_hash = @Hash AND erasure_id IS NULL AND active_organization_id = @OrganizationId AND active_project_id = ''
+        """;
 
     public async Task<StoredAccount?> FindAsync(string subject, CancellationToken cancellationToken)
     {
@@ -135,6 +139,19 @@ public sealed class AccountStore(DashboardDb storage, TimeProvider time)
             }
         }
     }
+
+    public Task<StorageWrite> TrySetActiveProjectAsync(string subject, string organizationId, string projectId, CancellationToken cancellationToken) =>
+        storage.TryWriteAsync(async (connection, transaction) =>
+        {
+            await DashboardDb.RunAsync(connection, SetActiveProject, new Dictionary<string, object?>
+            {
+                ["Hash"] = AccountService.AccountStorageKey(subject),
+                ["OrganizationId"] = organizationId,
+                ["ProjectId"] = projectId,
+                ["Next"] = AccountService.NewId(),
+            }, transaction, cancellationToken);
+            return true;
+        }, cancellationToken);
 
     public async Task RemoveNotificationsAsync(string organizationId, string? projectId, CancellationToken cancellationToken)
     {

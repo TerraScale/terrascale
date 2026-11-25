@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
     public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatform platform,
         IWorkspacePlacement placement, IOrganizationAccess access, DashboardSessions sessions, ProjectReservations reservations,
-        OrganizationStore organizations, TimeProvider time, ILogger<OrganizationOperations> logger)
+        OrganizationStore organizations, AccountStore accountStore, TimeProvider time, ILogger<OrganizationOperations> logger)
     {
         public async Task RenameAsync(AccountContext context, string name, CancellationToken cancellationToken)
         {
@@ -131,13 +131,19 @@ namespace TerraScale.Dashboard.Features.Organizations
                 await DashboardDb.ConflictBackoffAsync(attempt, time, CancellationToken.None);
             }
 
-            await accounts.UpdateAccountAsync(context.Session, account =>
+            var preference = await accountStore.TrySetActiveProjectAsync(context.Session.UserId, project.OrganizationId, project.Id, CancellationToken.None);
+            var unsaved = preference switch
             {
-                if (account.ActiveOrganizationId == project.OrganizationId && account.ActiveProjectId.Length == 0)
-                {
-                    account.ActiveProjectId = project.Id;
-                }
-            }, CancellationToken.None);
+                StorageWritten => null,
+                StorageConflicted => "concurrent account change",
+                StorageDuplicate => "duplicate account record",
+                StorageFailed failed => failed.Failure,
+            };
+            if (unsaved is { } reason)
+            {
+                logger.ActiveProjectNotSelected(project.Id, reason);
+            }
+
             return project;
         }
 
