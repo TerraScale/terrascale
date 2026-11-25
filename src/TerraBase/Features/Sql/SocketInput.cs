@@ -25,6 +25,7 @@ internal sealed class SocketInput(TimeProvider time)
     private bool _final;
     private bool _control;
     private bool _invalid;
+    private long _arrivedAt;
 
     public Action<long, int>? Progress
     {
@@ -87,11 +88,12 @@ internal sealed class SocketInput(TimeProvider time)
         }
     }
 
-    private bool Inspect(ReadOnlySpan<byte> bytes)
+    private bool Inspect(ReadOnlySpan<byte> bytes, long arrivedAt)
     {
         lock (_gate)
         {
             var valid = !_invalid;
+            _arrivedAt = arrivedAt;
             InspectLocked(bytes);
             return valid && _invalid;
         }
@@ -113,7 +115,7 @@ internal sealed class SocketInput(TimeProvider time)
                         return;
                     }
 
-                    _current = new Message(time.GetTimestamp());
+                    _current = new Message(_arrivedAt);
                     _messages.Enqueue(_current);
                     _message = true;
                 }
@@ -201,7 +203,7 @@ internal sealed class SocketInput(TimeProvider time)
         _header = 0;
         if (!_control && _final)
         {
-            _current?.Completed = time.GetTimestamp();
+            _current?.Completed = _arrivedAt;
             _message = false;
             _current = null;
         }
@@ -251,7 +253,7 @@ internal sealed class SocketInput(TimeProvider time)
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             var read = await inner.ReadAsync(buffer, cancellationToken);
-            if (input.Inspect(buffer.Span[..read]))
+            if (input.Inspect(buffer.Span[..read], input.Clock.GetTimestamp()))
             {
                 input.Failed?.Invoke();
                 await CloseAsync();

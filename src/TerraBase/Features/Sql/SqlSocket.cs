@@ -181,18 +181,15 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         var remaining = AuthTimeout - time.GetElapsedTime(_accepted);
         using var deadline = new CancellationTokenSource(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        SqlRefusal? resolved;
-        try
-        {
-            resolved = await ResolveAsync(frame.Id, token, causality, linked.Token);
-        }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        var resolving = ResolveAsync(frame.Id, token, causality, linked.Token).AsTask();
+        await ((Task)resolving).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (resolving.IsCanceled && deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             await CloseAsync(WebSocketCloseStatus.PolicyViolation, "authenticate within 5 seconds");
             return false;
         }
 
-        if (resolved is { } refusal)
+        if (await resolving is { } refusal)
         {
             await RefuseAsync(frame.Id, refusal, cancellationToken);
             return false;
@@ -567,7 +564,6 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         {
             inFlight = _inFlight;
             _inFlight = null;
-            _partial = null;
         }
 
         if (inFlight is null)
@@ -589,6 +585,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         {
             while (await ReadMessageAsync(buffer, MaxFrameBytes, "frames are at most 1 MiB", cancellationToken) is { } payload)
             {
+                (long Started, int Bytes)? settled;
+                lock (_progress)
+                {
+                    settled = _partial;
+                }
+
                 if (!await ArrivedOnTimeAsync())
                 {
                     return;
@@ -603,6 +605,14 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                     await CloseAsync(WebSocketCloseStatus.PolicyViolation, "too many frames are waiting; wait for answers before sending more");
                     return;
                 }
+
+                lock (_progress)
+                {
+                    if (_partial == settled)
+                    {
+                        _partial = null;
+                    }
+                }
             }
         }
         finally
@@ -612,6 +622,11 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             input.Failed = null;
             inbox.TryComplete();
             await ArrivedOnTimeAsync();
+            lock (_progress)
+            {
+                _partial = null;
+            }
+
             ArrayPool<byte>.Shared.Return(buffer);
         }
     }

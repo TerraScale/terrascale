@@ -156,9 +156,16 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
 
         var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, last)).ToArray();
-        if (PinCached(projectIssuer) is { } existing)
+        var cached = PinCached(projectIssuer);
+        IssuerTrust? decided = cached switch
         {
-            return new TrustedIssuer(projectIssuer, existing, audiences, project);
+            IssuerEntry existing => new TrustedIssuer(projectIssuer, existing, audiences, project),
+            RetiredIssuer => AuthenticationGate.Busy,
+            MissingIssuer => null,
+        };
+        if (decided is { } early)
+        {
+            return early;
         }
 
         using var permit = await gate.EnterAsync(cancellationToken);
@@ -197,20 +204,25 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
-    private IssuerEntry? PinCached(string issuer)
+    private IssuerLookup PinCached(string issuer)
     {
         lock (_issuers)
         {
-            if (!_projects.TryGetValue(issuer, out var slot) || slot.Entry.Retired)
+            if (!_projects.TryGetValue(issuer, out var slot))
             {
-                return null;
+                return MissingIssuer.Instance;
+            }
+
+            if (slot.Entry.Retired)
+            {
+                return RetiredIssuer.Instance;
             }
 
             var now = time.GetTimestamp();
             if (slot.Entry.Pins == 0 && time.GetElapsedTime(slot.LastUsed, now) > ProjectIssuerIdle)
             {
                 _projects.Remove(issuer);
-                return null;
+                return MissingIssuer.Instance;
             }
 
             slot.LastUsed = now;
@@ -448,9 +460,14 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     private async Task<OpenIdConnectConfiguration?> RetrieveAsync(IssuerEntry entry)
     {
         await Task.Yield();
+        OpenIdConnectConfiguration? fetched = null;
         try
         {
-            var fetched = await FetchAsync(entry);
+            fetched = await FetchAsync(entry);
+            return fetched;
+        }
+        finally
+        {
             var now = time.GetTimestamp();
             lock (entry.Gate)
             {
@@ -464,10 +481,6 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                 entry.Inflight = null;
             }
 
-            return fetched;
-        }
-        finally
-        {
             Unpin(entry);
         }
     }
@@ -478,7 +491,8 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         {
             return await OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, CancellationToken.None);
         }
-        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException or OperationCanceledException)
+        catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException or OperationCanceledException
+            or JsonException or ArgumentException or FormatException or SecurityTokenException)
         {
             return null;
         }
@@ -507,5 +521,17 @@ internal sealed class IssuerSlot(IssuerEntry entry)
 
     public long LastUsed { get; set; }
 }
+
+internal sealed record MissingIssuer
+{
+    public static MissingIssuer Instance { get; } = new();
+}
+
+internal sealed record RetiredIssuer
+{
+    public static RetiredIssuer Instance { get; } = new();
+}
+
+internal readonly union IssuerLookup(IssuerEntry, MissingIssuer, RetiredIssuer);
 
 internal sealed record TrustedIssuer(string Issuer, IssuerEntry Entry, IReadOnlyList<string> Audiences, Ulid? Tenant);
