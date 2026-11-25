@@ -10,6 +10,10 @@ public sealed record ShapePage(IReadOnlyList<ShapeRecord> Items);
 
 public sealed record ShapesForgotten(int Count);
 
+public sealed record RetiringShapeDatabases(IReadOnlyList<Ulid> Items);
+
+public sealed record ShapeDatabaseRetirementRequested;
+
 public readonly union RegisterShapeOutcome(ShapeRecord, PlatformUnavailable);
 
 public readonly union ReadShapeOutcome(ShapeRecord, PlatformNotFound, PlatformUnavailable);
@@ -32,9 +36,14 @@ public readonly union PageShapesOutcome(ShapePage, PlatformUnavailable);
 
 public readonly union ForgetShapesOutcome(ShapesForgotten, PlatformUnavailable);
 
+public readonly union RetiringShapeDatabasesOutcome(RetiringShapeDatabases, PlatformUnavailable);
+
+public readonly union RequestShapeDatabaseRetirementOutcome(ShapeDatabaseRetirementRequested, PlatformUnavailable);
+
 public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider)
 {
     public const long RetainedChunks = 128;
+    private const int ForgetBatch = 128;
     public static readonly TimeSpan ActiveFor = TimeSpan.FromHours(1);
 
     private const string RecordColumns =
@@ -258,7 +267,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         }
 
         List<SqlHttpStatement> statements = [];
-        foreach (var shape in erased)
+        foreach (var shape in erased.Take(ForgetBatch))
         {
             var handle = SqlValues.Text(shape.Handle);
             statements.Add(SqlValues.Statement("DELETE FROM platform_shape_chunks WHERE handle = ? AND chunk_offset <= ?", handle, SqlValues.Number(shape.Through)));
@@ -269,7 +278,63 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         var outcome = await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken);
         return outcome switch
         {
-            SqlExecuteResponse { Results: var results } => new ShapesForgotten((int)results.Where(static (_, index) => index % 2 == 1).Sum(static result => result.RowsAffected)),
+            SqlExecuteResponse { Results: var results } => await RestAsync((int)results.Where(static (_, index) => index % 2 == 1).Sum(static result => result.RowsAffected)),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
+        };
+
+        async ValueTask<ForgetShapesOutcome> RestAsync(int forgotten)
+        {
+            var rest = await ForgetAsync([.. erased.Skip(ForgetBatch)], cancellationToken);
+            return rest switch
+            {
+                ShapesForgotten more => new ShapesForgotten(forgotten + more.Count),
+                PlatformUnavailable unavailable => unavailable,
+            };
+        }
+    }
+
+    public async ValueTask<RequestShapeDatabaseRetirementOutcome> RequestDatabaseRetirementAsync(Ulid database, CancellationToken cancellationToken)
+    {
+        var outcome = await store.ExecuteAsync(
+            [SqlValues.Statement(
+                "INSERT OR IGNORE INTO platform_shape_database_retirements (database_id, requested_at) VALUES (?, ?)",
+                SqlValues.Text(database.ToString()),
+                SqlValues.Number(timeProvider.GetUtcNow().UnixMs()))],
+            SqlContext.Strong,
+            cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse => new ShapeDatabaseRetirementRequested(),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
+        };
+    }
+
+    public async ValueTask<RetiringShapeDatabasesOutcome> RetiringDatabasesAsync(int limit, CancellationToken cancellationToken)
+    {
+        var outcome = await store.ReadAsync(
+            SqlValues.Statement("SELECT database_id FROM platform_shape_database_retirements ORDER BY requested_at, database_id LIMIT ?", SqlValues.Number(limit)),
+            cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse { Results: var results } => new RetiringShapeDatabases([.. results[0].RowsOf().Select(static row => Ulid.Parse(row.Text(0)))]),
+            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            PlatformUnavailable unavailable => unavailable,
+        };
+    }
+
+    public async ValueTask<ForgetShapesOutcome> FinishDatabaseRetirementAsync(Ulid database, CancellationToken cancellationToken)
+    {
+        var id = SqlValues.Text(database.ToString());
+        var outcome = await store.ExecuteAsync(
+            [SqlValues.Statement(
+                "DELETE FROM platform_shape_database_retirements WHERE database_id = ? AND NOT EXISTS (SELECT 1 FROM platform_shapes WHERE database_id = ?)", id, id)],
+            SqlContext.Strong,
+            cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse { Results: var results } => new ShapesForgotten((int)results[0].RowsAffected),
             PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
             PlatformUnavailable unavailable => unavailable,
         };

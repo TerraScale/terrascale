@@ -90,6 +90,9 @@ public sealed class PlatformSchema(
             epoch INTEGER NOT NULL, digest TEXT NOT NULL, row_count INTEGER NOT NULL, created_at INTEGER NOT NULL,
             PRIMARY KEY (handle, chunk_offset))
         """,
+        """
+        CREATE TABLE IF NOT EXISTS platform_shape_database_retirements (database_id TEXT NOT NULL PRIMARY KEY, requested_at INTEGER NOT NULL)
+        """,
     ];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

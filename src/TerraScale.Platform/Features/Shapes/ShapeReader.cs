@@ -255,6 +255,10 @@ public sealed class ShapeReader(
         {
             _ = await notifier.WaitAsync(current.Shape.Database, current.Seen, remaining, cancellationToken);
         }
+        else if (remaining > TimeSpan.Zero)
+        {
+            await Task.WhenAny(Task.Delay(remaining, timeProvider, cancellationToken));
+        }
 
         var started = timeProvider.GetUtcNow();
         var outcome = await ResolveAsync(context, route, current.Query, cancellationToken);
@@ -262,7 +266,7 @@ public sealed class ShapeReader(
         {
             ResolvedShape next when next.Shape.Handle != current.Shape.Handle => Refetch(next.Shape, "shape lineage changed"),
             ResolvedShape next => await WaitAsync(
-                context, route, next, after, offsetText, cursor, deadline, pass + 1, started >= deadline || pass + 1 >= MaxLivePasses, cancellationToken),
+                context, route, next, after, offsetText, cursor, deadline, pass + 1, started >= deadline, cancellationToken),
             PlatformInvalidRequest invalid => invalid,
             PlatformUnauthorized unauthorized => unauthorized,
             PlatformForbidden forbidden => forbidden,

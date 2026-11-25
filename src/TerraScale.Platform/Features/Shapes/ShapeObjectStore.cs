@@ -142,6 +142,10 @@ public sealed class ShapeObjectStore : IDisposable
             _ = await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = options.Bucket, Key = key }, cancellationToken);
             return new ShapeObjectDeleted();
         }
+        catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new ShapeObjectDeleted();
+        }
         catch (AmazonServiceException error)
         {
             return Failed(error);

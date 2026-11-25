@@ -18,6 +18,7 @@ public sealed class ShapeMaterializerService(
 {
     private const int ClaimLimit = 64;
     private const int AuditPage = 256;
+    private const int RetiringDatabases = 8;
     private const string RefusedFilter = "its persisted filter is no longer accepted";
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Lease = TimeSpan.FromSeconds(20);
@@ -198,7 +199,7 @@ public sealed class ShapeMaterializerService(
     {
         var outcome = Accepted(shape)
             ? await SnapshotAsync(shape, bookmark, cancellationToken)
-            : await RetireAsync(shape, RefusedFilter, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken);
+            : await RetireAsync(shape.Handle, RefusedFilter, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken);
         if (outcome is not null)
         {
             logger.ZLogWarning($"Shape {shape.Handle} was not materialized: {outcome}");
@@ -220,23 +221,44 @@ public sealed class ShapeMaterializerService(
                 PlatformUnavailable unavailable => unavailable.Message,
             },
             SqlFailure { Error.SqlState: "42P01" or "42703" } failure =>
-                await RetireAsync(shape, failure.Error.Message, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken),
+                await RetireAsync(shape.Handle, failure.Error.Message, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken),
             SqlFailure failure => failure.Error.Message,
-            PlatformNotFound { Code: "unknown_database" } missing =>
-                await RetireAsync(shape, missing.Message ?? "the database no longer exists", await registry.DatabaseRetirementAsync(shape.Database, cancellationToken), cancellationToken),
+            PlatformNotFound { Code: "unknown_database" } missing => await RetireDatabaseAsync(shape.Database, missing.Message ?? "the database no longer exists", cancellationToken),
             PlatformNotFound missing => missing.Message ?? "the database no longer exists",
             PlatformUnavailable unavailable => unavailable.Message,
         };
     }
 
-    private async Task<string?> RetireAsync(ShapeRecord shape, string reason, RetireShapeOutcome outcome, CancellationToken cancellationToken) =>
+    private async Task<string?> RetireDatabaseAsync(Ulid database, string reason, CancellationToken cancellationToken)
+    {
+        var requestedOutcome = await registry.RequestDatabaseRetirementAsync(database, cancellationToken);
+        return requestedOutcome switch
+        {
+            ShapeDatabaseRetirementRequested => await ResumeDatabaseRetirementAsync(database, reason, cancellationToken),
+            PlatformUnavailable unavailable => $"{reason}; recording the database retirement failed: {unavailable.Message}",
+        };
+    }
+
+    private async Task<string?> ResumeDatabaseRetirementAsync(Ulid database, string reason, CancellationToken cancellationToken)
+    {
+        var retired = await RetireAsync(database.ToString(), reason, await registry.DatabaseRetirementAsync(database, cancellationToken), cancellationToken);
+        var finishedOutcome = await registry.FinishDatabaseRetirementAsync(database, cancellationToken);
+        var finished = finishedOutcome switch
+        {
+            ShapesForgotten => null,
+            PlatformUnavailable unavailable => $"{reason}; closing the database retirement failed: {unavailable.Message}",
+        };
+        return retired ?? finished;
+    }
+
+    private async Task<string?> RetireAsync(string subject, string reason, RetireShapeOutcome outcome, CancellationToken cancellationToken) =>
         outcome switch
         {
-            ShapeRetirement retired => await RetiredAsync(shape, reason, retired, cancellationToken),
+            ShapeRetirement retired => await RetiredAsync(subject, reason, retired, cancellationToken),
             PlatformUnavailable unavailable => $"{reason}; retiring the shape failed: {unavailable.Message}",
         };
 
-    private async Task<string?> RetiredAsync(ShapeRecord shape, string reason, ShapeRetirement retired, CancellationToken cancellationToken)
+    private async Task<string?> RetiredAsync(string subject, string reason, ShapeRetirement retired, CancellationToken cancellationToken)
     {
         if (retired.Handles.Count == 0)
         {
@@ -255,9 +277,11 @@ public sealed class ShapeMaterializerService(
             return $"{reason}; forgetting the erased shapes failed and will be retried: {failure}";
         }
 
-        var handles = erased.Select(static shape => shape.Handle).ToHashSet(StringComparer.Ordinal);
+        IReadOnlyList<string> erasedHandles = [.. erased.Select(static shape => shape.Handle)];
+        await sealer.ErasePointersAsync(erasedHandles, cancellationToken);
+        var handles = erasedHandles.ToHashSet(StringComparer.Ordinal);
         Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
-        logger.ZLogInformation($"Retired {erased.Count} of {retired.Handles.Count} shapes of {shape.Database} after {shape.Handle} failed permanently: {reason}");
+        logger.ZLogInformation($"Retired {erased.Count} of {retired.Handles.Count} shapes for {subject}: {reason}");
         return erased.Count == retired.Handles.Count ? null : $"{reason}; {retired.Handles.Count - erased.Count} shapes keep objects that could not be deleted and will be retried";
     }
 
@@ -272,10 +296,25 @@ public sealed class ShapeMaterializerService(
         _audited = page.Count < AuditPage ? "" : page[^1].Handle;
         foreach (var shape in page.Where(static shape => !Accepted(shape)))
         {
-            var outcome = await RetireAsync(shape, RefusedFilter, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken);
+            var outcome = await RetireAsync(shape.Handle, RefusedFilter, await registry.ShapeRetirementAsync(shape.Handle, cancellationToken), cancellationToken);
             if (outcome is not null)
             {
                 logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");
+            }
+        }
+
+        var retiringOutcome = await registry.RetiringDatabasesAsync(RetiringDatabases, cancellationToken);
+        var retiring = retiringOutcome switch
+        {
+            RetiringShapeDatabases { Items: var databases } => databases,
+            PlatformUnavailable unavailable => Deferred<Ulid>(unavailable.Message),
+        };
+        foreach (var database in retiring)
+        {
+            var outcome = await ResumeDatabaseRetirementAsync(database, "the database no longer exists", cancellationToken);
+            if (outcome is not null)
+            {
+                logger.ZLogWarning($"Shapes of {database} were not retired: {outcome}");
             }
         }
     }
