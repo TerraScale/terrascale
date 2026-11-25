@@ -10,15 +10,18 @@ namespace TerraScale.Dashboard.Features.Auth
     {
         internal const string OrganizationPickerClaim = "ts_org_picker";
 
-        public static string? KeyId(string? token)
+        public static string? KeyId(string? token) => UnverifiedText(token, 0, "kid");
+
+        public static string? UnverifiedIssuer(string? token) => UnverifiedText(token, 1, "iss");
+
+        private static string? UnverifiedText(string? token, int part, string name)
         {
-            var dot = token?.IndexOf('.', StringComparison.Ordinal) ?? -1;
-            if (token is not { Length: <= 65536 } || dot <= 0 || !Base64Url.IsValid(token.AsSpan(0, dot)))
+            if (token is not { Length: <= 65536 } || token.Split('.') is not { Length: 3 } parts || !Base64Url.IsValid(parts[part]))
             {
                 return null;
             }
 
-            var reader = new Utf8JsonReader(Base64Url.DecodeFromChars(token.AsSpan(0, dot)));
+            var reader = new Utf8JsonReader(Base64Url.DecodeFromChars(parts[part]));
             try
             {
                 if (!JsonDocument.TryParseValue(ref reader, out var parsed))
@@ -26,9 +29,9 @@ namespace TerraScale.Dashboard.Features.Auth
                     return null;
                 }
 
-                using var header = parsed;
-                return header.RootElement.ValueKind == JsonValueKind.Object && header.RootElement.TryGetProperty("kid", out var kid) &&
-                    kid.ValueKind == JsonValueKind.String ? kid.GetString() : null;
+                using var document = parsed;
+                return document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty(name, out var value) &&
+                    value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             }
             catch (JsonException)
             {

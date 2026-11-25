@@ -52,6 +52,11 @@ namespace TerraScale.Dashboard.Features.Auth
             return signingKeys.Get(time, KeysReuse, false, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
+        private Task<(TsAuthJwkSet Keys, bool Fetched)> RefreshedKeysAsync(TsAuthClient client, CancellationToken cancellationToken)
+        {
+            return signingKeys.RefreshAsync(time, KeysReuse, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+        }
+
         private async Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, string? token, CancellationToken cancellationToken)
         {
             var keys = await SigningKeysAsync(client, cancellationToken);

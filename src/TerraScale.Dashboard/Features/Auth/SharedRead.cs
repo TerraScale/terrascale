@@ -12,9 +12,27 @@ internal sealed class SharedRead<T>
 
     public Task<T> Get(TimeProvider time, TimeSpan reuse, bool refresh, Func<Task<T>> read)
     {
+        var (chosen, settled, fallback) = Acquire(time, reuse, refresh, read);
+        return chosen is null ? settled ?? throw new InvalidOperationException("A shared read has neither a value nor an attempt.")
+            : fallback is null ? chosen.Value : OrLastGoodAsync(chosen.Value, fallback);
+    }
+
+    public async Task<(T Value, bool Fetched)> RefreshAsync(TimeProvider time, TimeSpan reuse, Func<Task<T>> read)
+    {
+        var (chosen, settled, fallback) = Acquire(time, reuse, true, read);
+        if (chosen is null)
+        {
+            return (await (settled ?? throw new InvalidOperationException("A shared read has neither a value nor an attempt.")), false);
+        }
+
+        var refreshing = chosen.Value;
+        await ((Task)refreshing).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        return refreshing.IsCompletedSuccessfully || fallback is null ? (await refreshing, true) : (await fallback, false);
+    }
+
+    private (Lazy<Task<T>>? Chosen, Task<T>? Settled, Task<T>? Fallback) Acquire(TimeProvider time, TimeSpan reuse, bool refresh, Func<Task<T>> read)
+    {
         ArgumentNullException.ThrowIfNull(time);
-        Lazy<Task<T>> chosen;
-        Task<T>? fallback;
         lock (gate)
         {
             var now = time.GetUtcNow();
@@ -26,27 +44,24 @@ internal sealed class SharedRead<T>
 
             if (!refresh && good is { } fresh && now - goodAt < reuse)
             {
-                return fresh;
+                return (null, fresh, null);
             }
 
-            fallback = good;
             if (attempt is { } running && (!running.IsValueCreated || !running.Value.IsCompleted))
             {
-                chosen = running;
+                return (running, null, good);
             }
-            else if (attempt is { } last && now - attemptAt < (good is null ? ColdRetryFloor : RetryFloor))
-            {
-                return good ?? last.Value;
-            }
-            else
-            {
-                chosen = new Lazy<Task<T>>(read, LazyThreadSafetyMode.ExecutionAndPublication);
-                attempt = chosen;
-                attemptAt = now;
-            }
-        }
 
-        return fallback is null ? chosen.Value : OrLastGoodAsync(chosen.Value, fallback);
+            if (attempt is { } last && now - attemptAt < (good is null ? ColdRetryFloor : RetryFloor))
+            {
+                return (null, good ?? last.Value, null);
+            }
+
+            var started = new Lazy<Task<T>>(read, LazyThreadSafetyMode.ExecutionAndPublication);
+            attempt = started;
+            attemptAt = now;
+            return (started, null, good);
+        }
     }
 
     private static async Task<T> OrLastGoodAsync(Task<T> refreshing, Task<T> lastGood)

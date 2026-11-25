@@ -15,10 +15,21 @@ public sealed partial class TsAuthGateway
     {
         var client = Client();
         var issuer = TrustedIssuer((await MetadataAsync(client, cancellationToken)).Issuer);
-        var keys = await SigningKeysAsync(client, agentToken, cancellationToken);
+        if (AuthJwtClaims.UnverifiedIssuer(agentToken) != issuer)
+        {
+            return new AgentTokenRejected();
+        }
+
+        var keys = await SigningKeysAsync(client, cancellationToken);
         if (AuthJwtClaims.KeyId(agentToken) is { } kid && !keys.Keys.Any(key => key.KeyId == kid))
         {
-            return new AgentTokenUnverifiable();
+            var (refreshed, fetched) = await RefreshedKeysAsync(client, cancellationToken);
+            if (!refreshed.Keys.Any(key => key.KeyId == kid))
+            {
+                return fetched ? new AgentTokenRejected() : new AgentTokenUnverifiable();
+            }
+
+            keys = refreshed;
         }
 
         JsonElement claims;
