@@ -32,7 +32,7 @@ internal static class OrganizationUsage
         var second = await ProjectAsync(http, organizationId, "usage-org-second", cancellationToken);
         var path = $"/v1/usage/organizations/{first.Organization}?month={Month}";
 
-        var empty = await SettledAsync(peer, path, cancellationToken);
+        var empty = await ReadAsync(peer, path, cancellationToken);
         UsageJourney.Require(empty.Projects.Count == 2 && empty.Totals.All(static metric => metric.Value == 0),
             "a new organization lists its projects with zero usage: " + empty);
 
@@ -42,7 +42,7 @@ internal static class OrganizationUsage
         await SqlAsync(http, second, "CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", cancellationToken);
         await SqlAsync(http, second, "INSERT INTO tags (name) VALUES ('x')", cancellationToken);
 
-        var metered = await SettledAsync(peer, path, cancellationToken);
+        var metered = await ReadAsync(peer, path, cancellationToken);
         var firstUsage = await UsageJourney.UsageAsync(http, first.ProjectUsage + "?month=" + Month, cancellationToken);
         var secondUsage = await UsageJourney.UsageAsync(http, second.ProjectUsage + "?month=" + Month, cancellationToken);
         UsageJourney.Require(metered.Complete && metered.Gaps.Count == 0 && metered.Month == Month && metered.AsOf == UsageJourneyClock.Boundary,
@@ -57,12 +57,12 @@ internal static class OrganizationUsage
 
         var sampler = services.GetRequiredService<StorageSampler>();
         var sampleOutcome = await sampler.SampleAsync(UsageJourneyClock.Boundary.AddHours(1), cancellationToken);
-        if (sampleOutcome switch { StorageSample taken => taken, BackendUnavailable => null } is not { Month: Month, Databases: > 0, ByteHours: > 0 } sample)
+        if (sampleOutcome switch { StorageSample taken => taken, BackendUnavailable => null } is not { Month: Month, Databases: > 0, ByteHours: > 0, Complete: true } sample)
         {
             throw new InvalidOperationException("the owning node samples stored databases for the hour that ended");
         }
 
-        var stored = await SettledAsync(peer, path, cancellationToken);
+        var stored = await ReadAsync(peer, path, cancellationToken);
         var firstDatabase = await UsageJourney.UsageAsync(http, first.DatabaseUsage + "?month=" + Month, cancellationToken);
         var secondDatabaseUsage = await UsageJourney.UsageAsync(http, second.DatabaseUsage + "?month=" + Month, cancellationToken);
         var firstBytes = stored.Project(first.Project)[UsageMetrics.StorageByteHours];
@@ -73,12 +73,12 @@ internal static class OrganizationUsage
         UsageJourney.Require(sample.ByteHours >= firstBytes + secondBytes, "the node sample covers the organization's databases: " + sample);
 
         var repeatOutcome = await sampler.SampleAsync(UsageJourneyClock.Boundary.AddHours(1), cancellationToken);
-        if (repeatOutcome switch { StorageSample taken => taken, BackendUnavailable => null } is not { Month: Month, Databases: 0, ByteHours: 0 })
+        if (repeatOutcome switch { StorageSample taken => taken, BackendUnavailable => null } is not { Month: Month, Databases: 0, ByteHours: 0, Complete: true })
         {
             throw new InvalidOperationException("sampling the same UTC hour again records nothing");
         }
 
-        var repeated = await SettledAsync(peer, path, cancellationToken);
+        var repeated = await ReadAsync(peer, path, cancellationToken);
         UsageJourney.Require(repeated.Project(first.Project)[UsageMetrics.StorageByteHours] == firstBytes && repeated.Project(second.Project)[UsageMetrics.StorageByteHours] == secondBytes
             && repeated.Totals[UsageMetrics.StorageByteHours] == firstBytes + secondBytes && repeated.Complete,
             "a second sample of the same UTC hour adds no storage: " + repeated);
@@ -87,9 +87,12 @@ internal static class OrganizationUsage
         UsageJourney.Require(!unsampled.Complete && unsampled.Gaps.SequenceEqual([UsageReports.StorageIncomplete]),
             "a month whose hours were never sampled is not complete: " + unsampled);
 
+        var future = await ReadAsync(peer, $"/v1/usage/organizations/{first.Organization}?month=9999-12", cancellationToken);
+        UsageJourney.Require(future.Complete && future.Totals.All(static metric => metric.Value == 0), "the last representable month has no usage and no elapsed hours: " + future);
+
         var current = await ReadAsync(peer, $"/v1/usage/organizations/{first.Organization}", cancellationToken);
         UsageJourney.Require(current.Month == Month, "an omitted month reads the current UTC month: " + current.Month);
-        var unknown = await SettledAsync(peer, $"/v1/usage/organizations/{Ulid.NewUlid()}?month={Month}", cancellationToken);
+        var unknown = await ReadAsync(peer, $"/v1/usage/organizations/{Ulid.NewUlid()}?month={Month}", cancellationToken);
         UsageJourney.Require(unknown.Complete && unknown.Projects.Count == 0, "an organization without projects has no usage: " + unknown);
 
         var refusals = new List<string>();
@@ -136,18 +139,6 @@ internal static class OrganizationUsage
     {
         var status = await UsageJourney.SqlAsync(http, tenant, sql, false, cancellationToken);
         UsageJourney.Require(status == HttpStatusCode.OK, $"{sql}: {status}");
-    }
-
-    private static async Task<OrganizationReading> SettledAsync(HttpClient http, string path, CancellationToken cancellationToken)
-    {
-        var reading = await ReadAsync(http, path, cancellationToken);
-        for (var attempt = 0; attempt < 60 && reading.Gaps.Contains(UsageReports.FlushPending); attempt++)
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
-            reading = await ReadAsync(http, path, cancellationToken);
-        }
-
-        return reading;
     }
 
     private static async Task<OrganizationReading> ReadAsync(HttpClient http, string path, CancellationToken cancellationToken)

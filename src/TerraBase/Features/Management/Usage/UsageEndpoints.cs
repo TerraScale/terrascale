@@ -125,6 +125,11 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
     public static long ExpectedStorageHours(string month, DateTimeOffset asOf)
     {
         var start = DateTimeOffset.ParseExact(string.Concat(month, "-01"), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+        if (start >= asOf)
+        {
+            return 0;
+        }
+
         var end = start.AddMonths(1);
         var horizon = asOf - SampleGrace < end ? asOf - SampleGrace : end;
         return horizon > start ? (long)Math.Floor((horizon - start) / StorageSampler.Slot) : 0;
@@ -165,13 +170,13 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
             gaps.Add(ProjectLimit);
         }
 
-        if (!counters.Settled || usage.FlushFailing)
+        if (usage.FlushFailing)
         {
             gaps.Add(FlushPending);
         }
 
         var expected = ExpectedStorageHours(month, asOf);
-        if (ownership.Nodes().Any(node => coverage.GetValueOrDefault(node) < expected))
+        if (ownership.Regions().Any(region => coverage.GetValueOrDefault(region) < expected))
         {
             gaps.Add(StorageIncomplete);
         }
