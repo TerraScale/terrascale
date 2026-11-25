@@ -32,6 +32,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan StateClockSkew = TimeSpan.FromSeconds(1);
 
     public async Task<(CredentialCreateOptions Options, string Challenge)?> OptionsAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
@@ -251,7 +252,8 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
     private static bool Unchanged(PasskeySignInChallenge challenge, UserRecord user) => challenge.UserId is { } bound
         ? bound == user.Id && challenge.AuthEpoch == user.AuthEpoch && challenge.AuthStamp == user.AuthStamp
-        : Ulid.TryParse(challenge.Id, out var issued) && user.AuthStamp is { } current && Ulid.TryParse(current, out var stamp) && stamp.Time <= issued.Time;
+        : Ulid.TryParse(challenge.Id, out var issued) && user.Version is { } version && Ulid.TryParse(version, out var written)
+            && written.Time < issued.Time - StateClockSkew;
 
     internal static AuthForbidden DeniedEnroll() => new("The passkey registration failed verification; start again.", "passkey_denied");
 

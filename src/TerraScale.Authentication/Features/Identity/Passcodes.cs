@@ -176,7 +176,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
 
         if (await users.FindByEmailAsync(instanceId, normalized, cancellationToken) is not { } user)
         {
-            return await this.DecoyAsync(instanceId, normalized, code.Trim(), cancellationToken);
+            return await this.DecoyAsync(instanceId, normalized, code.Trim(), purpose, cancellationToken);
         }
 
         var consumed = await this.ConsumeAsync(instanceId, user.Id, code.Trim(), purpose,
@@ -197,7 +197,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
 
         if (await users.FindByEmailAsync(instanceId, normalized, cancellationToken) is not { } user)
         {
-            return await this.DecoyAsync(instanceId, normalized, code.Trim(), cancellationToken);
+            return await this.DecoyAsync(instanceId, normalized, code.Trim(), PasscodePurpose.PasswordReset, cancellationToken);
         }
 
         return (await this.ConsumeAsync(instanceId, user.Id, code.Trim(), PasscodePurpose.PasswordReset,
@@ -375,14 +375,14 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             return null;
         }
 
-        var sameState = previous is not null && previous.AuthEpoch == authEpoch && previous.AuthStamp == authStamp;
-        var ancestors = sameState ? previous!.IssuanceBindings : [];
-        var recovery = sameState && (previous!.ResetsAuthentication || ancestors.Count >= Credentials.MaxBindings - 2
+        var sameState = previous is not null && previous.AuthEpoch == authEpoch && previous.AuthStamp == authStamp ? previous : null;
+        var ancestors = sameState is null ? [] : sameState.IssuanceBindings;
+        var recovery = sameState is not null && (sameState.ResetsAuthentication || ancestors.Count >= Credentials.MaxBindings - 2
             || !await credentials.AreCurrentAsync(instanceId, ancestors, cancellationToken));
         var issuance = recovery ? null : Credentials.New("passcode-issuance",
             AuthIds.Derived(instanceId, key, AuthIds.Derived(instanceId, authStamp ?? "initial",
-                sameState ? previous!.IssueId.Length > 0 ? previous.IssueId : previous.CodeHash : "initial")));
-        var code = Tokens.RandomDigits(6)!;
+                sameState is null ? "initial" : sameState.IssueId.Length > 0 ? sameState.IssueId : sameState.CodeHash)));
+        var code = Tokens.RandomDigits(6) ?? throw new UnreachableException();
         var passcode = new PasscodeRecord(instanceId, userId, email, this.Digest(instanceId, userId, code), authEpoch, now + (lifetime ?? Lifetime),
             FailedAttempts: 0, Consumed: false, window is null ? windowStart : previousWindowStart, (window?.IssuedInWindow ?? 0) + 1, StoredPurpose(purpose), passwordHash, pendingTokenHash)
         {
@@ -410,14 +410,18 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         for (var round = 0; round < MaxAttempts + 2; round++)
         {
             var rowData = await this.ReadAsync(instanceId, key, cancellationToken);
-            var passcode = rowData?.Value;
             var now = clock.GetUtcNow();
-            if (passcode is null || passcode.Consumed || passcode.FailedAttempts >= MaxAttempts || passcode.ExpiresAt <= now
-                || passcode.InstanceId != instanceId || passcode.Purpose != StoredPurpose(purpose) || !belongs(passcode)
-                || (!passcode.ResetsAuthentication && purpose is not PasscodePurpose.PasswordReset
-                    && !await credentials.AreCurrentAsync(instanceId, passcode.IssuanceBindings, cancellationToken)))
+            if (rowData is not { Value: var passcode } || passcode.Consumed || passcode.FailedAttempts >= MaxAttempts || passcode.ExpiresAt <= now
+                || passcode.InstanceId != instanceId || passcode.Purpose != StoredPurpose(purpose) || !belongs(passcode))
             {
-                await this.DecoyProofAsync(instanceId, key, code, cancellationToken);
+                await this.DecoyProofAsync(instanceId, key, code, ChecksLineage(purpose), cancellationToken);
+                return null;
+            }
+
+            if (!passcode.ResetsAuthentication && purpose is not PasscodePurpose.PasswordReset
+                && !await credentials.AreCurrentAsync(instanceId, passcode.IssuanceBindings, cancellationToken))
+            {
+                await this.DecoyProofAsync(instanceId, key, code, lineage: false, cancellationToken);
                 return null;
             }
 
@@ -425,7 +429,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             var matches = Tokens.FixedTimeEquals(passcode.CodeHash, digest);
             var charged = matches ? passcode with { Consumed = true, PasswordHash = null } : passcode with { FailedAttempts = passcode.FailedAttempts + 1 };
             var binding = matches ? Credentials.New("passcode", AuthIds.Derived(instanceId, key, passcode.IssueId.Length > 0 ? passcode.IssueId : passcode.CodeHash)) : null;
-            List<Change> changes = [Change.Update(rowData!, charged)];
+            List<Change> changes = [Change.Update(rowData, charged)];
             if (binding is not null)
             {
                 changes.Add(Credentials.Claim(instanceId, binding));
@@ -495,20 +499,26 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
         Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<PasscodeRecord>(
             "SELECT * FROM passcodes WHERE instance_id = @instanceId AND \"key\" = @key", new { instanceId, key }), cancellationToken));
 
-    private async Task<UserRecord?> DecoyAsync(string instanceId, string normalized, string code, CancellationToken cancellationToken)
+    private async Task<UserRecord?> DecoyAsync(string instanceId, string normalized, string code, PasscodePurpose purpose, CancellationToken cancellationToken)
     {
         var key = AuthIds.Derived(instanceId, "passcode-decoy", normalized);
         await data.ReadAsync(connection => connection.QueryAsync<string>(
             "SELECT subject FROM provider_links WHERE user_id = @key", new { key }), cancellationToken);
         await this.ReadAsync(instanceId, key, cancellationToken);
-        await this.DecoyProofAsync(instanceId, key, code, cancellationToken);
+        await this.DecoyProofAsync(instanceId, key, code, ChecksLineage(purpose), cancellationToken);
         return null;
     }
 
-    private async Task DecoyProofAsync(string instanceId, string key, string code, CancellationToken cancellationToken)
+    private static bool ChecksLineage(PasscodePurpose purpose) => purpose is not PasscodePurpose.PasswordReset;
+
+    private async Task DecoyProofAsync(string instanceId, string key, string code, bool lineage, CancellationToken cancellationToken)
     {
         var decoy = AuthIds.Derived(instanceId, "passcode-decoy-proof", key);
-        await credentials.AreCurrentAsync(instanceId, [Credentials.UserState(decoy, decoy)], cancellationToken);
+        if (lineage)
+        {
+            await credentials.AreCurrentAsync(instanceId, [Credentials.UserState(decoy, decoy)], cancellationToken);
+        }
+
         _ = Tokens.FixedTimeEquals(this.Digest(instanceId, decoy, code), DecoyDigest);
         await data.ReadAsync(connection => connection.ExecuteAsync(
             "UPDATE passcodes SET failed_attempts = failed_attempts + 1 WHERE instance_id = @instanceId AND \"key\" = @decoy", new { instanceId, decoy }), cancellationToken);

@@ -123,7 +123,7 @@ internal sealed class MachineTokenResources(IOpenIddictApplicationManager applic
             return;
         }
 
-        var application = await applications.FindByClientIdAsync(context.ClientId!, context.CancellationToken) as OidcApplication;
+        var application = context.ClientId is { } clientId ? await applications.FindByClientIdAsync(clientId, context.CancellationToken) as OidcApplication : null;
         var resources = context.Request.GetResources();
         if (application is null || MachineClients.Policy(application) is not { } policy
             || resources.Length > 1 || resources.Except(policy.AllowedAudiences, StringComparer.Ordinal).Any())
