@@ -96,10 +96,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 wizard = "organization";
             }
-            if (error.Length == 0 && http.Request.Query["error"].ToString() is { Length: > 0 and <= 500 } queryError)
-            {
-                error = queryError;
-            }
             var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
                 ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
             var checkoutNotice = await StripeBilling.OrganizationCheckoutNoticeAsync(http, context.UserId);

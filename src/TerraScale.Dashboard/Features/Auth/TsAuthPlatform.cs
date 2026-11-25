@@ -147,7 +147,7 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             var created = await PlatformAsync(() => Client().Platform.CreateInvitationAsync(Bearer(session), Id(organizationId), new(email, role, projectId is null ? null : Id(projectId)), cancellationToken));
             if (created.Invitation is null || !TerraScaleIds.IsValid(created.Invitation.Id) || created.Token is not { Length: > 0 and <= 4096 } ||
-                !created.Invitation.Email.Equals(email, StringComparison.OrdinalIgnoreCase) || created.Invitation.ProjectId != projectId || created.Invitation.Role != role)
+                created.Invitation.Email is not { } invited || !invited.Equals(email, StringComparison.OrdinalIgnoreCase) || created.Invitation.ProjectId != projectId || created.Invitation.Role != role)
             {
                 throw new IOException("ts-auth returned an invalid invitation.");
             }

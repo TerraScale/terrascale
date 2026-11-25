@@ -53,14 +53,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
         await AccountEnrollment.ThrowIfErasedAsync(storage, record.UserId, context.RequestAborted);
         Csrf.Bind(context, token);
-        context.Response.Cookies.Append(Cookie, token, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = context.Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
-            Path = "/",
-            Expires = record.SessionExpiresAt
-        });
+        context.Response.Cookies.Append(Cookie, token, DashboardCookies.Private(context, SameSiteMode.Lax, record.SessionExpiresAt));
     }
 
     public async Task<SessionRecord?> ReadAsync(HttpContext context)
@@ -429,7 +422,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
     {
         if (!context.Response.HasStarted)
         {
-            context.Response.Cookies.Delete(Cookie);
+            context.Response.Cookies.Delete(Cookie, DashboardCookies.Private(context, SameSiteMode.Lax));
         }
 
         Csrf.Bind(context, null);

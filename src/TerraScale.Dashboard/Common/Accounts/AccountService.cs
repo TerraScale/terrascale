@@ -450,15 +450,24 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             var members = access.Members;
             var saved = org.Members;
-            org.Members = members.ToDictionary(member => member.UserId, member => new MemberRecord
+            var current = new Dictionary<string, MemberRecord>(members.Count, StringComparer.Ordinal);
+            foreach (var member in members)
             {
-                UserId = member.UserId,
-                Email = member.Email,
-                Role = member.Role,
-                CreatedAt = member.JoinedAt,
-                Name = saved.GetValueOrDefault(member.UserId)?.Name is { Length: > 0 } name ? name : member.UserId == session.UserId ? session.Name : member.Email,
-                JoinedOn = saved.GetValueOrDefault(member.UserId)?.JoinedOn
-            });
+                if (member.UserId is not { Length: > 0 } userId || !current.TryAdd(userId, new MemberRecord
+                {
+                    UserId = userId,
+                    Email = member.Email,
+                    Role = member.Role,
+                    CreatedAt = member.JoinedAt,
+                    Name = saved.GetValueOrDefault(userId)?.Name is { Length: > 0 } name ? name : userId == session.UserId ? session.Name : member.Email,
+                    JoinedOn = saved.GetValueOrDefault(userId)?.JoinedOn
+                }))
+                {
+                    throw new JsonException("ts-auth returned an organization member without a unique user id.");
+                }
+            }
+
+            org.Members = current;
             var owners = members.Where(member => member.Role == "owner").Select(member => member.UserId).Order(StringComparer.Ordinal).ToArray();
             org.OwnerUserId = owners.Contains(session.UserId) ? session.UserId : owners.FirstOrDefault() ?? "";
             org.PendingOwnerUserId = access.Transfer?.ToUserId ?? "";

@@ -185,7 +185,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private static CookieOptions Options(HttpContext context)
         {
-            return new() { HttpOnly = true, Secure = context.Request.IsHttps, SameSite = SameSiteMode.Lax, Path = "/" };
+            return DashboardCookies.Private(context, SameSiteMode.Lax);
         }
 
         private static string Random()

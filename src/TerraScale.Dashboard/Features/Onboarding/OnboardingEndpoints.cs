@@ -46,7 +46,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 Email = account.Email,
                 Step = account.OnboardingStep,
                 PaymentCanceled = payment == "canceled",
-                Error = error.Length > 0 ? error : context.Request.Query["error"].ToString(),
+                Error = error,
                 ProjectName = draft?["name"].ToString() ?? "Personal",
                 Region = draft?["region"].ToString() ?? "",
                 Plan = OfferedPlan(plans, requested).Length == 0 ? (plans is [var firstPlan, ..] ? firstPlan?.Key ?? "" : "") : requested,
