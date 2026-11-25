@@ -84,7 +84,7 @@ public sealed class ShapeMaterializerService(
         var active = activeOutcome switch
         {
             ActiveShapeDatabases { Items: var databases } => databases,
-            PlatformUnavailable unavailable => Deferred<Ulid>(unavailable.Message),
+            PlatformUnavailable unavailable => Kept(unavailable.Message),
         };
         var wanted = active.ToHashSet();
         foreach (var database in _subscriptions.Keys.Where(database => !wanted.Contains(database)).ToArray())
@@ -325,6 +325,12 @@ public sealed class ShapeMaterializerService(
     {
         logger.ZLogWarning($"Changefeed for {database} broke: {unavailable.Message}");
         return null;
+    }
+
+    private IReadOnlyList<Ulid> Kept(string message)
+    {
+        logger.ZLogWarning($"Shape changefeed subscriptions kept unchanged: {message}");
+        return [.. _subscriptions.Keys];
     }
 
     private T[] Deferred<T>(string message)

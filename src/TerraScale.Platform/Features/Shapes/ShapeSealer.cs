@@ -159,26 +159,30 @@ public sealed class ShapeSealer(
 
     public async ValueTask<string?> DrainAsync(CancellationToken cancellationToken)
     {
-        var outcome = await registry.DueDeletionsAsync(_drained, DrainPage, cancellationToken);
-        return outcome switch
+        var dueOutcome = await registry.DueDeletionsAsync(_drained, DrainPage, cancellationToken);
+        return dueOutcome switch
         {
-            ShapeObjectDeletions { Items: var items } => await EraseAsync(items),
+            ShapeObjectDeletions { Items: var due } => await ClaimAsync(due),
             PlatformUnavailable unavailable => unavailable.Message,
         };
 
-        async ValueTask<string?> EraseAsync(IReadOnlyList<ShapeObjectDeletion> items)
+        async ValueTask<string?> ClaimAsync(IReadOnlyList<ShapeObjectDeletion> due)
         {
-            _drained = items.Count < DrainPage ? "" : items[^1].Id;
-            var done = new List<string>(items.Count);
-            var purge = new List<string>();
-            foreach (var item in items)
+            _drained = due.Count < DrainPage ? "" : due[^1].Id;
+            var claimedOutcome = await registry.ClaimDeletionsAsync(due, cancellationToken);
+            return claimedOutcome switch
             {
-                if (item.Referenced)
-                {
-                    done.Add(item.Id);
-                    continue;
-                }
+                ShapeObjectDeletions { Items: var claimed } => await EraseAsync(claimed),
+                PlatformUnavailable unavailable => unavailable.Message,
+            };
+        }
 
+        async ValueTask<string?> EraseAsync(IReadOnlyList<ShapeObjectDeletion> claimed)
+        {
+            var done = new List<string>(claimed.Count);
+            var purge = new List<string>();
+            foreach (var item in claimed)
+            {
                 var deletedOutcome = await objects.DeleteAsync(ShapeObjectStore.Key(item.Handle, item.Name), cancellationToken);
                 var deleted = deletedOutcome switch
                 {
@@ -196,7 +200,7 @@ public sealed class ShapeSealer(
             var cleared = await registry.ClearDeletionsAsync(done, cancellationToken);
             return cleared switch
             {
-                ShapeDeletionsUpdated => done.Count == items.Count ? null : $"{items.Count - done.Count} shape objects could not be deleted and stay queued",
+                ShapeDeletionsUpdated => done.Count == claimed.Count ? null : $"{claimed.Count - done.Count} shape objects could not be deleted and stay queued",
                 PlatformUnavailable unavailable => unavailable.Message,
             };
         }
