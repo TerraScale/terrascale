@@ -44,7 +44,7 @@ internal sealed class TerraBaseDatabaseExecutor(
         var begun = await coordinator.BeginTransactionAsync(session, options, cancellationToken);
         return begun switch
         {
-            ISqlTransaction transaction => Transaction(target.EndUser is { } auth ? new RulesTransaction(transaction, target.Database.Id, auth, rules) : transaction),
+            ISqlTransaction transaction => Transaction(target.EndUser is { } auth ? new RulesTransaction(transaction, session, auth, rules) : transaction),
             StorageBusy busy => busy,
             ClusterTimeout timeout => timeout,
         };
@@ -134,7 +134,7 @@ internal sealed class TerraBaseDatabaseExecutor(
     }
 }
 
-internal sealed class RulesTransaction(ISqlTransaction inner, Ulid databaseId, RulesAuth auth, RulesEnforcer rules) : ISqlTransaction
+internal sealed class RulesTransaction(ISqlTransaction inner, ISqlDatabaseSession session, RulesAuth auth, RulesEnforcer rules) : ISqlTransaction
 {
     public ISqlTransaction Inner { get; } = inner;
 
@@ -162,7 +162,7 @@ internal sealed class RulesTransaction(ISqlTransaction inner, Ulid databaseId, R
 
     private async ValueTask<TransactionExecuteResult> ExecutePlannedAsync(PlannedStatement planned, CancellationToken cancellationToken)
     {
-        var enforced = await rules.ApplyAsync(databaseId, auth, [planned], cancellationToken);
+        var enforced = await rules.ApplyAsync(session.DatabaseId, auth, [planned], cancellationToken, session);
         return enforced switch
         {
             EnforcedSql { Statements: [var rewritten] } => await Inner.ExecuteAsync(rewritten, cancellationToken),

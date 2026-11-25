@@ -344,6 +344,20 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     private SqliteStatus BindScope(SqlRuleScope scope, StatementInfo info)
     {
+        if (scope.SchemaVersion is { } checkedVersion)
+        {
+            var version = QueryFirst("PRAGMA schema_version", out var current);
+            if (!version.IsOk)
+            {
+                return version;
+            }
+
+            if (current is not [var value] || !value.TryGetIntegral(out var live) || live != checkedVersion)
+            {
+                return new SqliteStatus(SqliteNative.Auth, "the schema changed after the rules were checked; retry the statement");
+            }
+        }
+
         List<SqlValue[]> rows = [];
         var status = Query("SELECT type, name FROM main.sqlite_schema WHERE type IN ('view', 'trigger')", rows);
         if (!status.IsOk)

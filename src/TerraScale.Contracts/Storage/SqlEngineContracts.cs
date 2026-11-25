@@ -128,7 +128,8 @@ public sealed record SqlRuleScope(
     IReadOnlyDictionary<string, SqlTableScope> Tables,
     IReadOnlySet<string> Ctes,
     IReadOnlyDictionary<string, string> Guards,
-    SqlTargetScope? Target);
+    SqlTargetScope? Target,
+    long? SchemaVersion);
 
 public sealed record SqlTableScope(IReadOnlySet<string>? VisibleColumns);
 
