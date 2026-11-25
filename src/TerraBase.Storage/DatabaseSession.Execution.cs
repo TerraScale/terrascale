@@ -7,7 +7,7 @@ internal readonly union StatementOutcome(SqlResultSet, SqlError, StrongRequired)
 
 internal readonly union ReaderStatementOutcome(SqlResultSet, SqlError);
 
-internal readonly record struct OpenSavepoint(string Name, int DdlCount, CaptureSavepoint Capture);
+internal readonly record struct OpenSavepoint(string Name, int DdlCount, CaptureSavepoint Capture, SqliteStatus DdlFault);
 
 internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
 {
@@ -29,7 +29,17 @@ internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, Canc
 
     public StrongRequiredReason? StrongReason { get; set; }
 
+    public SqliteStatus DdlFault { get; set; } = SqliteStatus.Success;
+
     public bool IsSchemaChange => Ddl.Count > 0;
+
+    public void RecordDdlFault(SqliteStatus status)
+    {
+        if (DdlFault.IsOk && !status.IsOk)
+        {
+            DdlFault = status;
+        }
+    }
 }
 
 internal sealed record StagedDescriptor(StagedWrite Staged, IReadOnlyList<ObservedRow> Observed, DateTimeOffset CreatedAt);
@@ -85,6 +95,14 @@ internal sealed partial class DatabaseSession
                 return SingleStatement.ToSqlError(index);
             }
 
+            var isExplain = SqliteConnection.IsExplain(handle);
+            var savepoint = isExplain ? null : info.Savepoint;
+            if (!context.DdlFault.IsOk && savepoint?.Operation != SavepointOperation.Rollback)
+            {
+                SqliteConnection.FinalizeStatement(handle);
+                return context.DdlFault.ToSqlError(index);
+            }
+
             if (context.Mode == ConsistencyMode.Fast && Gate(info) is { } reason)
             {
                 SqliteConnection.FinalizeStatement(handle);
@@ -105,9 +123,7 @@ internal sealed partial class DatabaseSession
                 tokens = SqlTokenizer.Tokenize(segment);
             }
 
-            var isExplain = SqliteConnection.IsExplain(handle);
             var isDdl = !isExplain && info.IsDdl;
-            var savepoint = isExplain ? null : info.Savepoint;
             if (context.AnalyzeReads)
             {
                 CollectScannedTables(context, handle, segment);
@@ -169,6 +185,7 @@ internal sealed partial class DatabaseSession
                 if (!status.IsOk)
                 {
                     _writer.InvalidateSchemaCache();
+                    context.RecordDdlFault(status);
                     return status.ToSqlError(index);
                 }
 
@@ -181,6 +198,7 @@ internal sealed partial class DatabaseSession
                         if (!status.IsOk)
                         {
                             _writer.InvalidateSchemaCache();
+                            context.RecordDdlFault(status);
                             return status.ToSqlError(index);
                         }
                     }
@@ -215,7 +233,7 @@ internal sealed partial class DatabaseSession
         switch (savepoint.Operation)
         {
             case SavepointOperation.Begin:
-                savepoints.Add(new OpenSavepoint(savepoint.Name, context.Ddl.Count, _capture.MarkSavepoint()));
+                savepoints.Add(new OpenSavepoint(savepoint.Name, context.Ddl.Count, _capture.MarkSavepoint(), context.DdlFault));
                 return SqliteStatus.Success;
             case SavepointOperation.Release when LastSavepoint(savepoints, savepoint.Name) is var released and >= 0:
                 savepoints.RemoveRange(released, savepoints.Count - released);
@@ -225,6 +243,7 @@ internal sealed partial class DatabaseSession
                 context.Ddl.RemoveRange(open.DdlCount, context.Ddl.Count - open.DdlCount);
                 savepoints.RemoveRange(target + 1, savepoints.Count - target - 1);
                 _capture.RestoreSavepoint(open.Capture);
+                context.DdlFault = open.DdlFault;
                 return _writer.ValidateSchemaCache();
             case SavepointOperation.Release or SavepointOperation.Rollback:
                 return SqliteStatus.Success;
@@ -362,6 +381,12 @@ internal sealed partial class DatabaseSession
     private SqliteStatus FinishLocal(WriteContext context, ref long nextSequence, ref ulong epoch, out CommitMetadata? commit)
     {
         commit = null;
+        if (!context.DdlFault.IsOk)
+        {
+            _capture.End();
+            return context.DdlFault;
+        }
+
         List<NetChange> changes = [];
         var status = _capture.TakeNetChanges(changes);
         if (!status.IsOk)
@@ -398,6 +423,12 @@ internal sealed partial class DatabaseSession
     private SqliteStatus FinishStage(WriteContext context, out StagedDescriptor? descriptor)
     {
         descriptor = null;
+        if (!context.DdlFault.IsOk)
+        {
+            _capture.End();
+            return context.DdlFault;
+        }
+
         List<NetChange> changes = [];
         var status = _capture.TakeNetChanges(changes);
         if (!status.IsOk)
