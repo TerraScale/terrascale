@@ -74,6 +74,15 @@ These are the limits a request or a plan can hit. All SQL surfaces (HTTP, WebSoc
 | Result size | 10,000 rows and 8 MiB | \`too_large\` (413) / 54000 |
 | Rows changed per transaction | 1,024 | \`too_large\` (413) / 54000 |
 | Database file growth per transaction | 8 MiB | \`too_large\` (413) / 54000 |
+| Any value, string or row a statement builds | 16 MiB | \`too_large\` (400) / 54000 |
+| Expression nesting | 200 levels | \`sql_error\` (400) / 54001 |
+| Terms in a compound \`SELECT\` | 50 | \`sql_error\` (400) / 54001 |
+| \`LIKE\` or \`GLOB\` pattern | 1,000 bytes | \`sql_error\` (400) / 54001 |
+| Trigger and foreign-key cascade nesting | 32 levels | \`sql_error\` (400) / 54001 |
+| Function arguments | 127 | \`sql_error\` (400) / 54023 |
+| Bound parameter number | \`?8192\` | \`sql_error\` (400) / 54023 |
+
+A statement that needs more memory than the server can spare, including one that compiles to an oversized program, answers \`storage_busy\` (503) / 53200; retry it, and simplify it if it keeps failing.
 
 A query that stays inside result limits but scans or works past the plan's scan budget answers \`query_canceled\` (400) / 57014 with \`query too expensive: it exceeds the work budget\`; add indexes or a \`LIMIT\`, or narrow the query. A request whose statements together spend more than 5 s executing answers \`query_canceled\` (400) / 57014 with \`the request exceeded its 5 s time limit; split the batch or narrow the query\`. Only statement and commit execution counts toward the 5 s; time spent admitted, queued or waiting on the organization's limits does not.
 

@@ -387,7 +387,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `storage_busy`
 
-503 — storage is busy right now. Retry after `Retry-After`. Retry: yes.
+503 — storage is busy right now, or the server ran short of memory for the statement (SQLSTATE 53200). Retry after `Retry-After`. Retry: yes.
 
 ### `storage_quota`
 

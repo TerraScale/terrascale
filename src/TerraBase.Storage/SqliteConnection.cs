@@ -58,7 +58,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public static SqliteOpenResult Open(SqliteOpenOptions options)
     {
-        SqliteLibrary.EnsureRegistered();
+        SqliteLibrary.EnsureInitialized();
         var flags = (options.ReadOnly ? SqliteNative.OpenReadOnly : SqliteNative.OpenReadWrite | SqliteNative.OpenCreate)
             | SqliteNative.OpenNoMutex
             | SqliteNative.OpenExtendedResultCodes;
@@ -308,7 +308,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         byte* tail = null;
         int rc;
         _collecting = info;
-        _userMode = true;
+        EnterUserMode();
         try
         {
             fixed (byte* sqlPointer = sql)
@@ -319,7 +319,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         }
         finally
         {
-            _userMode = false;
+            LeaveUserMode();
             _collecting = null;
         }
         var status = rc == SqliteNative.Ok ? SqliteStatus.Success : UserStatus(Status(rc), info);
@@ -340,6 +340,24 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
         statement = handle;
         return status;
+    }
+
+    private void EnterUserMode()
+    {
+        _userMode = true;
+        if (HasUserLimits)
+        {
+            SqliteLimits.ApplyUser(Handle);
+        }
+    }
+
+    private void LeaveUserMode()
+    {
+        _userMode = false;
+        if (HasUserLimits)
+        {
+            SqliteLimits.ApplyEngine(Handle);
+        }
     }
 
     private SqliteStatus BindScope(SqlRuleScope scope, StatementInfo info)
@@ -434,7 +452,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         _workCancellation = cancellationToken;
         _workStarted = Stopwatch.GetTimestamp();
         _collecting = info;
-        _userMode = true;
+        EnterUserMode();
         SqliteStatus status;
         SqliteNative.SetProgressHandler(Handle, 1000, &OnProgress, GCHandle<SqliteConnection>.ToIntPtr(_self));
         try
@@ -444,7 +462,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         finally
         {
             SqliteNative.SetProgressHandler(Handle, 0, null, 0);
-            _userMode = false;
+            LeaveUserMode();
             _collecting = null;
             _workCancellation = default;
             info.Scope = null;
@@ -715,6 +733,15 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         if (!status.IsOk)
         {
             return status;
+        }
+
+        if (HasUserLimits)
+        {
+            status = SqliteLimits.Verify(_db);
+            if (!status.IsOk)
+            {
+                return status;
+            }
         }
 
         var pragmas = _options.ReadOnly

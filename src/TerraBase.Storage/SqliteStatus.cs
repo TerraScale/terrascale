@@ -12,7 +12,7 @@ internal readonly record struct SqliteStatus(int Code, string Message)
 
     public int Primary => Code & 0xFF;
 
-    public bool IsBusy => Primary is SqliteNative.Busy or SqliteNative.Locked;
+    public bool IsBusy => Primary is SqliteNative.Busy or SqliteNative.Locked or SqliteNative.NoMem;
 
     public static SqliteStatus Fail(string message) => new(SqliteNative.Error, message);
 
@@ -34,7 +34,7 @@ internal readonly record struct SqliteStatus(int Code, string Message)
         _ => Primary switch
         {
             SqliteNative.Constraint => "constraint_violation",
-            SqliteNative.Busy or SqliteNative.Locked => "storage_busy",
+            SqliteNative.Busy or SqliteNative.Locked or SqliteNative.NoMem => "storage_busy",
             SqliteNative.ReadOnly => "read_only",
             SqliteNative.Interrupt => "query_canceled",
             SqliteNative.Auth => "not_authorized",
@@ -60,6 +60,7 @@ internal readonly record struct SqliteStatus(int Code, string Message)
         {
             SqliteNative.Constraint => "23000",
             SqliteNative.Busy or SqliteNative.Locked => "55P03",
+            SqliteNative.NoMem => "53200",
             SqliteNative.ReadOnly => "25006",
             SqliteNative.Interrupt => "57014",
             SqliteNative.Auth => "42501",
@@ -69,6 +70,8 @@ internal readonly record struct SqliteStatus(int Code, string Message)
             SqliteNative.IoError or SqliteNative.Full => "58030",
             SqliteNative.Mismatch => "42804",
             SqliteNative.Range => "22023",
+            SqliteNative.Error when IsTooComplex(Message) => "54001",
+            SqliteNative.Error when HasTooManyArguments(Message) => "54023",
             SqliteNative.Error when Message.StartsWith("no such table", StringComparison.Ordinal) => "42P01",
             SqliteNative.Error when Message.StartsWith("no such column", StringComparison.Ordinal) => "42703",
             SqliteNative.Error when Message.Contains("syntax error", StringComparison.Ordinal) => "42601",
@@ -76,4 +79,16 @@ internal readonly record struct SqliteStatus(int Code, string Message)
             _ => "XX000",
         },
     };
+
+    private static bool IsTooComplex(string message) =>
+        message.StartsWith("Expression tree is too large", StringComparison.Ordinal)
+        || message.StartsWith("VIEWs and/or subqueries nested too deep", StringComparison.Ordinal)
+        || message.StartsWith("too many terms in compound SELECT", StringComparison.Ordinal)
+        || message.StartsWith("LIKE or GLOB pattern too complex", StringComparison.Ordinal)
+        || message.StartsWith("triggers nested too deep", StringComparison.Ordinal);
+
+    private static bool HasTooManyArguments(string message) =>
+        message.StartsWith("too many SQL variables", StringComparison.Ordinal)
+        || message.StartsWith("variable number must be between", StringComparison.Ordinal)
+        || message.StartsWith("too many arguments on function", StringComparison.Ordinal);
 }
