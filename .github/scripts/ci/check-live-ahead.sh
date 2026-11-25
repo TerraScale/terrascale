@@ -23,8 +23,13 @@ decide() {
 }
 
 reject_nul() {
-  if [[ -n $(LC_ALL=C tr -cd '\0' < "$1" | tr '\0' x) ]]; then
-    echo "::error::$2 contained a NUL byte" >&2
+  local nuls
+  if ! nuls=$(LC_ALL=C tr -cd '\0' < "$1" | tr '\0' x); then
+    printf '::error::failed to scan %s for NUL bytes\n' "$2" >&2
+    exit 1
+  fi
+  if [[ -n "$nuls" ]]; then
+    printf '::error::%s contained a NUL byte\n' "$2" >&2
     exit 1
   fi
 }
