@@ -55,6 +55,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private int _references = 1;
     private int _closed;
     private int _readerCount;
+    private bool _writeGroupBroken;
 
     private DatabaseSession(SessionContext context, SqliteConnection writer, PreupdateCapture capture, CommitLogCipher cipher, bool strict, Func<DatabaseSession, Task> release)
     {

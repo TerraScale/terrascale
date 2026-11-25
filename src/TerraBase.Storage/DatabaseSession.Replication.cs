@@ -82,6 +82,12 @@ internal sealed partial class DatabaseSession
 
         try
         {
+            var begun = reader.Begin("BEGIN;");
+            if (!begun.IsOk)
+            {
+                return begun.ToBusy();
+            }
+
             var scope = new WriteScope(reader);
             List<RowKey> staleKeys = [];
             foreach (var key in readSet)
@@ -99,6 +105,7 @@ internal sealed partial class DatabaseSession
             }
 
             List<string> staleTables = [.. scannedTables.Where(table => TableHlc(scope, table) > readSnapshot)];
+            _ = reader.Exec("COMMIT;");
             if (scope.Failed)
             {
                 return scope.Failure.ToBusy();
@@ -615,6 +622,12 @@ internal sealed partial class DatabaseSession
         if (staged.SchemaEpoch != SchemaEpoch)
         {
             return new SchemaMismatch(DatabaseId, staged.SchemaEpoch, SchemaEpoch);
+        }
+
+        var cleared = _writer.RollbackOpenTransaction();
+        if (!cleared.IsOk)
+        {
+            return cleared.ToBusy();
         }
 
         var scope = new WriteScope(_writer);

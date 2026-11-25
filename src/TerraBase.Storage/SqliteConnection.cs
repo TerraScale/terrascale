@@ -190,16 +190,25 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus Begin(string sql)
     {
-        if (InTransaction)
+        var cleared = RollbackOpenTransaction();
+        return cleared.IsOk ? Exec(sql) : cleared;
+    }
+
+    public SqliteStatus RollbackOpenTransaction()
+    {
+        if (!InTransaction)
         {
-            var rolledBack = Exec("ROLLBACK;");
-            if (InTransaction)
-            {
-                return rolledBack.IsOk ? new SqliteStatus(SqliteNative.Busy, "an earlier transaction is still open") : rolledBack;
-            }
+            return SqliteStatus.Success;
         }
 
-        return Exec(sql);
+        var rolledBack = Exec("ROLLBACK;");
+        InvalidateSchemaCache();
+        if (!InTransaction)
+        {
+            return SqliteStatus.Success;
+        }
+
+        return rolledBack.IsOk ? new SqliteStatus(SqliteNative.Busy, "an earlier transaction is still open") : rolledBack;
     }
 
     public SqliteStatus Run(string sql, params ReadOnlySpan<SqlValue> parameters)
