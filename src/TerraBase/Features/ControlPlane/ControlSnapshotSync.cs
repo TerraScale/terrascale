@@ -61,7 +61,7 @@ internal sealed class ControlSnapshotSync(
             }
         }
 
-        foreach (var database in snapshot.Databases)
+        foreach (var database in snapshot.Databases.OrderBy(static database => database.State == ControlDatabaseState.Deleted ? 0 : 1))
         {
             var applied = database.State == ControlDatabaseState.Deleted
                 ? await DeleteAsync(database, cancellationToken)

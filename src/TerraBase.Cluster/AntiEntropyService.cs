@@ -294,7 +294,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             return (0, 0, false, null, false, head);
         }
 
-        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, cancellationToken);
+        var applied = await replicator.ApplyToSessionAsync(session, page.Entries, requestCatchUpOnBuffered: false, cancellationToken);
         return applied switch
         {
             RemoteApplyOutcome outcome => (page.Entries.Count, outcome.Applied, page.HasMore, null, false, head),
