@@ -184,13 +184,15 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 return null;
             }
 
-            if (record.ExpiresAt <= now + renewBefore)
+            var refreshable = !string.IsNullOrWhiteSpace(record.RefreshToken);
+            if (!refreshable && record.ExpiresAt <= now)
             {
-                if (string.IsNullOrWhiteSpace(record.RefreshToken))
-                {
-                    await RemoveAsync(row, "no refresh token", cancellationToken);
-                    return null;
-                }
+                await RemoveAsync(row, "no refresh token", cancellationToken);
+                return null;
+            }
+
+            if (refreshable && record.ExpiresAt <= now + renewBefore)
+            {
                 var leaseEnded = record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now;
                 if (record.RefreshLease.Length != 0 && !(leaseEnded && lookup.Kind == SessionRow.Credential))
                 {

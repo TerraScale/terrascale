@@ -11,13 +11,17 @@ public readonly union AgentVerification(AgentDelegation, AgentTokenRejected, Age
 
 public sealed partial class TsAuthGateway
 {
+    private const int AgentTokenLength = 8192;
+
     public async Task<AgentVerification> VerifyAgentTokenAsync(string agentToken, CancellationToken cancellationToken)
     {
         var issuer = PlatformIssuer;
-        if (!AuthJwtClaims.WellFormed(agentToken) || AuthJwtClaims.UnverifiedIssuer(agentToken) != issuer || AuthJwtClaims.KeyId(agentToken) is not { } kid)
+        if (AuthJwtClaims.Parse(agentToken, AgentTokenLength) is not { } unverified || unverified.Issuer != issuer)
         {
             return new AgentTokenRejected();
         }
+
+        var kid = unverified.KeyId;
 
         var client = Client();
         var (keys, fetched) = await TrackedKeysAsync(client, false, cancellationToken);
@@ -37,9 +41,11 @@ public sealed partial class TsAuthGateway
             keys = refreshed;
         }
 
-        JsonElement claims;
-        try { claims = AuthJwtClaims.Read(agentToken, issuer, null, keys, time.GetUtcNow(), "at+jwt", 8192); }
-        catch (SignInRejectedException) { return new AgentTokenRejected(); }
+        if (AuthJwtClaims.TryRead(agentToken, issuer, null, keys, time.GetUtcNow(), "at+jwt", AgentTokenLength) is not { } claims)
+        {
+            return new AgentTokenRejected();
+        }
+
         if (Text(claims, "token_use") != "agent" || Text(claims, "actor_type") != "agent" || claims.TryGetProperty("owner_sub", out _) ||
             Text(claims, "agent_id") is not { } agent || !TerraScaleIds.IsValid(agent) ||
             !claims.TryGetProperty("act", out var actor) || actor.ValueKind != JsonValueKind.Object || Text(actor, "sub") != agent ||
@@ -69,9 +75,11 @@ public sealed partial class TsAuthGateway
         }
 
         var issuer = TrustedIssuer((await MetadataAsync(client, cancellationToken)).Issuer);
-        JsonElement claims;
-        try { claims = AuthJwtClaims.Read(tokens.AccessToken, issuer, issuer, await SigningKeysAsync(client, tokens.AccessToken, cancellationToken), time.GetUtcNow(), "at+jwt"); }
-        catch (SignInRejectedException error) { throw new IOException("ts-auth returned an invalid agent exchange.", error); }
+        var keys = await SigningKeysAsync(client, tokens.AccessToken, cancellationToken);
+        if (AuthJwtClaims.TryRead(tokens.AccessToken, issuer, issuer, keys, time.GetUtcNow(), "at+jwt") is not { } claims)
+        {
+            throw new IOException("ts-auth returned an invalid agent exchange.");
+        }
         if (Text(claims, "sub") != agent.OwnerId || Text(claims, "agent_id") != agent.AgentId ||
             !claims.TryGetProperty("act", out var actor) || actor.ValueKind != JsonValueKind.Object || Text(actor, "sub") != agent.AgentId)
         {
