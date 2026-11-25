@@ -2,7 +2,7 @@ using TerraScale.Contracts;
 
 namespace TerraScale.Platform.Hosting;
 
-public sealed class ErrorResult(int status, string code, string message, IReadOnlyDictionary<string, string>? details, bool retryAfter, string? sqlState = null) : IResult
+public sealed class ErrorResult(int status, string code, string message, IReadOnlyDictionary<string, string>? details, bool retryAfter) : IResult
 {
     public int StatusCode => status;
 
@@ -18,7 +18,7 @@ public sealed class ErrorResult(int status, string code, string message, IReadOn
         }
 
         response.ContentType = "application/json";
-        var body = new ApiErrorEnvelope(new ApiErrorBody(code, message, sqlState, null, details));
+        var body = new ApiErrorEnvelope(new ApiErrorBody(code, message, null, null, details));
         return JsonSerializer.SerializeAsync(response.Body, body, TerraScaleContractsJsonContext.Default.ApiErrorEnvelope, httpContext.RequestAborted);
     }
 }
@@ -39,12 +39,7 @@ public static class ErrorResults
 
     public static ErrorResult From(PlatformQuotaExceeded error) => new(StatusCodes.Status429TooManyRequests, error.Code, error.Message, null, true);
 
-    public static ErrorResult From(PlatformUnavailable error)
-    {
-        var uncertain = SqlWriteUncertainty.Matches(error.Code);
-        return new(StatusCodes.Status503ServiceUnavailable, error.Code, error.Message, error.Details,
-            retryAfter: !uncertain, sqlState: uncertain ? SqlWriteUncertainty.SqlState : null);
-    }
+    public static ErrorResult From(PlatformUnavailable error) => new(StatusCodes.Status503ServiceUnavailable, error.Code, error.Message, error.Details, true);
 
     public static ErrorResult From(PlatformPayloadTooLarge error) => new(StatusCodes.Status413PayloadTooLarge, error.Code, error.Message, null, false);
 

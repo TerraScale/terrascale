@@ -327,7 +327,7 @@ internal sealed class QuicRpcServerCore(
         {
             metrics.Received(QuicSide.Server, frame.TotalLength);
             var header = frame.Header;
-            var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);
+            var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId);
             using var scope = new CallScope(Timeout.InfiniteTimeSpan, timeProvider, cancellationToken, CancellationToken.None);
             if (header.IsError || !routes.Bidi.TryGetValue(header.MessageType, out var route))
             {
@@ -470,7 +470,7 @@ internal sealed class QuicRpcServerCore(
         {
             metrics.Received(QuicSide.Server, frame.TotalLength);
             var header = frame.Header;
-            var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);
+            var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId);
             var started = timeProvider.GetTimestamp();
             if (header.IsError || !routes.Push.TryGetValue(header.MessageType, out var dispatch))
             {

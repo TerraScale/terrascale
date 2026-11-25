@@ -49,9 +49,7 @@ public sealed record SqlRefusal(
     public static SqlRefusal RulesInvalid(string message, int statement) =>
         new("rules_invalid", message, "42501", statement, StatusCodes.Status403Forbidden);
 
-    public static SqlRefusal From(SqlError error) => SqlWriteUncertainty.Matches(error.Code)
-        ? Uncertain(error.Code, error.Message, error.StatementIndex)
-        : new(MapCode(error.Code, error.SqlState), error.Message, error.SqlState, error.StatementIndex, MapStatus(error.Code));
+    public static SqlRefusal From(SqlError error) => new(MapCode(error.Code, error.SqlState), error.Message, error.SqlState, error.StatementIndex, MapStatus(error.Code));
 
     public static SqlRefusal From(SerializationConflict conflict) =>
         new("serialization_conflict", string.Concat("the transaction conflicted with a concurrent one and was rolled back (", conflict.Reason, "); retry it"),
@@ -68,17 +66,10 @@ public sealed record SqlRefusal(
     public static SqlRefusal From(ClusterTimeout timeout) => new("request_timeout", timeout.Message, "57014", 0, StatusCodes.Status504GatewayTimeout);
 
     public static SqlRefusal From(ClusterUnavailable unavailable) =>
-        Unavailable(unavailable.Code, unavailable.Message);
+        new(unavailable.Code, unavailable.Message, "57P03", 0, StatusCodes.Status503ServiceUnavailable, TimeSpan.FromSeconds(1));
 
     public static SqlRefusal From(BackendUnavailable unavailable) =>
-        Unavailable(unavailable.Code, unavailable.Message);
-
-    private static SqlRefusal Unavailable(string code, string message) => SqlWriteUncertainty.Matches(code)
-        ? Uncertain(code, message, 0)
-        : new(code, message, "57P03", 0, StatusCodes.Status503ServiceUnavailable, TimeSpan.FromSeconds(1));
-
-    private static SqlRefusal Uncertain(string code, string message, int statement) =>
-        new(code, message, SqlWriteUncertainty.SqlState, statement, StatusCodes.Status503ServiceUnavailable);
+        new(unavailable.Code, unavailable.Message, "57P03", 0, StatusCodes.Status503ServiceUnavailable, TimeSpan.FromSeconds(1));
 
     private static string MapCode(string code, string sqlState) => (code, sqlState) switch
     {
@@ -96,7 +87,7 @@ public sealed record SqlRefusal(
     {
         "not_authorized" => StatusCodes.Status403Forbidden,
         "storage_busy" => StatusCodes.Status503ServiceUnavailable,
-        "strong_required" or "serialization_conflict" => StatusCodes.Status409Conflict,
+        "strong_required" => StatusCodes.Status409Conflict,
         "storage_corrupted" or "io_error" => StatusCodes.Status503ServiceUnavailable,
         _ => StatusCodes.Status400BadRequest,
     };

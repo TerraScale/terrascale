@@ -14,8 +14,6 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
 
     public void TrackDatabase(Ulid databaseId) => databases.Track(databaseId);
 
-    public void UntrackDatabase(Ulid databaseId) => databases.Untrack(databaseId);
-
     public CausalBookmark CurrentBookmark(Ulid databaseId) => databases.Current(databaseId);
 
     public async ValueTask<ClusterWaitBookmarkOutcome> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
@@ -190,19 +188,16 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
     private static ClusterWriteOutcome Durable(SqlWriteResult written, InRegionReplicationOutcome durable) => durable switch
     {
         InRegionReplicated => written,
-        ClusterUnavailable unavailable => QuorumUnconfirmed(unavailable.Message),
-        ClusterTimeout timeout => QuorumUnconfirmed(timeout.Message),
+        ClusterUnavailable unavailable => new ClusterUnavailable(string.Concat("committed locally; in-region quorum unconfirmed: ", unavailable.Message), "in_region_quorum_unconfirmed"),
+        ClusterTimeout timeout => timeout,
     };
 
     private static ClusterCommitTransactionOutcome Durable(CommitMetadata commit, InRegionReplicationOutcome durable) => durable switch
     {
         InRegionReplicated => commit,
-        ClusterUnavailable unavailable => QuorumUnconfirmed(unavailable.Message),
-        ClusterTimeout timeout => QuorumUnconfirmed(timeout.Message),
+        ClusterUnavailable unavailable => new ClusterUnavailable(string.Concat("committed locally; in-region quorum unconfirmed: ", unavailable.Message), "in_region_quorum_unconfirmed"),
+        ClusterTimeout timeout => timeout,
     };
-
-    private static ClusterUnavailable QuorumUnconfirmed(string reason) =>
-        new(string.Concat("committed locally; in-region quorum unconfirmed: ", reason), "in_region_quorum_unconfirmed");
 
     private static string Reason(StrongRequiredReason reason) => reason switch
     {
@@ -215,7 +210,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
 
 public sealed class UpgradingTransaction(ISqlDatabaseSession session, ISqlTransaction inner) : ISqlTransaction
 {
-    private readonly List<(SqlStatement Statement, SqlResultSet Result)> _statements = [];
+    private readonly List<SqlStatement> _statements = [];
     private ISqlTransaction _inner = inner;
 
     public Ulid TxId => _inner.TxId;
@@ -251,10 +246,7 @@ public sealed class UpgradingTransaction(ISqlDatabaseSession session, ISqlTransa
 
     private TransactionExecuteResult Recorded(SqlStatement statement, SqlResultSet result)
     {
-        if (Options.Mode == ConsistencyMode.Fast)
-        {
-            _statements.Add((statement, result));
-        }
+        _statements.Add(statement);
         return result;
     }
 
@@ -276,25 +268,20 @@ public sealed class UpgradingTransaction(ISqlDatabaseSession session, ISqlTransa
     {
         _inner = strong;
         Upgraded = true;
-        for (var index = 0; index < _statements.Count; index++)
+        foreach (var recorded in _statements)
         {
-            var (recorded, previous) = _statements[index];
             var replayed = await strong.ExecuteAsync(recorded, cancellationToken);
-            TransactionExecuteResult? failure = replayed switch
+            var succeeded = replayed switch
             {
-                SqlResultSet result when SameResult(previous, result) => (TransactionExecuteResult?)null,
-                SqlResultSet => (TransactionExecuteResult)new SqlError("serialization_conflict", "transaction replay changed a result already returned; the transaction was rolled back", "40001", index, 0),
-                SqlError or StorageBusy or StorageTimeout => replayed,
+                SqlResultSet => true,
+                SqlError or StorageBusy or StorageTimeout => false,
             };
-            if (failure is { } refused)
+            if (!succeeded)
             {
-                _statements.Clear();
-                await strong.RollbackAsync(CancellationToken.None);
-                return refused;
+                return replayed;
             }
         }
 
-        _statements.Clear();
         var executed = await strong.ExecuteAsync(statement, cancellationToken);
         return executed switch
         {
@@ -304,11 +291,4 @@ public sealed class UpgradingTransaction(ISqlDatabaseSession session, ISqlTransa
             StorageTimeout timeout => timeout,
         };
     }
-
-    private static bool SameResult(SqlResultSet first, SqlResultSet second) =>
-        first.RowsAffected == second.RowsAffected
-        && first.LastInsertRowId == second.LastInsertRowId
-        && first.Columns.SequenceEqual(second.Columns)
-        && first.Rows.Count == second.Rows.Count
-        && first.Rows.Zip(second.Rows).All(static rows => rows.First.SequenceEqual(rows.Second));
 }

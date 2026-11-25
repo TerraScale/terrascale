@@ -37,16 +37,6 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         return new DatabaseGateLease(gate);
     }
 
-    internal async ValueTask<ArchiveManifestOutcome> ReadCurrentAsync(Ulid databaseId, CancellationToken cancellationToken)
-    {
-        var loaded = await FetchRemoteAsync(databaseId, cancellationToken);
-        return loaded switch
-        {
-            CachedManifest fresh => fresh.Manifest,
-            ContinuityUnavailable unavailable => unavailable,
-        };
-    }
-
     internal async ValueTask<ArchiveManifestOutcome> LoadAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         if (_cache.TryGetValue(databaseId, out var cached))

@@ -49,12 +49,6 @@ internal static class HostModules
         {
             services.AddSingleton<ClusterSessions>();
             services.AddTerraBaseCluster(cluster, static provider => provider.GetRequiredService<ClusterSessions>().ResolveAsync, clock);
-            services.AddSingleton<ArchiveCatchUp>(static provider => provider.GetRequiredService<ClusterSessions>().CatchUpFromArchiveAsync);
-            services.AddSingleton<ChangefeedPeerAuthorization>(static provider =>
-            {
-                var topology = provider.GetRequiredService<ClusterTopology>();
-                return context => context.IsPlatform || topology.IsPeer(context);
-            });
             services.AddSingleton<IContinuityDatabaseCatalog>(static provider => provider.GetRequiredService<ClusterSessions>());
             services.AddSingleton<IQuicEndpoints, InternalSqlQuicEndpoint>();
             services.AddSingleton<IQuicEndpoints, RewindDatabaseQuicEndpoint>();

@@ -8,73 +8,44 @@ public readonly union DatabaseResolveOutcome(ISqlDatabaseSession, DatabaseNotFou
 
 public delegate ValueTask<DatabaseResolveOutcome> DatabaseSessionResolver(Ulid databaseId, CancellationToken cancellationToken);
 
-public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvider timeProvider)
+public sealed class ClusterDatabases(DatabaseSessionResolver resolver)
 {
     private const int CatchUpQueueCapacity = 1024;
-    private const int PeriodicBatchSize = 32;
 
-    private readonly ConcurrentDictionary<Ulid, TrackedDatabase> _tracked = new();
+    private readonly ConcurrentDictionary<Ulid, CausalBookmark> _bookmarks = new();
     private readonly Channel<Ulid> _catchUp = Channel.CreateBounded<Ulid>(new BoundedChannelOptions(CatchUpQueueCapacity)
     {
-        FullMode = BoundedChannelFullMode.Wait,
+        FullMode = BoundedChannelFullMode.DropWrite,
         SingleReader = true,
     });
 
+    public IReadOnlyCollection<Ulid> Tracked => [.. _bookmarks.Keys];
+
     internal ChannelReader<Ulid> CatchUpRequests => _catchUp.Reader;
 
-    public void Track(Ulid databaseId) => _ = _tracked.GetOrAdd(databaseId, static _ => new TrackedDatabase());
+    public void Track(Ulid databaseId) => _ = _bookmarks.TryAdd(databaseId, CausalBookmark.Empty);
 
-    public void Untrack(Ulid databaseId) => _ = _tracked.TryRemove(databaseId, out _);
-
-    public CausalBookmark Current(Ulid databaseId) =>
-        _tracked.TryGetValue(databaseId, out var tracked) ? tracked.Bookmark : CausalBookmark.Empty;
+    public CausalBookmark Current(Ulid databaseId) => _bookmarks.GetValueOrDefault(databaseId, CausalBookmark.Empty);
 
     public void Observe(Ulid databaseId, CausalBookmark bookmark)
     {
         ArgumentNullException.ThrowIfNull(bookmark);
-        if (_tracked.TryGetValue(databaseId, out var tracked))
-        {
-            tracked.Observe(bookmark);
-        }
+        _ = _bookmarks.AddOrUpdate(databaseId, bookmark, (_, existing) => existing.Merge(bookmark));
     }
-
-    internal IReadOnlyList<Ulid> Due()
-    {
-        var now = timeProvider.GetUtcNow();
-        return [.. _tracked.Select(static entry => (entry.Key, Due: entry.Value.NextSync))
-            .Where(entry => entry.Due <= now)
-            .OrderBy(static entry => entry.Due)
-            .Take(PeriodicBatchSize)
-            .Select(static entry => entry.Key)];
-    }
-
-    internal TrackedDatabase? BeginSync(Ulid databaseId, bool onDemand) =>
-        _tracked.TryGetValue(databaseId, out var tracked) && tracked.BeginSync(timeProvider.GetUtcNow(), onDemand) ? tracked : null;
 
     public bool RequestCatchUp(Ulid databaseId)
     {
-        if (!_tracked.TryGetValue(databaseId, out var tracked) || !tracked.QueueSync())
-        {
-            return false;
-        }
-
-        if (_catchUp.Writer.TryWrite(databaseId))
-        {
-            return true;
-        }
-
-        tracked.DeferQueuedSync(timeProvider.GetUtcNow());
-        return false;
+        Track(databaseId);
+        return _catchUp.Writer.TryWrite(databaseId);
     }
 
     public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
-        _tracked.TryGetValue(databaseId, out var tracked);
         var resolved = await resolver(databaseId, cancellationToken);
         return resolved switch
         {
             ISqlDatabaseSession session => Observed(session),
-            DatabaseNotFound notFound => Missing(notFound, tracked),
+            DatabaseNotFound notFound => notFound,
             ClusterUnavailable unavailable => unavailable,
         };
     }
@@ -83,118 +54,6 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
     {
         Observe(session.DatabaseId, session.CurrentBookmark);
         return session;
-    }
-
-    private DatabaseResolveOutcome Missing(DatabaseNotFound missing, TrackedDatabase? tracked)
-    {
-        if (tracked is not null)
-        {
-            _ = _tracked.TryRemove(KeyValuePair.Create(missing.DatabaseId, tracked));
-        }
-
-        return missing;
-    }
-
-    internal sealed class TrackedDatabase
-    {
-        private static readonly TimeSpan InitialInterval = TimeSpan.FromSeconds(2);
-        private static readonly TimeSpan IdleInterval = TimeSpan.FromMinutes(5);
-
-        private readonly Lock _gate = new();
-        private CausalBookmark _bookmark = CausalBookmark.Empty;
-        private DateTimeOffset _nextSync = DateTimeOffset.MinValue;
-        private TimeSpan _interval = InitialInterval;
-        private DateTimeOffset _notBefore;
-        private bool _resync;
-        private bool _syncing;
-        private bool _queued;
-
-        public CausalBookmark Bookmark => Volatile.Read(ref _bookmark);
-
-        public DateTimeOffset NextSync
-        {
-            get
-            {
-                lock (_gate)
-                {
-                    return _syncing ? DateTimeOffset.MaxValue : _nextSync;
-                }
-            }
-        }
-
-        public void Observe(CausalBookmark bookmark)
-        {
-            lock (_gate)
-            {
-                Volatile.Write(ref _bookmark, _bookmark.Merge(bookmark));
-            }
-        }
-
-        public bool BeginSync(DateTimeOffset now, bool onDemand)
-        {
-            lock (_gate)
-            {
-                if (onDemand)
-                {
-                    _queued = false;
-                }
-
-                if (_syncing)
-                {
-                    _resync |= onDemand;
-                    return false;
-                }
-
-                if (onDemand && now < _notBefore)
-                {
-                    _nextSync = _notBefore;
-                    return false;
-                }
-
-                if (!onDemand && _nextSync > now)
-                {
-                    return false;
-                }
-
-                _syncing = true;
-                return true;
-            }
-        }
-
-        public void EndSync(DateTimeOffset now, bool progressed)
-        {
-            lock (_gate)
-            {
-                _syncing = false;
-                _interval = progressed ? InitialInterval : TimeSpan.FromTicks(Math.Min(_interval.Ticks * 2, IdleInterval.Ticks));
-                _notBefore = now + InitialInterval;
-                _nextSync = _resync ? _notBefore : now + _interval;
-                _resync = false;
-            }
-        }
-
-        public bool QueueSync()
-        {
-            lock (_gate)
-            {
-                if (_queued)
-                {
-                    return false;
-                }
-
-                _queued = true;
-                return true;
-            }
-        }
-
-        public void DeferQueuedSync(DateTimeOffset now)
-        {
-            lock (_gate)
-            {
-                _queued = false;
-                _nextSync = now;
-            }
-        }
     }
 }
 

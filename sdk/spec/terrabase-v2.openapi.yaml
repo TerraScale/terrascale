@@ -66,21 +66,7 @@ paths:
         '429':
           $ref: '#/components/responses/RetryableError'
         '503':
-          description: >-
-            The service could not complete the request or confirm its outcome. A pre-execution refusal may include
-            Retry-After. in_region_quorum_unconfirmed means the write committed locally and its in-region quorum is
-            unconfirmed. For this code, write_outcome_unknown, or commit_uncertain, reconcile the write outcome
-            before repeating the request. These responses omit Retry-After.
-          headers:
-            Retry-After:
-              description: Delay in seconds when the server explicitly permits retry after a pre-execution refusal.
-              schema:
-                type: integer
-                minimum: 0
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiErrorEnvelope'
+          $ref: '#/components/responses/RetryableError'
         '504':
           $ref: '#/components/responses/Error'
   /v1/projects/{project}/databases/{database}/sql/ws:
@@ -1025,8 +1011,7 @@ components:
           type: string
           description: >-
             Stable error code, for example serialization_conflict (409, SQLSTATE 40001, retry the whole transaction),
-            in_region_quorum_unconfirmed, write_outcome_unknown, and commit_uncertain (503, SQLSTATE 08007, reconcile
-            before repeating), syntax_error, unique_violation,
+            write_outcome_unknown (503, SQLSTATE 08007, reconcile before repeating), syntax_error, unique_violation,
             not_found, unauthorized, forbidden, quota_exceeded, storage_busy, request_timeout.
         message:
           type: string

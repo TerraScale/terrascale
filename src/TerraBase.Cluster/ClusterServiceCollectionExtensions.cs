@@ -35,7 +35,6 @@ public static class ClusterServiceCollectionExtensions
             _ = services.AddSingleton<CommitFinalizer>();
             _ = services.AddSingleton<StrongParticipant>();
             _ = services.AddSingleton<StrongVoteCollector>();
-            _ = services.AddSingleton<StrongCommitRecovery>();
             _ = services.AddSingleton<StrongCoordinator>();
             _ = services.AddSingleton<AntiEntropyService>();
             _ = services.AddSingleton<ClusterCoordinator>();

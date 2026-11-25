@@ -60,8 +60,6 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
     private readonly Dictionary<Ulid, TaskCompletionSource> _released = [];
     private readonly HashSet<Ulid> _finalized = [];
     private readonly Queue<Ulid> _finalizedOrder = new();
-    private readonly HashSet<(Ulid DatabaseId, Ulid TxId, string Coordinator)> _remoteAborts = [];
-    private readonly Queue<(Ulid DatabaseId, Ulid TxId, string Coordinator)> _remoteAbortOrder = new();
     private long _expired;
     private long _wounded;
 
@@ -87,7 +85,7 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
         ArgumentNullException.ThrowIfNull(candidate);
         lock (_gate)
         {
-            if (_finalized.Contains(candidate.TxId) || _remoteAborts.Contains((candidate.DatabaseId, candidate.TxId, candidate.CoordinatorNodeId)))
+            if (_finalized.Contains(candidate.TxId))
             {
                 return new LockDenied(candidate);
             }
@@ -101,9 +99,7 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
             EvictExpired(holders);
             if (holders.TryGetValue(candidate.TxId, out var existing))
             {
-                return string.Equals(existing.CoordinatorNodeId, candidate.CoordinatorNodeId, StringComparison.Ordinal)
-                    ? new LockGranted(existing)
-                    : new LockDenied(existing);
+                return new LockGranted(existing);
             }
 
             List<StrongLockHolder> conflicts = [.. holders.Values.Where(candidate.ConflictsWith)];
@@ -176,28 +172,6 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
         }
     }
 
-    internal void AbortFrom(Ulid databaseId, Ulid txId, string coordinator)
-    {
-        lock (_gate)
-        {
-            var key = (databaseId, txId, coordinator);
-            if (_remoteAborts.Add(key))
-            {
-                _remoteAbortOrder.Enqueue(key);
-                if (_remoteAbortOrder.Count > FinalizedCapacity)
-                {
-                    _ = _remoteAborts.Remove(_remoteAbortOrder.Dequeue());
-                }
-            }
-
-            if (_databases.TryGetValue(databaseId, out var holders) && holders.TryGetValue(txId, out var holder)
-                && string.Equals(holder.CoordinatorNodeId, coordinator, StringComparison.Ordinal))
-            {
-                _ = Release(databaseId, txId);
-            }
-        }
-    }
-
     public void Wound(StrongLockHolder victim)
     {
         ArgumentNullException.ThrowIfNull(victim);
@@ -239,18 +213,11 @@ internal enum StrongTransactionState
     Aborted = 2,
 }
 
-internal sealed class StrongTransactionHandle(StrongPreparePayload payload)
+internal sealed class StrongTransactionHandle(Ulid txId)
 {
     private int _state;
 
-    private readonly ConcurrentDictionary<string, byte> _participants = new(StringComparer.Ordinal);
-
-    public Ulid TxId => payload.TxId;
-
-    public void DispatchTo(string nodeId) => _ = _participants.TryAdd(nodeId, 0);
-
-    public bool CanWound(StrongWoundPayload wound, string nodeId) =>
-        wound.DatabaseId == payload.DatabaseId && wound.WinnerPriority < payload.Priority && _participants.ContainsKey(nodeId);
+    public Ulid TxId { get; } = txId;
 
     public StrongTransactionState State => (StrongTransactionState)Volatile.Read(ref _state);
 
@@ -277,23 +244,10 @@ public sealed class StrongTransactionRegistry
 
     public int Active => _active.Count;
 
-    internal StrongTransactionHandle Register(StrongPreparePayload payload)
+    internal StrongTransactionHandle Register(Ulid txId)
     {
-        var handle = new StrongTransactionHandle(payload);
-        return _active.GetOrAdd(payload.TxId, handle);
-    }
-
-    internal WoundDecision? TryWoundFrom(StrongWoundPayload wound, string nodeId)
-    {
-        if (_active.TryGetValue(wound.TxId, out var handle))
-        {
-            return handle.CanWound(wound, nodeId) ? handle.TryAbort() : null;
-        }
-
-        lock (_gate)
-        {
-            return _committed.Contains(wound.TxId) ? WoundDecision.Committed : WoundDecision.Aborted;
-        }
+        var handle = new StrongTransactionHandle(txId);
+        return _active.GetOrAdd(txId, handle);
     }
 
     public WoundDecision TryWound(Ulid txId)

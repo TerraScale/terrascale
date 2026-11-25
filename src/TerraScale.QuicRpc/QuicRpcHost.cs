@@ -9,7 +9,7 @@ internal readonly union UnaryDispatchOutcome(FrameBuilder, QuicRemoteError);
 
 internal readonly union StreamDispatchOutcome(FrameBuilder, QuicRemoteError);
 
-public readonly union PushDispatchOutcome(QuicSent, QuicRemoteError);
+internal readonly union PushDispatchOutcome(QuicSent, QuicRemoteError);
 
 internal delegate ValueTask<UnaryDispatchOutcome> UnaryDispatch(QuicCallContext context, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken);
 
@@ -93,7 +93,7 @@ public sealed class QuicRpcHost : IAsyncDisposable
         return this;
     }
 
-    public QuicRpcHost MapPush<TMsg>(ushort messageTypeId, Func<QuicCallContext, TMsg, CancellationToken, ValueTask<PushDispatchOutcome>> handler)
+    public QuicRpcHost MapPush<TMsg>(ushort messageTypeId, Func<QuicCallContext, TMsg, CancellationToken, ValueTask> handler)
         where TMsg : IBinaryMessage<TMsg>
     {
         ArgumentNullException.ThrowIfNull(handler);
@@ -104,7 +104,8 @@ public sealed class QuicRpcHost : IAsyncDisposable
                 return Malformed(context);
             }
 
-            return await handler(context, message, cancellationToken);
+            await handler(context, message, cancellationToken);
+            return new QuicSent();
         };
         lock (_gate)
         {

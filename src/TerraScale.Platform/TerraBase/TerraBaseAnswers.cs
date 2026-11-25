@@ -35,7 +35,6 @@ public static class TerraBaseAnswers
                 or StatusCodes.Status422UnprocessableEntity or StatusCodes.Status504GatewayTimeout => new SqlFailure(status, error),
             StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden =>
                 new PlatformUnavailable("TerraBase refused the platform peer credential", "peer_credential_refused"),
-            StatusCodes.Status503ServiceUnavailable => new PlatformUnavailable(error.Message, error.Code, error.Details),
             _ => new PlatformUnavailable(error.Message, error.Code),
         };
     }

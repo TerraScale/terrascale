@@ -6,7 +6,7 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-public sealed class StrongParticipant(ClusterOptions options, ClusterTopology topology, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, AntiEntropyService antiEntropy, QuicRpcClient client, HlcClock clock, ILogger<StrongParticipant> logger)
+public sealed class StrongParticipant(ClusterOptions options, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, AntiEntropyService antiEntropy, QuicRpcClient client, HlcClock clock, ILogger<StrongParticipant> logger)
 {
     private const int MaxWoundRounds = 4;
 
@@ -155,26 +155,20 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
 
     private async ValueTask<QuicHandlerOutcome<StrongPrepareResponseMessage>> HandlePrepareAsync(QuicCallContext context, StrongPrepareMessage message, CancellationToken cancellationToken)
     {
-        if (!topology.IsPeer(context, message.CoordinatorNodeId)
-            || !string.Equals(context.RemoteRegion, message.Payload.OriginRegion, StringComparison.Ordinal))
-        {
-            return ClusterTopology.PeerForbidden();
-        }
-
         var resolved = await databases.ResolveAsync(message.Payload.DatabaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => await PrepareLeasedAsync(session, message, context.RemoteNodeId, cancellationToken),
+            ISqlDatabaseSession session => await PrepareLeasedAsync(session, message, cancellationToken),
             DatabaseNotFound notFound => new QuicRemoteError("database_not_found", notFound.Message),
             ClusterUnavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
         };
     }
 
-    private async ValueTask<QuicHandlerOutcome<StrongPrepareResponseMessage>> PrepareLeasedAsync(ISqlDatabaseSession session, StrongPrepareMessage message, string coordinatorNodeId, CancellationToken cancellationToken)
+    private async ValueTask<QuicHandlerOutcome<StrongPrepareResponseMessage>> PrepareLeasedAsync(ISqlDatabaseSession session, StrongPrepareMessage message, CancellationToken cancellationToken)
     {
         await using (session)
         {
-            var vote = await PrepareAsync(session, message.Payload, coordinatorNodeId, message.OriginBookmark, cancellationToken);
+            var vote = await PrepareAsync(session, message.Payload, message.CoordinatorNodeId, message.OriginBookmark, cancellationToken);
             return vote switch
             {
                 Prepared prepared => Respond(prepared),
@@ -192,11 +186,7 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
 
     private ValueTask<QuicHandlerOutcome<StrongWoundResponseMessage>> HandleWoundAsync(QuicCallContext context, StrongWoundMessage message, CancellationToken cancellationToken)
     {
-        var payload = message.Payload;
-        QuicHandlerOutcome<StrongWoundResponseMessage> outcome = topology.IsPeer(context)
-            && registry.TryWoundFrom(payload, context.RemoteNodeId) is { } decision
-                ? new StrongWoundResponseMessage(decision)
-                : ClusterTopology.PeerForbidden();
-        return ValueTask.FromResult(outcome);
+        var decision = registry.TryWound(message.Payload.TxId);
+        return ValueTask.FromResult<QuicHandlerOutcome<StrongWoundResponseMessage>>(new StrongWoundResponseMessage(decision));
     }
 }

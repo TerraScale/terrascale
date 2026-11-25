@@ -13,7 +13,7 @@ public sealed record InRegionReplicated;
 
 public readonly union InRegionReplicationOutcome(InRegionReplicated, ClusterUnavailable, ClusterTimeout);
 
-public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology topology, QuicRpcClient client, DeltaReplicator replicator, ILoggerFactory loggerFactory) : IAsyncDisposable
+public sealed class InRegionRaftRouter(ClusterOptions options, QuicRpcClient client, DeltaReplicator replicator, ILoggerFactory loggerFactory) : IAsyncDisposable
 {
     private const long SnapshotThreshold = 4096;
 
@@ -180,11 +180,6 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
     private async ValueTask<QuicHandlerOutcome<RaftVoteResponse>> HandleVoteAsync(QuicCallContext context, RaftVoteMessage message, CancellationToken cancellationToken)
     {
-        if (!topology.IsRegionPeer(context) || message.Sender != RaftIdentity.For(context.RemoteNodeId))
-        {
-            return ClusterTopology.PeerForbidden();
-        }
-
         if (Shard(message.Shard) is not { } shard)
         {
             return NotReady();
@@ -200,11 +195,6 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
     private async ValueTask<QuicHandlerOutcome<RaftAppendResponse>> HandleAppendAsync(QuicCallContext context, RaftAppendMessage message, CancellationToken cancellationToken)
     {
-        if (!topology.IsRegionPeer(context))
-        {
-            return ClusterTopology.PeerForbidden();
-        }
-
         if (Shard(message.Shard) is not { } shard)
         {
             return NotReady();
@@ -217,30 +207,10 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
                 return new QuicRemoteError(QuicRemoteError.MalformedRequest, "a raft proposal carries exactly one entry");
             }
 
-            if (ReplicatedCommit.Decode(message.Entries[0].Payload.Span) is not { } proposed || ShardOf(proposed.DatabaseId) != message.Shard)
-            {
-                return new QuicRemoteError(QuicRemoteError.MalformedRequest, "raft proposal is not a commit for this shard");
-            }
-
-            if (!topology.IsPeerOrigin(context, proposed.Commit.OriginRegion))
-            {
-                return ClusterTopology.PeerForbidden();
-            }
-
             var status = shard.Leader is { IsRemote: false }
                 ? await RaftBoundary.ReplicateAsync(shard, message.Entries[0].Payload.ToArray(), cancellationToken, cancellationToken)
                 : RaftProposeStatus.NotLeader;
             return new RaftAppendResponse(shard.CurrentTerm, 0, 0, status);
-        }
-
-        if (message.Kind != RaftAppendKind.Append)
-        {
-            return new QuicRemoteError(QuicRemoteError.MalformedRequest, "unknown raft append kind");
-        }
-
-        if (message.Sender != RaftIdentity.For(context.RemoteNodeId) || message.Entries.Any(entry => !IsRegionEntry(message.Shard, entry)))
-        {
-            return ClusterTopology.PeerForbidden();
         }
 
         return await shard.HandleAppendAsync(message, cancellationToken);
@@ -248,11 +218,6 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
     private async ValueTask<QuicHandlerOutcome<RaftAppendResponse>> HandleSnapshotAsync(QuicCallContext context, RaftSnapshotMessage message, CancellationToken cancellationToken)
     {
-        if (!topology.IsRegionPeer(context) || message.Sender != RaftIdentity.For(context.RemoteNodeId))
-        {
-            return ClusterTopology.PeerForbidden();
-        }
-
         if (Shard(message.Shard) is not { } shard)
         {
             return NotReady();
@@ -260,10 +225,6 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
         return await shard.HandleSnapshotAsync(message, cancellationToken);
     }
-
-    private bool IsRegionEntry(ushort shard, RaftWireEntry entry) =>
-        entry.IsConfiguration || entry.Payload.IsEmpty || (ReplicatedCommit.Decode(entry.Payload.Span) is { } replicated
-            && ShardOf(replicated.DatabaseId) == shard && topology.IsRegionOrigin(options.Region, replicated.Commit.OriginRegion));
 
     private static QuicRemoteError NotReady() => new("raft_not_ready", "in-region raft shard is not started on this node");
 }

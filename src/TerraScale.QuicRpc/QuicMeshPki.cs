@@ -104,7 +104,7 @@ public static class QuicMeshPki
         return CreateAuthority(key);
     }
 
-    public static QuicMeshCertificates DeriveNode(ReadOnlySpan<byte> secret, string nodeId, string region, TimeProvider timeProvider, bool isPlatform = false)
+    public static QuicMeshCertificates DeriveNode(ReadOnlySpan<byte> secret, string nodeId, string region, TimeProvider timeProvider)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
         ArgumentException.ThrowIfNullOrWhiteSpace(region);
@@ -120,11 +120,6 @@ public static class QuicMeshPki
         var request = new CertificateRequest(name.Build(), nodeKey, HashAlgorithmName.SHA256);
         var alternativeNames = new SubjectAlternativeNameBuilder();
         alternativeNames.AddUri(QuicMeshIdentity.UriFor(nodeId, region));
-        if (isPlatform)
-        {
-            alternativeNames.AddUri(new Uri(QuicMeshIdentity.PlatformUri));
-        }
-
         request.CertificateExtensions.Add(alternativeNames.Build(critical: false));
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
         request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyAgreement, true));
@@ -138,7 +133,7 @@ public static class QuicMeshPki
         using var withKey = issued.CopyWithPrivateKey(nodeKey);
         var certificate = X509CertificateLoader.LoadPkcs12(withKey.Export(X509ContentType.Pkcs12), null);
         var secretCopy = secret.ToArray();
-        return new QuicMeshCertificates(certificate, [authority], [], tp => DeriveNode(secretCopy, nodeId, region, tp, isPlatform));
+        return new QuicMeshCertificates(certificate, [authority], [], tp => DeriveNode(secretCopy, nodeId, region, tp));
     }
 
     public static MeshPkiOutcome LoadPem(string certificatePath, string keyPath, string authorityPath, string nodeId, string region, TimeProvider timeProvider)

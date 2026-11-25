@@ -11,32 +11,25 @@ public sealed record ChangefeedPeerTimeout(string Message, string Code);
 
 public readonly union ChangefeedStreamItem(ChangefeedEntry, ChangefeedPeerUnavailable, ChangefeedPeerTimeout, QuicRemoteError);
 
-public delegate bool ChangefeedPeerAuthorization(QuicCallContext context);
-
-public sealed class ChangefeedQuicEndpoint(ChangefeedHub hub, ChangefeedPeerAuthorization authorize) : IQuicEndpoints
+public static class ChangefeedQuicEndpointExtensions
 {
-    public void Map(QuicRpcHost host)
+    extension(QuicRpcHost host)
     {
-        ArgumentNullException.ThrowIfNull(host);
-        _ = host.MapServerStream<ChangefeedSubscribeMessage, ChangefeedEntryMessage>(QuicMessageType.ChangefeedSubscribe, HandleAsync);
-    }
-
-    private IAsyncEnumerable<QuicHandlerOutcome<ChangefeedEntryMessage>> HandleAsync(
-        QuicCallContext context, ChangefeedSubscribeMessage request, CancellationToken cancellationToken)
-    {
-        if (!authorize(context))
+        public QuicRpcHost MapChangefeedEndpoints(IChangefeedHub hub)
         {
-            return RejectAsync(new QuicRemoteError("forbidden", "changefeed requires an authenticated platform service or cluster peer"));
+            ArgumentNullException.ThrowIfNull(hub);
+            return host.MapServerStream<ChangefeedSubscribeMessage, ChangefeedEntryMessage>(
+                QuicMessageType.ChangefeedSubscribe,
+                (_, request, cancellationToken) => request.ToSubscription() switch
+                {
+                    ChangefeedSubscription subscription => StreamAsync(hub, subscription, cancellationToken),
+                    QuicRemoteError rejected => RejectAsync(rejected),
+                });
         }
-
-        return request.ToSubscription() switch
-        {
-            ChangefeedSubscription subscription => StreamAsync(subscription, cancellationToken),
-            QuicRemoteError rejected => RejectAsync(rejected),
-        };
     }
 
-    private async IAsyncEnumerable<QuicHandlerOutcome<ChangefeedEntryMessage>> StreamAsync(
+    private static async IAsyncEnumerable<QuicHandlerOutcome<ChangefeedEntryMessage>> StreamAsync(
+        IChangefeedHub hub,
         ChangefeedSubscription subscription,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -50,6 +43,15 @@ public sealed class ChangefeedQuicEndpoint(ChangefeedHub hub, ChangefeedPeerAuth
     {
         await Task.CompletedTask;
         yield return rejected;
+    }
+}
+
+public sealed class ChangefeedQuicEndpoint(ChangefeedHub hub) : IQuicEndpoints
+{
+    public void Map(QuicRpcHost host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        _ = host.MapChangefeedEndpoints(hub);
     }
 }
 

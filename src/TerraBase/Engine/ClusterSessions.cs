@@ -5,7 +5,6 @@ using TerraBase.Features.InternalApi;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraScale.Contracts.Cluster;
-using TerraScale.Contracts.Continuity;
 using TerraScale.Contracts.Quic;
 using TerraScale.QuicRpc;
 using ZLogger;
@@ -39,35 +38,6 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
             DatabasePlacement placement => await OpenPlacedAsync(databaseId, placement, cancellationToken),
             ResourceNotFound missing => new DatabaseNotFound(databaseId, missing.Message),
             BackendUnavailable unavailable => new ClusterUnavailable(unavailable.Message, unavailable.Code),
-        };
-    }
-
-    public async ValueTask<ArchiveCatchUpOutcome> CatchUpFromArchiveAsync(ISqlDatabaseSession session, CausalBookmark target, CancellationToken cancellationToken)
-    {
-        var before = session.CurrentBookmark;
-        var localOrigin = Cluster.StorageOrigin;
-        var remoteTarget = CausalBookmark.Create(target.Entries.Where(entry => !string.Equals(entry.Key, localOrigin, StringComparison.Ordinal)));
-        var continuity = services.GetRequiredService<BackupContinuityService>();
-        var recovered = await continuity.CatchUpAsync(session, remoteTarget, ReplayArchiveSegmentAsync, cancellationToken);
-        return recovered switch
-        {
-            CausalBookmark after => new ArchiveCatchUpProgress((int)Math.Min(after.Entries.Sum(entry => Math.Clamp(entry.Value - before.Get(entry.Key), 0, int.MaxValue)), int.MaxValue)),
-            ContinuityUnavailable unavailable => new ClusterUnavailable(unavailable.Message, unavailable.Code),
-        };
-    }
-
-    private async ValueTask<ContinuityUnavailable?> ReplayArchiveSegmentAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> entries, CancellationToken cancellationToken)
-    {
-        var replicator = services.GetRequiredService<DeltaReplicator>();
-        var applied = await replicator.ApplyToSessionAsync(session, entries, cancellationToken);
-        return applied switch
-        {
-            RemoteApplyOutcome => null,
-            DatabaseNotFound missing => new ContinuityUnavailable(missing.Message, "database_not_found"),
-            SchemaMismatch => new ContinuityUnavailable("schema changed during archive catch-up", "serialization_conflict"),
-            StorageCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, "storage_corrupted"),
-            StorageBusy busy => new ContinuityUnavailable(busy.Message, "storage_busy"),
-            ClusterUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
         };
     }
 

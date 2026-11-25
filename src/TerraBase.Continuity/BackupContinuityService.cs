@@ -30,10 +30,6 @@ internal sealed record ArchiveTruncated;
 
 internal readonly union ArchiveTruncateOutcome(ArchiveTruncated, ContinuityUnavailable);
 
-public delegate ValueTask<ContinuityUnavailable?> ReplayArchiveSegment(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> entries, CancellationToken cancellationToken);
-
-public readonly union ContinuityCatchUpOutcome(CausalBookmark, ContinuityUnavailable);
-
 public readonly union ContinuityRewindOutcome(CausalBookmark, ContinuityUnavailable);
 
 public sealed class BackupContinuityService(
@@ -315,88 +311,6 @@ public sealed class BackupContinuityService(
         DateTimeOffset => null,
         CausalBookmark => null,
     };
-
-    public async ValueTask<ContinuityCatchUpOutcome> CatchUpAsync(ISqlDatabaseSession session, CausalBookmark target, ReplayArchiveSegment replay, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-        ArgumentNullException.ThrowIfNull(target);
-        if (!manifests.IsEnabled)
-        {
-            return Disabled;
-        }
-
-        using var lease = await manifests.AcquireAsync(session.DatabaseId, cancellationToken);
-        var loaded = await manifests.ReadCurrentAsync(session.DatabaseId, cancellationToken);
-        return loaded switch
-        {
-            ArchiveManifest manifest => await ReplayArchivedSegmentsAsync(session, target, manifest, replay, cancellationToken),
-            ContinuityUnavailable unavailable => unavailable,
-        };
-    }
-
-    private async ValueTask<ContinuityCatchUpOutcome> ReplayArchivedSegmentsAsync(
-        ISqlDatabaseSession session, CausalBookmark target, ArchiveManifest manifest, ReplayArchiveSegment replay, CancellationToken cancellationToken)
-    {
-        const int maxSegments = 32;
-        var before = session.CurrentBookmark;
-        var imported = 0;
-        foreach (var group in manifest.Segments.GroupBy(static segment => segment.Origin, StringComparer.Ordinal))
-        {
-            var through = target.Get(group.Key);
-            var cursor = session.CurrentBookmark.Get(group.Key);
-            foreach (var segment in group.OrderBy(static segment => segment.FirstSequence))
-            {
-                if (cursor >= through || segment.FirstSequence > cursor + 1 || imported >= maxSegments)
-                {
-                    break;
-                }
-
-                if (segment.LastSequence <= cursor)
-                {
-                    continue;
-                }
-
-                if (await ReplayArchivedSegmentAsync(session, segment, replay, cancellationToken) is { } failure)
-                {
-                    return failure;
-                }
-
-                imported++;
-                cursor = segment.LastSequence;
-            }
-        }
-
-        var current = session.CurrentBookmark;
-        return before.Dominates(current)
-            ? new ContinuityUnavailable("the archive has no applicable segments for the commit log gap", "archive_gap")
-            : current;
-    }
-
-    private async ValueTask<ContinuityUnavailable?> ReplayArchivedSegmentAsync(
-        ISqlDatabaseSession session, ArchivedSegment segment, ReplayArchiveSegment replay, CancellationToken cancellationToken)
-    {
-        var fetched = await manifests.Store.GetBytesAsync(segment.Key, cancellationToken);
-        return fetched switch
-        {
-            byte[] bytes => await ReadAndReplayAsync(bytes, cancellationToken),
-            ArchiveObjectMissing missing => new ContinuityUnavailable(missing.Message, missing.Code),
-            ArchiveUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
-            ArchiveTimedOut timeout => new ContinuityUnavailable(timeout.Message, timeout.Code),
-        };
-
-        async ValueTask<ContinuityUnavailable?> ReadAndReplayAsync(byte[] bytes, CancellationToken token)
-        {
-            using var content = new MemoryStream(bytes, writable: false);
-            var descriptor = new CommitLogSegment(session.DatabaseId, segment.Origin, segment.FirstSequence, segment.LastSequence, segment.SizeBytes, segment.SealedAtUtc);
-            var result = await session.ReadArchivedSegmentAsync(descriptor, content, token);
-            return result switch
-            {
-                IReadOnlyList<CommitMetadata> entries => await replay(session, entries, token),
-                InvalidSegment invalid => new ContinuityUnavailable(invalid.Message, invalid.Code),
-                StorageCorrupted corrupted => new ContinuityUnavailable(corrupted.Message, "storage_corrupted"),
-            };
-        }
-    }
 
     public async ValueTask<ContinuityRewindOutcome> RewindLocalAsync(Ulid databaseId, CausalBookmark bookmark, CancellationToken cancellationToken)
     {

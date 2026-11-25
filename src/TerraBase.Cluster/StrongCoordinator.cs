@@ -8,23 +8,22 @@ namespace TerraBase.Cluster;
 
 public readonly union StrongVote(Prepared, Wounded, ReadSetStale, SchemaEpochStale, ClusterUnavailable);
 
-public sealed record StrongVoteTally(int Prepared, int Required, IReadOnlyList<StrongPrepareOutcome> Rejections, int Unreachable, IReadOnlyList<string> RemoteParticipants, long LeaseDeadline, bool WithinLease);
+public sealed record StrongVoteTally(int Prepared, int Required, IReadOnlyList<StrongPrepareOutcome> Rejections, int Unreachable, IReadOnlyList<string> RemoteParticipants, bool WithinLease);
 
 public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology topology, PeerHealthMonitor health, StrongParticipant participant, QuicRpcClient client, TimeProvider timeProvider)
 {
-    internal async ValueTask<StrongVoteTally> CollectAsync(ISqlDatabaseSession session, StrongPreparePayload payload, StrongTransactionHandle handle, CancellationToken cancellationToken)
+    public async ValueTask<StrongVoteTally> CollectAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(payload);
         var started = timeProvider.GetTimestamp();
-        var leaseDeadline = started + (long)(options.StrongLockLease.TotalSeconds * timeProvider.TimestampFrequency);
         var regionCount = topology.Regions.Count;
         var required = topology.RegionQuorum;
         var voteCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var dispatchGate = new Lock();
         var closed = false;
         List<string> dispatched = [];
-        List<Task<RegionVote>> votes = [.. topology.Regions.Select(region => VoteRegionAsync(session, payload, handle, region, dispatchGate, () => closed, dispatched, voteCancel.Token))];
+        List<Task<RegionVote>> votes = [.. topology.Regions.Select(region => VoteRegionAsync(session, payload, region, dispatchGate, () => closed, dispatched, voteCancel.Token, cancellationToken))];
         var prepared = 0;
         var unreachable = 0;
         List<StrongPrepareOutcome> rejections = [];
@@ -55,10 +54,7 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
                 static (task, state) =>
                 {
                     _ = task.Exception;
-                    if (state is CancellationTokenSource source)
-                    {
-                        source.Dispose();
-                    }
+                    ((CancellationTokenSource)state!).Dispose();
                 },
                 voteCancel,
                 CancellationToken.None,
@@ -74,25 +70,25 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         }
 
         var withinLease = timeProvider.GetElapsedTime(started) < options.StrongLockLease / 2;
-        return new StrongVoteTally(prepared, required, rejections, unreachable, remoteParticipants, leaseDeadline, withinLease);
+        return new StrongVoteTally(prepared, required, rejections, unreachable, remoteParticipants, withinLease);
     }
 
     private async Task<RegionVote> VoteRegionAsync(
         ISqlDatabaseSession session,
         StrongPreparePayload payload,
-        StrongTransactionHandle handle,
         string region,
         Lock dispatchGate,
         Func<bool> isClosed,
         List<string> dispatched,
-        CancellationToken cancellationToken)
+        CancellationToken voteToken,
+        CancellationToken callerToken)
     {
         var candidates = topology.StrongCandidates(region, payload.DatabaseId);
         StrongParticipantTarget[] ordered = [.. candidates.OrderByDescending(candidate => candidate.IsLocal || health.IsReachable(candidate.NodeId))];
         StrongVote last = new ClusterUnavailable("no candidate available in region", "region_unreachable");
         foreach (var candidate in ordered)
         {
-            if (cancellationToken.IsCancellationRequested)
+            if (voteToken.IsCancellationRequested)
             {
                 break;
             }
@@ -101,17 +97,24 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
             {
                 lock (dispatchGate)
                 {
-                    if (isClosed() || cancellationToken.IsCancellationRequested)
+                    if (isClosed() || voteToken.IsCancellationRequested)
                     {
                         break;
                     }
 
-                    handle.DispatchTo(candidate.NodeId);
                     dispatched.Add(candidate.NodeId);
                 }
             }
 
-            var vote = await VoteAsync(session, payload, candidate, cancellationToken);
+            StrongVote vote;
+            try
+            {
+                vote = await VoteAsync(session, payload, candidate, voteToken);
+            }
+            catch (OperationCanceledException) when (voteToken.IsCancellationRequested && !callerToken.IsCancellationRequested)
+            {
+                return new RegionVote(new ClusterUnavailable("vote canceled after quorum decision", "vote_canceled"));
+            }
 
             last = vote;
             if (!IsRetryable(vote))
@@ -180,7 +183,7 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
     }
 }
 
-public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollector votes, StrongTransactionRegistry registry, CommitFinalizer finalizer, AntiEntropyService antiEntropy, StrongCommitRecovery recovery, HlcClock clock, TimeProvider timeProvider, ILogger<StrongCoordinator> logger)
+public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollector votes, StrongTransactionRegistry registry, CommitFinalizer finalizer, AntiEntropyService antiEntropy, HlcClock clock, ILogger<StrongCoordinator> logger)
 {
     private static readonly TimeSpan SiblingSyncTimeout = TimeSpan.FromMilliseconds(500);
 
@@ -224,7 +227,7 @@ public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollec
         ArgumentNullException.ThrowIfNull(staged);
         if (staged.WriteKeys.Count == 0 && !staged.IsSchemaChange && staged.DeltaPayload.IsEmpty)
         {
-            var local = await session.CommitStagedAsync(staged.Token, clock.Tick(), leaseDeadline: null, cancellationToken);
+            var local = await session.CommitStagedAsync(staged.Token, clock.Tick(), cancellationToken);
             return local switch
             {
                 CommitMetadata commit => commit,
@@ -232,10 +235,10 @@ public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollec
                 ReadSetConflict => Conflict(staged, "read_set_stale"),
                 SchemaMismatch mismatch => mismatch,
                 StorageBusy busy => busy,
-                StorageTimeout timeout => new ClusterTimeout(timeout.Message),
             };
         }
 
+        var handle = registry.Register(staged.TxId);
         var payload = new StrongPreparePayload(
             session.DatabaseId,
             staged.TxId,
@@ -247,8 +250,7 @@ public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollec
             staged.ScannedTables,
             staged.WriteKeys,
             staged.IsSchemaChange);
-        var handle = registry.Register(payload);
-        var tally = await votes.CollectAsync(session, payload, handle, cancellationToken);
+        var tally = await votes.CollectAsync(session, payload, cancellationToken);
         if (tally.Prepared < tally.Required || !tally.WithinLease || !handle.TryBeginCommit())
         {
             var reason = Rejection(session.DatabaseId, staged, tally, handle);
@@ -256,83 +258,29 @@ public sealed class StrongCoordinator(ClusterTopology topology, StrongVoteCollec
             return reason;
         }
 
-        if (!recovery.TryReserve())
-        {
-            await AbortAsync(session, staged, handle, payload, tally);
-            return new ClusterUnavailable("strong commit recovery is at capacity", "strong_commit_capacity");
-        }
-
-        var deferred = false;
-        CommitStagedOutcome committed;
-        try
-        {
-            var now = timeProvider.GetTimestamp();
-            if (now >= tally.LeaseDeadline)
-            {
-                await AbortAsync(session, staged, handle, payload, tally);
-                return new ClusterTimeout("participant lock leases expired before the staged commit");
-            }
-
-            using var timer = new CancellationTokenSource();
-            var elapsed = Task.Delay(timeProvider.GetElapsedTime(now, tally.LeaseDeadline), timeProvider, timer.Token);
-            var completion = session.CommitStagedAsync(staged.Token, clock.Tick(), tally.LeaseDeadline, CancellationToken.None).AsTask();
-            if (await Task.WhenAny(completion, elapsed) != completion && !completion.IsCompletedSuccessfully)
-            {
-                recovery.Enqueue(() => ResolveExpiredCommitAsync(session, staged, handle, payload, tally, completion));
-                deferred = true;
-                return new ClusterUnavailable("the staged commit's outcome could not be confirmed before its participant leases expired", "write_outcome_unknown");
-            }
-
-            await timer.CancelAsync();
-            committed = await completion;
-        }
-        finally
-        {
-            if (!deferred)
-            {
-                recovery.Release();
-            }
-        }
-
-        return await ResolveCommitAsync(session, staged, handle, payload, tally, committed);
-    }
-
-    private async Task ResolveExpiredCommitAsync(
-        ISqlDatabaseSession session, StagedWrite staged, StrongTransactionHandle handle, StrongPreparePayload payload, StrongVoteTally tally, Task<CommitStagedOutcome> completion)
-    {
-        var outcome = await ResolveCommitAsync(session, staged, handle, payload, tally, await completion);
-        _ = outcome switch
-        {
-            CommitMetadata => true,
-            SerializationConflict or SchemaMismatch or ClusterTimeout or ClusterUnavailable or StorageBusy => false,
-        };
-    }
-
-    private async ValueTask<ClusterCommitTransactionOutcome> ResolveCommitAsync(
-        ISqlDatabaseSession session, StagedWrite staged, StrongTransactionHandle handle, StrongPreparePayload payload, StrongVoteTally tally, CommitStagedOutcome committed)
-    {
-        var finalized = committed switch
+        var committed = await session.CommitStagedAsync(staged.Token, clock.Tick(), cancellationToken);
+        ClusterCommitTransactionOutcome outcome = committed switch
         {
             CommitMetadata commit => commit,
-            StagedWriteMissing or ReadSetConflict or SchemaMismatch or StorageBusy or StorageTimeout => null,
-        };
-        if (finalized is { } completeCommit)
-        {
-            registry.Complete(handle, committed: true);
-            await finalizer.FinalizeStrongAsync(session.DatabaseId, completeCommit, CancellationToken.None);
-            return completeCommit;
-        }
-
-        await AbortAsync(session, staged, handle, payload, tally);
-        return committed switch
-        {
-            CommitMetadata completed => completed,
             StagedWriteMissing => Conflict(staged, "staged_write_expired"),
             ReadSetConflict => Conflict(staged, "read_set_stale"),
             SchemaMismatch mismatch => mismatch,
             StorageBusy busy => busy,
-            StorageTimeout storageTimeout => new ClusterTimeout(storageTimeout.Message),
         };
+        var finalized = committed switch
+        {
+            CommitMetadata commit => commit,
+            StagedWriteMissing or ReadSetConflict or SchemaMismatch or StorageBusy => null,
+        };
+        if (finalized is null)
+        {
+            await AbortAsync(session, staged, handle, payload, tally);
+            return outcome;
+        }
+
+        registry.Complete(handle, committed: true);
+        await finalizer.FinalizeStrongAsync(session.DatabaseId, finalized, cancellationToken);
+        return outcome;
     }
 
     private static ClusterWriteOutcome Written(

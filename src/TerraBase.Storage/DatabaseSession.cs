@@ -370,7 +370,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         return ValueTask.FromResult(result);
     }
 
-    public async ValueTask<ReadArchivedSegmentOutcome> ReadArchivedSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken)
+    public async ValueTask<ImportSegmentOutcome> ImportSegmentAsync(CommitLogSegment segment, Stream content, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(segment);
         ArgumentNullException.ThrowIfNull(content);
@@ -400,9 +400,14 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return new InvalidSegment("segment range does not match its content");
         }
 
-        return AsSegment(commits);
-
-        static ReadArchivedSegmentOutcome AsSegment(IReadOnlyList<CommitMetadata> entries) => entries;
+        var applied = await ApplyRemoteBatchAsync(new RemoteCommitBatch(DatabaseId, commits), cancellationToken);
+        return applied switch
+        {
+            RemoteApplyOutcome => new SegmentImported(),
+            SchemaMismatch mismatch => new InvalidSegment(string.Concat("segment schema epoch mismatch: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture))),
+            StorageCorrupted corrupted => corrupted,
+            StorageBusy busy => busy,
+        };
     }
 
     internal OriginLog? Log(string origin)

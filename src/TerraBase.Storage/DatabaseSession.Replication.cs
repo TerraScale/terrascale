@@ -467,7 +467,7 @@ internal sealed partial class DatabaseSession
         return true;
     }
 
-    private SqliteStatus ApplyInTransaction(List<(CommitMetadata Commit, DeltaBatch Batch)> order, bool persist, out int skipped, long? leaseDeadline = null)
+    private SqliteStatus ApplyInTransaction(List<(CommitMetadata Commit, DeltaBatch Batch)> order, bool persist, out int skipped)
     {
         skipped = 0;
         var status = BeginWrite(applying: true);
@@ -547,9 +547,7 @@ internal sealed partial class DatabaseSession
 
         if (!scope.Failed)
         {
-            scope.Fail(LeaseExpired(leaseDeadline)
-                ? new SqliteStatus(SqliteNative.Interrupt, "the staged commit's participant lease expired")
-                : _writer.Exec("COMMIT;"));
+            scope.Fail(_writer.Exec("COMMIT;"));
         }
 
         _capture.Suppressed = false;
@@ -582,15 +580,8 @@ internal sealed partial class DatabaseSession
         return SqliteStatus.Success;
     }
 
-    private bool LeaseExpired(long? leaseDeadline) => leaseDeadline is { } deadline && _context.Time.GetTimestamp() >= deadline;
-
-    private CommitStagedOutcome CommitStaged(StagedDescriptor descriptor, HlcTimestamp commitHlc, long? leaseDeadline)
+    private CommitStagedOutcome CommitStaged(StagedDescriptor descriptor, HlcTimestamp commitHlc)
     {
-        if (LeaseExpired(leaseDeadline))
-        {
-            return new StorageTimeout("the staged commit's participant lease expired in the writer queue");
-        }
-
         var staged = descriptor.Staged;
         if (staged.SchemaEpoch != SchemaEpoch)
         {
@@ -639,12 +630,10 @@ internal sealed partial class DatabaseSession
         var sequence = _versions.Get(Region) + 1;
         var epoch = batch.Ddl.Count > 0 ? SchemaEpoch + 1 : SchemaEpoch;
         var commit = new CommitMetadata(staged.TxId, Region, sequence, commitHlc, epoch, ConsistencyMode.Strong, BookmarkWith(Region, sequence), staged.DeltaPayload);
-        var status = ApplyInTransaction([(commit, batch)], persist: true, out _, leaseDeadline);
+        var status = ApplyInTransaction([(commit, batch)], persist: true, out _);
         if (!status.IsOk)
         {
-            return LeaseExpired(leaseDeadline)
-                ? new StorageTimeout("the staged commit's participant lease expired before commit")
-                : status.ToBusy();
+            return status.ToBusy();
         }
 
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);

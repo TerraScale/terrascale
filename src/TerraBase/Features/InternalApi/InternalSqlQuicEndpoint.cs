@@ -22,14 +22,8 @@ internal sealed class InternalSqlQuicEndpoint(DatabaseAccess access, SqlRunner r
         _ = host.MapUnary<InternalSqlRequest, InternalSqlReply>(QuicMessageType.InternalSqlExecute, HandleAsync);
     }
 
-    private async ValueTask<QuicHandlerOutcome<InternalSqlReply>> HandleAsync(QuicCallContext context, InternalSqlRequest request, CancellationToken cancellationToken)
-    {
-        if (!context.IsPlatform)
-        {
-            return Refused(StatusCodes.Status403Forbidden, "forbidden", "internal SQL requires an authenticated platform service");
-        }
-
-        return Causality(request) switch
+    private async ValueTask<QuicHandlerOutcome<InternalSqlReply>> HandleAsync(QuicCallContext context, InternalSqlRequest request, CancellationToken cancellationToken) =>
+        Causality(request) switch
         {
             SqlCausality causality => Statements(request.Statements) switch
             {
@@ -38,7 +32,6 @@ internal sealed class InternalSqlQuicEndpoint(DatabaseAccess access, SqlRunner r
             },
             SqlRefusal refusal => Refused(refusal.Status, refusal.Body),
         };
-    }
 
     private async ValueTask<InternalSqlReply> RunAsync(Ulid databaseId, IReadOnlyList<SqlStatement> statements, SqlCausality causality, CancellationToken cancellationToken)
     {

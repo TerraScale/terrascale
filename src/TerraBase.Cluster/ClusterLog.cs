@@ -41,9 +41,9 @@ internal static partial class ClusterLog
     [LoggerMessage(EventId = 2111, Level = LogLevel.Information, Message = "Anti-entropy applied {Applied} of {Fetched} commits for database {DatabaseId}; now at {Bookmark}")]
     public static partial void CatchUpApplied(ILogger logger, Ulid databaseId, int applied, int fetched, CausalBookmark bookmark);
 
-    [LoggerMessage(EventId = 2112, Level = LogLevel.Warning, Message = "Serving catch-up for database {DatabaseId} to {NodeId} could not serve an origin: {Reason}")]
+    [LoggerMessage(EventId = 2112, Level = LogLevel.Warning, Message = "Serving catch-up for database {DatabaseId} to {NodeId} skipped an origin: {Reason}")]
     public static partial void CatchUpServeFailed(ILogger logger, Ulid databaseId, string nodeId, string reason);
 
-    [LoggerMessage(EventId = 2113, Level = LogLevel.Error, Message = "Cluster background loop {Loop} failed and will restart after {Delay}")]
-    public static partial void LoopFailed(ILogger logger, string loop, TimeSpan delay, Exception exception);
+    [LoggerMessage(EventId = 2113, Level = LogLevel.Error, Message = "Cluster background loop {Loop} failed")]
+    public static partial void LoopFailed(ILogger logger, string loop, Exception exception);
 }
