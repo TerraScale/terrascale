@@ -138,7 +138,8 @@ function Todos({ db, where = "done = 0" }) {
 `data` is the live row array in stable row-key order. Status is `loading` until the snapshot arrives, `live` at the
 current head, `reconnecting` while resuming a lost connection, or `error` with a terminal error. A server
 `must_refetch` returns to `loading` while replacing the snapshot. Previous rows remain visible while React
-switches filters or Svelte's `setShape` switches the store's source.
+switches filters or Svelte's `setShape` switches the store's source. A shape nobody reads for a day is retired;
+the next read starts it under a new handle, and a client still holding the old handle gets `must_refetch`.
 
 Equivalent shapes on one client share one stream. It closes two seconds after the last consumer unmounts;
 a quick remount reuses it. No application refresh callback is needed.

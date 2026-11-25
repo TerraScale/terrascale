@@ -18,7 +18,9 @@ public sealed class ShapeMaterializerService(
 {
     private const int ClaimLimit = 64;
     private const int AuditPage = 256;
+    private const int AuditRetirements = 16;
     private const string RefusedFilter = "its persisted filter is no longer accepted";
+    private const string IdleShape = "it was not read for a day";
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Lease = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan Reconnect = TimeSpan.FromSeconds(1);
@@ -27,7 +29,7 @@ public sealed class ShapeMaterializerService(
     private readonly Dictionary<Ulid, ChangeSubscription> _subscriptions = [];
     private readonly string _owner = options.Region + "/" + options.Node + "/" + Ulid.NewUlid();
     private IReadOnlyList<ShapeRecord> _owned = [];
-    private string _audited = "";
+    private string _audited = ShapeQuery.NewHandle();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -66,10 +68,12 @@ public sealed class ShapeMaterializerService(
                 {
                     logger.ZLogWarning($"Shape object cleanup deferred: {undrained}");
                 }
+
+                await AuditAsync(stoppingToken);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                logger.ZLogWarning(error, $"Shape object cleanup pass failed");
+                logger.ZLogWarning(error, $"Shape cleanup pass failed");
             }
         }
     }
@@ -127,8 +131,6 @@ public sealed class ShapeMaterializerService(
         {
             await EnqueueAsync(shape.Database, "", cancellationToken);
         }
-
-        await AuditAsync(cancellationToken);
     }
 
     private async Task FollowAsync(Ulid database, CancellationToken cancellationToken)
@@ -267,7 +269,12 @@ public sealed class ShapeMaterializerService(
 
         sealer.ForgetShapes(retired.Handles);
         var handles = retired.Handles.ToHashSet(StringComparer.Ordinal);
-        Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
+        var owned = Volatile.Read(ref _owned);
+        while (Interlocked.CompareExchange(ref _owned, [.. owned.Where(shape => !handles.Contains(shape.Handle))], owned) is var seen && !ReferenceEquals(seen, owned))
+        {
+            owned = seen;
+        }
+
         logger.ZLogInformation($"Retired {retired.Handles.Count} shapes for {subject}: {reason}");
         return null;
     }
@@ -278,12 +285,20 @@ public sealed class ShapeMaterializerService(
         var page = pageOutcome switch
         {
             ShapePage { Items: var items } => items,
-            PlatformUnavailable unavailable => Deferred<ShapeRecord>(unavailable.Message),
+            PlatformUnavailable unavailable => Deferred<AuditedShape>(unavailable.Message),
         };
-        _audited = page.Count < AuditPage ? "" : page[^1].Handle;
-        foreach (var shape in page.Where(static shape => !Accepted(shape)))
+        AuditedShape[] due = [.. page.Where(static audited => audited.Idle || !Accepted(audited.Shape)).Take(AuditRetirements)];
+        _audited = (due.Length, page.Count) switch
         {
-            var outcome = Retire(shape.Handle, RefusedFilter, await registry.RetireShapeAsync(shape.Handle, cancellationToken));
+            (AuditRetirements, _) => due[^1].Shape.Handle,
+            (_, < AuditPage) => "",
+            _ => page[^1].Shape.Handle,
+        };
+        foreach (var (shape, _) in due)
+        {
+            var outcome = Accepted(shape)
+                ? Retire(shape.Handle, IdleShape, await registry.RetireIdleShapeAsync(shape.Handle, cancellationToken))
+                : Retire(shape.Handle, RefusedFilter, await registry.RetireShapeAsync(shape.Handle, cancellationToken));
             if (outcome is not null)
             {
                 logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");

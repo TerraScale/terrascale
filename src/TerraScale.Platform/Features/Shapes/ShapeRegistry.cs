@@ -6,7 +6,9 @@ public sealed record ActiveShapeDatabases(IReadOnlyList<Ulid> Items);
 
 public sealed record ClaimedShapes(IReadOnlyList<ShapeRecord> Items);
 
-public sealed record ShapePage(IReadOnlyList<ShapeRecord> Items);
+public sealed record AuditedShape(ShapeRecord Shape, bool Idle);
+
+public sealed record ShapePage(IReadOnlyList<AuditedShape> Items);
 
 public sealed record ShapeObjectDeletion(string Id, string Handle, string Name);
 
@@ -48,7 +50,9 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
     private const int ChunkSlice = 256;
     private const int CreateAttempts = 2;
     private const int RetirePasses = 32;
+    private const string FenceQuery = "SELECT head, sealer, created_at FROM platform_shapes WHERE handle = ?";
     private static readonly TimeSpan DeletionGrace = TimeSpan.FromDays(1);
+    private static readonly TimeSpan IdleFor = TimeSpan.FromDays(1);
 
     private const string RecordColumns =
         "handle, shape_id, organization_id, project_id, database_id, project_route, database_route, table_name, where_clause, columns, viewer_key, head, head_digest";
@@ -321,20 +325,49 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
 
     public async ValueTask<PageShapesOutcome> PageAsync(string after, int limit, CancellationToken cancellationToken)
     {
+        var idleBefore = IdleBefore();
         var outcome = await store.ReadAsync(
-            SqlValues.Statement($"SELECT {RecordColumns} FROM platform_shapes WHERE handle > ? ORDER BY handle LIMIT ?", SqlValues.Text(after), SqlValues.Number(limit)),
+            SqlValues.Statement(
+                $"SELECT {RecordColumns}, last_read_at FROM platform_shapes WHERE handle > ? ORDER BY handle LIMIT ?",
+                SqlValues.Text(after),
+                SqlValues.Number(limit)),
             cancellationToken);
         return outcome switch
         {
-            SqlExecuteResponse { Results: var results } => new ShapePage([.. results[0].RowsOf().Select(Record)]),
+            SqlExecuteResponse { Results: var results } => new ShapePage([.. results[0].RowsOf().Select(row => new AuditedShape(Record(row), row.Number(13) < idleBefore))]),
             PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
             PlatformUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<RetireShapeOutcome> RetireShapeAsync(string handle, CancellationToken cancellationToken)
+    public ValueTask<RetireShapeOutcome> RetireShapeAsync(string handle, CancellationToken cancellationToken) =>
+        RetireAsync(handle, new RetireProgress(null, false, "", null), cancellationToken);
+
+    public async ValueTask<RetireShapeOutcome> RetireIdleShapeAsync(string handle, CancellationToken cancellationToken)
     {
-        var state = new RetireProgress(null, false, "");
+        var key = SqlValues.Text(handle);
+        var idleBefore = IdleBefore();
+        var outcome = await store.ExecuteAsync(
+            [SqlValues.Statement(
+                "DELETE FROM platform_shape_lineages WHERE shape_id = (SELECT shape_id FROM platform_shapes WHERE handle = ? AND last_read_at < ?) AND handle = ?",
+                key,
+                SqlValues.Number(idleBefore),
+                key)],
+            SqlContext.Strong,
+            cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse detached => await RetireAsync(handle, new RetireProgress(null, false, detached.Bookmark, idleBefore), cancellationToken),
+            PlatformConflict => new ShapeRetirement([]),
+            PlatformUnavailable unavailable => unavailable,
+        };
+    }
+
+    private long IdleBefore() => (timeProvider.GetUtcNow() - IdleFor).UnixMs();
+
+    private async ValueTask<RetireShapeOutcome> RetireAsync(string handle, RetireProgress start, CancellationToken cancellationToken)
+    {
+        var state = start;
         for (var pass = 0; pass < RetirePasses; pass++)
         {
             var step = await RetirePassAsync(handle, state, cancellationToken);
@@ -355,7 +388,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
 
     private sealed record ShapeFence(long Head, string Sealer, long CreatedAt);
 
-    private sealed record RetireProgress(ShapeFence? Fence, bool Drained, string Bookmark);
+    private sealed record RetireProgress(ShapeFence? Fence, bool Drained, string Bookmark, long? IdleBefore);
 
     private readonly union RetireStep(RetireProgress, ShapeRetirement, PlatformUnavailable);
 
@@ -370,10 +403,15 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
     private async ValueTask<RetireStep> ReadFenceAsync(string handle, RetireProgress state, CancellationToken cancellationToken)
     {
         var context = state.Bookmark.Length == 0 ? SqlContext.Fast : SqlContext.After(state.Bookmark);
-        var outcome = await store.ExecuteAsync([SqlValues.Statement("SELECT head, sealer, created_at FROM platform_shapes WHERE handle = ?", SqlValues.Text(handle))], context, cancellationToken);
+        var key = SqlValues.Text(handle);
+        var fence = state.IdleBefore is { } idleBefore
+            ? SqlValues.Statement(FenceQuery + " AND last_read_at < ?", key, SqlValues.Number(idleBefore))
+            : SqlValues.Statement(FenceQuery, key);
+        var outcome = await store.ExecuteAsync([fence], context, cancellationToken);
         return outcome switch
         {
-            SqlExecuteResponse { Results: var results } read when results[0].FirstRow() is { } row => new RetireProgress(new ShapeFence(row.Number(0), row.Text(1), row.Number(2)), false, read.Bookmark),
+            SqlExecuteResponse { Results: var results } read when results[0].FirstRow() is { } row =>
+                new RetireProgress(new ShapeFence(row.Number(0), row.Text(1), row.Number(2)), false, read.Bookmark, null),
             SqlExecuteResponse => new ShapeRetirement([]),
             PlatformConflict => state,
             PlatformUnavailable unavailable => unavailable,
@@ -439,7 +477,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         return outcome switch
         {
             SqlExecuteResponse { Results: var results } when results[2].RowsAffected == 1 => new ShapeRetirement([handle]),
-            SqlExecuteResponse finished => new RetireProgress(null, false, finished.Bookmark),
+            SqlExecuteResponse finished => new RetireProgress(null, false, finished.Bookmark, null),
             PlatformConflict => state,
             PlatformUnavailable unavailable => unavailable,
         };

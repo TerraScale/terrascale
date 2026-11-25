@@ -169,19 +169,18 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
         return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
-    public (string Handle, string ShapeId) Lineage(Ulid organization, Ulid project, Ulid database, string viewerKey, IReadOnlyList<string> columns)
+    public string ShapeId(Ulid organization, Ulid project, Ulid database, string viewerKey, IReadOnlyList<string> columns)
     {
         var fields = string.Join('\0', organization, project, database, Table, Encoded(Where), Encoded(Columns), viewerKey, string.Join(',', columns));
-        return ("h1-" + Hash("TB-SHAPE-HANDLE-V4", fields, 8), Hash("TB-SHAPE-V4", fields, 16));
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("TB-SHAPE-V4\0" + fields)).AsSpan(0, 16));
     }
+
+    public static string NewHandle() => "h1-" + RandomNumberGenerator.GetHexString(16, lowercase: true);
 
     private static string Encoded(string? value) => value is null ? "-" : "=" + value;
 
     public static bool IsHandle(string? handle) =>
         handle is { Length: 19 } && handle.StartsWith("h1-", StringComparison.Ordinal) && !handle.AsSpan(3).ContainsAnyExcept(LowerHex);
-
-    private static string Hash(string domain, string fields, int bytes) =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(domain + '\0' + fields)).AsSpan(0, bytes));
 
     private static bool IsSafeWhere(string where)
     {
