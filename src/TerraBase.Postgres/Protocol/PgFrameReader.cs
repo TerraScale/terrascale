@@ -61,6 +61,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
     }
 
     private long? _interruptedStart;
+    private long _interruptedSeen;
 
     public long LastMessageStarted { get; private set; }
 
@@ -68,11 +69,12 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
     {
         var called = timeProvider.GetTimestamp();
         var started = _interruptedStart;
+        var seen = _interruptedSeen;
         _interruptedStart = null;
-        var initial = started is { } resumed ? Remaining(resumed, 0, ceiling, called) : timeout;
+        _interruptedSeen = 0;
+        var initial = started is { } resumed ? Remaining(resumed, seen, ceiling, called) : timeout;
         using var deadline = new CancellationTokenSource(initial > TimeSpan.Zero ? initial : TimeSpan.Zero, timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        var seen = 0L;
         var oversized = 0L;
         var discarded = 0L;
         while (true)
@@ -138,6 +140,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             {
                 input.AdvanceTo(buffer.Start, buffer.End);
                 _interruptedStart = buffer.IsEmpty ? null : started;
+                _interruptedSeen = buffer.IsEmpty ? 0 : seen;
                 return new PgReadInterrupted();
             }
 

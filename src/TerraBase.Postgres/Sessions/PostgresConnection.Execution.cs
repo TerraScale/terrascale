@@ -38,6 +38,11 @@ internal sealed partial class PostgresConnection
                 return PgErrors.AdministratorShutdown;
             }
 
+            if (Revoked)
+            {
+                return PgErrors.CredentialRevoked;
+            }
+
             return scope.TimedOut ? PgErrors.StatementTimeout : PgErrors.QueryCanceled;
         }
     }
