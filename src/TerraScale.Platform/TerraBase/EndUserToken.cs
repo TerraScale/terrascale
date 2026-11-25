@@ -20,35 +20,27 @@ public sealed record EndUserToken(string Digest, bool Guest)
         }
 
         var bytes = new byte[Base64Url.GetMaxDecodedLength(encoded.Length)];
-        if (Base64Url.DecodeFromChars(encoded, bytes, out _, out var written) != OperationStatus.Done || Parse(bytes.AsMemory(0, written)) is not { } payload)
+        if (Base64Url.DecodeFromChars(encoded, bytes, out _, out var written) != OperationStatus.Done
+            || TerraBaseAnswers.Parse(bytes.AsSpan(0, written), PlatformJsonContext.Default.DictionaryStringJsonElement) is not { } payload)
         {
             return null;
         }
 
-        using (payload)
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
         {
-            var root = payload.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
+            writer.WriteStartObject();
+            foreach (var (name, value) in payload.Where(static member => RulesInputs.Contains(member.Key)).OrderBy(static member => member.Key, StringComparer.Ordinal))
             {
-                return null;
+                writer.WritePropertyName(name);
+                WriteCanonical(writer, value);
             }
 
-            var buffer = new ArrayBufferWriter<byte>();
-            using (var writer = new Utf8JsonWriter(buffer))
-            {
-                writer.WriteStartObject();
-                foreach (var property in root.EnumerateObject().Where(static property => RulesInputs.Contains(property.Name)).OrderBy(static property => property.Name, StringComparer.Ordinal))
-                {
-                    writer.WritePropertyName(property.Name);
-                    WriteCanonical(writer, property.Value);
-                }
-
-                writer.WriteEndObject();
-            }
-
-            var guest = root.TryGetProperty("is_anonymous", out var anonymous) && anonymous.ValueKind == JsonValueKind.True;
-            return new EndUserToken(Convert.ToHexStringLower(SHA256.HashData(buffer.WrittenSpan)), guest);
+            writer.WriteEndObject();
         }
+
+        var guest = payload.TryGetValue("is_anonymous", out var anonymous) && anonymous.ValueKind == JsonValueKind.True;
+        return new EndUserToken(Convert.ToHexStringLower(SHA256.HashData(buffer.WrittenSpan)), guest);
     }
 
     private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
@@ -79,18 +71,6 @@ public sealed record EndUserToken(string Digest, bool Guest)
                 return;
             default:
                 throw new UnreachableException();
-        }
-    }
-
-    private static JsonDocument? Parse(ReadOnlyMemory<byte> json)
-    {
-        try
-        {
-            return JsonDocument.Parse(json);
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 }

@@ -18,4 +18,5 @@ public sealed record InternalLogPayload(string Project, string Database, string 
 [JsonSerializable(typeof(long))]
 [JsonSerializable(typeof(double))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 public sealed partial class PlatformJsonContext : JsonSerializerContext;
