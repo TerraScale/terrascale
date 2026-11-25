@@ -42,6 +42,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private static readonly TimeSpan CloseBudget = TimeSpan.FromSeconds(2);
 
+    private static readonly TimeSpan PumpSettleBudget = TimeSpan.FromSeconds(3);
+
     private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(5);
 
     private readonly SqlRunner runner = services.Runner;
@@ -108,6 +110,11 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     public async ValueTask DisposeAsync()
     {
+        using (var settle = new CancellationTokenSource(PumpSettleBudget, time))
+        {
+            await _pump.WaitAsync(settle.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
         await _pumpStop.CancelAsync();
         await _pump;
         _pumpStop.Dispose();

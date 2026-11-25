@@ -431,13 +431,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return fresh.Configuration;
         }
 
-        return await Retrieval(entry).WaitAsync(cancellationToken) ?? entry.Fresh?.Configuration;
+        return await Retrieval(entry, unknownKey: false).WaitAsync(cancellationToken) ?? entry.Fresh?.Configuration;
     }
 
     private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken) =>
-        await Retrieval(entry).WaitAsync(cancellationToken);
+        await Retrieval(entry, unknownKey: true).WaitAsync(cancellationToken);
 
-    private Task<OpenIdConnectConfiguration?> Retrieval(IssuerEntry entry)
+    private Task<OpenIdConnectConfiguration?> Retrieval(IssuerEntry entry, bool unknownKey)
     {
         lock (entry.Gate)
         {
@@ -446,18 +446,21 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                 return running;
             }
 
-            if (entry.LastRefreshAttemptTimestamp != 0 && time.GetElapsedTime(entry.LastRefreshAttemptTimestamp) < RefreshCooldown)
+            var (attempted, failed) = unknownKey
+                ? (entry.LastUnknownKeyAttemptTimestamp, entry.LastUnknownKeyFailed)
+                : (entry.LastRefreshAttemptTimestamp, entry.LastRefreshFailed);
+            if (attempted != 0 && time.GetElapsedTime(attempted) < RefreshCooldown)
             {
-                return Task.FromResult(entry.LastRefreshFailed ? null : entry.Fresh?.Configuration);
+                return Task.FromResult(failed ? null : entry.Fresh?.Configuration);
             }
 
-            var started = RetrieveAsync(Pin(entry));
+            var started = RetrieveAsync(Pin(entry), unknownKey);
             entry.Inflight = started;
             return started;
         }
     }
 
-    private async Task<OpenIdConnectConfiguration?> RetrieveAsync(IssuerEntry entry)
+    private async Task<OpenIdConnectConfiguration?> RetrieveAsync(IssuerEntry entry, bool unknownKey)
     {
         await Task.Yield();
         OpenIdConnectConfiguration? fetched = null;
@@ -473,6 +476,12 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             {
                 entry.LastRefreshAttemptTimestamp = now;
                 entry.LastRefreshFailed = fetched is null;
+                if (unknownKey)
+                {
+                    entry.LastUnknownKeyAttemptTimestamp = now;
+                    entry.LastUnknownKeyFailed = fetched is null;
+                }
+
                 if (fetched is not null)
                 {
                     entry.Fresh = new FreshConfigurationState(fetched, now);
@@ -510,6 +519,8 @@ internal sealed class IssuerEntry(string issuer, string metadataAddress, HttpDoc
     public Task<OpenIdConnectConfiguration?>? Inflight;
     public volatile FreshConfigurationState? Fresh;
     public long LastRefreshAttemptTimestamp;
+    public long LastUnknownKeyAttemptTimestamp;
+    public bool LastUnknownKeyFailed;
     public int Pins;
     public bool Retired;
     public bool LastRefreshFailed;
