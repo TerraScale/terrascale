@@ -22,6 +22,8 @@ internal sealed record EnforcedSql(IReadOnlyList<SqlStatement> Statements, strin
 internal sealed record RewrittenSql(
     IReadOnlyList<string> Pieces, IReadOnlyDictionary<string, string> Guards, IReadOnlyDictionary<string, SqlTableScope> Tables, long? SchemaVersion);
 
+internal delegate ValueTask<SqlReadOutcome> CatalogReader(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken);
+
 internal sealed record LiveTable(IReadOnlyList<string> Names, IReadOnlyList<string> Declared, string? RowIdAlias, string? RowIdSource, long SchemaVersion);
 
 internal sealed record GuardPlan(string Name, string Table, IReadOnlyList<string>? Readable, CompiledCondition Condition, LiveTable? Live, List<string> Keys);
@@ -54,23 +56,23 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         "EXISTS", "WITH", "RECURSIVE", "UPDATE", "SET", "DELETE", "INSERT", "INTO", "VALUES", "RETURNING", "ROWID", "_ROWID_", "OID");
 
     public async ValueTask<EnforcementOutcome> ApplyAsync(
-        Ulid databaseId, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken, ISqlDatabaseSession? session = null)
+        Ulid databaseId, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken, CatalogReader? catalog = null)
     {
         ArgumentNullException.ThrowIfNull(auth);
         ArgumentNullException.ThrowIfNull(statements);
         var loaded = await store.CurrentAsync(databaseId, cancellationToken);
         return loaded switch
         {
-            StoredRules current => await RewriteAllAsync(current.Rules, current.Version, auth, statements, session, cancellationToken),
-            ResourceNotFound => await DenyMissingRulesAsync(auth, statements, session, cancellationToken),
+            StoredRules current => await RewriteAllAsync(current.Rules, current.Version, auth, statements, catalog, cancellationToken),
+            ResourceNotFound => await DenyMissingRulesAsync(auth, statements, catalog, cancellationToken),
             BackendUnavailable unavailable => SqlRefusal.From(unavailable),
         };
     }
 
     private async ValueTask<EnforcementOutcome> DenyMissingRulesAsync(
-        RulesAuth auth, IReadOnlyList<PlannedStatement> statements, ISqlDatabaseSession? session, CancellationToken cancellationToken)
+        RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CatalogReader? catalog, CancellationToken cancellationToken)
     {
-        var checkedEmpty = await RewriteAllAsync(new RulesSet(new Dictionary<string, RulesTable>()), "", auth, statements, session, cancellationToken);
+        var checkedEmpty = await RewriteAllAsync(new RulesSet(new Dictionary<string, RulesTable>()), "", auth, statements, catalog, cancellationToken);
         return checkedEmpty switch
         {
             SqlRefusal refusal => refusal,
@@ -79,12 +81,12 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     }
 
     private async ValueTask<EnforcementOutcome> RewriteAllAsync(
-        RulesSet rules, string rulesVersion, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, ISqlDatabaseSession? session, CancellationToken cancellationToken)
+        RulesSet rules, string rulesVersion, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CatalogReader? catalog, CancellationToken cancellationToken)
     {
         List<SqlStatement> rewritten = [];
         for (var index = 0; index < statements.Count; index++)
         {
-            var outcome = await RewriteAsync(rules, auth, statements[index], index, session, cancellationToken);
+            var outcome = await RewriteAsync(rules, auth, statements[index], index, catalog, cancellationToken);
             var failure = outcome switch
             {
                 SqlStatement statement => Add(rewritten, statement),
@@ -100,7 +102,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     }
 
     public async ValueTask<StatementEnforcement> RewriteAsync(
-        RulesSet rules, RulesAuth auth, PlannedStatement planned, int index, ISqlDatabaseSession? session, CancellationToken cancellationToken)
+        RulesSet rules, RulesAuth auth, PlannedStatement planned, int index, CatalogReader? catalog, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rules);
         ArgumentNullException.ThrowIfNull(planned);
@@ -111,13 +113,13 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
         return Parse(planned.Statement.Sql, index) switch
         {
-            EndUserStatement statement => await EnforceAsync(rules, auth, planned, statement, index, session, cancellationToken),
+            EndUserStatement statement => await EnforceAsync(rules, auth, planned, statement, index, catalog, cancellationToken),
             SqlRefusal refusal => refusal,
         };
     }
 
     private async ValueTask<StatementEnforcement> EnforceAsync(
-        RulesSet rules, RulesAuth auth, PlannedStatement planned, EndUserStatement statement, int index, ISqlDatabaseSession? session, CancellationToken cancellationToken)
+        RulesSet rules, RulesAuth auth, PlannedStatement planned, EndUserStatement statement, int index, CatalogReader? catalog, CancellationToken cancellationToken)
     {
         var main = statement.Tokens[statement.Main];
         if (main.Is("PRAGMA"))
@@ -128,7 +130,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return planned.Kind switch
         {
             StatementKind.Read when main.Is("SELECT") || main.Is("VALUES") =>
-                await ReadsAsync(rules, auth, statement, index, skipTarget: -1, [], session, cancellationToken) switch
+                await ReadsAsync(rules, auth, statement, index, skipTarget: -1, [], catalog, cancellationToken) switch
                 {
                     RewrittenSql text => planned.Statement with
                     {
@@ -138,7 +140,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                     SqlRefusal refusal => refusal,
                 },
             StatementKind.Read => SqlRefusal.RuleDenied("end users run SELECT, UPDATE and DELETE statements", index),
-            StatementKind.Write => await WriteAsync(rules, auth, planned, statement, index, session, cancellationToken),
+            StatementKind.Write => await WriteAsync(rules, auth, planned, statement, index, catalog, cancellationToken),
             StatementKind.Schema or StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback =>
                 SqlRefusal.RuleDenied("end users cannot change the schema or control transactions", index),
             _ => throw new UnreachableException(),
@@ -146,7 +148,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     }
 
     private async ValueTask<StatementEnforcement> WriteAsync(
-        RulesSet rules, RulesAuth auth, PlannedStatement planned, EndUserStatement statement, int index, ISqlDatabaseSession? session, CancellationToken cancellationToken)
+        RulesSet rules, RulesAuth auth, PlannedStatement planned, EndUserStatement statement, int index, CatalogReader? catalog, CancellationToken cancellationToken)
     {
         var tokens = statement.Tokens;
         var verb = tokens[statement.Main];
@@ -219,7 +221,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         var targetAlias = targetAt + 2 < tokens.Count && tokens[targetAt + 1].Is("AS") && tokens[targetAt + 2].IsName ? tokens[targetAt + 2].Value : table;
         var written = AssignedPositions(tokens, targetAt);
         List<long> versions = [];
-        var targetLive = session is null ? null : await LiveTableAsync(session, table, cancellationToken);
+        var targetLive = catalog is null ? null : await LiveTableAsync(catalog, table, cancellationToken);
         if (targetLive is not null)
         {
             versions.Add(targetLive.SchemaVersion);
@@ -245,7 +247,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         var target = new SqlTargetScope(table, targetVisible?.ToFrozenSet(AsciiIgnoreCaseComparer.Instance), readableColumns,
             rule.Writable?.ToFrozenSet(AsciiIgnoreCaseComparer.Instance));
         var predicate = RulesCompiler.Render(compiled, auth, time.GetUtcNow().ToUnixTimeMilliseconds());
-        var rewrittenReads = await ReadsAsync(rules, auth, statement, index, skipTarget: targetAt, versions, session, cancellationToken);
+        var rewrittenReads = await ReadsAsync(rules, auth, statement, index, skipTarget: targetAt, versions, catalog, cancellationToken);
         return rewrittenReads switch
         {
             RewrittenSql text => planned.Statement with
@@ -258,7 +260,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     }
 
     private async ValueTask<ReadConditionOutcome> ReadsAsync(
-        RulesSet rules, RulesAuth auth, EndUserStatement statement, int index, int skipTarget, List<long> versions, ISqlDatabaseSession? session,
+        RulesSet rules, RulesAuth auth, EndUserStatement statement, int index, int skipTarget, List<long> versions, CatalogReader? catalog,
         CancellationToken cancellationToken)
     {
         var tokens = statement.Tokens;
@@ -366,6 +368,16 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 || (tokens[at + 1].IsName && !(tokens[at + 1].Kind == SqlTokenKind.Word && ClauseEnds.Contains(tokens[at + 1].Value))));
             var aliasAt = !aliased ? -1 : tokens[at + 1].Is("AS") ? at + 2 : at + 1;
             var alias = aliasAt >= 0 && aliasAt < tokens.Count ? tokens[aliasAt].Value : table;
+            var closeAt = aliasAt >= 0 ? aliasAt + 1 : at + 1;
+            if (start > 0 && tokens[start - 1].Kind == SqlTokenKind.Open && closeAt < tokens.Count && tokens[closeAt].Kind == SqlTokenKind.Close)
+            {
+                var outerAt = closeAt + 1 < tokens.Count && tokens[closeAt + 1].Is("AS") ? closeAt + 2 : closeAt + 1;
+                if (outerAt < tokens.Count && (tokens[outerAt].Kind == SqlTokenKind.String
+                    || (tokens[outerAt].IsName && !(tokens[outerAt].Kind == SqlTokenKind.Word && ClauseEnds.Contains(tokens[outerAt].Value)))))
+                {
+                    alias = tokens[outerAt].Value;
+                }
+            }
             if (at == skipTarget || (!qualified && statement.Ctes.Contains(table)))
             {
                 sources.Add(new RuleSource(Group(fromDepths), null, alias));
@@ -377,7 +389,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 return SqlRefusal.RuleDenied(string.Concat("the rules do not allow reading ", table), index, "read", table);
             }
 
-            var live = plans.TryGetValue(table, out var existing) ? existing.Live : session is null ? null : await LiveTableAsync(session, table, cancellationToken);
+            var live = plans.TryGetValue(table, out var existing) ? existing.Live : catalog is null ? null : await LiveTableAsync(catalog, table, cancellationToken);
             if (live is not null)
             {
                 versions.Add(live.SchemaVersion);
@@ -683,18 +695,22 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         }
     }
 
-    private static async ValueTask<LiveTable?> LiveTableAsync(ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
+    public static CatalogReader Catalog(ISqlDatabaseSession session) => (statements, cancellationToken) =>
+        session.ExecuteReadAsync(new SqlStatementRequest(session.DatabaseId, statements, SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty), cancellationToken);
+
+    public static CatalogReader Catalog(ISqlTransaction transaction) => transaction.ReadCatalogAsync;
+
+    private static async ValueTask<LiveTable?> LiveTableAsync(CatalogReader catalog, string table, CancellationToken cancellationToken)
     {
         var name = RulesCompiler.Literal(table);
-        var request = new SqlStatementRequest(session.DatabaseId,
+        var outcome = await catalog(
             [
                 new SqlStatement(string.Concat("SELECT name, type, pk, hidden FROM pragma_table_xinfo(", name, ")"), [], SqlBuild.NoNamed),
                 new SqlStatement(string.Concat("SELECT type, wr FROM pragma_table_list(", name, ") WHERE schema = 'main'"), [], SqlBuild.NoNamed),
                 new SqlStatement(string.Concat("SELECT count(*) FROM pragma_index_list(", name, ") WHERE origin = 'pk'"), [], SqlBuild.NoNamed),
                 new SqlStatement("PRAGMA schema_version", [], SqlBuild.NoNamed),
             ],
-            SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
-        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+            cancellationToken);
         IReadOnlyList<SqlResultSet> results = outcome switch
         {
             SqlReadResult read => read.ResultSets,
