@@ -50,10 +50,13 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private readonly Func<DatabaseSession, Task> _release;
     private readonly bool _strict;
     private Task _lane = Task.CompletedTask;
+    private LaneRequest[] _inFlight = [];
     private WriteTransaction? _activeTransaction;
     private long _schemaEpoch;
     private int _references = 1;
     private int _closed;
+    private int _laneFaulted;
+    private int _recoveredQuarantined;
     private int _readerCount;
     private bool _writeGroupBroken;
 
@@ -81,6 +84,18 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     public CausalBookmark CurrentBookmark => _versions.Snapshot();
 
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
+
+    internal bool IsFaulted => Volatile.Read(ref _laneFaulted) != 0;
+
+    public bool IsUsable => !IsClosed && !IsFaulted;
+
+    internal int TakeRecoveredQuarantined() => Interlocked.Exchange(ref _recoveredQuarantined, 0);
+
+    internal DatabaseSession WithQuarantined(int quarantined)
+    {
+        _ = Interlocked.Add(ref _recoveredQuarantined, quarantined);
+        return this;
+    }
 
     internal int References => Volatile.Read(ref _references);
 
@@ -163,7 +178,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             }
         }
 
-        _lane = Task.Run(RunLaneAsync);
+        _lane = Task.Run(RunGuardedLaneAsync);
         return this;
     }
 
@@ -220,7 +235,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             transaction.Abandon();
         }
 
-        await _lane;
+        await _lane.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         while (_readers.Reader.TryRead(out var idleReader))
         {
             idleReader.Dispose();
@@ -342,7 +357,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                         entry.SchemaEpoch,
                         entry.Mode,
                         entry.DeltaPayload,
-                        DateTimeOffset.FromUnixTimeMilliseconds(entry.Hlc.WallMs));
+                        entry.Hlc.WallTime);
                 }
             }
 
@@ -368,7 +383,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         {
             IReadOnlyList<CommitMetadata> page => Page(originRegion, fromSequence, [.. page.Where(entry => entry.Sequence <= visible)]),
             CommitLogGap gap => gap,
-            StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.FromSeconds(1)),
+            StorageCorrupted corrupted => corrupted,
         };
         return ValueTask.FromResult(result);
     }
@@ -600,6 +615,8 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                     {
                         return appended.ToBusy();
                     }
+
+                    destination.MarkCommitted();
                 }
 
                 next = page[^1].Sequence + 1;
@@ -747,7 +764,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private async ValueTask<bool> EnqueueAsync(LaneRequest request, CancellationToken cancellationToken)
     {
-        if (IsClosed)
+        if (IsClosed || IsFaulted)
         {
             return false;
         }
@@ -763,5 +780,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         return false;
     }
 
-    private static StorageBusy Closing() => new("database session is closing", TimeSpan.FromMilliseconds(100));
+    private StorageBusy Closing() => IsFaulted ? LaneFaulted() : new("database session is closing", TimeSpan.FromMilliseconds(100));
+
+    private static StorageBusy LaneFaulted() => new("the database writer lane faulted; the session reopens on the next request", TimeSpan.FromMilliseconds(100));
 }

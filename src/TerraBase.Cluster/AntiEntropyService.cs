@@ -297,7 +297,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         var applied = await replicator.ApplyToSessionAsync(session, page.Entries, requestCatchUpOnBuffered: false, cancellationToken);
         return applied switch
         {
-            RemoteApplyOutcome outcome => (page.Entries.Count, outcome.Applied, page.HasMore, null, false, head),
+            RemoteApplyOutcome outcome => (page.Entries.Count, outcome.Applied + outcome.Quarantined, page.HasMore, null, false, head),
             DatabaseNotFound notFound => (page.Entries.Count, 0, false, notFound.Message, false, head),
             SchemaMismatch mismatch => Stuck(session, nodeId, page, head, string.Concat(
                 "schema epoch mismatch: expected ",
@@ -413,6 +413,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
                 {
                     CommitLogPage { Entries.Count: > 0 } => null,
                     CommitLogPage or CommitLogGap => Gap(bookmark, origin, sequence),
+                    StorageCorrupted corrupted => new QuicRemoteError("storage_corrupted", corrupted.Message),
                     StorageBusy busy => new QuicRemoteError("storage_busy", busy.Message),
                 };
                 if (issue is not null)
@@ -429,7 +430,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
                 var page = read switch
                 {
                     CommitLogPage served => served.Entries,
-                    CommitLogGap or StorageBusy => [],
+                    CommitLogGap or StorageCorrupted or StorageBusy => [],
                 };
                 pages[origin] = new Queue<CommitMetadata>(page);
                 fetched += page.Count;

@@ -13,7 +13,9 @@ internal static class MetaStore
 
     public const string SelectMetaSql = "SELECT meta FROM _tb_meta WHERE tbl = ?1 AND pk = ?2";
 
-    public const string SelectAllMetaSql = "SELECT pk, meta FROM _tb_meta";
+    public const string SelectClockWatermarkSql =
+        "WITH RECURSIVE tables(name) AS (SELECT min(tbl) FROM _tb_meta UNION ALL SELECT (SELECT min(tbl) FROM _tb_meta WHERE tbl > tables.name) FROM tables WHERE tables.name IS NOT NULL) "
+        + "SELECT max(meta.meta) FROM tables JOIN _tb_meta AS meta ON meta.tbl = tables.name AND meta.pk = X'' WHERE length(meta.meta) = 10 AND meta.meta <= ?1";
 
     public const string SelectTableHlcSql = "SELECT meta FROM _tb_meta WHERE tbl = ?1 AND pk = X''";
 
@@ -31,6 +33,12 @@ internal static class MetaStore
         "INSERT INTO _tb_vv (origin, seq, schema_epoch) VALUES (?1, ?2, ?3) ON CONFLICT (origin) DO UPDATE SET seq = excluded.seq, schema_epoch = excluded.schema_epoch";
 
     private const string InsertAppliedSql = "INSERT OR IGNORE INTO _tb_applied (tx_id, applied_at) VALUES (?1, ?2)";
+
+    private const string PruneAppliedSql = "DELETE FROM _tb_applied WHERE tx_id IN (SELECT tx_id FROM _tb_applied WHERE tx_id < ?1 LIMIT 64)";
+
+    private static readonly TimeSpan AppliedRetention = TimeSpan.FromDays(7);
+
+    private static readonly byte[] FloorRandomness = new byte[10];
 
     public static RowMeta Load(WriteScope scope, string table, byte[] key)
     {
@@ -67,6 +75,14 @@ internal static class MetaStore
 
     public static void MarkApplied(WriteScope scope, Ulid txId, long appliedAtMs) =>
         scope.Run(InsertAppliedSql, SqlValue.FromBlob(txId.ToByteArray()), SqlValue.FromIntegral(appliedAtMs));
+
+    public static void PruneApplied(WriteScope scope, DateTimeOffset now)
+    {
+        if (now - DateTimeOffset.UnixEpoch > AppliedRetention)
+        {
+            scope.Run(PruneAppliedSql, SqlValue.FromBlob(Ulid.NewUlid(now - AppliedRetention, FloorRandomness).ToByteArray()));
+        }
+    }
 
     public static bool IsApplied(WriteScope scope, Ulid txId) =>
         scope.First(SelectAppliedSql, SqlValue.FromBlob(txId.ToByteArray())) is not null;
@@ -148,11 +164,11 @@ internal static class LocalStamper
 
                         var hasBefore = Value(change.Original, index).TryGetIntegral(out var before);
                         var hasAfter = final.TryGetIntegral(out var after);
-                        if (hasBefore && hasAfter && !change.Replaced && !change.AbsoluteColumns.Contains(column.Name))
+                        if (hasBefore && hasAfter && !change.Replaced && !change.AbsoluteColumns.Contains(column.Name)
+                            && DeltaMath.TryDifference(after, before, out var delta))
                         {
-                            var delta = after - before;
                             columnChanges.Add(new ColumnChange(column.Name, ChangeKind.DeltaOp, current.Epoch, SqlValue.Null, delta));
-                            next.Columns[column.Index] = current with { DeltaSum = current.DeltaSum + delta };
+                            next.Columns[column.Index] = current with { DeltaSum = DeltaMath.Sum(current.DeltaSum, delta) };
                         }
                         else
                         {
@@ -196,9 +212,11 @@ internal static class LocalStamper
             return new HlcTimestamp(existing.WallMs, existing.Logical, current.NodeId);
         }
 
-        return existing.Logical == ushort.MaxValue
-            ? new HlcTimestamp(existing.WallMs + 1, 0, current.NodeId)
-            : new HlcTimestamp(existing.WallMs, (ushort)(existing.Logical + 1), current.NodeId);
+        return existing.Logical < ushort.MaxValue
+            ? new HlcTimestamp(existing.WallMs, (ushort)(existing.Logical + 1), current.NodeId)
+            : existing.WallMs < HlcTimestamp.MaxWallMs
+                ? new HlcTimestamp(existing.WallMs + 1, 0, current.NodeId)
+                : new HlcTimestamp(HlcTimestamp.MaxWallMs, ushort.MaxValue, ushort.MaxValue);
     }
 }
 
@@ -292,7 +310,7 @@ internal static class CrdtApplier
                 }
             }
 
-            Write(scope, sql, keyValues, current is not null, columns, values, orIgnore: mutation.Op == MutationOp.Update);
+            Write(scope, sql, keyValues, current is not null, columns, values);
         }
         else
         {
@@ -334,7 +352,7 @@ internal static class CrdtApplier
                     case ChangeKind.DeltaOp:
                         next.Columns[column.Index] = change.Epoch > state.Epoch
                             ? new ColumnMeta(HlcTimestamp.Zero, change.Epoch, change.Delta)
-                            : state with { DeltaSum = state.DeltaSum + change.Delta };
+                            : state with { DeltaSum = DeltaMath.Sum(state.DeltaSum, change.Delta) };
                         columns.Add(column);
                         values.Add(Add(existing, change.Delta));
                         break;
@@ -343,14 +361,14 @@ internal static class CrdtApplier
                 }
             }
 
-            Write(scope, sql, keyValues, current is not null, columns, values, orIgnore: true);
+            Write(scope, sql, keyValues, current is not null, columns, values);
         }
 
         MetaStore.Save(scope, schema.Table, key, next);
         MetaStore.Raise(tables, schema.Table, hlc);
     }
 
-    private static void Write(WriteScope scope, TableSql sql, SqlValue[] key, bool exists, List<TableColumn> columns, List<SqlValue> values, bool orIgnore)
+    private static void Write(WriteScope scope, TableSql sql, SqlValue[] key, bool exists, List<TableColumn> columns, List<SqlValue> values)
     {
         if (exists && columns.Count == 0)
         {
@@ -358,7 +376,7 @@ internal static class CrdtApplier
         }
 
         SqlValue[] parameters = [.. key, .. values];
-        scope.Run(exists ? sql.Update(columns) : sql.Insert(columns, orIgnore), parameters);
+        scope.Run(exists ? sql.Update(columns) : sql.Insert(columns), parameters);
     }
 
     private static SqlValue Existing(TableSchema schema, SqlValue[]? current, TableColumn column)
@@ -381,7 +399,9 @@ internal static class CrdtApplier
 
         if (value.TryGetIntegral(out var integral))
         {
-            return SqlValue.FromIntegral(integral + delta);
+            return DeltaMath.TryDifference(integral, -(Int128)delta, out var sum)
+                ? SqlValue.FromIntegral(sum)
+                : SqlValue.FromReal((double)((Int128)integral + delta));
         }
 
         if (value.TryGetReal(out var real))
@@ -391,4 +411,17 @@ internal static class CrdtApplier
 
         return SqlValue.FromIntegral(delta);
     }
+}
+
+internal static class DeltaMath
+{
+    public static bool TryDifference(Int128 after, Int128 before, out long delta)
+    {
+        var exact = after - before;
+        var fits = exact >= long.MinValue && exact <= long.MaxValue;
+        delta = fits ? (long)exact : 0;
+        return fits;
+    }
+
+    public static long Sum(long left, long right) => long.CreateSaturating((Int128)left + right);
 }

@@ -217,7 +217,7 @@ jobs:
             journey-write:
               - *journey-browser
               - e2e/placement/{support,fleet}.ts
-              - e2e/placement/{database-functions,write-guarantees,region-restore,catalog-guards,close}.spec.ts
+              - e2e/placement/{database-functions,write-guarantees,storage-lifecycle,region-restore,catalog-guards,close}.spec.ts
               - e2e/fault/support.ts
             journey-faults:
               - *journey-browser
@@ -325,7 +325,7 @@ jobs:
               {shard: "phone pages and hosted", projects: "pages/ hosted/ journey/invitation interactions/f --project pages-mobile --project hosted --project invitation --project interactions", selected: env.PHONE},
               {shard: "phone interactions", projects: "interactions/[^f] interactions/files\\. --project interactions", selected: env.PHONE},
               {shard: "session limits", projects: "placement/session-limits.spec.ts --project placement --workers 1", regions: 2, nodes: 2, selected: env.SESSION},
-              {shard: "write guarantees", projects: "placement/database-functions.spec.ts placement/write-guarantees.spec.ts placement/region-restore.spec.ts placement/catalog-guards.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
+              {shard: "write guarantees", projects: "placement/database-functions.spec.ts placement/write-guarantees.spec.ts placement/storage-lifecycle.spec.ts placement/region-restore.spec.ts placement/catalog-guards.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
               {shard: "multi-region faults", projects: "--project fault", regions: 2, nodes: 2, selected: env.FAULTS}
             ] | map(select(env.ALL_LANES == "true" or .selected == "true") | del(.selected)) as $shards
             | ($shards | length > 0) as $browser

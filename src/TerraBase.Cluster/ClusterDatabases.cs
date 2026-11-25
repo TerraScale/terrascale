@@ -383,7 +383,7 @@ public sealed class ChangefeedPublisher(IEnumerable<IChangefeedHub> hubs, TimePr
             commit.SchemaEpoch,
             commit.Mode,
             commit.DeltaPayload,
-            commit.Hlc.WallMs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(commit.Hlc.WallMs) : timeProvider.GetUtcNow());
+            commit.Hlc.WallMs > 0 ? commit.Hlc.WallTime : timeProvider.GetUtcNow());
         foreach (var hub in _hubs)
         {
             await hub.PublishAsync(entry, cancellationToken);

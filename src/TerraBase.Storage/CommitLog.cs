@@ -289,6 +289,7 @@ internal sealed class OriginLog : IDisposable
     private long _firstAvailable;
     private int _sealedReaders;
     private DateTimeOffset _activeSince;
+    private bool _uncommitted;
     private bool _disposed;
 
     private OriginLog(
@@ -467,12 +468,21 @@ internal sealed class OriginLog : IDisposable
 
             _length = offset + buffer.Length;
             _lastSequence = added[^1].Sequence;
+            _uncommitted = true;
             if (_firstAvailable > _lastSequence || _firstAvailable == 0)
             {
                 _firstAvailable = added[0].Sequence;
             }
 
             return SqliteStatus.Success;
+        }
+    }
+
+    public void MarkCommitted()
+    {
+        lock (_gate)
+        {
+            _uncommitted = false;
         }
     }
 
@@ -487,23 +497,21 @@ internal sealed class OriginLog : IDisposable
         }
     }
 
-    public void Truncate(long length, long lastSequence)
+    public bool Truncate(long length, long lastSequence)
     {
         lock (_gate)
         {
+            _uncommitted = false;
             if (_disposed || length > _length)
             {
-                return;
+                return !_disposed;
             }
 
             _frames.RemoveAll(frame => frame.Offset >= length);
-            if (_active is { } active)
-            {
-                _ = FileIo.SetLength(active, length);
-            }
-
+            var truncated = _active is { } active && FileIo.SetLength(active, length) is null;
             _length = length;
             _lastSequence = lastSequence;
+            return truncated;
         }
     }
 
@@ -744,7 +752,7 @@ internal sealed class OriginLog : IDisposable
 
     private void SealIfDue(bool force)
     {
-        if (_active is null || _frames.Count == 0 || (!force && _length < _options.SegmentMaxBytes && _time.GetUtcNow() - _activeSince < _options.SegmentMaxAge))
+        if (_active is null || _uncommitted || _frames.Count == 0 || (!force && _length < _options.SegmentMaxBytes && _time.GetUtcNow() - _activeSince < _options.SegmentMaxAge))
         {
             return;
         }

@@ -158,17 +158,18 @@ internal sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<Key
             IReadOnlyList<CommitMetadata> entries = read switch
             {
                 CommitLogPage page => page.Entries,
-                CommitLogGap or StorageBusy => [],
+                CommitLogGap or StorageCorrupted or StorageBusy => [],
             };
             var resume = read switch
             {
                 CommitLogPage page => page.NextSequence,
                 CommitLogGap gap => gap.OldestAvailable,
-                StorageBusy => next,
+                StorageCorrupted or StorageBusy => next,
             };
             var failure = read switch
             {
                 CommitLogPage or CommitLogGap => null,
+                StorageCorrupted corrupted => corrupted.Message,
                 StorageBusy busy => busy.Message,
             };
             if (failure is not null)

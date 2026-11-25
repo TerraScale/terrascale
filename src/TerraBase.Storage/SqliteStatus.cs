@@ -5,14 +5,25 @@ namespace TerraBase.Storage;
 internal readonly record struct SqliteStatus(int Code, string Message)
 {
     private const int UnsupportedStatement = -1;
+    private const int NumericOutOfRange = -2;
+    private const int CharacterNotInRepertoire = -3;
 
     public static SqliteStatus Success { get; } = new(SqliteNative.Ok, "ok");
+
+    public static SqliteStatus NonFiniteReal { get; } = new(NumericOutOfRange, "REAL values must be finite; Infinity and NaN are not supported");
+
+    public static SqliteStatus InvalidUtf8 { get; } = new(CharacterNotInRepertoire, "TEXT values must be valid UTF-8; store raw bytes as a BLOB");
 
     public bool IsOk => Code is SqliteNative.Ok or SqliteNative.Row or SqliteNative.Done;
 
     public int Primary => Code & 0xFF;
 
     public bool IsBusy => Primary is SqliteNative.Busy or SqliteNative.Locked or SqliteNative.NoMem;
+
+    public bool IsEnvironmental => Primary is SqliteNative.Internal or SqliteNative.Perm or SqliteNative.Abort or SqliteNative.Busy
+        or SqliteNative.Locked or SqliteNative.NoMem or SqliteNative.ReadOnly or SqliteNative.Interrupt or SqliteNative.IoError
+        or SqliteNative.Corrupt or SqliteNative.Full or SqliteNative.CantOpen or SqliteNative.Protocol or SqliteNative.Schema
+        or SqliteNative.Misuse or SqliteNative.NoLargeFile or SqliteNative.NotADatabase;
 
     public static SqliteStatus Fail(string message) => new(SqliteNative.Error, message);
 
@@ -31,6 +42,8 @@ internal readonly record struct SqliteStatus(int Code, string Message)
         SqliteNative.ConstraintForeignKey => "foreign_key_violation",
         SqliteNative.ConstraintNotNull => "not_null_violation",
         SqliteNative.ConstraintCheck => "check_violation",
+        NumericOutOfRange => "numeric_value_out_of_range",
+        CharacterNotInRepertoire => "character_not_in_repertoire",
         _ => Primary switch
         {
             SqliteNative.Constraint => "constraint_violation",
@@ -56,6 +69,8 @@ internal readonly record struct SqliteStatus(int Code, string Message)
         SqliteNative.ConstraintNotNull => "23502",
         SqliteNative.ConstraintCheck => "23514",
         UnsupportedStatement => "0A000",
+        NumericOutOfRange => "22003",
+        CharacterNotInRepertoire => "22021",
         _ => Primary switch
         {
             SqliteNative.Constraint => "23000",

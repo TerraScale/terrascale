@@ -157,32 +157,6 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         return status;
     }
 
-    public SqliteStatus ChargeCreatedRow(nint statement, int columnCount)
-    {
-        if (!CountWrite())
-        {
-            return Fault;
-        }
-
-        for (var column = 0; column < columnCount; column++)
-        {
-            var length = SqliteNative.ColumnType(statement, column) switch
-            {
-                SqliteNative.TypeText or SqliteNative.TypeBlob => SqliteNative.ColumnBytes(statement, column),
-                SqliteNative.TypeNull => 0,
-                _ => sizeof(long),
-            };
-            if (!FitsWrite(length, _remainingBytes))
-            {
-                return Fault;
-            }
-
-            _remainingBytes -= length;
-        }
-
-        return SqliteStatus.Success;
-    }
-
     public void Dispose()
     {
         if (!_self.IsAllocated)
@@ -500,7 +474,14 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             return SqlValue.Null;
         }
 
-        return SqliteNative.ReadValue(value);
+        var read = SqliteNative.ReadValue(value, out var result);
+        if (!read.IsOk)
+        {
+            Fault = read;
+            SqliteNative.InterruptQuery(db);
+        }
+
+        return result;
     }
 
     private static bool IsMain(byte* database) =>

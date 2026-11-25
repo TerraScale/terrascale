@@ -30,6 +30,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     private long _workStarted;
     private bool _userMode;
     private bool _applyMode;
+    private bool _applyModeDirty;
     private long _schemaCookie = -1;
     private int _deltaVersion = -1;
     private nint _db;
@@ -135,7 +136,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         int rc;
         fixed (byte* namePointer = name)
         {
-            rc = SqliteNative.CreateFunctionV2(Handle, namePointer, 0, SqliteNative.Utf8, GCHandle<SnowflakeGenerator>.ToIntPtr(_snowflake), &OnSnowflake, 0, 0, 0);
+            rc = SqliteNative.CreateFunctionV2(Handle, namePointer, 0, SqliteNative.Utf8 | SqliteNative.Innocuous, GCHandle<SnowflakeGenerator>.ToIntPtr(_snowflake), &OnSnowflake, 0, 0, 0);
         }
 
         return Status(rc);
@@ -143,15 +144,26 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus SetApplyMode(bool applying)
     {
-        if (_applyMode == applying)
+        if (_applyMode == applying && !_applyModeDirty)
         {
             return SqliteStatus.Success;
         }
 
+        if (InTransaction)
+        {
+            return new SqliteStatus(SqliteNative.Misuse, "the writer cannot change apply mode inside a transaction");
+        }
+
+        _applyModeDirty = true;
         var status = SetFlag(SqliteNative.ConfigEnableTrigger, applying ? 0 : 1);
         if (status.IsOk)
         {
             status = SetFlag(SqliteNative.ConfigDefensive, applying ? 0 : 1);
+        }
+
+        if (status.IsOk)
+        {
+            status = Exec(applying ? "PRAGMA foreign_keys = OFF;" : "PRAGMA foreign_keys = ON;");
         }
 
         if (!status.IsOk)
@@ -160,6 +172,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         }
 
         _applyMode = applying;
+        _applyModeDirty = false;
         return SqliteStatus.Success;
     }
 
@@ -269,7 +282,11 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                     break;
                 }
 
-                rows.Add(ReadRow(statement));
+                status = ReadRow(statement, out var row);
+                if (status.IsOk)
+                {
+                    rows.Add(row);
+                }
             }
         }
         finally
@@ -297,7 +314,8 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 var rc = SqliteNative.Step(statement);
                 if (rc == SqliteNative.Row)
                 {
-                    row = ReadRow(statement);
+                    status = ReadRow(statement, out var read);
+                    row = status.IsOk ? read : null;
                 }
                 else if (rc != SqliteNative.Done)
                 {
@@ -543,39 +561,16 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 }
             }
 
-            rows.Add(ReadRow(statement));
+            var read = ReadRow(statement, out var row);
+            if (!read.IsOk)
+            {
+                return read;
+            }
+
+            rows.Add(row);
         }
 
         return Canceled;
-    }
-
-    public SqliteStatus CheckCreatedTable(string table, PreupdateCapture capture)
-    {
-        var query = string.Concat("SELECT * FROM main.", TableSql.Quote(table));
-        var status = Rent(query, out var statement, out var cached);
-        if (!status.IsOk)
-        {
-            return status;
-        }
-
-        var columnCount = SqliteNative.ColumnCount(statement);
-        while (true)
-        {
-            var rc = SqliteNative.Step(statement);
-            if (rc == SqliteNative.Done)
-            {
-                break;
-            }
-
-            status = rc == SqliteNative.Row ? capture.ChargeCreatedRow(statement, columnCount) : Status(rc);
-            if (!status.IsOk)
-            {
-                break;
-            }
-        }
-
-        Return(statement, cached);
-        return status;
     }
 
     private bool IsWorkCanceled() =>
@@ -997,16 +992,20 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         }
     }
 
-    private static SqlValue[] ReadRow(nint statement)
+    private static SqliteStatus ReadRow(nint statement, out SqlValue[] row)
     {
         var count = SqliteNative.ColumnCount(statement);
-        var row = new SqlValue[count];
+        row = new SqlValue[count];
         for (var index = 0; index < count; index++)
         {
-            row[index] = SqliteNative.ReadColumn(statement, index);
+            var read = SqliteNative.ReadColumn(statement, index, out row[index]);
+            if (!read.IsOk)
+            {
+                return read;
+            }
         }
 
-        return row;
+        return SqliteStatus.Success;
     }
 
     private static byte[] Utf8Z(string value)

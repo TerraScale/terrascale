@@ -50,6 +50,9 @@ internal sealed partial class DatabaseSession
 
     private static readonly SqliteStatus SingleStatement = new(SqliteNative.Auth, "end users send exactly one statement per entry");
 
+    private static readonly SqliteStatus CreateTableAsSelect =
+        SqliteStatus.Unsupported("CREATE TABLE ... AS SELECT is not supported; create the table with a primary key, then INSERT ... SELECT into it");
+
     private StatementOutcome ExecuteStatement(WriteContext context, SqlStatement statement, int index)
     {
         if (!_capture.Fault.IsOk)
@@ -110,7 +113,7 @@ internal sealed partial class DatabaseSession
             }
 
             var tokens = SqlTokenizer.Tokenize(segment);
-            if (SqlAnalyzer.RewriteSnowflakeInsert(segment, tokens, _capture.Resolve) is { } rewritten)
+            if ((SqlAnalyzer.RewriteSnowflakeInsert(segment, tokens, _capture.Resolve) ?? SqlAnalyzer.RewriteTriggerInserts(segment, tokens, _capture.Resolve)) is { } rewritten)
             {
                 SqliteConnection.FinalizeStatement(handle);
                 status = _writer.PrepareUser(Encoding.UTF8.GetBytes(rewritten), statement.Scope, info, out handle, out _);
@@ -123,10 +126,16 @@ internal sealed partial class DatabaseSession
                 tokens = SqlTokenizer.Tokenize(segment);
             }
 
+            if (info.CreatedTable is not null && CreatesPopulatedTable(tokens))
+            {
+                SqliteConnection.FinalizeStatement(handle);
+                return CreateTableAsSelect.ToSqlError(index);
+            }
+
             var isDdl = !isExplain && info.IsDdl;
             if (context.AnalyzeReads)
             {
-                CollectScannedTables(context, handle, segment);
+                CollectScannedTables(context, handle, segment, tokens);
             }
 
             status = _writer.BindUser(handle, statement);
@@ -134,22 +143,6 @@ internal sealed partial class DatabaseSession
             {
                 SqliteConnection.FinalizeStatement(handle);
                 return status.ToSqlError(index);
-            }
-
-            string? populatedTable = null;
-            if (_writer.HasUserLimits && info.CreatedTable is { } table && CreatesPopulatedTable(tokens))
-            {
-                status = _writer.QueryFirst("SELECT 1 FROM main.sqlite_schema WHERE name = ? COLLATE NOCASE", out var existing, SqlValue.FromText(table));
-                if (!status.IsOk)
-                {
-                    SqliteConnection.FinalizeStatement(handle);
-                    return status.ToSqlError(index);
-                }
-
-                if (existing is null)
-                {
-                    populatedTable = table;
-                }
             }
 
             long cookieBefore = 0;
@@ -192,16 +185,6 @@ internal sealed partial class DatabaseSession
                 if (cookieAfter != cookieBefore)
                 {
                     context.Ddl.Add(segment.Trim().TrimEnd(';'));
-                    if (populatedTable is not null)
-                    {
-                        status = _writer.CheckCreatedTable(populatedTable, _capture);
-                        if (!status.IsOk)
-                        {
-                            _writer.InvalidateSchemaCache();
-                            context.RecordDdlFault(status);
-                            return status.ToSqlError(index);
-                        }
-                    }
                 }
 
                 status = _writer.ValidateSchemaCache();
@@ -305,7 +288,7 @@ internal sealed partial class DatabaseSession
         return null;
     }
 
-    private void CollectScannedTables(WriteContext context, nint handle, string segment)
+    private void CollectScannedTables(WriteContext context, nint handle, string segment, List<SqlToken> tokens)
     {
         var info = context.Info;
         foreach (var table in info.WrittenTables)
@@ -328,33 +311,76 @@ internal sealed partial class DatabaseSession
         }
 
         List<string> plan = [];
-        if (!_writer.ExplainQueryPlan(segment, plan).IsOk || !plan.TrueForAll(IsPointLookup))
+        if (!_writer.ExplainQueryPlan(segment, plan).IsOk)
         {
             context.ScannedTables.UnionWith(info.ReadTables);
+            return;
         }
+
+        Dictionary<string, int> accesses = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> pointLookups = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var detail in plan)
+        {
+            if (PlanTable(detail) is not { } table)
+            {
+                continue;
+            }
+
+            if (!info.ReadTables.Contains(table))
+            {
+                context.ScannedTables.UnionWith(info.ReadTables);
+                return;
+            }
+
+            accesses[table] = accesses.GetValueOrDefault(table) + 1;
+            if (IsPointLookup(detail))
+            {
+                _ = pointLookups.Add(table);
+            }
+        }
+
+        var verb = SqlAnalyzer.MainVerb(tokens);
+        var inserts = verb >= 0 && (tokens[verb].Is("INSERT") || tokens[verb].Is("REPLACE"));
+        foreach (var table in info.ReadTables)
+        {
+            var readsOnlyWrittenRow = info.WrittenTables.Contains(table) && accesses.GetValueOrDefault(table) switch
+            {
+                0 => true,
+                1 => !inserts && pointLookups.Contains(table),
+                _ => false,
+            };
+            if (!readsOnlyWrittenRow)
+            {
+                _ = context.ScannedTables.Add(table);
+            }
+        }
+    }
+
+    private static string? PlanTable(string detail)
+    {
+        var scan = detail.StartsWith("SCAN ", StringComparison.Ordinal) && !detail.StartsWith("SCAN CONSTANT ROW", StringComparison.Ordinal);
+        if (!scan && !detail.StartsWith("SEARCH ", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var name = detail[(scan ? "SCAN ".Length : "SEARCH ".Length)..];
+        var access = name.IndexOf(" USING ", StringComparison.Ordinal);
+        return access >= 0 ? name[..access] : name;
     }
 
     private bool IsPointLookup(string detail)
     {
-        if (detail.StartsWith("SCAN CONSTANT ROW", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        if (detail.StartsWith("SCAN ", StringComparison.Ordinal))
+        if (!detail.StartsWith("SEARCH ", StringComparison.Ordinal))
         {
             return false;
         }
 
-        if (!detail.StartsWith("SEARCH ", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var parts = detail.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+        var table = PlanTable(detail);
+        var usingAt = detail.IndexOf(" USING ", StringComparison.Ordinal);
         var open = detail.LastIndexOf('(');
         var close = detail.LastIndexOf(')');
-        if (parts.Length < 3 || open < 0 || close < open || _capture.Resolve(parts[1]) is not { } schema)
+        if (table is null || usingAt < 0 || open < 0 || close < open || _capture.Resolve(table) is not { } schema)
         {
             return false;
         }
@@ -365,7 +391,7 @@ internal sealed partial class DatabaseSession
             return false;
         }
 
-        var access = parts[2];
+        var access = detail[(usingAt + 1)..];
         if (access.StartsWith("USING INTEGER PRIMARY KEY", StringComparison.Ordinal) || access.StartsWith("USING PRIMARY KEY", StringComparison.Ordinal))
         {
             return terms.Length >= schema.PrimaryKeyColumnNames.Count;
@@ -465,15 +491,11 @@ internal sealed partial class DatabaseSession
 
     private void RegisterStaged(StagedDescriptor descriptor)
     {
-        var now = _context.Time.GetUtcNow();
+        var retained = descriptor with { Staged = descriptor.Staged with { ResultSets = [] } };
         lock (_stagedGate)
         {
-            foreach (var expired in _staged.Where(pair => now - pair.Value.CreatedAt > Options.StagedWriteTtl).Select(static pair => pair.Key).ToArray())
-            {
-                _ = _staged.Remove(expired);
-            }
-
-            _staged[descriptor.Staged.Token.Value] = descriptor;
+            DropExpiredStaged();
+            _staged[descriptor.Staged.Token.Value] = retained;
         }
     }
 
@@ -481,7 +503,17 @@ internal sealed partial class DatabaseSession
     {
         lock (_stagedGate)
         {
+            DropExpiredStaged();
             return _staged.Remove(token.Value, out var descriptor) ? descriptor : null;
+        }
+    }
+
+    private void DropExpiredStaged()
+    {
+        var now = _context.Time.GetUtcNow();
+        foreach (var expired in _staged.Where(pair => now - pair.Value.CreatedAt > Options.StagedWriteTtl).Select(static pair => pair.Key).ToArray())
+        {
+            _ = _staged.Remove(expired);
         }
     }
 

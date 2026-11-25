@@ -6,8 +6,12 @@ internal sealed record SnapshotCapture(CausalBookmark Bookmark, ulong SchemaEpoc
 
 internal readonly union SnapshotOutcome(SnapshotCapture, StorageBusy);
 
+internal readonly record struct PendingApply(CommitMetadata Commit, DeltaBatch Batch, bool Quarantined, ulong SavedEpoch);
+
 internal sealed partial class DatabaseSession
 {
+    private static readonly DeltaBatch EmptyBatch = new([], []);
+
     public ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken) =>
         ExecuteReadAsync(request, limitResults: true, cancellationToken);
 
@@ -246,64 +250,45 @@ internal sealed partial class DatabaseSession
         var pending = ApplyPending([], persist: false);
         return pending switch
         {
-            RemoteApplyOutcome => RecoverClockWatermark(),
+            RemoteApplyOutcome recovered => RecoverClockWatermark(recovered),
             SchemaMismatch mismatch => new StorageCorrupted(DatabaseId, string.Concat("schema epoch mismatch during recovery: expected ", mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture))),
             StorageCorrupted corrupted => corrupted,
             StorageBusy busy => busy,
         };
     }
 
-    private RecoverOutcome RecoverClockWatermark()
+    private RecoverOutcome RecoverClockWatermark(RemoteApplyOutcome recovered)
     {
-        var maxHlc = HlcTimestamp.Zero;
-        List<SqlValue[]> metaRows = [];
-        var status = _writer.Query(MetaStore.SelectAllMetaSql, metaRows);
-        if (status.IsBusy)
+        _ = Interlocked.Add(ref _recoveredQuarantined, recovered.Quarantined);
+        var ceiling = new byte[HlcTimestamp.EncodedSize];
+        HlcCodec.Write(ceiling, new HlcTimestamp(HlcTimestamp.MaxWallMs, ushort.MaxValue, ushort.MaxValue));
+        var status = _writer.QueryFirst(MetaStore.SelectClockWatermarkSql, out var row, SqlValue.FromBlob(ceiling));
+        if (!status.IsOk)
         {
-            return status.ToBusy();
+            return status.IsBusy ? status.ToBusy() : new StorageCorrupted(DatabaseId, status.Message);
         }
 
-        if (status.IsOk)
+        if (row is not null && row[0].TryGetBlob(out var blob) && blob.Length == HlcTimestamp.EncodedSize)
         {
-            foreach (var row in metaRows)
-            {
-                if (!row[0].TryGetBlob(out var pk) || !row[1].TryGetBlob(out var blob))
-                {
-                    continue;
-                }
-
-                if (pk.Length == 0 && blob.Length == HlcTimestamp.EncodedSize)
-                {
-                    maxHlc = HlcCodec.Max(maxHlc, HlcCodec.Read(blob.Span));
-                }
-                else if (RowMeta.Decode(blob.Span) is { } meta)
-                {
-                    maxHlc = HlcCodec.Max(maxHlc, meta.RowHlc);
-                    foreach (var column in meta.Columns.Values)
-                    {
-                        maxHlc = HlcCodec.Max(maxHlc, column.Hlc);
-                    }
-                }
-            }
+            _context.Clock.Restore(HlcCodec.Read(blob.Span));
         }
 
         foreach (var log in Logs())
         {
             var last = log.LastSequence;
-            if (last <= 0)
+            if (last <= 0 || log.Read(last, 1) is not IReadOnlyList<CommitMetadata> { Count: > 0 } entries || !entries[^1].Hlc.IsValid)
             {
                 continue;
             }
 
-            if (log.Read(last, 1) is IReadOnlyList<CommitMetadata> { Count: > 0 } entries)
+            if (string.Equals(log.Origin, Region, StringComparison.Ordinal))
             {
-                maxHlc = HlcCodec.Max(maxHlc, entries[^1].Hlc);
+                _context.Clock.Restore(entries[^1].Hlc);
             }
-        }
-
-        if (maxHlc > HlcTimestamp.Zero)
-        {
-            _context.Clock.Restore(maxHlc);
+            else
+            {
+                _ = _context.Clock.Observe(entries[^1].Hlc);
+            }
         }
 
         return new SessionRecovered();
@@ -388,12 +373,16 @@ internal sealed partial class DatabaseSession
     {
         var applied = 0;
         var duplicates = 0;
+        var quarantined = 0;
+        var isolate = false;
+        HashSet<(string Origin, long Sequence)> poisoned = [];
         var batchFull = true;
         while (batchFull)
         {
             var tentative = _versions.Copy();
             var epoch = SchemaEpoch;
-            List<(CommitMetadata Commit, DeltaBatch Batch)> order = [];
+            var horizon = _context.Time.GetUtcNow().ToUnixTimeMilliseconds() + HlcClock.MaxFutureSkewMs;
+            List<PendingApply> order = [];
             var bytes = 0L;
             batchFull = false;
             var progressed = true;
@@ -402,30 +391,40 @@ internal sealed partial class DatabaseSession
                 progressed = false;
                 foreach (var (origin, queue) in _pending)
                 {
+                    if (isolate && order.Count > 0)
+                    {
+                        batchFull = true;
+                        break;
+                    }
+
                     var next = tentative.GetValueOrDefault(origin) + 1;
                     if (!queue.TryGetValue(next, out var commit) || !Satisfied(commit, tentative))
                     {
                         continue;
                     }
 
-                    if (!MutationBatchCodec.TryDecode(commit.DeltaPayload.Span, out var batch))
+                    if (persist && commit.Hlc.IsValid && commit.Hlc.WallMs > horizon && !string.Equals(origin, Region, StringComparison.Ordinal))
                     {
-                        _ = queue.Remove(next);
-                        return new StorageCorrupted(DatabaseId, string.Concat("undecodable delta payload from ", origin));
-                    }
-
-                    if (batch.Ddl.Count > 0 && commit.SchemaEpoch != epoch + 1)
-                    {
-                        if (commit.SchemaEpoch <= epoch)
-                        {
-                            _ = queue.Remove(next);
-                            return new SchemaMismatch(DatabaseId, epoch + 1, commit.SchemaEpoch);
-                        }
-
                         continue;
                     }
 
-                    if (batch.Ddl.Count == 0 && commit.SchemaEpoch > epoch)
+                    var decoded = MutationBatchCodec.TryDecode(commit.DeltaPayload.Span, out var batch);
+                    var malformed = !commit.Hlc.IsValid || !decoded;
+                    var regressed = false;
+                    if (malformed)
+                    {
+                        batch = EmptyBatch;
+                    }
+                    else if (batch.Ddl.Count > 0 && commit.SchemaEpoch != epoch + 1)
+                    {
+                        if (commit.SchemaEpoch > epoch)
+                        {
+                            continue;
+                        }
+
+                        regressed = true;
+                    }
+                    else if (batch.Ddl.Count == 0 && commit.SchemaEpoch > epoch)
                     {
                         continue;
                     }
@@ -448,8 +447,9 @@ internal sealed partial class DatabaseSession
                         bytes += size;
                     }
 
-                    epoch = batch.Ddl.Count > 0 ? commit.SchemaEpoch : epoch;
-                    order.Add((commit, batch));
+                    var poison = malformed || regressed || poisoned.Contains((origin, next));
+                    epoch = !malformed && !regressed && batch.Ddl.Count > 0 ? commit.SchemaEpoch : epoch;
+                    order.Add(new PendingApply(commit, poison ? EmptyBatch : batch, poison, poison ? epoch : commit.SchemaEpoch));
                     tentative[origin] = next;
                     progressed = true;
                 }
@@ -460,10 +460,24 @@ internal sealed partial class DatabaseSession
                 break;
             }
 
-            var status = ApplyInTransaction(order, persist, out var skipped);
-            foreach (var (commit, _) in order)
+            var status = ApplyInTransaction(order, persist, out var skipped, out var dataFault);
+            if (dataFault && order is [{ Quarantined: false } single])
             {
-                _ = _pending[commit.OriginRegion].Remove(commit.Sequence);
+                _ = poisoned.Add((single.Commit.OriginRegion, single.Commit.Sequence));
+                batchFull = true;
+                continue;
+            }
+
+            if (dataFault && order.Count > 1)
+            {
+                isolate = true;
+                batchFull = true;
+                continue;
+            }
+
+            foreach (var pending in order)
+            {
+                _ = _pending[pending.Commit.OriginRegion].Remove(pending.Commit.Sequence);
             }
 
             if (!status.IsOk)
@@ -471,14 +485,17 @@ internal sealed partial class DatabaseSession
                 return status.IsBusy ? status.ToBusy() : new StorageCorrupted(DatabaseId, status.Message);
             }
 
+            var isolated = order.Count(static pending => pending.Quarantined);
+            isolate &= isolated == 0;
             Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
             _versions.Set(tentative);
-            applied += order.Count - skipped;
+            applied += order.Count - skipped - isolated;
             duplicates += skipped;
+            quarantined += isolated;
         }
 
         var buffered = requested.Count(commit => _pending.TryGetValue(commit.OriginRegion, out var queue) && queue.ContainsKey(commit.Sequence));
-        return new RemoteApplyOutcome(applied, duplicates, buffered, _versions.Snapshot());
+        return new RemoteApplyOutcome(applied, duplicates, buffered, _versions.Snapshot(), quarantined);
     }
 
     private static bool Satisfied(CommitMetadata commit, Dictionary<string, long> tentative)
@@ -494,9 +511,10 @@ internal sealed partial class DatabaseSession
         return true;
     }
 
-    private SqliteStatus ApplyInTransaction(List<(CommitMetadata Commit, DeltaBatch Batch)> order, bool persist, out int skipped, long? leaseDeadline = null)
+    private SqliteStatus ApplyInTransaction(List<PendingApply> order, bool persist, out int skipped, out bool dataFault, long? leaseDeadline = null)
     {
         skipped = 0;
+        dataFault = false;
         var status = BeginWrite(applying: true);
         if (!status.IsOk)
         {
@@ -505,14 +523,20 @@ internal sealed partial class DatabaseSession
 
         _capture.Suppressed = true;
         var scope = new WriteScope(_writer);
-        scope.Fail(_writer.Exec("PRAGMA defer_foreign_keys = ON;"));
         var nowMs = _context.Time.GetUtcNow().ToUnixTimeMilliseconds();
         var schemaChanged = false;
-        foreach (var (commit, batch) in order)
+        foreach (var (commit, batch, quarantined, savedEpoch) in order)
         {
-            var receipt = _context.Clock.Observe(commit.Hlc);
+            var receipt = quarantined ? HlcTimestamp.Zero : _context.Clock.Observe(commit.Hlc);
             var local = string.Equals(commit.OriginRegion, Region, StringComparison.Ordinal);
-            if (!local && MetaStore.IsApplied(scope, commit.TxId))
+            if (quarantined)
+            {
+                if (!local)
+                {
+                    MetaStore.MarkApplied(scope, commit.TxId, nowMs);
+                }
+            }
+            else if (!local && MetaStore.IsApplied(scope, commit.TxId))
             {
                 skipped++;
             }
@@ -524,9 +548,9 @@ internal sealed partial class DatabaseSession
                     schemaChanged = true;
                 }
 
-                if (batch.Ddl.Count > 0)
+                if (batch.Ddl.Count > 0 && _writer.ValidateSchemaCache() is { IsOk: false } stale)
                 {
-                    scope.Fail(_writer.ValidateSchemaCache());
+                    scope.Fail(stale.IsEnvironmental ? stale : new SqliteStatus(SqliteNative.Schema, stale.Message));
                 }
 
                 Dictionary<string, HlcTimestamp> tables = new(StringComparer.OrdinalIgnoreCase);
@@ -547,13 +571,19 @@ internal sealed partial class DatabaseSession
                 }
             }
 
-            MetaStore.SaveVersion(scope, commit.OriginRegion, commit.Sequence, commit.SchemaEpoch);
+            MetaStore.SaveVersion(scope, commit.OriginRegion, commit.Sequence, savedEpoch);
             if (scope.Failed)
             {
                 break;
             }
         }
 
+        if (!scope.Failed && order.Exists(pending => !string.Equals(pending.Commit.OriginRegion, Region, StringComparison.Ordinal)))
+        {
+            MetaStore.PruneApplied(scope, _context.Time.GetUtcNow());
+        }
+
+        dataFault = scope.Failed && !scope.Failure.IsEnvironmental;
         List<(OriginLog Log, long Length, long Last)> appended = [];
         if (!scope.Failed && persist)
         {
@@ -561,13 +591,25 @@ internal sealed partial class DatabaseSession
             {
                 if (EnsureLog(group.Key, _versions.Get(group.Key)) is not { } log)
                 {
-                    scope.Fail(SqliteStatus.Fail(string.Concat("commit log unavailable for origin ", group.Key)));
+                    scope.Fail(new SqliteStatus(SqliteNative.CantOpen, string.Concat("commit log unavailable for origin ", group.Key)));
                     break;
                 }
 
                 var last = log.LastSequence;
-                CommitMetadata[] fresh = [.. group.Where(commit => commit.Sequence > last)];
-                scope.Fail(log.Append(fresh, out var length));
+                CommitMetadata[] fresh = [.. order.Where(pending => pending.Commit.Sequence > last && string.Equals(pending.Commit.OriginRegion, group.Key, StringComparison.Ordinal))
+                    .Select(static pending => pending.Quarantined ? Preserved(pending.Commit) : pending.Commit)];
+                if (fresh.Length == 0)
+                {
+                    continue;
+                }
+
+                var written = log.Append(fresh, out var length);
+                scope.Fail(written);
+                if (!written.IsOk)
+                {
+                    break;
+                }
+
                 appended.Add((log, length, last));
             }
         }
@@ -582,20 +624,31 @@ internal sealed partial class DatabaseSession
         _capture.Suppressed = false;
         if (scope.Failed)
         {
+            var truncated = true;
             foreach (var (log, length, last) in appended)
             {
-                log.Truncate(length, last);
+                truncated &= log.Truncate(length, last);
             }
 
-            if (_writer.InTransaction)
-            {
-                _ = _writer.Exec("ROLLBACK;");
-            }
-
+            var cleared = _writer.RollbackOpenTransaction();
             _writer.InvalidateSchemaCache();
-            return scope.Failure;
+            if (!truncated)
+            {
+                return UntruncatableLog(scope.Failure);
+            }
+
+            if (!cleared.IsOk)
+            {
+                return cleared;
+            }
+
+            var restored = _writer.SetApplyMode(false);
+            return restored.IsOk
+                ? scope.Failure
+                : new SqliteStatus(SqliteNative.Corrupt, string.Concat("the writer could not leave apply mode after a failed apply: ", restored.Message));
         }
 
+        _ = _writer.SetApplyMode(false);
         if (schemaChanged)
         {
             _writer.InvalidateSchemaCache();
@@ -603,11 +656,18 @@ internal sealed partial class DatabaseSession
 
         foreach (var (log, _, _) in appended)
         {
+            log.MarkCommitted();
             log.SealIfDue();
         }
 
         return SqliteStatus.Success;
     }
+
+    private static CommitMetadata Preserved(CommitMetadata commit) =>
+        commit.Hlc.WallMs < 0 ? commit with { Hlc = commit.Hlc with { WallMs = HlcCodec.MaxWallMs } } : commit;
+
+    private static SqliteStatus UntruncatableLog(SqliteStatus failure) =>
+        new(SqliteNative.Corrupt, string.Concat("rolled-back commit log frames could not be truncated after: ", failure.Message));
 
     private bool LeaseExpired(long? leaseDeadline) => leaseDeadline is { } deadline && _context.Time.GetTimestamp() >= deadline;
 
@@ -672,7 +732,7 @@ internal sealed partial class DatabaseSession
         var sequence = _versions.Get(Region) + 1;
         var epoch = batch.Ddl.Count > 0 ? SchemaEpoch + 1 : SchemaEpoch;
         var commit = new CommitMetadata(staged.TxId, Region, sequence, commitHlc, epoch, ConsistencyMode.Strong, BookmarkWith(Region, sequence), staged.DeltaPayload);
-        var status = ApplyInTransaction([(commit, batch)], persist: true, out _, leaseDeadline);
+        var status = ApplyInTransaction([new PendingApply(commit, batch, false, commit.SchemaEpoch)], persist: true, out _, out _, leaseDeadline);
         if (!status.IsOk)
         {
             return LeaseExpired(leaseDeadline)

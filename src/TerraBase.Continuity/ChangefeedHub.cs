@@ -105,6 +105,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
                     {
                         CommitLogPage log => log,
                         CommitLogGap gap => Skip(subscription.DatabaseId, origin, gap),
+                        StorageCorrupted corrupted => Stop(subscription.DatabaseId, origin, corrupted.Message),
                         StorageBusy busy => Stop(subscription.DatabaseId, origin, busy.Message),
                     };
                     if (page.Entries.Count == 0)
@@ -128,7 +129,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
                             commit.SchemaEpoch,
                             commit.Mode,
                             commit.DeltaPayload,
-                            DateTimeOffset.FromUnixTimeMilliseconds(commit.Hlc.WallMs));
+                            commit.Hlc.WallTime);
                     }
 
                     next = page.NextSequence;

@@ -15,7 +15,11 @@ public readonly union InRegionReplicationOutcome(InRegionReplicated, ClusterUnav
 
 public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology topology, QuicRpcClient client, DeltaReplicator replicator, ILoggerFactory loggerFactory) : IAsyncDisposable
 {
-    private const long SnapshotThreshold = 4096;
+    private const long SnapshotThreshold = 256;
+
+    private const UnixFileMode PrivateDirectory = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
+    private const UnixFileMode PrivateFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
     private readonly ILogger _logger = loggerFactory.CreateLogger<InRegionRaftRouter>();
     private RaftShard[] _shards = [];
@@ -50,14 +54,17 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
         var shards = new RaftShard[options.RaftShardCount];
         var logs = new WriteAheadLog[options.RaftShardCount];
         var localId = RaftIdentity.For(options.NodeId);
+        var root = Path.Combine(options.DataDirectory, "raft");
+        Restrict(root);
         for (var index = 0; index < shards.Length; index++)
         {
             var shard = (ushort)index;
             var context = new RaftShardContext(shard, localId, client, options.RaftRequestTimeout);
-            var location = Path.Combine(options.DataDirectory, "raft", string.Concat("shard-", shard.ToString("D3", CultureInfo.InvariantCulture)));
-            _ = Directory.CreateDirectory(location);
+            var location = Path.Combine(root, string.Concat("shard-", shard.ToString("D3", CultureInfo.InvariantCulture)));
+            Restrict(location);
             var machine = new RaftShardStateMachine(IStateMachine.CreateNoOp(SnapshotThreshold), ApplyAsync);
             logs[index] = new WriteAheadLog(new WriteAheadLog.Options { Location = location }, machine);
+            Restrict(location);
             shards[index] = new RaftShard(configuration, context, loggerFactory.CreateLogger<RaftShard>()) { AuditTrail = logs[index] };
             List<QuicRaftMember> members = [new QuicRaftMember(context, options.NodeId, options.ListenEndPoint, isRemote: false)];
             members.AddRange(options.RegionPeers.Select(peer => new QuicRaftMember(context, peer.NodeId, new DnsEndPoint(peer.Host, peer.QuicPort), isRemote: true)));
@@ -67,6 +74,27 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
         Volatile.Write(ref _logs, logs);
         Volatile.Write(ref _shards, shards);
         ClusterLog.RaftStarted(_logger, options.Region, shards.Length, options.RegionPeers.Count + 1);
+    }
+
+    private static void Restrict(string location)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            _ = Directory.CreateDirectory(location);
+            return;
+        }
+
+        _ = Directory.CreateDirectory(location, PrivateDirectory);
+        File.SetUnixFileMode(location, PrivateDirectory);
+        foreach (var directory in Directory.EnumerateDirectories(location, "*", SearchOption.AllDirectories))
+        {
+            File.SetUnixFileMode(directory, PrivateDirectory);
+        }
+
+        foreach (var file in Directory.EnumerateFiles(location, "*", SearchOption.AllDirectories))
+        {
+            File.SetUnixFileMode(file, PrivateFile);
+        }
     }
 
     public async ValueTask<InRegionReplicationOutcome> ReplicateAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)

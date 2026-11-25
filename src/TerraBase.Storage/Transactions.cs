@@ -9,6 +9,7 @@ internal readonly union TransactionStartOutcome(TransactionStarted, StorageBusy)
 internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOptions options, Ulid txId) : ISqlTransaction
 {
     private readonly Channel<Command> _commands = Channel.CreateUnbounded<Command>(new UnboundedChannelOptions { SingleReader = true });
+    private Command? _current;
     private int _statements;
     private int _finished;
     private int _abandoned;
@@ -27,6 +28,26 @@ internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOp
         _commands.Writer.TryComplete();
     }
 
+    public void Fault(StorageBusy busy)
+    {
+        Abandon();
+        _ = Started.TrySetResult(busy);
+        _ = FailCommand(Interlocked.Exchange(ref _current, null), busy);
+        while (_commands.Reader.TryRead(out var queued))
+        {
+            _ = FailCommand(queued, busy);
+        }
+    }
+
+    private static bool FailCommand(Command? command, StorageBusy busy) => command switch
+    {
+        null => false,
+        ExecuteCommand execute => execute.Completion.TrySetResult(busy),
+        CommitCommand commit => commit.Completion.TrySetResult(busy),
+        StageCommand stage => stage.Completion.TrySetResult(busy),
+        RollbackCommand rollback => rollback.Completion.TrySetResult(),
+    };
+
     public async ValueTask<Command?> NextCommandAsync(TimeSpan idleTimeout, TimeProvider time)
     {
         using var cancellation = new CancellationTokenSource();
@@ -36,9 +57,11 @@ internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOp
         await cancellation.CancelAsync();
         if (winner == ready && await ready && _commands.Reader.TryRead(out var command))
         {
+            Volatile.Write(ref _current, command);
             return command;
         }
 
+        Volatile.Write(ref _current, null);
         Abandon();
         return null;
     }
