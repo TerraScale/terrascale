@@ -90,11 +90,12 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             await RegisterAsync(state, cancellationToken);
             if (!state.Registered)
             {
-                _ = Record(state, success: false, timedOut: false, TimeSpan.Zero, refused: false, instanceId: 0, observedAt: 0);
+                _ = Record(state, success: false, timedOut: false, TimeSpan.Zero, refused: false, instanceId: 0, observedAt: 0, generation: -1);
                 return;
             }
         }
 
+        var generation = state.Generation;
         var started = timeProvider.GetTimestamp();
         var response = await client.CallAsync<PingMessage, PongMessage>(
             state.Info.NodeId,
@@ -110,7 +111,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             QuicTimeout => (false, true, false, 0L),
             PongMessage or QuicUnavailable or QuicRemoteError => (false, false, false, 0L),
         };
-        var (stale, restarted, previous, next, failures, outboundRecovered) = Record(state, success, timedOut, timeProvider.GetElapsedTime(started), refused, remoteInstanceId, started);
+        var (stale, restarted, previous, next, failures, outboundRecovered) = Record(state, success, timedOut, timeProvider.GetElapsedTime(started), refused, remoteInstanceId, started, generation);
         if (stale)
         {
             return;
@@ -123,14 +124,14 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
 
         if (!success && !refused && failures >= options.UnreachableAfterFailures && failures % options.UnreachableAfterFailures == 0 && !IPAddress.TryParse(state.Info.Host, out _))
         {
-            await RefreshAddressAsync(state, started, cancellationToken);
+            await RefreshAddressAsync(state, generation, cancellationToken);
         }
     }
 
     private (bool Stale, bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(
-        PeerState state, bool success, bool timedOut, TimeSpan roundTrip, bool refused, long instanceId, long observedAt)
+        PeerState state, bool success, bool timedOut, TimeSpan roundTrip, bool refused, long instanceId, long observedAt, long generation)
     {
-        var recorded = state.Record(success, timedOut, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures, instanceId, observedAt, client);
+        var recorded = state.Record(success, timedOut, roundTrip, timeProvider.GetUtcNow(), refused ? 1 : options.UnreachableAfterFailures, instanceId, observedAt, generation, client);
         if (recorded.Previous != recorded.Next)
         {
             ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, recorded.Previous, recorded.Next);
@@ -160,11 +161,11 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         state.Registered = true;
     }
 
-    private async ValueTask RefreshAddressAsync(PeerState state, long probedAt, CancellationToken cancellationToken)
+    private async ValueTask RefreshAddressAsync(PeerState state, long generation, CancellationToken cancellationToken)
     {
         if (await ResolveAsync(state.Info, cancellationToken) is { } address)
         {
-            _ = state.RefreshAddress(address, probedAt, client);
+            _ = state.RefreshAddress(address, generation, client);
         }
     }
 
@@ -220,7 +221,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         private IPAddress? _resolvedAddress;
         private long _instanceId;
         private long _instanceObservedAt;
-        private long _instanceChangedAt;
+        private long _instanceGeneration;
         private int _failures;
         private bool _inboundPromoted;
 
@@ -253,11 +254,22 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
         }
 
-        public bool RefreshAddress(IPAddress address, long probedAt, QuicRpcClient client)
+        public long Generation
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _instanceGeneration;
+                }
+            }
+        }
+
+        public bool RefreshAddress(IPAddress address, long generation, QuicRpcClient client)
         {
             lock (_gate)
             {
-                if ((probedAt > 0 && probedAt < _instanceChangedAt) || (_resolvedAddress is { } previous && previous.Equals(address)))
+                if ((generation >= 0 && generation != _instanceGeneration) || (_resolvedAddress is { } previous && previous.Equals(address)))
                 {
                     return false;
                 }
@@ -270,14 +282,13 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         }
 
         public (bool Stale, bool Restarted, PeerStatus Previous, PeerStatus Next, int Failures, bool OutboundRecovered) Record(
-            bool success, bool timedOut, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter, long instanceId, long observedAt, QuicRpcClient client)
+            bool success, bool timedOut, TimeSpan roundTrip, DateTimeOffset now, int unreachableAfter, long instanceId, long observedAt, long generation, QuicRpcClient client)
         {
             lock (_gate)
             {
                 var previous = _health.Status;
-                if (observedAt > 0 && (success
-                    ? instanceId != 0 && _instanceId != 0 && instanceId != _instanceId && observedAt < _instanceObservedAt
-                    : observedAt < _instanceChangedAt))
+                if (generation >= 0 && generation != _instanceGeneration
+                    && (!success || (instanceId != 0 && _instanceId != 0 && instanceId != _instanceId)))
                 {
                     return (true, false, previous, previous, _failures, false);
                 }
@@ -333,7 +344,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
 
             var restarted = _instanceId != 0 && _instanceId != instanceId;
-            _instanceChangedAt = _instanceId != instanceId ? observedAt : _instanceChangedAt;
+            _instanceGeneration += _instanceId != instanceId ? 1 : 0;
             _instanceId = instanceId;
             _instanceObservedAt = observedAt;
             _inboundPromoted &= !restarted;
