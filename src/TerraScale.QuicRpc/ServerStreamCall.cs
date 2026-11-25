@@ -69,11 +69,11 @@ internal sealed class ServerStreamCall<TRes>(
             if (!_completed)
             {
                 lease.Stream.Abort(QuicAbortDirection.Both, QuicProtocol.StreamErrorCode);
-                _ = QuicIo.DisposeStreamAsync(lease.Stream);
+                _ = lease.ReleaseAsync();
             }
             else
             {
-                await QuicIo.DisposeStreamAsync(lease.Stream);
+                await lease.ReleaseAsync();
             }
 
             metrics.StreamClosed(QuicSide.Client);

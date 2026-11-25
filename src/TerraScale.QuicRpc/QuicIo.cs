@@ -29,6 +29,7 @@ internal readonly union QuicConnectionCloseOutcome(QuicConnectionClosed, QuicFau
 [SupportedOSPlatform("windows")]
 internal static class QuicIo
 {
+    private const int InitialPayloadCapacity = 4 * 1024;
     private static readonly StreamEnded Ended = new();
 
     public static async ValueTask<QuicListenerOpenOutcome> ListenAsync(QuicListenerOptions options, CancellationToken cancellationToken)
@@ -206,8 +207,27 @@ internal static class QuicIo
                 return new PooledFrame(parsed, []);
             }
 
-            payload = ArrayPool<byte>.Shared.Rent(parsed.PayloadLength);
-            await stream.ReadExactlyAsync(payload.AsMemory(0, parsed.PayloadLength), scope.Token);
+            payload = ArrayPool<byte>.Shared.Rent(Math.Min(parsed.PayloadLength, InitialPayloadCapacity));
+            var received = 0;
+            while (received < parsed.PayloadLength)
+            {
+                var capacity = Math.Min(payload.Length, parsed.PayloadLength);
+                var count = await stream.ReadAtLeastAsync(payload.AsMemory(received, capacity - received), capacity - received, throwOnEndOfStream: false, scope.Token);
+                received += count;
+                if (received < capacity)
+                {
+                    return new ProtocolFault("The peer ended the stream inside a frame payload.");
+                }
+
+                if (received < parsed.PayloadLength)
+                {
+                    var next = ArrayPool<byte>.Shared.Rent(Math.Min(capacity * 2, parsed.PayloadLength));
+                    payload.AsSpan(0, received).CopyTo(next);
+                    ArrayPool<byte>.Shared.Return(payload);
+                    payload = next;
+                }
+            }
+
             var frame = new PooledFrame(parsed, payload);
             payload = null;
             return frame;
@@ -219,10 +239,6 @@ internal static class QuicIo
         catch (AuthenticationException exception)
         {
             return new PeerRejected(exception.Message);
-        }
-        catch (EndOfStreamException)
-        {
-            return new ProtocolFault("The peer ended the stream inside a frame payload.");
         }
         catch (SocketException exception)
         {

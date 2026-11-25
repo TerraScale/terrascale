@@ -65,6 +65,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
     private readonly PeerSlot _slot;
     private readonly string _key;
     private readonly Channel<PendingPush> _queue;
+    private readonly Lock _enqueueGate = new();
     private readonly Lock _stopGate = new();
     private readonly CancellationTokenSource _stop;
     private StreamLease? _lease;
@@ -91,14 +92,9 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
     public async ValueTask<PushEnqueueOutcome> EnqueueAsync(PendingPush push, CallScope scope)
     {
-        if (_queue.Writer.TryWrite(push))
+        while (true)
         {
-            return new PushEnqueued();
-        }
-
-        try
-        {
-            while (await _queue.Writer.WaitToWriteAsync(scope.Token))
+            lock (_enqueueGate)
             {
                 if (_queue.Writer.TryWrite(push))
                 {
@@ -106,22 +102,37 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 }
             }
 
-            return Volatile.Read(ref _evicted) != 0
-                ? new ChannelEvicted()
-                : new TransportShutdown("The ordered push channel is closed.");
-        }
-        catch (OperationCanceledException) when (!scope.Caller.IsCancellationRequested)
-        {
-            return scope.Interrupted();
+            var wait = _queue.Writer.WaitToWriteAsync(scope.Token).AsTask();
+            await ((Task)wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (wait.IsCanceled && !scope.Caller.IsCancellationRequested)
+            {
+                return scope.Interrupted();
+            }
+
+            if (!await wait)
+            {
+                return Volatile.Read(ref _evicted) != 0
+                    ? new ChannelEvicted()
+                    : new TransportShutdown("The ordered push channel is closed.");
+            }
         }
     }
 
     public void Complete() => _queue.Writer.TryComplete();
 
-    public void CompleteIdle()
+    public bool TryCompleteIdle()
     {
-        Volatile.Write(ref _evicted, 1);
-        _queue.Writer.TryComplete();
+        lock (_enqueueGate)
+        {
+            if (_queue.Reader.TryPeek(out _))
+            {
+                return false;
+            }
+
+            Volatile.Write(ref _evicted, 1);
+            _queue.Writer.TryComplete();
+            return true;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -205,25 +216,16 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
     private async ValueTask<bool> WaitForItemAsync()
     {
         using var idleCancel = new CancellationTokenSource();
-        var waitTask = _queue.Reader.WaitToReadAsync(idleCancel.Token).AsTask();
+        var waitTask = _queue.Reader.WaitToReadAsync().AsTask();
         var idleTask = Task.Delay(QuicMeshLimits.OrderedChannelIdleTimeout, _pool.TimeProvider, idleCancel.Token);
         var winner = await Task.WhenAny(waitTask, idleTask);
         await idleCancel.CancelAsync();
-        if (winner == waitTask)
+        if (winner == idleTask)
         {
-            try
-            {
-                return await waitTask;
-            }
-            catch (OperationCanceledException)
-            {
-                return false;
-            }
+            _slot.EvictIdleChannel(_key, this);
         }
 
-        _ = waitTask.ContinueWith(static task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
-        _slot.EvictIdleChannel(_key, this);
-        return _queue.Reader.TryPeek(out _);
+        return await waitTask;
     }
 
     private void FailQueued(QuicFault failure)
@@ -307,7 +309,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
     {
         _lease = null;
         lease.Stream.Abort(QuicAbortDirection.Write, QuicProtocol.StreamErrorCode);
-        _ = QuicIo.DisposeStreamAsync(lease.Stream);
+        _ = lease.ReleaseAsync();
         _pool.Metrics.StreamClosed(QuicSide.Client);
     }
 
@@ -325,11 +327,12 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         {
             lease.Stream.Abort(QuicAbortDirection.Write, QuicProtocol.StreamErrorCode);
             _pool.Metrics.Error(QuicSide.Client, failure);
-            _ = QuicIo.DisposeStreamAsync(lease.Stream);
+            _pool.InvalidateIfDead(lease, failure);
+            _ = lease.ReleaseAsync();
         }
         else
         {
-            await QuicIo.DisposeStreamAsync(lease.Stream);
+            await lease.ReleaseAsync();
         }
 
         _pool.Metrics.StreamClosed(QuicSide.Client);
