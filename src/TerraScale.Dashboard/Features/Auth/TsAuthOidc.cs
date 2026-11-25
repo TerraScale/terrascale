@@ -191,12 +191,13 @@ namespace TerraScale.Dashboard.Features.Auth
             return expiry <= now.AddDays(1).ToUnixTimeSeconds() ? DateTimeOffset.FromUnixTimeSeconds(expiry) : throw new SignInRejectedException();
         }
 
+        private static string PlatformIssuer => new Uri(TsAuthOrigin.Value, "/" + Tenant).AbsoluteUri;
+
         private static string TrustedIssuer(string issuer)
         {
-            var expected = new Uri(TsAuthOrigin.Value, "/" + Tenant);
             if (!Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || !SameOrigin(uri) ||
                 uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
-                uri.AbsoluteUri != expected.AbsoluteUri)
+                uri.AbsoluteUri != PlatformIssuer)
             {
                 throw new SignInRejectedException();
             }

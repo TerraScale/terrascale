@@ -49,12 +49,20 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
-            return signingKeys.Get(time, KeysReuse, false, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return signingKeys.Get(time, KeysReuse, false, () => UsableKeysAsync(client)).WaitAsync(cancellationToken);
         }
 
-        private Task<(TsAuthJwkSet Keys, bool Fetched)> RefreshedKeysAsync(TsAuthClient client, CancellationToken cancellationToken)
+        private Task<(TsAuthJwkSet Keys, bool Fetched)> TrackedKeysAsync(TsAuthClient client, bool refresh, CancellationToken cancellationToken)
         {
-            return signingKeys.RefreshAsync(time, KeysReuse, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return signingKeys.ReadAsync(time, KeysReuse, refresh, () => UsableKeysAsync(client)).WaitAsync(cancellationToken);
+        }
+
+        private static async Task<TsAuthJwkSet> UsableKeysAsync(TsAuthClient client)
+        {
+            var keys = await client.Oidc.GetJwksAsync(CancellationToken.None);
+            return keys.Keys is { Count: > 0 } published && published.All(static key => key is { KeyId.Length: > 0, KeyType.Length: > 0, Curve.Length: > 0, X.Length: > 0, Y.Length: > 0 })
+                ? keys
+                : throw new HttpRequestException("ts-auth published an unusable JSON Web Key Set.");
         }
 
         private async Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, string? token, CancellationToken cancellationToken)
@@ -65,7 +73,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 return keys;
             }
 
-            return await signingKeys.Get(time, KeysReuse, true, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return await signingKeys.Get(time, KeysReuse, true, () => UsableKeysAsync(client)).WaitAsync(cancellationToken);
         }
 
 

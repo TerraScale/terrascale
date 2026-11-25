@@ -17,9 +17,9 @@ internal sealed class SharedRead<T>
             : fallback is null ? chosen.Value : OrLastGoodAsync(chosen.Value, fallback);
     }
 
-    public async Task<(T Value, bool Fetched)> RefreshAsync(TimeProvider time, TimeSpan reuse, Func<Task<T>> read)
+    public async Task<(T Value, bool Fetched)> ReadAsync(TimeProvider time, TimeSpan reuse, bool refresh, Func<Task<T>> read)
     {
-        var (chosen, settled, fallback) = Acquire(time, reuse, true, read);
+        var (chosen, settled, fallback) = Acquire(time, reuse, refresh, read);
         if (chosen is null)
         {
             return (await (settled ?? throw new InvalidOperationException("A shared read has neither a value nor an attempt.")), false);

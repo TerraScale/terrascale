@@ -13,20 +13,25 @@ public sealed partial class TsAuthGateway
 {
     public async Task<AgentVerification> VerifyAgentTokenAsync(string agentToken, CancellationToken cancellationToken)
     {
-        var client = Client();
-        var issuer = TrustedIssuer((await MetadataAsync(client, cancellationToken)).Issuer);
-        if (AuthJwtClaims.UnverifiedIssuer(agentToken) != issuer)
+        var issuer = PlatformIssuer;
+        if (!AuthJwtClaims.WellFormed(agentToken) || AuthJwtClaims.UnverifiedIssuer(agentToken) != issuer || AuthJwtClaims.KeyId(agentToken) is not { } kid)
         {
             return new AgentTokenRejected();
         }
 
-        var keys = await SigningKeysAsync(client, cancellationToken);
-        if (AuthJwtClaims.KeyId(agentToken) is { } kid && !keys.Keys.Any(key => key.KeyId == kid))
+        var client = Client();
+        var (keys, fetched) = await TrackedKeysAsync(client, false, cancellationToken);
+        if (!keys.Keys.Any(key => key.KeyId == kid))
         {
-            var (refreshed, fetched) = await RefreshedKeysAsync(client, cancellationToken);
+            if (fetched)
+            {
+                return new AgentTokenRejected();
+            }
+
+            var (refreshed, refetched) = await TrackedKeysAsync(client, true, cancellationToken);
             if (!refreshed.Keys.Any(key => key.KeyId == kid))
             {
-                return fetched ? new AgentTokenRejected() : new AgentTokenUnverifiable();
+                return refetched ? new AgentTokenRejected() : new AgentTokenUnverifiable();
             }
 
             keys = refreshed;

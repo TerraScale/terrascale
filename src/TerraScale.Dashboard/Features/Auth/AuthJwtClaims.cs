@@ -1,7 +1,9 @@
 using System.Buffers.Text;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Unicode;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
@@ -10,18 +12,28 @@ namespace TerraScale.Dashboard.Features.Auth
     {
         internal const string OrganizationPickerClaim = "ts_org_picker";
 
+        public static bool WellFormed([NotNullWhen(true)] string? token) =>
+            token is { Length: > 0 and <= 65536 } && token.Split('.') is { Length: 3 } parts &&
+            parts.All(static part => part.Length > 0 && Base64Url.IsValid(part));
+
         public static string? KeyId(string? token) => UnverifiedText(token, 0, "kid");
 
         public static string? UnverifiedIssuer(string? token) => UnverifiedText(token, 1, "iss");
 
         private static string? UnverifiedText(string? token, int part, string name)
         {
-            if (token is not { Length: <= 65536 } || token.Split('.') is not { Length: 3 } parts || !Base64Url.IsValid(parts[part]))
+            if (!WellFormed(token) || token.Split('.')[part] is not { } segment)
             {
                 return null;
             }
 
-            var reader = new Utf8JsonReader(Base64Url.DecodeFromChars(parts[part]));
+            var bytes = Base64Url.DecodeFromChars(segment);
+            if (!Utf8.IsValid(bytes))
+            {
+                return null;
+            }
+
+            var reader = new Utf8JsonReader(bytes);
             try
             {
                 if (!JsonDocument.TryParseValue(ref reader, out var parsed))
@@ -29,11 +41,11 @@ namespace TerraScale.Dashboard.Features.Auth
                     return null;
                 }
 
-                using var document = parsed;
-                return document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty(name, out var value) &&
+                using var json = parsed;
+                return json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty(name, out var value) &&
                     value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             }
-            catch (JsonException)
+            catch (Exception error) when (error is JsonException or InvalidOperationException)
             {
                 return null;
             }
