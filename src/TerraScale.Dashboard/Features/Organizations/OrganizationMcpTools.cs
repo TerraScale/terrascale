@@ -36,7 +36,8 @@ namespace TerraScale.Dashboard.Features.Organizations
             return created switch
             {
                 ProjectRecord project => new OrganizationProjectResult(project.Id, project.OrganizationId, project.Name, project.Regions),
-                ProjectCreationUnconfirmed unconfirmed => Unconfirmed(unconfirmed),
+                ProjectCreationUnconfirmed unconfirmed => Refused(unconfirmed.Message, StatusCodes.Status503ServiceUnavailable),
+                ProjectCreationConflicted conflicted => Refused(conflicted.Message, StatusCodes.Status409Conflict),
             };
         });
         }
@@ -372,7 +373,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             { throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502); }
         }
 
-        private static OrganizationProjectResult Unconfirmed(ProjectCreationUnconfirmed unconfirmed) =>
-            throw new AccountAccessException(unconfirmed.Message, StatusCodes.Status503ServiceUnavailable);
+        private static OrganizationProjectResult Refused(string message, int status) => throw new AccountAccessException(message, status);
     }
 }

@@ -10,7 +10,9 @@ namespace TerraScale.Dashboard.Features.Organizations
 
     public sealed record ProjectInventoryChanged;
 
-    public readonly union ProjectReservation(ProjectSlotReserved, ProjectSlotsFull, ProjectInventoryChanged);
+    public sealed record ProjectReservationFailed(string Failure);
+
+    public readonly union ProjectReservation(ProjectSlotReserved, ProjectSlotsFull, ProjectInventoryChanged, ProjectReservationFailed);
 
     public sealed class ProjectReservations(DashboardDb storage, TimeProvider time)
     {
@@ -20,7 +22,6 @@ namespace TerraScale.Dashboard.Features.Organizations
         private const string RootVersion = "SELECT version FROM organizations WHERE id = @Id AND erasure_id IS NULL";
         private const string Fence = "UPDATE organizations SET version = @Next WHERE id = @Id AND version = @Current";
         private const string Insert = "INSERT INTO project_reservations (id, organization_id, project_id, created_at, expires_at) VALUES (@Id, @OrganizationId, NULL, @CreatedAt, @ExpiresAt)";
-        private const string Bind = "UPDATE project_reservations SET project_id = @ProjectId WHERE id = @Id AND project_id IS NULL AND expires_at > @Now";
         private const string Remove = "DELETE FROM project_reservations WHERE id = @Id";
 
         public async Task<string?> VersionAsync(string organizationId, CancellationToken cancellationToken)
@@ -73,16 +74,10 @@ namespace TerraScale.Dashboard.Features.Organizations
             }, cancellationToken);
             return write switch
             {
-                StorageConflicted => new ProjectInventoryChanged(),
+                StorageConflicted or StorageDuplicate => new ProjectInventoryChanged(),
                 StorageWritten => reserved is { } slot ? slot : full ? new ProjectSlotsFull(limit) : new ProjectInventoryChanged(),
+                StorageFailed failed => new ProjectReservationFailed(failed.Failure),
             };
-        }
-
-        public async Task<bool> BindAsync(string reservationId, string projectId, CancellationToken cancellationToken)
-        {
-            await using var connection = await storage.OpenAsync(cancellationToken);
-            return await DashboardDb.RunAsync(connection, Bind,
-                new Dictionary<string, object?> { ["Id"] = reservationId, ["ProjectId"] = projectId, ["Now"] = time.GetUtcNow().UtcDateTime }, null, cancellationToken) == 1;
         }
 
         public async Task ReleaseAsync(string reservationId, CancellationToken cancellationToken)

@@ -8,6 +8,14 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Common.Accounts;
 
+public sealed record ProjectAdopted;
+
+public sealed record ProjectAdoptionConflicted;
+
+public sealed record ProjectAdoptionUnconfirmed(string Failure);
+
+public readonly union ProjectAdoption(ProjectAdopted, ProjectAdoptionConflicted, ProjectAdoptionUnconfirmed);
+
 public sealed record StoredOrganization(OrganizationRecord Organization, string Version, bool Erased)
 {
     public required OrganizationRows Rows { get; init; }
@@ -19,6 +27,9 @@ public sealed record OrganizationRows(OrganizationRow Root, IReadOnlyList<Organi
 public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
 {
     private const string ById = DashboardSql.Organizations.Select + " WHERE id = @Id";
+    private const string BindReservation =
+        "UPDATE project_reservations SET project_id = @ProjectId WHERE id = @Id AND expires_at > @Now AND (project_id IS NULL OR project_id = @ProjectId)";
+    private const string RemoveReservation = "DELETE FROM project_reservations WHERE id = @Id";
     private const string ByIds = DashboardSql.Organizations.Select + " WHERE id IN (SELECT value FROM json_each(@Ids))";
     private const string Live = DashboardSql.Organizations.Select + " WHERE erasure_id IS NULL";
     private const string Erased = "SELECT count(*) FROM organizations WHERE id = @Id AND erasure_id IS NOT NULL";
@@ -303,6 +314,51 @@ public sealed class OrganizationStore(DashboardDb storage, TimeProvider time)
         }
 
         loaded.Root.Version = root.Version;
+    }
+
+    public async Task<ProjectAdoption> TryAdoptProjectAsync(string organizationId, ProjectRecord project, AuditRecord audit, string reservationId,
+        CancellationToken cancellationToken)
+    {
+        string? refusal = null;
+        var write = await storage.TryWriteAsync(async (connection, transaction) =>
+        {
+            var bound = await DashboardDb.RunAsync(connection, BindReservation,
+                new Dictionary<string, object?> { ["Id"] = reservationId, ["ProjectId"] = project.Id, ["Now"] = time.GetUtcNow().UtcDateTime }, transaction, cancellationToken);
+            if (bound != 1)
+            {
+                refusal = "reservation expired before the created project was saved";
+                return false;
+            }
+
+            if (await FindAsync(organizationId, cancellationToken) is not { Erased: false } stored)
+            {
+                refusal = "organization is unavailable";
+                return false;
+            }
+
+            var organization = stored.Organization;
+            organization.Projects[project.Id] = project;
+            organization.AuditEvents.Add(audit);
+            var next = Write(organization, stored.Rows.Root.Version, null);
+            var changes = Diff(stored.Rows, next);
+            next.Root.OriginalVersion = stored.Rows.Root.Version;
+            next.Root.Version = AccountService.NewId();
+            if (await connection.ExecuteAsync(DashboardSql.Organizations.Update, next.Root, transaction) != 1)
+            {
+                return false;
+            }
+
+            await ApplyAsync(connection, transaction, changes);
+            await DashboardDb.RunAsync(connection, RemoveReservation, new Dictionary<string, object?> { ["Id"] = reservationId }, transaction, cancellationToken);
+            return true;
+        }, cancellationToken);
+        return write switch
+        {
+            StorageWritten => new ProjectAdopted(),
+            StorageConflicted => refusal is { } reason ? new ProjectAdoptionUnconfirmed(reason) : new ProjectAdoptionConflicted(),
+            StorageDuplicate => new ProjectAdoptionUnconfirmed("the created project conflicts with a stored record"),
+            StorageFailed failed => new ProjectAdoptionUnconfirmed(failed.Failure),
+        };
     }
 
     public async Task FenceAsync(string id, string erasureId, CancellationToken cancellationToken)

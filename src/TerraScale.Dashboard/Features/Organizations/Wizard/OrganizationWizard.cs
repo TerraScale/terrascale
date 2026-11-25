@@ -76,15 +76,13 @@ public static class OrganizationWizard
 
             var created = await http.RequestServices.GetRequiredService<OrganizationOperations>().CreateProjectAsync(context, name,
                 [.. form["regions"].Select(value => value ?? "").Where(value => value.Length > 0)], http.RequestAborted);
-            var unconfirmed = created switch
+            return created switch
             {
-                ProjectRecord => null,
-                ProjectCreationUnconfirmed waiting => waiting,
+                ProjectRecord => HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true)),
+                ProjectCreationUnconfirmed unconfirmed => RequestError.Response(http, StatusCodes.Status503ServiceUnavailable, unconfirmed.Message),
+                ProjectCreationConflicted conflicted => await RenderAsync(http, context, placement, "project", form["name"].ToString(), form["plan"].ToString(),
+                    form["interval"].ToString(), conflicted.Message, StatusCodes.Status409Conflict, form),
             };
-            return unconfirmed is { } pending
-                ? await RenderAsync(http, context, placement, "project", form["name"].ToString(), form["plan"].ToString(),
-                    form["interval"].ToString(), pending.Message, StatusCodes.Status503ServiceUnavailable, form)
-                : HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
         }
         catch (Exception error) when (DashboardStorageOutcomes.Find(error) is null &&
                                       (error is AccountAccessException or OnboardingValidationException or StripeException or HttpRequestException or IOException ||

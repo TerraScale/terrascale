@@ -7,11 +7,13 @@ namespace TerraScale.Dashboard.Features.Organizations
 {
     public sealed record ProjectCreationUnconfirmed(string Message);
 
-    public readonly union ProjectCreateResult(ProjectRecord, ProjectCreationUnconfirmed);
+    public sealed record ProjectCreationConflicted(string Message);
+
+    public readonly union ProjectCreateResult(ProjectRecord, ProjectCreationUnconfirmed, ProjectCreationConflicted);
 
     public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatform platform,
         IWorkspacePlacement placement, IOrganizationAccess access, DashboardSessions sessions, ProjectReservations reservations,
-        TimeProvider time, ILogger<OrganizationOperations> logger)
+        OrganizationStore organizations, TimeProvider time, ILogger<OrganizationOperations> logger)
     {
         public async Task RenameAsync(AccountContext context, string name, CancellationToken cancellationToken)
         {
@@ -32,11 +34,17 @@ namespace TerraScale.Dashboard.Features.Organizations
         public async Task<ProjectCreateResult> CreateProjectAsync(AccountContext context, string name,
             IReadOnlyList<string>? regions, CancellationToken cancellationToken)
         {
+            context.DemandWrite();
             context = await FreshManagerAsync(context, cancellationToken);
             name = AccountService.ValidName(name);
             var chosen = await LocationsAsync(regions, cancellationToken);
             var (reserved, slot) = await ReserveSlotAsync(context, name, cancellationToken);
-            var organizationId = reserved.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
+            if (slot is null)
+            {
+                return new ProjectCreationConflicted(DashboardStorageOutcomes.ConflictMessage);
+            }
+
+            var organizationId = Selected(reserved).Id;
             var remaining = slot.ExpiresAt - ReservationMargin - time.GetUtcNow();
             if (remaining <= TimeSpan.Zero)
             {
@@ -48,73 +56,54 @@ namespace TerraScale.Dashboard.Features.Organizations
             var creation = await platform.TryCreateProjectAsync(reserved.Session, organizationId, name, budget, cancellationToken);
             return creation switch
             {
-                TsAuthPlatformProject created => await AdoptAsync(reserved, slot.ReservationId, created, name, chosen, cancellationToken),
+                TsAuthPlatformProject created => await AdoptAsync(reserved, slot.ReservationId, created, name, chosen),
                 ProjectCreationRefused refused => await RefusedAsync(slot.ReservationId, refused),
                 ProjectCreationUnknown unknown => Unconfirmed(unknown.Failure),
             };
         }
 
-        private async Task<(AccountContext Context, ProjectSlotReserved Slot)> ReserveSlotAsync(AccountContext context, string name, CancellationToken cancellationToken)
+        private async Task<(AccountContext Context, ProjectSlotReserved? Slot)> ReserveSlotAsync(AccountContext context, string name, CancellationToken cancellationToken)
         {
-            var organizationId = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
+            var organizationId = Selected(context).Id;
             for (var attempt = 0; ; attempt++)
             {
                 var version = await reservations.VersionAsync(organizationId, cancellationToken)
                     ?? throw new AccountAccessException("Organization is unavailable.", StatusCodes.Status404NotFound);
                 var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken, reload: true);
-                var organization = fresh.Organization ?? throw new AccountAccessException("Select an organization.");
+                var organization = Selected(fresh);
                 Manage(organization, fresh.UserId);
                 CanCreate(organization, fresh.UserId, name);
                 var limit = ProjectLimit(organization);
                 var outcome = await reservations.ReserveAsync(organizationId, version, organization.Projects.Keys, limit, cancellationToken);
-                (ProjectSlotReserved? Slot, int? Full) picked = outcome switch
+                (ProjectSlotReserved? Slot, int? Full, string? Failure) picked = outcome switch
                 {
-                    ProjectSlotReserved slot => (slot, null),
-                    ProjectSlotsFull full => (null, full.Limit),
-                    ProjectInventoryChanged => (null, null),
+                    ProjectSlotReserved slot => (slot, null, null),
+                    ProjectSlotsFull full => (null, full.Limit, null),
+                    ProjectInventoryChanged => (null, null, null),
+                    ProjectReservationFailed failed => (null, null, failed.Failure),
                 };
-                var (reserved, fullLimit) = picked;
+                var (reserved, fullLimit, failure) = picked;
                 if (fullLimit is { } capped)
                 {
                     throw ProjectLimitReached(capped);
                 }
 
-                if (reserved is { } held)
+                if (failure is { } unavailable)
                 {
-                    return (fresh, held);
+                    throw new IOException("The project slot could not be reserved (" + unavailable + ").");
                 }
 
-                if (attempt >= 4)
+                if (reserved is not null || attempt >= 4)
                 {
-                    throw new DBConcurrencyException("The organization's projects changed concurrently.");
+                    return (fresh, reserved);
                 }
 
                 await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
             }
         }
 
-        private async Task<ProjectCreateResult> AdoptAsync(AccountContext context, string reservation, TsAuthPlatformProject created, string name,
-            List<string> regions, CancellationToken cancellationToken)
+        private async Task<ProjectCreateResult> AdoptAsync(AccountContext context, string reservation, TsAuthPlatformProject created, string name, List<string> regions)
         {
-            try
-            {
-                return await SaveCreatedAsync(context, reservation, created, name, regions, cancellationToken);
-            }
-            catch (Exception error) when (error is DBConcurrencyException or HttpRequestException or IOException or TimeoutException or System.Text.Json.JsonException ||
-                                          error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            {
-                return Unconfirmed(StorageFailure.Describe(error));
-            }
-        }
-
-        private async Task<ProjectCreateResult> SaveCreatedAsync(AccountContext context, string reservation, TsAuthPlatformProject created, string name,
-            List<string> regions, CancellationToken cancellationToken)
-        {
-            if (!await reservations.BindAsync(reservation, created.Id, cancellationToken))
-            {
-                return Unconfirmed("reservation expired before the created project was bound");
-            }
-
             var project = new ProjectRecord
             {
                 Id = created.Id,
@@ -124,21 +113,40 @@ namespace TerraScale.Dashboard.Features.Organizations
                 CreatedAt = created.CreatedAt,
                 Regions = regions
             };
-            await accounts.UpdateOrganizationAsync(context, org =>
+            var audit = Event(context, "project.created", name, "project") with { Ip = accounts.ClientIp, Source = context.AuditSource("dashboard") };
+            for (var attempt = 0; ; attempt++)
             {
-                org.Projects[project.Id] = project;
-                org.AuditEvents.Add(Event(context, "project.created", name, "project"));
-            }, cancellationToken);
-            await reservations.ReleaseAsync(reservation, CancellationToken.None);
+                var adoption = await organizations.TryAdoptProjectAsync(project.OrganizationId, project, audit, reservation, CancellationToken.None);
+                var picked = Outcome(adoption, attempt);
+                if (picked.Adopted)
+                {
+                    break;
+                }
+
+                if (picked.Failure is { } failure)
+                {
+                    return Unconfirmed(failure);
+                }
+
+                await DashboardDb.ConflictBackoffAsync(attempt, time, CancellationToken.None);
+            }
+
             await accounts.UpdateAccountAsync(context.Session, account =>
             {
                 if (account.ActiveOrganizationId == project.OrganizationId && account.ActiveProjectId.Length == 0)
                 {
                     account.ActiveProjectId = project.Id;
                 }
-            }, cancellationToken);
+            }, CancellationToken.None);
             return project;
         }
+
+        private static (bool Adopted, string? Failure) Outcome(ProjectAdoption adoption, int attempt) => adoption switch
+        {
+            ProjectAdopted => (true, null),
+            ProjectAdoptionConflicted => (false, attempt >= 4 ? "the organization changed concurrently" : null),
+            ProjectAdoptionUnconfirmed unconfirmed => (false, unconfirmed.Failure),
+        };
 
         private async Task<ProjectCreateResult> RefusedAsync(string reservation, ProjectCreationRefused refused)
         {

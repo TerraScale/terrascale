@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Globalization;
+using System.Net.WebSockets;
 using Dapper;
 using TerraScale.DotNet.TerraBase;
 using SdkTerraBaseException = TerraScale.DotNet.TerraBase.TerraBaseException;
@@ -61,6 +62,15 @@ public sealed class DashboardDb(TerraBaseSqlDatabase database)
             catch (TerraBaseSqlException error) when (DashboardStorageOutcomes.IsConflict(error))
             {
                 return new StorageConflicted();
+            }
+            catch (Exception error) when (IsDuplicate(error))
+            {
+                return new StorageDuplicate();
+            }
+            catch (Exception error) when (error is HttpRequestException or WebSocketException or IOException or TimeoutException ||
+                                          error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                return new StorageFailed(StorageFailure.Describe(error));
             }
         });
     }
@@ -139,7 +149,11 @@ public sealed record StorageWritten;
 
 public sealed record StorageConflicted;
 
-public readonly union StorageWrite(StorageWritten, StorageConflicted);
+public sealed record StorageDuplicate;
+
+public sealed record StorageFailed(string Failure);
+
+public readonly union StorageWrite(StorageWritten, StorageConflicted, StorageDuplicate, StorageFailed);
 
 public sealed class UtcDateTimeOffsetHandler : DbValueHandler<DateTimeOffset>
 {
