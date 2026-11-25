@@ -7,7 +7,7 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology topology, QuicRpcClient client, TimeProvider timeProvider, ILogger<PeerHealthMonitor> logger)
+public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology topology, QuicRpcClient client, ClusterDatabases databases, TimeProvider timeProvider, ILogger<PeerHealthMonitor> logger)
 {
     private readonly long _instanceId = Random.Shared.NextInt64(1, long.MaxValue);
     private readonly ConcurrentDictionary<string, PeerState> _peers = new(
@@ -20,6 +20,24 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
     public PeerStatus StatusOf(string nodeId) => _peers.TryGetValue(nodeId, out var state) ? state.Health.Status : PeerStatus.Unreachable;
 
     public bool IsReachable(string nodeId) => StatusOf(nodeId) != PeerStatus.Unreachable;
+
+    public void ObserveReachable(string nodeId)
+    {
+        if (!_peers.TryGetValue(nodeId, out var state))
+        {
+            return;
+        }
+
+        var (_, previous, next) = state.ObserveInbound(0, timeProvider.GetUtcNow());
+        if (previous == next)
+        {
+            return;
+        }
+
+        ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
+        client.ResetPeer(nodeId);
+        Recovered(previous, next);
+    }
 
     public void Map(QuicRpcHost host)
     {
@@ -117,9 +135,18 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         if (previous != next)
         {
             ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
+            Recovered(previous, next);
         }
 
         return failures;
+    }
+
+    private void Recovered(PeerStatus previous, PeerStatus next)
+    {
+        if (previous == PeerStatus.Unreachable && next != PeerStatus.Unreachable)
+        {
+            databases.OnPeerRecovered();
+        }
     }
 
     private async ValueTask RegisterAsync(PeerState state, CancellationToken cancellationToken)
@@ -185,6 +212,11 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         if (restarted)
         {
             client.ResetPeer(context.RemoteNodeId);
+            databases.OnPeerRecovered();
+        }
+        else
+        {
+            Recovered(previous, next);
         }
 
         return ValueTask.FromResult<QuicHandlerOutcome<PongMessage>>(new PongMessage(options.NodeId, options.Region, message.SentAtTicks, _instanceId));

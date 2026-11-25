@@ -127,7 +127,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         {
             if (!session.CurrentBookmark.Dominates(bookmark))
             {
-                _ = databases.RequestCatchUp(session.DatabaseId);
+                _ = databases.RequestCatchUp(session.DatabaseId, bookmark);
             }
 
             var waited = await session.WaitForBookmarkAsync(bookmark, timeout, cancellationToken);

@@ -94,6 +94,9 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         };
     }
 
+    public ValueTask<RemoteReplicationOutcome> ApplyToSessionAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken) =>
+        ApplyToSessionAsync(session, commits, requestCatchUpOnBuffered: false, cancellationToken);
+
     public async ValueTask<RemoteReplicationOutcome> ApplyToSessionAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, bool requestCatchUpOnBuffered, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -171,7 +174,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
         if (requestCatchUpOnBuffered && outcome.Buffered > 0)
         {
-            _ = databases.RequestCatchUp(databaseId);
+            _ = databases.RequestCatchUp(databaseId, FrontierOf(commits));
         }
 
         return outcome;
@@ -193,7 +196,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (bookmark is null)
         {
             ClusterLog.RemoteApplyDeferred(logger, message.DatabaseId, context.RemoteNodeId, Describe(applied));
-            _ = databases.RequestCatchUp(message.DatabaseId);
+            _ = databases.RequestCatchUp(message.DatabaseId, FrontierOf(message.Commits));
             return new QuicSent();
         }
 
@@ -234,7 +237,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (failure is not null)
         {
             ClusterLog.RemoteApplyDeferred(logger, payload.DatabaseId, context.RemoteNodeId, failure);
-            _ = databases.RequestCatchUp(payload.DatabaseId);
+            _ = databases.RequestCatchUp(payload.DatabaseId, FrontierOf([payload.Commit]));
         }
 
         return new QuicSent();
@@ -251,6 +254,11 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         locks.AbortFrom(payload.DatabaseId, payload.TxId, context.RemoteNodeId);
         return ValueTask.FromResult<PushDispatchOutcome>(new QuicSent());
     }
+
+    private static CausalBookmark FrontierOf(IReadOnlyList<CommitMetadata> commits) =>
+        CausalBookmark.Create(commits.SelectMany(static commit => commit.Sequence > 0
+            ? commit.Bookmark.Entries.Append(KeyValuePair.Create(commit.OriginRegion, commit.Sequence))
+            : commit.Bookmark.Entries));
 
     private static string Describe(RemoteReplicationOutcome applied) => applied switch
     {

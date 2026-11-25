@@ -186,12 +186,19 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
     {
         var totalFetched = 0;
         var totalApplied = 0;
+        var retried = false;
         List<string> failures = [];
         for (var page = 0; page < MaxPagesPerPeer; page++)
         {
-            var (fetched, applied, more, failure, _) = await PullAsync(session, nodeId, perPeerTimeout, recoverFromArchive: true, cancellationToken);
+            var (fetched, applied, more, failure, transportReset) = await PullAsync(session, nodeId, perPeerTimeout, recoverFromArchive: true, cancellationToken);
             totalFetched += fetched;
             totalApplied += applied;
+            if (transportReset && !retried)
+            {
+                retried = true;
+                continue;
+            }
+
             if (failure is not null)
             {
                 failures.Add(failure);
@@ -231,7 +238,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
 
         if (!recoverFromArchive)
         {
-            _ = databases.RequestCatchUp(session.DatabaseId);
+            _ = databases.RequestCatchUp(session.DatabaseId, target);
             return (0, 0, false, string.Concat(nodeId, ": commit log gap; archive catch-up queued"), false);
         }
 
@@ -286,6 +293,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             return ClusterTopology.PeerForbidden();
         }
 
+        health.ObserveReachable(context.RemoteNodeId);
         var resolved = await databases.ResolveAsync(message.DatabaseId, cancellationToken);
         return resolved switch
         {
