@@ -6,6 +6,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"terrascale.tech/sdk/v1"
 )
 
 var commandSyntax = map[string]string{
@@ -211,7 +213,8 @@ func helpOptions(name string) map[string]string {
 	case name == "agent revoke" || name == "agent policy set":
 		options["-yes"] = "confirm the operation without a terminal"
 	case name == "db import":
-		options["<file|->"] = "stream a SQL dump from a file or stdin"
+		options["<file|->"] = fmt.Sprintf("stream SQL from a file or stdin in batches of up to %d statements. Each batch commits independently", v1.MaxSQLStatements)
+		options["-from <n>"] = "resume at statement n. Interrupted imports report a resume position when a batch committed and the outcome is known"
 	case name == "db branch create":
 		options["-from <database>"] = "source database; snapshot and later writes are independent"
 		options["-ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"

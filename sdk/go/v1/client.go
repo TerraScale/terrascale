@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	mrand "math/rand/v2"
 	"net"
@@ -45,8 +46,9 @@ type Config struct {
 	TSAuthBaseURL string
 }
 
-func (Config) String() string     { return "terrabase configuration (credentials redacted)" }
-func (c Config) GoString() string { return c.String() }
+func (Config) String() string         { return "terrabase configuration (credentials redacted)" }
+func (c Config) GoString() string     { return c.String() }
+func (c Config) LogValue() slog.Value { return slog.StringValue(c.String()) }
 
 type Client struct {
 	apiKey      string
