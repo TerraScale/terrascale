@@ -78,6 +78,8 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
 
     public const string FlushPending = "usage_flush_pending";
 
+    public const string CountersDropped = "usage_counters_dropped";
+
     public const string StorageIncomplete = "storage_sample_incomplete";
 
     private static readonly TimeSpan SampleGrace = TimeSpan.FromMinutes(15);
@@ -175,6 +177,11 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
         if (usage.FlushFailing)
         {
             gaps.Add(FlushPending);
+        }
+
+        if (counters.Dropped)
+        {
+            gaps.Add(CountersDropped);
         }
 
         var expected = ExpectedStorageHours(month, asOf);
