@@ -5,30 +5,39 @@ namespace TerraScale.Dashboard.Features.Auth;
 
 public sealed record AgentDelegation(string AgentId, string OwnerId, string TokenId, bool Write, DateTimeOffset ExpiresAt);
 public sealed record AgentOwnerToken(string AccessToken, DateTimeOffset ExpiresAt, bool Write);
+public sealed record AgentTokenRejected;
+public sealed record AgentTokenUnverifiable;
+public readonly union AgentVerification(AgentDelegation, AgentTokenRejected, AgentTokenUnverifiable);
 
 public sealed partial class TsAuthGateway
 {
-    public async Task<AgentDelegation?> VerifyAgentTokenAsync(string agentToken, CancellationToken cancellationToken)
+    public async Task<AgentVerification> VerifyAgentTokenAsync(string agentToken, CancellationToken cancellationToken)
     {
         var client = Client();
         var issuer = TrustedIssuer((await MetadataAsync(client, cancellationToken)).Issuer);
+        var keys = await SigningKeysAsync(client, agentToken, cancellationToken);
+        if (AuthJwtClaims.KeyId(agentToken) is { } kid && !keys.Keys.Any(key => key.KeyId == kid))
+        {
+            return new AgentTokenUnverifiable();
+        }
+
         JsonElement claims;
-        try { claims = AuthJwtClaims.Read(agentToken, issuer, null, await SigningKeysAsync(client, agentToken, cancellationToken), time.GetUtcNow(), "at+jwt", 8192); }
-        catch (SignInRejectedException) { return null; }
+        try { claims = AuthJwtClaims.Read(agentToken, issuer, null, keys, time.GetUtcNow(), "at+jwt", 8192); }
+        catch (SignInRejectedException) { return new AgentTokenRejected(); }
         if (Text(claims, "token_use") != "agent" || Text(claims, "actor_type") != "agent" || claims.TryGetProperty("owner_sub", out _) ||
             Text(claims, "agent_id") is not { } agent || !TerraScaleIds.IsValid(agent) ||
             !claims.TryGetProperty("act", out var actor) || actor.ValueKind != JsonValueKind.Object || Text(actor, "sub") != agent ||
             Text(claims, "sub") is not { } owner || !TerraScaleIds.IsValid(owner) || owner == agent ||
             Text(claims, "jti") is not { Length: > 0 and <= 128 } tokenId || Text(claims, "scope") is not { } scope)
         {
-            return null;
+            return new AgentTokenRejected();
         }
 
         var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var expiresAt = DateTimeOffset.FromUnixTimeSeconds(claims.GetProperty("exp").GetInt64());
-        return scopes.Contains("mcp:write") ? new(agent, owner, tokenId, true, expiresAt)
-            : scopes.Contains("mcp:read") ? new(agent, owner, tokenId, false, expiresAt)
-            : null;
+        return scopes.Contains("mcp:write") ? new AgentDelegation(agent, owner, tokenId, true, expiresAt)
+            : scopes.Contains("mcp:read") ? new AgentDelegation(agent, owner, tokenId, false, expiresAt)
+            : new AgentTokenRejected();
     }
 
     public async Task<AgentOwnerToken?> ExchangeAgentTokenAsync(string agentToken, AgentDelegation agent, CancellationToken cancellationToken)

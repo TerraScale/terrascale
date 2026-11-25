@@ -1,8 +1,14 @@
+using System.Data;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
+    public sealed record ProjectCreationUnconfirmed(string Message);
+
+    public readonly union ProjectCreateResult(ProjectRecord, ProjectCreationUnconfirmed);
+
     public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatform platform,
         IWorkspacePlacement placement, IOrganizationAccess access, DashboardSessions sessions, ProjectReservations reservations,
         TimeProvider time, ILogger<OrganizationOperations> logger)
@@ -11,7 +17,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         {
             context = await FreshManagerAsync(context, cancellationToken);
             name = AccountService.ValidName(name);
-            await platform.RenameOrganizationAsync(context.Session, context.Organization!.Id, name, cancellationToken);
+            await platform.RenameOrganizationAsync(context.Session, Selected(context).Id, name, cancellationToken);
             await accounts.UpdateOrganizationAsync(context, org =>
             {
                 Manage(org, context.UserId);
@@ -19,32 +25,76 @@ namespace TerraScale.Dashboard.Features.Organizations
             }, cancellationToken);
         }
 
-        public async Task<ProjectRecord> CreateProjectAsync(AccountContext context, string name,
+        public const string UnconfirmedProjectMessage = "Project creation could not be confirmed. Reload the project list before trying again.";
+
+        public async Task<ProjectCreateResult> CreateProjectAsync(AccountContext context, string name,
             IReadOnlyList<string>? regions, CancellationToken cancellationToken)
         {
             context = await FreshManagerAsync(context, cancellationToken);
-            var organization = context.Organization ?? throw new AccountAccessException("Select an organization.");
             name = AccountService.ValidName(name);
-            CanCreate(organization, context.UserId, name);
             var chosen = await LocationsAsync(regions, cancellationToken);
-            var limit = ProjectLimit(organization);
-            var reservation = await reservations.ReserveAsync(organization.Id, organization.Projects.Keys, limit, cancellationToken)
-                ?? throw ProjectLimitReached(limit);
-            var creation = await platform.TryCreateProjectAsync(context.Session, organization.Id, name, cancellationToken);
-            var remote = await (creation switch
+            var (reserved, reservation) = await ReserveSlotAsync(context, name, cancellationToken);
+            var organizationId = reserved.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
+            var creation = await platform.TryCreateProjectAsync(reserved.Session, organizationId, name, cancellationToken);
+            return creation switch
             {
-                TsAuthPlatformProject created => BindAsync(reservation, created, cancellationToken),
-                ProjectCreationRefused refused => RefusedAsync(reservation, refused),
-                ProjectCreationUnknown unknown => UnconfirmedAsync(unknown),
-            });
+                TsAuthPlatformProject created => await AdoptAsync(reserved, reservation, created, name, chosen, cancellationToken),
+                ProjectCreationRefused refused => await RefusedAsync(reservation, refused),
+                ProjectCreationUnknown unknown => Unconfirmed(unknown),
+            };
+        }
+
+        private async Task<(AccountContext Context, string Reservation)> ReserveSlotAsync(AccountContext context, string name, CancellationToken cancellationToken)
+        {
+            var organizationId = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
+            for (var attempt = 0; ; attempt++)
+            {
+                var version = await reservations.VersionAsync(organizationId, cancellationToken)
+                    ?? throw new AccountAccessException("Organization is unavailable.", StatusCodes.Status404NotFound);
+                var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken, reload: true);
+                var organization = fresh.Organization ?? throw new AccountAccessException("Select an organization.");
+                Manage(organization, fresh.UserId);
+                CanCreate(organization, fresh.UserId, name);
+                var limit = ProjectLimit(organization);
+                var outcome = await reservations.ReserveAsync(organizationId, version, organization.Projects.Keys, limit, cancellationToken);
+                (string? Reservation, int? Full) picked = outcome switch
+                {
+                    ProjectSlotReserved slot => (slot.ReservationId, null),
+                    ProjectSlotsFull full => (null, full.Limit),
+                    ProjectInventoryChanged => (null, null),
+                };
+                var (reservation, fullLimit) = picked;
+                if (fullLimit is { } capped)
+                {
+                    throw ProjectLimitReached(capped);
+                }
+
+                if (reservation is { } id)
+                {
+                    return (fresh, id);
+                }
+
+                if (attempt >= 4)
+                {
+                    throw new DBConcurrencyException("The organization's projects changed concurrently.");
+                }
+
+                await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
+            }
+        }
+
+        private async Task<ProjectCreateResult> AdoptAsync(AccountContext context, string reservation, TsAuthPlatformProject created, string name,
+            List<string> regions, CancellationToken cancellationToken)
+        {
+            await reservations.BindAsync(reservation, created.Id, cancellationToken);
             var project = new ProjectRecord
             {
-                Id = remote.Id,
-                OrganizationId = remote.OrganizationId,
-                Name = remote.Name,
-                Slug = AccountService.Slug(remote.Name),
-                CreatedAt = remote.CreatedAt,
-                Regions = chosen
+                Id = created.Id,
+                OrganizationId = created.OrganizationId,
+                Name = created.Name,
+                Slug = AccountService.Slug(created.Name),
+                CreatedAt = created.CreatedAt,
+                Regions = regions
             };
             await accounts.UpdateOrganizationAsync(context, org =>
             {
@@ -62,30 +112,23 @@ namespace TerraScale.Dashboard.Features.Organizations
             return project;
         }
 
-        private async Task<TsAuthPlatformProject> BindAsync(string reservation, TsAuthPlatformProject created, CancellationToken cancellationToken)
-        {
-            await reservations.BindAsync(reservation, created.Id, cancellationToken);
-            return created;
-        }
-
-        private async Task<TsAuthPlatformProject> RefusedAsync(string reservation, ProjectCreationRefused refused)
+        private async Task<ProjectCreateResult> RefusedAsync(string reservation, ProjectCreationRefused refused)
         {
             await reservations.ReleaseAsync(reservation, CancellationToken.None);
             throw new AccountAccessException(refused.Message, refused.StatusCode, refused.Code);
         }
 
-        private Task<TsAuthPlatformProject> UnconfirmedAsync(ProjectCreationUnknown unknown)
+        private ProjectCreationUnconfirmed Unconfirmed(ProjectCreationUnknown unknown)
         {
             logger.ProjectCreationUnconfirmed(unknown.Failure);
-            return Task.FromException<TsAuthPlatformProject>(
-                new IOException("Project creation could not be confirmed. Reload the project list before trying again."));
+            return new ProjectCreationUnconfirmed(UnconfirmedProjectMessage);
         }
 
         public async Task UpdateProjectAsync(AccountContext context, string name,
             IReadOnlyList<string>? regions, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
-            if (context.Project!.Role != "admin" || !context.CanWriteProjectData)
+            if (SelectedProject(context).Role != "admin" || !context.CanWriteProjectData)
             {
                 throw new AccountAccessException("Project admin access is required to rename this project.");
             }
@@ -97,21 +140,21 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
 
             name = AccountService.ValidName(name);
-            var project = context.Project!;
+            var project = SelectedProject(context);
             if (!placementRequested)
             {
                 if (project.Name != name)
                 {
-                    await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
+                    await platform.RenameProjectAsync(context.Session, Selected(context).Id, project.Id, name, cancellationToken);
                 }
 
                 return;
             }
-            Duplicate(context.Organization!, name, project.Id);
+            Duplicate(Selected(context), name, project.Id);
             var chosen = await LocationsAsync(regions, cancellationToken);
             if (project.Name != name)
             {
-                await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
+                await platform.RenameProjectAsync(context.Session, Selected(context).Id, project.Id, name, cancellationToken);
             }
 
             await accounts.UpdateOrganizationAsync(context, org =>
@@ -196,16 +239,22 @@ namespace TerraScale.Dashboard.Features.Organizations
         public async Task<AccountContext> FreshOwnerAsync(AccountContext context, CancellationToken cancellationToken, bool requireProject = false)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject);
-            Owner(context.Organization!, context.UserId);
+            Owner(Selected(context), context.UserId);
             return context;
         }
 
         private async Task<AccountContext> FreshManagerAsync(AccountContext context, CancellationToken cancellationToken, bool requireProject = false)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject);
-            Manage(context.Organization!, context.UserId);
+            Manage(Selected(context), context.UserId);
             return context;
         }
+
+        private static OrganizationRecord Selected(AccountContext context) =>
+            context.Organization ?? throw new AccountAccessException("Select an organization.");
+
+        private static ProjectRecord SelectedProject(AccountContext context) =>
+            context.Project ?? throw new AccountAccessException("Project is unavailable.", StatusCodes.Status404NotFound);
 
         internal static void Manage(OrganizationRecord org, string userId)
         {

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Errors;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Organizations
@@ -31,8 +32,12 @@ namespace TerraScale.Dashboard.Features.Organizations
         {
             return Invoke(async () =>
         {
-            var project = await operations.CreateProjectAsync(Scope(organizationId, projectId), name, regions, Cancellation);
-            return new OrganizationProjectResult(project.Id, project.OrganizationId, project.Name, project.Regions);
+            var created = await operations.CreateProjectAsync(Scope(organizationId, projectId), name, regions, Cancellation);
+            return created switch
+            {
+                ProjectRecord project => new OrganizationProjectResult(project.Id, project.OrganizationId, project.Name, project.Regions),
+                ProjectCreationUnconfirmed unconfirmed => Unconfirmed(unconfirmed),
+            };
         });
         }
 
@@ -362,8 +367,16 @@ namespace TerraScale.Dashboard.Features.Organizations
         private async Task<T> Invoke<T>(Func<Task<T>> action)
         {
             try { return await action(); }
+            catch (Exception error) when (DashboardStorageOutcomes.Find(error) is { } storage)
+            {
+                var refusal = DashboardStorageOutcomes.Classify(storage);
+                throw new AccountAccessException(refusal.Message, refusal.Status);
+            }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !Cancellation.IsCancellationRequested)
             { throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502); }
         }
+
+        private static OrganizationProjectResult Unconfirmed(ProjectCreationUnconfirmed unconfirmed) =>
+            throw new AccountAccessException(unconfirmed.Message, StatusCodes.Status503ServiceUnavailable);
     }
 }

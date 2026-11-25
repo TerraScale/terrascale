@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,7 +14,8 @@ public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, Accou
     private const int Capacity = 10_000;
     private static readonly TimeSpan Reuse = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan ExpirySkew = TimeSpan.FromSeconds(30);
-    private readonly ConcurrentDictionary<string, Exchanged> exchanges = new(StringComparer.Ordinal);
+    private readonly Lock gate = new();
+    private readonly Dictionary<string, Exchanged> exchanges = new(StringComparer.Ordinal);
 
     public static bool IsAgentToken(string bearer)
     {
@@ -33,17 +33,42 @@ public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, Accou
         };
     }
 
-    public async Task<AccountContext?> SignInAsync(string token, CancellationToken cancellationToken)
+    public async Task<McpAgentSignIn> SignInAsync(string token, CancellationToken cancellationToken)
     {
-        if (await ExchangeAsync(token, cancellationToken) is not { } exchanged)
+        var key = Key(token);
+        var now = time.GetUtcNow();
+        if (Cached(key, now) is { } cached)
         {
-            return null;
+            return await ContextAsync(key, cached, cancellationToken);
         }
 
+        var verification = await auth.VerifyAgentTokenAsync(token, cancellationToken);
+        return verification switch
+        {
+            AgentDelegation delegation => await ExchangeAsync(key, token, delegation, now, cancellationToken),
+            AgentTokenRejected => Forget(key),
+            AgentTokenUnverifiable => new McpBearerUnverified(),
+        };
+    }
+
+    private async Task<McpAgentSignIn> ExchangeAsync(string key, string token, AgentDelegation delegation, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (await auth.ExchangeAgentTokenAsync(token, delegation, cancellationToken) is not { } owner)
+        {
+            return Forget(key);
+        }
+
+        var exchanged = new Exchanged(delegation, owner, Min(now + Reuse, Min(owner.ExpiresAt, delegation.ExpiresAt) - ExpirySkew));
+        Remember(key, exchanged, now);
+        return await ContextAsync(key, exchanged, cancellationToken);
+    }
+
+    private async Task<McpAgentSignIn> ContextAsync(string key, Exchanged exchanged, CancellationToken cancellationToken)
+    {
         var (delegation, owner) = (exchanged.Delegation, exchanged.Owner);
         if (await store.FindAsync(delegation.OwnerId, cancellationToken) is not { Erased: false } stored)
         {
-            return null;
+            return Forget(key);
         }
 
         var session = new SessionRecord(delegation.OwnerId, stored.Account.Name, stored.Account.Email, owner.AccessToken, null, owner.ExpiresAt)
@@ -56,38 +81,34 @@ public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, Accou
         }
         catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status401Unauthorized)
         {
-            exchanges.TryRemove(Key(token), out _);
-            return null;
+            return Forget(key);
         }
     }
 
-    private async Task<Exchanged?> ExchangeAsync(string token, CancellationToken cancellationToken)
+    private Exchanged? Cached(string key, DateTimeOffset now)
     {
-        var key = Key(token);
-        var now = time.GetUtcNow();
-        if (exchanges.TryGetValue(key, out var cached) && cached.Until > now)
+        lock (gate)
         {
-            return cached;
+            return exchanges.TryGetValue(key, out var cached) && cached.Until > now ? cached : null;
+        }
+    }
+
+    private void Remember(string key, Exchanged exchanged, DateTimeOffset now)
+    {
+        if (exchanged.Until <= now)
+        {
+            return;
         }
 
-        if (await auth.VerifyAgentTokenAsync(token, cancellationToken) is not { } delegation ||
-            await auth.ExchangeAgentTokenAsync(token, delegation, cancellationToken) is not { } owner)
+        lock (gate)
         {
-            exchanges.TryRemove(key, out _);
-            return null;
-        }
-
-        var until = Min(now + Reuse, Min(owner.ExpiresAt, delegation.ExpiresAt) - ExpirySkew);
-        var exchanged = new Exchanged(delegation, owner, until);
-        if (until > now)
-        {
-            if (exchanges.Count >= Capacity)
+            if (!exchanges.ContainsKey(key) && exchanges.Count >= Capacity)
             {
                 foreach (var (stale, entry) in exchanges)
                 {
                     if (entry.Until <= now)
                     {
-                        exchanges.TryRemove(stale, out _);
+                        exchanges.Remove(stale);
                     }
                 }
 
@@ -99,8 +120,16 @@ public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, Accou
 
             exchanges[key] = exchanged;
         }
+    }
 
-        return exchanged;
+    private McpBearerRejected Forget(string key)
+    {
+        lock (gate)
+        {
+            exchanges.Remove(key);
+        }
+
+        return new McpBearerRejected();
     }
 
     private static DateTimeOffset Min(DateTimeOffset left, DateTimeOffset right) => left < right ? left : right;

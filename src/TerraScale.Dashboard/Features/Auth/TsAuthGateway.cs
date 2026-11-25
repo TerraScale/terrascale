@@ -40,18 +40,18 @@ namespace TerraScale.Dashboard.Features.Auth
         private static readonly TimeSpan DiscoveryReuse = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan KeysReuse = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan KeysRefreshFloor = TimeSpan.FromSeconds(30);
-        private readonly Lock sharedGate = new();
-        private SharedRead<TsAuthOidcDiscovery>? discovery;
-        private SharedRead<TsAuthJwkSet>? signingKeys;
+        private static readonly TimeSpan FirstFailureFloor = TimeSpan.FromSeconds(5);
+        private readonly SharedRead<TsAuthOidcDiscovery> discovery = new();
+        private readonly SharedRead<TsAuthJwkSet> signingKeys = new();
 
         private Task<TsAuthOidcDiscovery> MetadataAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
-            return Shared(ref discovery, DiscoveryReuse, null, () => client.Oidc.GetDiscoveryDocumentAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return discovery.Get(time, DiscoveryReuse, false, () => client.Oidc.GetDiscoveryDocumentAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
         private Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
-            return Shared(ref signingKeys, KeysReuse, null, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return signingKeys.Get(time, KeysReuse, false, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
         private async Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, string? token, CancellationToken cancellationToken)
@@ -62,33 +62,53 @@ namespace TerraScale.Dashboard.Features.Auth
                 return keys;
             }
 
-            return await Shared(ref signingKeys, KeysReuse, KeysRefreshFloor, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return await signingKeys.Get(time, KeysReuse, true, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
-        private Task<T> Shared<T>(ref SharedRead<T>? slot, TimeSpan reuse, TimeSpan? refreshAfter, Func<Task<T>> read)
+        private sealed class SharedRead<T>
         {
-            SharedRead<T> chosen;
-            lock (sharedGate)
+            private readonly Lock gate = new();
+            private Task<T>? good;
+            private DateTimeOffset goodAt;
+            private Lazy<Task<T>>? attempt;
+            private DateTimeOffset attemptAt;
+
+            public Task<T> Get(TimeProvider time, TimeSpan reuse, bool refresh, Func<Task<T>> read)
             {
-                var now = time.GetUtcNow();
-                var age = refreshAfter ?? reuse;
-                if (slot is { } current && (!current.Read.IsValueCreated || Usable(current) && now - current.At < age))
+                Lazy<Task<T>> chosen;
+                lock (gate)
                 {
-                    chosen = current;
+                    var now = time.GetUtcNow();
+                    if (attempt is { IsValueCreated: true, Value: { IsCompletedSuccessfully: true } succeeded })
+                    {
+                        good = succeeded;
+                        goodAt = attemptAt;
+                    }
+
+                    if (!refresh && good is { } fresh && now - goodAt < reuse)
+                    {
+                        return fresh;
+                    }
+
+                    if (attempt is { } running && (!running.IsValueCreated || !running.Value.IsCompleted))
+                    {
+                        chosen = running;
+                    }
+                    else if (attempt is { } last && now - attemptAt < (good is null ? FirstFailureFloor : KeysRefreshFloor))
+                    {
+                        return good ?? last.Value;
+                    }
+                    else
+                    {
+                        chosen = new Lazy<Task<T>>(read, LazyThreadSafetyMode.ExecutionAndPublication);
+                        attempt = chosen;
+                        attemptAt = now;
+                    }
                 }
-                else
-                {
-                    chosen = new SharedRead<T>(now, new Lazy<Task<T>>(read, LazyThreadSafetyMode.ExecutionAndPublication));
-                    slot = chosen;
-                }
+
+                return chosen.Value;
             }
-
-            return chosen.Read.Value;
         }
-
-        private static bool Usable<T>(SharedRead<T> read) => read.Read.Value is { IsFaulted: false, IsCanceled: false };
-
-        private sealed record SharedRead<T>(DateTimeOffset At, Lazy<Task<T>> Read);
 
         private Task<TsAuthUserInfo> SessionUserInfoAsync(TsAuthClient client, SessionRecord session, CancellationToken cancellationToken)
         {

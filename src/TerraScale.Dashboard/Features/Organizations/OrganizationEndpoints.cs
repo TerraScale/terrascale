@@ -322,7 +322,16 @@ namespace TerraScale.Dashboard.Features.Organizations
 
                 if (operation == "projects")
                 {
-                    await operations.CreateProjectAsync(context, name, regions, http.RequestAborted);
+                    var created = await operations.CreateProjectAsync(context, name, regions, http.RequestAborted);
+                    var unconfirmed = created switch
+                    {
+                        ProjectRecord => null,
+                        ProjectCreationUnconfirmed waiting => waiting,
+                    };
+                    if (unconfirmed is { } pending)
+                    {
+                        return await ProjectRefusedAsync(http, context, placement, operation, form, pending.Message, StatusCodes.Status503ServiceUnavailable);
+                    }
                 }
                 else
                 {

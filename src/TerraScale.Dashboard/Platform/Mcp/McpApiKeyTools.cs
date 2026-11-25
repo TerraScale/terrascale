@@ -43,9 +43,14 @@ namespace TerraScale.Dashboard.Platform.Mcp
             {
                 result = await new TsAuthClient(http.CreateClient("platform")).Oidc.ExchangeApiKeyAsync(key, project, ct);
             }
-            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ||
+                                                error.StatusCode is HttpStatusCode.BadRequest && error.ErrorCode is "invalid_grant" or "invalid_client" or "unauthorized_client" or "invalid_scope" or "invalid_target")
             {
                 return new McpBearerRejected();
+            }
+            catch (TsAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest)
+            {
+                return new McpBearerUnverified();
             }
 
             var pieces = result.AccessToken.Split('.');

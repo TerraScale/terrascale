@@ -1,9 +1,16 @@
-using System.Data;
 using Dapper;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
+    public sealed record ProjectSlotReserved(string ReservationId);
+
+    public sealed record ProjectSlotsFull(int Limit);
+
+    public sealed record ProjectInventoryChanged;
+
+    public readonly union ProjectReservation(ProjectSlotReserved, ProjectSlotsFull, ProjectInventoryChanged);
+
     public sealed class ProjectReservations(DashboardDb storage, TimeProvider time)
     {
         private static readonly TimeSpan Hold = TimeSpan.FromMinutes(10);
@@ -15,50 +22,63 @@ namespace TerraScale.Dashboard.Features.Organizations
         private const string Bind = "UPDATE project_reservations SET project_id = @ProjectId WHERE id = @Id AND project_id IS NULL";
         private const string Remove = "DELETE FROM project_reservations WHERE id = @Id";
 
-        public async Task<string?> ReserveAsync(string organizationId, IReadOnlyCollection<string> liveProjectIds, int limit, CancellationToken cancellationToken)
+        public async Task<string?> VersionAsync(string organizationId, CancellationToken cancellationToken)
         {
-            for (var attempt = 0; ; attempt++)
-            {
-                string? reserved = null;
-                try
-                {
-                    await storage.WriteAsync(async (connection, transaction) =>
-                    {
-                        var now = time.GetUtcNow().UtcDateTime;
-                        await connection.ExecuteAsync(Expired, new { OrganizationId = organizationId, Now = now }, transaction);
-                        var held = (await connection.QueryAsync<ProjectReservationRow>(Held, new { OrganizationId = organizationId, Now = now }, transaction))
-                            .Count(row => row.ProjectId is not { } projectId || !liveProjectIds.Contains(projectId));
-                        if (liveProjectIds.Count + held >= limit)
-                        {
-                            return;
-                        }
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            return (await DashboardDb.RowsAsync(connection, RootVersion, new Dictionary<string, object?> { ["Id"] = organizationId },
+                static reader => reader.GetString(0), null, cancellationToken)).SingleOrDefault();
+        }
 
-                        var version = (await connection.QueryAsync<string>(RootVersion, new { Id = organizationId }, transaction)).FirstOrDefault()
-                            ?? throw new AccountAccessException("Organization is unavailable.", StatusCodes.Status404NotFound);
-                        DashboardDb.Expect(await connection.ExecuteAsync(Fence, new { Id = organizationId, Current = version, Next = AccountService.NewId() }, transaction));
-                        var id = AccountService.NewId();
-                        await connection.ExecuteAsync(Insert, new { Id = id, OrganizationId = organizationId, CreatedAt = now, ExpiresAt = now + Hold }, transaction);
-                        reserved = id;
-                    }, cancellationToken);
-                    return reserved;
-                }
-                catch (DBConcurrencyException) when (attempt < 4)
+        public async Task<ProjectReservation> ReserveAsync(string organizationId, string inventoryVersion, IReadOnlyCollection<string> liveProjectIds, int limit,
+            CancellationToken cancellationToken)
+        {
+            string? reserved = null;
+            var full = false;
+            var write = await storage.TryWriteAsync(async (connection, transaction) =>
+            {
+                var current = (await connection.QueryAsync<string>(RootVersion, new { Id = organizationId }, transaction)).SingleOrDefault();
+                if (current != inventoryVersion)
                 {
-                    await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken);
+                    return false;
                 }
-            }
+
+                var now = time.GetUtcNow().UtcDateTime;
+                await connection.ExecuteAsync(Expired, new { OrganizationId = organizationId, Now = now }, transaction);
+                var held = (await connection.QueryAsync<ProjectReservationRow>(Held, new { OrganizationId = organizationId, Now = now }, transaction))
+                    .Count(row => row.ProjectId is not { } projectId || !liveProjectIds.Contains(projectId));
+                if (liveProjectIds.Count + held >= limit)
+                {
+                    full = true;
+                    return true;
+                }
+
+                if (await connection.ExecuteAsync(Fence, new { Id = organizationId, Current = inventoryVersion, Next = AccountService.NewId() }, transaction) != 1)
+                {
+                    return false;
+                }
+
+                var id = AccountService.NewId();
+                await connection.ExecuteAsync(Insert, new { Id = id, OrganizationId = organizationId, CreatedAt = now, ExpiresAt = now + Hold }, transaction);
+                reserved = id;
+                return true;
+            }, cancellationToken);
+            return write switch
+            {
+                StorageConflicted => new ProjectInventoryChanged(),
+                StorageWritten => reserved is { } id ? new ProjectSlotReserved(id) : full ? new ProjectSlotsFull(limit) : new ProjectInventoryChanged(),
+            };
         }
 
         public async Task BindAsync(string reservationId, string projectId, CancellationToken cancellationToken)
         {
             await using var connection = await storage.OpenAsync(cancellationToken);
-            await connection.ExecuteAsync(new CommandDefinition(Bind, new { Id = reservationId, ProjectId = projectId }, cancellationToken: cancellationToken));
+            await DashboardDb.RunAsync(connection, Bind, new Dictionary<string, object?> { ["Id"] = reservationId, ["ProjectId"] = projectId }, null, cancellationToken);
         }
 
         public async Task ReleaseAsync(string reservationId, CancellationToken cancellationToken)
         {
             await using var connection = await storage.OpenAsync(cancellationToken);
-            await connection.ExecuteAsync(new CommandDefinition(Remove, new { Id = reservationId }, cancellationToken: cancellationToken));
+            await DashboardDb.RunAsync(connection, Remove, new Dictionary<string, object?> { ["Id"] = reservationId }, null, cancellationToken);
         }
     }
 

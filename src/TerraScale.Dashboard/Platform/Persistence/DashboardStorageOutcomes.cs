@@ -13,6 +13,19 @@ public static class DashboardStorageOutcomes
     private const string RejectedMessage = "The change conflicts with stored data.";
     private static readonly TimeSpan DefaultRetry = TimeSpan.FromSeconds(1);
 
+    public static TerraBaseSqlException? Find(Exception error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+        {
+            if (current is TerraBaseSqlException sql)
+            {
+                return sql;
+            }
+        }
+
+        return null;
+    }
+
     public static bool IsConflict(TerraBaseSqlException error) =>
         error.Code is TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.RowConflict;
 

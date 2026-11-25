@@ -1,6 +1,5 @@
 using System.Data;
 using System.Globalization;
-using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 using TerraScale.Endpoints;
 using RequestIdentity = TerraScale.Dashboard.Platform.Http.RequestIdentity;
 using ExceptionFrames = TerraScale.Dashboard.Platform.Http.ExceptionFrames;
@@ -416,10 +415,10 @@ namespace TerraScale.Dashboard
 
                     await RequestError.Response(context, error.StatusCode, error.Message).ExecuteAsync(context);
                 }
-                catch (TerraBaseSqlException error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+                catch (Exception error) when (DashboardStorageOutcomes.Find(error) is { } storage && !context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
                 {
-                    var refusal = DashboardStorageOutcomes.Classify(error);
-                    app.Logger.DashboardStorageRefused((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", error.Code, refusal.Status);
+                    var refusal = DashboardStorageOutcomes.Classify(storage);
+                    app.Logger.DashboardStorageRefused((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", storage.Code, refusal.Status);
                     context.Response.Clear();
                     if (refusal.RetryAfter is { } retryAfter)
                     {

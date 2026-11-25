@@ -3,6 +3,7 @@ using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Common.Validation;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations.Wizard;
 
@@ -73,11 +74,21 @@ public static class OrganizationWizard
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
             }
 
-            await http.RequestServices.GetRequiredService<OrganizationOperations>().CreateProjectAsync(context, name,
+            var created = await http.RequestServices.GetRequiredService<OrganizationOperations>().CreateProjectAsync(context, name,
                 [.. form["regions"].Select(value => value ?? "").Where(value => value.Length > 0)], http.RequestAborted);
-            return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
+            var unconfirmed = created switch
+            {
+                ProjectRecord => null,
+                ProjectCreationUnconfirmed waiting => waiting,
+            };
+            return unconfirmed is { } pending
+                ? await RenderAsync(http, context, placement, "project", form["name"].ToString(), form["plan"].ToString(),
+                    form["interval"].ToString(), pending.Message, StatusCodes.Status503ServiceUnavailable, form)
+                : HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
         }
-        catch (Exception error) when (error is AccountAccessException or OnboardingValidationException or StripeException or HttpRequestException or IOException or OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+        catch (Exception error) when (DashboardStorageOutcomes.Find(error) is null &&
+                                      (error is AccountAccessException or OnboardingValidationException or StripeException or HttpRequestException or IOException ||
+                                       error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested))
         {
             var step = form["step"].ToString() is "payment-method" or "cancel-checkout" ? "payment" : form["step"] == "project" ? "project" : "organization";
             return await RenderAsync(http, context, placement, step, form["name"].ToString(), form["plan"].ToString(),

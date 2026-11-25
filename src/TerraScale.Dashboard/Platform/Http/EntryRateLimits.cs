@@ -18,10 +18,21 @@ public sealed class EntryRateLimits(TimeProvider time)
     public bool AdmitMcp(HttpContext context)
     {
         var client = ClientKey(context);
-        return mcpRejections.HasToken(client) && mcp.TryTake(client);
+        if (!mcpRejections.TryTake(client))
+        {
+            return false;
+        }
+
+        if (mcp.TryTake(client))
+        {
+            return true;
+        }
+
+        mcpRejections.Refund(client);
+        return false;
     }
 
-    public void RecordMcpRejection(HttpContext context) => mcpRejections.TryTake(ClientKey(context));
+    public void RefundMcpRejection(HttpContext context) => mcpRejections.Refund(ClientKey(context));
 
     public static IResult Refuse(HttpContext context)
     {
@@ -56,9 +67,7 @@ public sealed class EntryRateLimits(TimeProvider time)
         {
             lock (gate)
             {
-                var now = time.GetUtcNow();
-                var bucket = Find(client, now);
-                Refill(bucket, now, bucket == overflow ? burst * 8.0 : burst, bucket == overflow ? perMinute * 8.0 : perMinute);
+                var bucket = Refilled(client);
                 if (bucket.Tokens < 1)
                 {
                     return false;
@@ -69,20 +78,24 @@ public sealed class EntryRateLimits(TimeProvider time)
             }
         }
 
-        public bool HasToken(string client)
+        public void Refund(string client)
         {
             lock (gate)
             {
-                var now = time.GetUtcNow();
-                if (!buckets.TryGetValue(client, out var bucket))
-                {
-                    return true;
-                }
-
-                Refill(bucket, now, burst, perMinute);
-                return bucket.Tokens >= 1;
+                var bucket = Refilled(client);
+                bucket.Tokens = Math.Min(Limit(bucket), bucket.Tokens + 1);
             }
         }
+
+        private Bucket Refilled(string client)
+        {
+            var now = time.GetUtcNow();
+            var bucket = Find(client, now);
+            Refill(bucket, now, Limit(bucket), bucket == overflow ? perMinute * 8.0 : perMinute);
+            return bucket;
+        }
+
+        private double Limit(Bucket bucket) => bucket == overflow ? burst * 8.0 : burst;
 
         private Bucket Find(string client, DateTimeOffset now)
         {

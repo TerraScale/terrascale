@@ -41,6 +41,70 @@ public sealed class DashboardDb(TerraBaseSqlDatabase database)
         });
     }
 
+    public async Task<StorageWrite> TryWriteAsync(Func<TerraBaseDbConnection, DbTransaction, Task<bool>> work, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        return await ServerTiming.StateWriteAsync<StorageWrite>(async () =>
+        {
+            try
+            {
+                await using var connection = await OpenAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+                if (!await work(connection, transaction))
+                {
+                    return new StorageConflicted();
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+                return new StorageWritten();
+            }
+            catch (TerraBaseSqlException error) when (DashboardStorageOutcomes.IsConflict(error))
+            {
+                return new StorageConflicted();
+            }
+        });
+    }
+
+    public static async Task<int> RunAsync(TerraBaseDbConnection connection, string sql, IReadOnlyDictionary<string, object?> parameters,
+        DbTransaction? transaction, CancellationToken cancellationToken)
+    {
+        await using var command = Command(connection, sql, parameters, transaction);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public static async Task<IReadOnlyList<T>> RowsAsync<T>(TerraBaseDbConnection connection, string sql, IReadOnlyDictionary<string, object?> parameters,
+        Func<DbDataReader, T> read, DbTransaction? transaction, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        await using var command = Command(connection, sql, parameters, transaction);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        List<T> rows = [];
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(read(reader));
+        }
+
+        return rows;
+    }
+
+    private static DbCommand Command(TerraBaseDbConnection connection, string sql, IReadOnlyDictionary<string, object?> parameters, DbTransaction? transaction)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(parameters);
+        var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Transaction = transaction;
+        foreach (var (name, value) in parameters)
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = name;
+            parameter.Value = value ?? DBNull.Value;
+            command.Parameters.Add(parameter);
+        }
+
+        return command;
+    }
+
     public static Task ConflictBackoffAsync(int attempt, TimeProvider time, CancellationToken cancellationToken) =>
         Task.Delay(ConflictBackoff(attempt, Random.Shared.NextDouble()), time, cancellationToken);
 
@@ -70,6 +134,12 @@ public sealed class DashboardDb(TerraBaseSqlDatabase database)
         error is SdkTerraBaseException { ErrorCode: TerraBaseSqlErrorCodes.UniqueViolation or TerraBaseSqlErrorCodes.PrimaryKeyViolation }
             or TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation or TerraBaseSqlErrorCodes.PrimaryKeyViolation };
 }
+
+public sealed record StorageWritten;
+
+public sealed record StorageConflicted;
+
+public readonly union StorageWrite(StorageWritten, StorageConflicted);
 
 public sealed class UtcDateTimeOffsetHandler : DbValueHandler<DateTimeOffset>
 {
