@@ -272,7 +272,7 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
                     "INSERT INTO usage_counters (scope, month, metric, value) SELECT ?1, ?2, ?3, ?4 "
                     + "WHERE NOT EXISTS (SELECT 1 FROM usage_counters WHERE scope = ?5 AND month = ?6 AND metric = ?7 AND value >= ?8) "
                     + "ON CONFLICT (scope, month, metric) DO UPDATE SET value = value + excluded.value",
-                    SqlBuild.Text(item.Key.Scope), SqlBuild.Text(item.Key.Month), SqlBuild.Text(item.Key.Metric), SqlBuild.Integer(item.Value),
+                    SqlBuild.Text(item.Key.Scope), SqlBuild.Text(item.Key.Month), SqlBuild.Text(string.Concat(item.Key.Metric, "@", commits.NodeId)), SqlBuild.Integer(item.Value),
                     SqlBuild.Text(WriterScope), SqlBuild.Text(WriterSlot), SqlBuild.Text(BatchMetric), SqlBuild.Integer(batch.Sequence))),
                 Absolute(BatchMetric, batch.Sequence),
                 .. heartbeat.Statements,
