@@ -9,6 +9,7 @@ using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
@@ -262,9 +263,16 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = record.Device };
                 for (var attempt = 0; ; attempt++)
                 {
-                    try
+                    SessionRow? latest = null;
+                    var unreadable = await storage.TryReadAsync(async connection => latest = await FindAsync(connection, lookup), rotating);
+                    var conflicted = false;
+                    string unsaved;
+                    if (unreadable is { } failure)
                     {
-                        var latest = await FindAsync(lookup, rotating);
+                        unsaved = failure.Failure;
+                    }
+                    else
+                    {
                         if (latest is null)
                         {
                             return null;
@@ -282,32 +290,33 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                         }
 
                         var saved = await TryReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, rotating);
-                        var unsaved = saved switch
+                        (bool Saved, bool Conflicted, string Reason) outcome = saved switch
                         {
-                            StorageWritten => null,
-                            StorageConflicted => "concurrent session change",
-                            StorageDuplicate => "duplicate session record",
-                            StorageFailed failed => failed.Failure,
+                            StorageWritten => (true, false, ""),
+                            StorageConflicted => (false, true, "concurrent session change"),
+                            StorageDuplicate => (false, true, "duplicate session record"),
+                            StorageFailed failed => (false, false, failed.Failure),
                         };
-                        if (unsaved is null)
+                        if (outcome.Saved)
                         {
                             break;
                         }
 
-                        if (attempt >= 5)
-                        {
-                            return null;
-                        }
+                        conflicted = outcome.Conflicted;
+                        unsaved = outcome.Reason;
+                    }
 
-                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, unsaved);
-                        await DashboardDb.ConflictBackoffAsync(attempt, time, rotating);
-                    }
-                    catch (Exception error) when (attempt < 5 && (error is TimeoutException or HttpRequestException { StatusCode: null or >= HttpStatusCode.InternalServerError or HttpStatusCode.TooManyRequests } ||
-                                                                  error is OperationCanceledException && !rotating.IsCancellationRequested))
+                    if (attempt >= 5)
                     {
-                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, StorageFailure.Describe(error));
-                        await Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), rotating);
+                        throw conflicted
+                            ? new DBConcurrencyException("The refreshed session could not be saved: " + unsaved + ".")
+                            : new IOException("The refreshed session could not be saved: " + unsaved + ".");
                     }
+
+                    logger.SavingARefreshedTsAuthGrant(lookup.Kind, unsaved);
+                    await (conflicted
+                        ? DashboardDb.ConflictBackoffAsync(attempt, time, rotating)
+                        : Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), time, rotating));
                 }
                 record = refreshed;
             }
@@ -445,6 +454,11 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
     private async Task<SessionRow?> FindAsync(Lookup lookup, CancellationToken cancellationToken)
     {
         await using var connection = await storage.OpenAsync(cancellationToken);
+        return await FindAsync(connection, lookup);
+    }
+
+    private static async Task<SessionRow?> FindAsync(TerraBaseDbConnection connection, Lookup lookup)
+    {
         return lookup.Kind == SessionRow.Browser
             ? await connection.QuerySingleOrDefaultAsync<SessionRow>(ByToken, new { TokenHash = lookup.Key, SessionRow.Browser })
             : await connection.QuerySingleOrDefaultAsync<SessionRow>(ById, new { Id = lookup.Key, SessionRow.Credential });

@@ -63,16 +63,62 @@ public sealed class DashboardDb(TerraBaseSqlDatabase database)
             {
                 return new StorageConflicted();
             }
-            catch (Exception error) when (IsDuplicate(error))
+            catch (HttpRequestException error) when (IsDuplicate(error))
             {
                 return new StorageDuplicate();
             }
-            catch (Exception error) when (error is HttpRequestException or WebSocketException or IOException or TimeoutException ||
-                                          error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            catch (HttpRequestException error)
+            {
+                return new StorageFailed(StorageFailure.Describe(error));
+            }
+            catch (WebSocketException error)
+            {
+                return new StorageFailed(StorageFailure.Describe(error));
+            }
+            catch (IOException error)
+            {
+                return new StorageFailed(StorageFailure.Describe(error));
+            }
+            catch (TimeoutException error)
+            {
+                return new StorageFailed(StorageFailure.Describe(error));
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
             {
                 return new StorageFailed(StorageFailure.Describe(error));
             }
         });
+    }
+
+    public async Task<StorageFailed?> TryReadAsync(Func<TerraBaseDbConnection, Task> read, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken);
+            await read(connection);
+            return null;
+        }
+        catch (HttpRequestException error)
+        {
+            return new StorageFailed(StorageFailure.Describe(error));
+        }
+        catch (WebSocketException error)
+        {
+            return new StorageFailed(StorageFailure.Describe(error));
+        }
+        catch (IOException error)
+        {
+            return new StorageFailed(StorageFailure.Describe(error));
+        }
+        catch (TimeoutException error)
+        {
+            return new StorageFailed(StorageFailure.Describe(error));
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new StorageFailed(StorageFailure.Describe(error));
+        }
     }
 
     public static async Task<int> RunAsync(TerraBaseDbConnection connection, string sql, IReadOnlyDictionary<string, object?> parameters,

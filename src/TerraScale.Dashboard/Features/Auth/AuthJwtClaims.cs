@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             try
             {
-                if (published.ValueKind != JsonValueKind.Object || !published.TryGetProperty("keys", out var listed) ||
+                if (published.ValueKind != JsonValueKind.Object || !Canonical(published) || !published.TryGetProperty("keys", out var listed) ||
                     listed.ValueKind != JsonValueKind.Array || listed.GetArrayLength() == 0)
                 {
                     return null;
@@ -144,7 +144,7 @@ namespace TerraScale.Dashboard.Features.Auth
             try
             {
                 using var json = JsonDocument.Parse(bytes);
-                return json.RootElement.ValueKind == JsonValueKind.Object && Transcodable(json.RootElement) ? json.RootElement.Clone() : null;
+                return json.RootElement.ValueKind == JsonValueKind.Object && Canonical(json.RootElement) ? json.RootElement.Clone() : null;
             }
             catch (JsonException)
             {
@@ -156,13 +156,27 @@ namespace TerraScale.Dashboard.Features.Auth
             }
         }
 
-        private static bool Transcodable(JsonElement element) => element.ValueKind switch
+        private static bool Canonical(JsonElement element) => element.ValueKind switch
         {
-            JsonValueKind.Object => element.EnumerateObject().All(static property => property.Name is not null && Transcodable(property.Value)),
-            JsonValueKind.Array => element.EnumerateArray().All(Transcodable),
+            JsonValueKind.Object => UniqueMembers(element),
+            JsonValueKind.Array => element.EnumerateArray().All(Canonical),
             JsonValueKind.String => element.GetString() is not null,
             _ => true,
         };
+
+        private static bool UniqueMembers(JsonElement element)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!seen.Add(property.Name) || !Canonical(property.Value))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
 
         private static string? Text(JsonElement element, string name)
         {
