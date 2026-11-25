@@ -104,7 +104,6 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         private CausalBookmark _bookmark = CausalBookmark.Empty;
         private DateTimeOffset _nextSync = DateTimeOffset.MinValue;
         private TimeSpan _interval = InitialInterval;
-        private DateTimeOffset _notBefore;
         private bool _resync;
         private bool _syncing;
         private bool _queued;
@@ -145,12 +144,6 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
                     return false;
                 }
 
-                if (onDemand && now < _notBefore)
-                {
-                    _nextSync = _notBefore;
-                    return false;
-                }
-
                 if (!onDemand && _nextSync > now)
                 {
                     return false;
@@ -161,15 +154,16 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             }
         }
 
-        public void EndSync(DateTimeOffset now, bool progressed)
+        public bool EndSync(DateTimeOffset now, bool progressed)
         {
             lock (_gate)
             {
                 _syncing = false;
                 _interval = progressed ? InitialInterval : TimeSpan.FromTicks(Math.Min(_interval.Ticks * 2, IdleInterval.Ticks));
-                _notBefore = now + InitialInterval;
-                _nextSync = _resync ? _notBefore : now + _interval;
+                _nextSync = now + _interval;
+                var resync = _resync;
                 _resync = false;
+                return resync;
             }
         }
 
