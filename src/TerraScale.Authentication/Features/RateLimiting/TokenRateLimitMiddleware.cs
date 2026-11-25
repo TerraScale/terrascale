@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Http.HttpResults;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Configuration;
@@ -48,17 +50,19 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         IResult? refusal;
         try
         {
-            refusal = await this.LimitAsync(context) is { } wait ? HostedAuth.TooMany(wait) : null;
+            refusal = await this.LimitAsync(context) is not { } wait ? null
+                : TokenEndpointDeadline.UsesOAuthErrors(context.Request, StatusCodes.Status429TooManyRequests) ? HostedAuth.TooMany(wait)
+                : TooMany(context, wait);
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
             logger.ZLogWarning(error.InnerException ?? error, $"Token request refused: its rate limit could not be checked");
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers.RetryAfter = "2";
-            refusal = CustomTokenEndpoint.Matches(context.Request.Path)
-                ? TypedResults.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
+            refusal = TokenEndpointDeadline.UsesOAuthErrors(context.Request, StatusCodes.Status503ServiceUnavailable)
+                ? TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
                     statusCode: StatusCodes.Status503ServiceUnavailable)
-                : TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
+                : TypedResults.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -69,6 +73,13 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         }
 
         await next(context);
+    }
+
+    private static JsonHttpResult<ErrorBody> TooMany(HttpContext context, TimeSpan wait)
+    {
+        context.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+        context.Response.Headers.CacheControl = "no-store";
+        return TypedResults.Json(new ErrorBody(new ErrorDetail("rate_limited", "Too many attempts; retry later.")), statusCode: StatusCodes.Status429TooManyRequests);
     }
 
     internal static bool IsProjectTokenPath(PathString path) =>

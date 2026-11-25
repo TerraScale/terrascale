@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Net;
 using System.Net.WebSockets;
 using TerraScale.Authentication.Contracts;
 using TerraScale.DotNet.TerraBase;
@@ -9,7 +10,11 @@ public readonly union AuthTransaction<T>(T, AuthConflict);
 
 internal sealed record AuthStorageDown(Exception Cause);
 
-internal readonly union AuthBatchWrite(AuthCompleted, AuthConflict, AuthStorageDown);
+internal sealed record AuthContended(Exception Cause);
+
+internal sealed record AuthOutcomeUnknown(Exception Cause);
+
+internal readonly union AuthBatchWrite(AuthCompleted, AuthConflict, AuthContended, AuthStorageDown, AuthOutcomeUnknown);
 
 public sealed class AuthData(AuthConnectionFactory connections)
 {
@@ -17,7 +22,28 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
     private const string SerializationFailureState = "40001";
 
+    internal const string StorageBusy = "storage_busy";
+
+    internal const string StrongQuorumUnreachable = "strong_quorum_unreachable";
+
+    private const string InRegionQuorumUnconfirmed = "in_region_quorum_unconfirmed";
+
+    private const string RequestTimeout = "request_timeout";
+
+    private const string WriteOutcomeUnknown = "write_outcome_unknown";
+
+    internal const string LostConflict = "A conditional write lost to a concurrent change.";
+
+    private static readonly AsyncLocal<StorageWrites?> Tracked = new();
+
     private readonly AsyncLocal<WriteAudit?> audit = new();
+
+    public static StorageWrites TrackWrites()
+    {
+        var writes = new StorageWrites();
+        Tracked.Value = writes;
+        return writes;
+    }
 
     public async Task<T> AuditWritesAsync<T>(Change success, Func<CancellationToken, Task<T>> write, CancellationToken cancellationToken)
     {
@@ -99,7 +125,9 @@ public sealed class AuthData(AuthConnectionFactory connections)
         {
             AuthCompleted => Committed(currentAudit, true),
             AuthConflict => false,
+            AuthContended contended => throw ApiException.Unavailable(contended.Cause),
             AuthStorageDown down => throw ApiException.Unavailable(down.Cause),
+            AuthOutcomeUnknown unknown => throw OutcomeUnknown(unknown.Cause),
         };
     }
 
@@ -113,45 +141,72 @@ public sealed class AuthData(AuthConnectionFactory connections)
         var currentAudit = audit.Value;
         if (Plan(scope.Staged, currentAudit) is not { } batch)
         {
-            return new AuthConflict("A conditional write lost to a concurrent change.");
+            return new AuthConflict(LostConflict);
         }
 
         var executed = await ExecuteAsync(batch, connection, transaction, cancellationToken);
         var outcome = executed switch
         {
             AuthCompleted => await CommitAsync(transaction, cancellationToken),
-            AuthConflict conflict => conflict,
-            AuthStorageDown down => down,
+            AuthConflict or AuthContended or AuthStorageDown or AuthOutcomeUnknown => executed,
         };
         return outcome switch
         {
             AuthCompleted => Committed(currentAudit, result),
             AuthConflict conflict => conflict,
+            AuthContended contended => throw ApiException.Unavailable(contended.Cause),
             AuthStorageDown down => throw ApiException.Unavailable(down.Cause),
+            AuthOutcomeUnknown unknown => throw OutcomeUnknown(unknown.Cause),
         };
     }
 
     public static bool IsContention(Exception? failure) =>
         failure is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SerializationConflict, Sqlstate: SerializationFailureState };
 
-    public static bool IsConflict(Exception failure) => failure is TerraBaseException { ErrorCode: { } code } refused && IsConflict(code, refused.Message);
+    public static bool IsConflict(Exception failure) => failure is TerraBaseException
+    {
+        ErrorCode: TerraBaseSqlErrorCodes.UniqueViolation or TerraBaseSqlErrorCodes.PrimaryKeyViolation or TerraBaseSqlErrorCodes.ForeignKeyViolation
+            or TerraBaseSqlErrorCodes.CheckViolation or TerraBaseSqlErrorCodes.RowConflict or TerraBaseSqlErrorCodes.SerializationConflict,
+    };
 
-    public static bool IsUnavailable(Exception failure) => failure switch
+    public static bool IsUnavailable(Exception failure) => IsOutcomeUnknown(failure) || failure switch
     {
         ApiException { Status: StatusCodes.Status503ServiceUnavailable } => true,
-        TerraBaseException { ErrorCode: TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable } => true,
+        TerraBaseException
+        {
+            ErrorCode: TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable or TerraBaseSqlErrorCodes.TransactionRolledBack or StorageBusy
+                or StrongQuorumUnreachable,
+        } => true,
+        TerraBaseException { StatusCode: HttpStatusCode.ServiceUnavailable } => true,
         TerraBaseUnavailableException or TimeoutException or WebSocketException => true,
-        HttpRequestException { StatusCode: null } => true,
+        HttpRequestException { StatusCode: null } and not TerraBaseException => true,
         _ when failure.InnerException is { } inner => IsUnavailable(inner),
         _ => false,
     };
 
-    private static bool IsConflict(string code, string message) => code switch
+    public static bool IsOutcomeUnknown(Exception failure) => failure switch
     {
-        TerraBaseSqlErrorCodes.UniqueViolation or TerraBaseSqlErrorCodes.PrimaryKeyViolation or TerraBaseSqlErrorCodes.ForeignKeyViolation or TerraBaseSqlErrorCodes.RowConflict => true,
-        TerraBaseSqlErrorCodes.NotNullViolation => message.Contains(WriteBatch.GuardColumn, StringComparison.Ordinal),
+        ApiException => false,
+        TerraBaseException { ErrorCode: WriteOutcomeUnknown or InRegionQuorumUnconfirmed or RequestTimeout or TerraBaseSqlErrorCodes.QueryCanceled } => true,
+        TerraBaseException { StatusCode: HttpStatusCode.GatewayTimeout } => true,
+        _ when failure.InnerException is { } inner => IsOutcomeUnknown(inner),
         _ => false,
     };
+
+    public static ApiException Unavailable(Exception failure)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+        return failure switch
+        {
+            ApiException { Status: StatusCodes.Status503ServiceUnavailable } unavailable => unavailable,
+            _ when IsOutcomeUnknown(failure) => OutcomeUnknown(failure),
+            _ => ApiException.Unavailable(failure),
+        };
+    }
+
+    public static ApiException OutcomeUnknown(Exception? cause) =>
+        new(StatusCodes.Status503ServiceUnavailable, "temporarily_unavailable",
+            "Storage did not confirm whether the change was saved; read the current state before repeating the request.", cause);
 
     private static WriteBatch? Plan(IReadOnlyList<Change> changes, WriteAudit? currentAudit)
     {
@@ -204,8 +259,8 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
     private static bool Contended(AuthBatchWrite outcome) => outcome switch
     {
-        AuthCompleted or AuthConflict => false,
-        AuthStorageDown down => IsContention(down.Cause),
+        AuthContended => true,
+        AuthCompleted or AuthConflict or AuthStorageDown or AuthOutcomeUnknown => false,
     };
 
     private static async Task<AuthBatchWrite> ExecuteInTransactionAsync(WriteBatch batch, DbConnection connection, CancellationToken cancellationToken)
@@ -215,28 +270,27 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return executed switch
         {
             AuthCompleted => await CommitAsync(transaction, cancellationToken),
-            AuthConflict conflict => conflict,
-            AuthStorageDown down => down,
+            AuthConflict or AuthContended or AuthStorageDown or AuthOutcomeUnknown => executed,
         };
     }
 
     private static async Task<AuthBatchWrite> ExecuteAsync(WriteBatch batch, DbConnection connection, DbTransaction? transaction, CancellationToken cancellationToken)
     {
-        foreach (var command in batch.Commands(connection, transaction))
+        foreach (var guarded in batch.Commands(connection, transaction))
         {
-            await using (command)
+            await using (guarded.Command)
             {
-                try
+                var executed = transaction is null
+                    ? await SendAsync(() => TerraBaseWrites.ExecuteAsync(guarded, false, cancellationToken))
+                    : await TerraBaseWrites.ExecuteAsync(guarded, true, cancellationToken);
+                var stopped = executed switch
                 {
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                }
-                catch (TerraBaseException refused) when (refused.ErrorCode is { } code && IsConflict(code, refused.Message))
+                    AuthCompleted => (AuthBatchWrite?)null,
+                    AuthConflict or AuthContended or AuthStorageDown or AuthOutcomeUnknown => executed,
+                };
+                if (stopped is { } outcome)
                 {
-                    return new AuthConflict("A conditional write lost to a concurrent change.");
-                }
-                catch (Exception failure) when (IsUnavailable(failure))
-                {
-                    return new AuthStorageDown(failure);
+                    return outcome;
                 }
             }
         }
@@ -244,21 +298,25 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return new AuthCompleted();
     }
 
-    private static async Task<AuthBatchWrite> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken)
+    private static Task<AuthBatchWrite> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken) =>
+        SendAsync(() => TerraBaseWrites.CommitAsync(transaction, cancellationToken));
+
+    private static async Task<AuthBatchWrite> SendAsync(Func<Task<AuthBatchWrite>> send)
     {
-        try
+        var writes = Tracked.Value;
+        writes?.Dispatch();
+        var outcome = await send();
+        var settled = outcome switch
         {
-            await transaction.CommitAsync(cancellationToken);
-            return new AuthCompleted();
-        }
-        catch (TerraBaseException refused) when (refused.ErrorCode is { } code && IsConflict(code, refused.Message))
+            AuthConflict or AuthContended or AuthStorageDown => true,
+            AuthCompleted or AuthOutcomeUnknown => false,
+        };
+        if (settled)
         {
-            return new AuthConflict("A transaction lost to a concurrent change.");
+            writes?.Settle();
         }
-        catch (Exception failure) when (IsUnavailable(failure))
-        {
-            return new AuthStorageDown(failure);
-        }
+
+        return outcome;
     }
 
     private sealed class WriteAudit(Change success)
@@ -267,6 +325,17 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
         public bool Committed { get; set; }
     }
+}
+
+public sealed class StorageWrites
+{
+    private int inDoubt;
+
+    public bool MayHaveCommitted => Volatile.Read(ref inDoubt) > 0;
+
+    internal void Dispatch() => Interlocked.Increment(ref inDoubt);
+
+    internal void Settle() => Interlocked.Decrement(ref inDoubt);
 }
 
 public sealed class AuthTransaction(DbConnection connection, DbTransaction transaction)

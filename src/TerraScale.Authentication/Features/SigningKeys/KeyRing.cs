@@ -301,7 +301,18 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
             }
         });
         var shared = source.Pending.GetOrAdd(instanceId, created);
+        if (ReferenceEquals(shared, created))
+        {
+            _ = ObserveAsync(shared.Value);
+        }
+
         return this.Current(await shared.Value.WaitAsync(cancellationToken));
+    }
+
+    private static async Task ObserveAsync(Task read)
+    {
+        await Task.WhenAny(read);
+        _ = read.Exception;
     }
 
     private Snapshot Current(Snapshot read) =>

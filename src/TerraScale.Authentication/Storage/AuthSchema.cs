@@ -15,14 +15,15 @@ public sealed class AuthSchema(TerraBaseDbUpRunner runner)
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
         var upgraded = await runner.UpgradeAsync(cancellationToken);
-        var failure = upgraded switch
+        Exception? failure = upgraded switch
         {
-            AuthCompleted => (AuthUnavailable?)null,
-            AuthUnavailable blocked => blocked,
+            AuthCompleted => null,
+            AuthUnavailable blocked => ApiException.Unavailable(new InvalidOperationException(blocked.Message)),
+            SchemaScriptChanged changed => new InvalidOperationException($"Schema script {changed.Script} changed after it was applied; merged scripts are immutable"),
         };
-        if (failure is { } unavailable)
+        if (failure is not null)
         {
-            throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message));
+            throw failure;
         }
     }
 

@@ -1,6 +1,7 @@
 using System.Globalization;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Storage;
@@ -33,32 +34,21 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (TerraBaseException conflict) when (!context.Response.HasStarted && AuthData.IsConflict(conflict))
         {
-            var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
+            var error = Conflict(context, conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (OpenIddictExceptions.ConcurrencyException conflict) when (!context.Response.HasStarted)
         {
-            var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
+            var error = Conflict(context, conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (Exception busy) when (!context.Response.HasStarted && busy is not ApiException && AuthData.IsUnavailable(busy))
         {
-            var error = ApiException.Unavailable(busy);
+            var error = AuthData.Unavailable(busy);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
-        }
-        catch (TerraBaseUnavailableException unavailable) when (!context.Response.HasStarted)
-        {
-            var error = ApiException.Unavailable(unavailable);
-            Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
-            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
-        }
-        catch (TimeoutException timeout) when (!context.Response.HasStarted)
-        {
-            Diagnose(context, timeout, () => logger.ZLogError(timeout, $"Storage did not answer in time"));
-            await WriteAsync(context, ApiException.Unavailable(timeout));
         }
         catch (Exception exception) when (!context.Response.HasStarted)
         {
@@ -77,6 +67,11 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             }
         }
     }
+
+    private static ApiException Conflict(HttpContext context, Exception conflict) =>
+        TokenEndpointDeadline.IsOAuthTokenRequest(context.Request)
+            ? new(StatusCodes.Status503ServiceUnavailable, "temporarily_unavailable", "A concurrent change won; retry the request.", conflict) { RetryAfter = TimeSpan.FromSeconds(1) }
+            : new(StatusCodes.Status409Conflict, "conflict", "A concurrent change won; retry the request.", conflict);
 
     private static void Diagnose(HttpContext context, Exception exception, Action log)
     {
@@ -102,6 +97,14 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
     private static Task WriteAsync(HttpContext context, ApiException error) =>
         WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
 
+    private static void ApplyRetryAfter(HttpResponse response, TimeSpan? retryAfter)
+    {
+        if (retryAfter is { } wait)
+        {
+            response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
     internal static Task WriteAsync(HttpContext context, int status, string code, string message, TimeSpan? retryAfter)
     {
         try
@@ -109,9 +112,18 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             context.Response.Clear();
             context.Response.StatusCode = status;
             context.Response.Headers.CacheControl = "no-store";
-            if (retryAfter is { } wait)
+            ApplyRetryAfter(context.Response, retryAfter);
+
+            if ((status >= 500 || status == StatusCodes.Status429TooManyRequests) && TokenEndpointDeadline.UsesOAuthErrors(context.Request, status))
             {
-                context.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+                return context.Response.WriteAsJsonAsync(new OAuthErrorBody(
+                    status switch
+                    {
+                        StatusCodes.Status503ServiceUnavailable => OpenIddictConstants.Errors.TemporarilyUnavailable,
+                        StatusCodes.Status429TooManyRequests => code,
+                        _ => OpenIddictConstants.Errors.ServerError,
+                    }, message),
+                    OidcJson.Default.OAuthErrorBody, cancellationToken: context.RequestAborted);
             }
 
             if (status >= 500 && SignInFlow.HostedPage(context))

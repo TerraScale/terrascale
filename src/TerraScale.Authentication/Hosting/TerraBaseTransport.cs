@@ -73,25 +73,11 @@ public static class TerraBaseTransport
 
     private sealed class StrongConsistency : DelegatingHandler
     {
-        private string? bookmark;
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             request.Headers.Remove(ConsistencyHeaders.Consistency);
             request.Headers.Add(ConsistencyHeaders.Consistency, ConsistencyHeaders.StrongValue);
-            request.Headers.Remove(ConsistencyHeaders.Bookmark);
-            if (Volatile.Read(ref bookmark) is { } after)
-            {
-                request.Headers.Add(ConsistencyHeaders.Bookmark, after);
-            }
-
-            var response = await base.SendAsync(request, cancellationToken);
-            if (response.Headers.TryGetValues(ConsistencyHeaders.Bookmark, out var values) && values.LastOrDefault() is { Length: > 0 } latest)
-            {
-                Volatile.Write(ref bookmark, latest);
-            }
-
-            return response;
+            return base.SendAsync(request, cancellationToken);
         }
     }
 

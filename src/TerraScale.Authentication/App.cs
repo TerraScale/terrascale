@@ -98,6 +98,7 @@ public static class App
         builder.Services.AddSingleton(services => new TerraBaseSqlClient(services.GetRequiredService<HttpClient>(), new TerraBaseSqlClientOptions
         {
             BaseAddress = InternalTerraBaseOrigin.ClientOrigin(TerraBaseOrigin(options)),
+            Consistency = TerraBaseConsistencyMode.Strong,
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddSingleton<AuthConnectionFactory>();
         builder.Services.AddSingleton<AuthData>();
