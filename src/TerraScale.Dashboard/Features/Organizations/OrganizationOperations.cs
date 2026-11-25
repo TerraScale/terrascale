@@ -1,9 +1,10 @@
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
     public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatform platform,
-        IWorkspacePlacement placement, IOrganizationAccess access, DashboardSessions sessions,
+        IWorkspacePlacement placement, IOrganizationAccess access, DashboardSessions sessions, ProjectReservations reservations,
         TimeProvider time, ILogger<OrganizationOperations> logger)
     {
         public async Task RenameAsync(AccountContext context, string name, CancellationToken cancellationToken)
@@ -18,33 +19,24 @@ namespace TerraScale.Dashboard.Features.Organizations
             }, cancellationToken);
         }
 
-        private static readonly SemaphoreSlim[] CreationGates = [.. Enumerable.Range(0, 64).Select(static _ => new SemaphoreSlim(1, 1))];
-        private static readonly TimeSpan AbandonDeadline = TimeSpan.FromSeconds(10);
-
         public async Task<ProjectRecord> CreateProjectAsync(AccountContext context, string name,
             IReadOnlyList<string>? regions, CancellationToken cancellationToken)
         {
-            var organizationId = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
-            var gate = CreationGates[(int)((uint)StringComparer.Ordinal.GetHashCode(organizationId) % (uint)CreationGates.Length)];
-            await gate.WaitAsync(cancellationToken);
-            try
-            {
-                return await CreateAdmittedProjectAsync(context, name, regions, cancellationToken);
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }
-
-        private async Task<ProjectRecord> CreateAdmittedProjectAsync(AccountContext context, string name,
-            IReadOnlyList<string>? regions, CancellationToken cancellationToken)
-        {
             context = await FreshManagerAsync(context, cancellationToken);
+            var organization = context.Organization ?? throw new AccountAccessException("Select an organization.");
             name = AccountService.ValidName(name);
-            CanCreate(context.Organization!, context.UserId, name);
+            CanCreate(organization, context.UserId, name);
             var chosen = await LocationsAsync(regions, cancellationToken);
-            var remote = await platform.CreateProjectAsync(context.Session, context.Organization!.Id, name, cancellationToken);
+            var limit = ProjectLimit(organization);
+            var reservation = await reservations.ReserveAsync(organization.Id, organization.Projects.Keys, limit, cancellationToken)
+                ?? throw ProjectLimitReached(limit);
+            var creation = await platform.TryCreateProjectAsync(context.Session, organization.Id, name, cancellationToken);
+            var remote = await (creation switch
+            {
+                TsAuthPlatformProject created => BindAsync(reservation, created, cancellationToken),
+                ProjectCreationRefused refused => RefusedAsync(reservation, refused),
+                ProjectCreationUnknown unknown => UnconfirmedAsync(unknown),
+            });
             var project = new ProjectRecord
             {
                 Id = remote.Id,
@@ -54,32 +46,12 @@ namespace TerraScale.Dashboard.Features.Organizations
                 CreatedAt = remote.CreatedAt,
                 Regions = chosen
             };
-            var kept = false;
-            try
+            await accounts.UpdateOrganizationAsync(context, org =>
             {
-                await accounts.UpdateOrganizationAsync(context, org =>
-                {
-                    Manage(org, context.UserId);
-                    if (!org.CanProvision(context.UserId))
-                    {
-                        throw new AccountAccessException("Active billing is required to create projects.", 409);
-                    }
-
-                    DemandProjectRoom(org, project.Id);
-                    Duplicate(org, name, project.Id);
-                    org.Projects[project.Id] = project;
-                    org.AuditEvents.Add(Event(context, "project.created", name, "project"));
-                }, cancellationToken);
-                kept = true;
-            }
-            finally
-            {
-                if (!kept)
-                {
-                    await AbandonProjectAsync(context.Session, project.OrganizationId, project.Id);
-                }
-            }
-
+                org.Projects[project.Id] = project;
+                org.AuditEvents.Add(Event(context, "project.created", name, "project"));
+            }, cancellationToken);
+            await reservations.ReleaseAsync(reservation, CancellationToken.None);
             await accounts.UpdateAccountAsync(context.Session, account =>
             {
                 if (account.ActiveOrganizationId == project.OrganizationId && account.ActiveProjectId.Length == 0)
@@ -90,20 +62,23 @@ namespace TerraScale.Dashboard.Features.Organizations
             return project;
         }
 
-        private async Task AbandonProjectAsync(SessionRecord session, string organizationId, string projectId)
+        private async Task<TsAuthPlatformProject> BindAsync(string reservation, TsAuthPlatformProject created, CancellationToken cancellationToken)
         {
-            using var deadline = new CancellationTokenSource(AbandonDeadline);
-            try
-            {
-                if (!await platform.DeleteProjectAsync(session, organizationId, projectId, deadline.Token))
-                {
-                    logger.AbandonedProjectNotDeleted(projectId, "pending");
-                }
-            }
-            catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or OperationCanceledException)
-            {
-                logger.AbandonedProjectNotDeleted(projectId, error.GetType().Name);
-            }
+            await reservations.BindAsync(reservation, created.Id, cancellationToken);
+            return created;
+        }
+
+        private async Task<TsAuthPlatformProject> RefusedAsync(string reservation, ProjectCreationRefused refused)
+        {
+            await reservations.ReleaseAsync(reservation, CancellationToken.None);
+            throw new AccountAccessException(refused.Message, refused.StatusCode, refused.Code);
+        }
+
+        private Task<TsAuthPlatformProject> UnconfirmedAsync(ProjectCreationUnknown unknown)
+        {
+            logger.ProjectCreationUnconfirmed(unknown.Failure);
+            return Task.FromException<TsAuthPlatformProject>(
+                new IOException("Project creation could not be confirmed. Reload the project list before trying again."));
         }
 
         public async Task UpdateProjectAsync(AccountContext context, string name,
@@ -267,14 +242,17 @@ namespace TerraScale.Dashboard.Features.Organizations
             : throw new AccountAccessException("The organization plan is unavailable.", 503);
         }
 
-        internal static void DemandProjectRoom(OrganizationRecord org, string? createdProjectId = null)
+        internal static void DemandProjectRoom(OrganizationRecord org)
         {
             var limit = ProjectLimit(org);
-            if (org.Projects.Keys.Count(id => id != createdProjectId) >= limit)
+            if (org.Projects.Count >= limit)
             {
-                throw new AccountAccessException($"Your organization has reached its plan's project limit ({limit} {(limit == 1 ? "project" : "projects")}). Upgrade the plan on the organization's Billing tab or delete a project.", 409);
+                throw ProjectLimitReached(limit);
             }
         }
+
+        private static AccountAccessException ProjectLimitReached(int limit) =>
+            new($"Your organization has reached its plan's project limit ({limit} {(limit == 1 ? "project" : "projects")}). Upgrade the plan on the organization's Billing tab or delete a project.", 409);
 
         private static void Duplicate(OrganizationRecord org, string name, string? except = null)
         {

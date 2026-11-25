@@ -21,6 +21,16 @@ using TerraScale.Dashboard.Common.Validation;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
+    public sealed record McpBearerAccepted;
+
+    public sealed record McpBearerRejected;
+
+    public sealed record McpBearerUnverified;
+
+    public readonly union McpBearerOutcome(McpBearerAccepted, McpBearerRejected, McpBearerUnverified);
+
+    public readonly union McpApiKeyAuthentication(McpApiKeyTools.Credential, McpBearerRejected, McpBearerUnverified);
+
     public static class DashboardMcp
     {
         internal const string ContextKey = "TerraScale.Dashboard/mcp-context";
@@ -317,12 +327,26 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 var bearer = header.Parameter;
                 var project = context.Request.Headers["X-TerraScale-Project"].ToString();
                 var rejected = context.RequestServices.GetRequiredService<McpRejectedBearers>();
-                if (rejected.Contains(bearer, project) || !await AuthenticateAsync(context, bearer, project))
+                var outcome = rejected.Contains(bearer, project) ? new McpBearerOutcome(new McpBearerRejected()) : await AuthenticateAsync(context, bearer, project);
+                var status = outcome switch
+                {
+                    McpBearerAccepted => StatusCodes.Status200OK,
+                    McpBearerRejected => StatusCodes.Status401Unauthorized,
+                    McpBearerUnverified => StatusCodes.Status503ServiceUnavailable,
+                };
+                if (status == StatusCodes.Status401Unauthorized)
                 {
                     rejected.Remember(bearer, project);
                     limits.RecordMcpRejection(context);
                     context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
-                    context.Response.StatusCode = 401;
+                    context.Response.StatusCode = status;
+                    return;
+                }
+
+                if (status == StatusCodes.Status503ServiceUnavailable)
+                {
+                    context.Response.Headers.RetryAfter = "1";
+                    context.Response.StatusCode = status;
                     return;
                 }
 
@@ -332,37 +356,43 @@ namespace TerraScale.Dashboard.Platform.Mcp
             app.MapMcp("/").RequireHost("mcp.terrascale.tech");
         }
 
-        private static async Task<bool> AuthenticateAsync(HttpContext context, string bearer, string project)
+        private static async Task<McpBearerOutcome> AuthenticateAsync(HttpContext context, string bearer, string project)
         {
             if (bearer.StartsWith("tspat_", StringComparison.Ordinal))
             {
                 if (await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(bearer, context.RequestAborted) is not { } principal)
                 {
-                    return false;
+                    return new McpBearerRejected();
                 }
 
                 context.Items[ContextKey] = principal;
-                return true;
+                return new McpBearerAccepted();
             }
 
             if (McpAgents.IsAgentToken(bearer))
             {
                 if (await context.RequestServices.GetRequiredService<McpAgents>().SignInAsync(bearer, context.RequestAborted) is not { } agent)
                 {
-                    return false;
+                    return new McpBearerRejected();
                 }
 
                 context.Items[ContextKey] = agent;
-                return true;
+                return new McpBearerAccepted();
             }
 
-            if (await context.RequestServices.GetRequiredService<McpApiKeyTools>().AuthenticateAsync(bearer, project, context.RequestAborted) is not { } key)
+            var authentication = await context.RequestServices.GetRequiredService<McpApiKeyTools>().AuthenticateAsync(bearer, project, context.RequestAborted);
+            return authentication switch
             {
-                return false;
-            }
+                McpApiKeyTools.Credential key => Accept(context, key),
+                McpBearerRejected rejected => rejected,
+                McpBearerUnverified unverified => unverified,
+            };
+        }
 
+        private static McpBearerOutcome Accept(HttpContext context, McpApiKeyTools.Credential key)
+        {
             context.Items[McpApiKeyTools.ContextKey] = key;
-            return true;
+            return new McpBearerAccepted();
         }
 
         internal static IResult UnsupportedStatelessMethod(HttpContext http)

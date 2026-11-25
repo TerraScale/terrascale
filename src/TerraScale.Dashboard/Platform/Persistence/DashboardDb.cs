@@ -48,7 +48,8 @@ public sealed class DashboardDb(TerraBaseSqlDatabase database)
         error is DBConcurrencyException || error is TerraBaseSqlException sql && DashboardStorageOutcomes.IsConflict(sql);
 
     private static TimeSpan ConflictBackoff(int attempt, double jitter) =>
-        TimeSpan.FromTicks((long)(Math.Min(LongestConflictBackoff.Ticks, FirstConflictBackoff.Ticks << Math.Clamp(attempt, 0, 8)) * (0.5 + 0.5 * Math.Clamp(jitter, 0, 1))));
+        TimeSpan.FromTicks(Math.Clamp((long)(Math.Min(LongestConflictBackoff.Ticks, FirstConflictBackoff.Ticks << Math.Clamp(attempt, 0, 8)) * (0.5 + Math.Clamp(jitter, 0, 1))),
+            FirstConflictBackoff.Ticks, LongestConflictBackoff.Ticks));
 
     public async Task<T> ReadAsync<T>(Func<TerraBaseDbConnection, Task<T>> read, CancellationToken cancellationToken)
     {

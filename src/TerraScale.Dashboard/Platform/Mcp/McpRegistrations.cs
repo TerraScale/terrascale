@@ -14,6 +14,7 @@ public static class McpRegistrations
     public static readonly TimeSpan UnfinishedLifetime = TimeSpan.FromHours(24);
     public static readonly TimeSpan IdleLifetime = TimeSpan.FromDays(30);
     private static readonly TimeSpan ActivityResolution = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(2);
 
     public static async Task<McpRegistration> CreateAsync(DashboardDb storage, string name, string[] redirectUris, DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -78,7 +79,7 @@ public static class McpRegistrations
             }
 
             var now = time.GetUtcNow().UtcDateTime;
-            if (row.CreatedAt > now || row.LastActivityAt > now)
+            if (row.CreatedAt > now + ClockSkew || row.LastActivityAt > now + ClockSkew)
             {
                 throw new IOException("MCP registration activity is in the future.");
             }
@@ -108,7 +109,7 @@ public static class McpRegistrations
             else
             {
                 row.FirstSignInCompletedAt ??= now;
-                row.LastActivityAt = now;
+                row.LastActivityAt = row.LastActivityAt > now ? row.LastActivityAt : now;
             }
 
             row.OriginalVersion = row.Version;

@@ -253,7 +253,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public bool CanManageKeys => CanManage || CanWriteProjectData;
         public bool CanManageProjectCidrs => CanManage || CanManageProject;
         [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
-        [System.Text.Json.Serialization.JsonIgnore] public McpAgent? Agent { get; init; }
+        [System.Text.Json.Serialization.JsonIgnore] public McpAgent? Agent => Session.Agent;
 
         public string AuditSource(string fallback) =>
             Agent is { } agent ? "mcp-agent:" + agent.AgentId : Session.Actor is { } actor ? "impersonation:" + actor : fallback;

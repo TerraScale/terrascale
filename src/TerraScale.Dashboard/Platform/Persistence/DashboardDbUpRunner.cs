@@ -17,6 +17,8 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
         "SELECT v.script_name AS Name, c.sha256 AS Sha256 FROM schema_versions v LEFT JOIN schema_checksums c ON c.script_name = v.script_name";
     private const string Record = "INSERT INTO schema_versions (script_name, applied_at) VALUES (@Name, @AppliedAt)";
     private const string RecordChecksum = "INSERT INTO schema_checksums (script_name, sha256) VALUES (@Name, @Sha256)";
+    private const string BackfillChecksum = "INSERT INTO schema_checksums (script_name, sha256) VALUES (@Name, @Sha256) ON CONFLICT(script_name) DO NOTHING";
+    private const string RecordedChecksum = "SELECT sha256 FROM schema_checksums WHERE script_name = @Name";
     private static readonly TimeSpan FirstRetry = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan LongestRetry = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StartupAttempt = TimeSpan.FromSeconds(10);
@@ -56,7 +58,7 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
     public async Task<IReadOnlyList<string>> PendingAsync(CancellationToken cancellationToken)
     {
         await using var connection = await storage.OpenAsync(cancellationToken);
-        var applied = (await connection.QueryAsync<string>(Applied)).ToHashSet(StringComparer.Ordinal);
+        var applied = (await connection.QueryAsync<string>(new CommandDefinition(Applied, cancellationToken: cancellationToken))).ToHashSet(StringComparer.Ordinal);
         return [.. Scripts().Select(static script => script.Name).Where(name => !applied.Contains(name))];
     }
 
@@ -94,11 +96,11 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
     public async Task UpgradeAsync(CancellationToken cancellationToken)
     {
         await using var connection = await storage.OpenAsync(cancellationToken);
-        await connection.ExecuteAsync(Journal);
-        await connection.ExecuteAsync(ChecksumJournal);
+        await connection.ExecuteAsync(new CommandDefinition(Journal, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(ChecksumJournal, cancellationToken: cancellationToken));
         var scripts = Scripts().ToDictionary(static script => script.Name, static script => Checksum(script.Contents), StringComparer.Ordinal);
         var applied = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var row in await connection.QueryAsync<AppliedScriptRow>(AppliedChecksums))
+        foreach (var row in await connection.QueryAsync<AppliedScriptRow>(new CommandDefinition(AppliedChecksums, cancellationToken: cancellationToken)))
         {
             applied.Add(row.Name);
             if (!scripts.TryGetValue(row.Name, out var expected))
@@ -106,14 +108,17 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
                 continue;
             }
 
-            if (row.Sha256 is null)
+            var recorded = row.Sha256;
+            if (recorded is null)
             {
-                await connection.ExecuteAsync(RecordChecksum, new { row.Name, Sha256 = expected });
+                await connection.ExecuteAsync(new CommandDefinition(BackfillChecksum, new { row.Name, Sha256 = expected }, cancellationToken: cancellationToken));
+                recorded = await connection.QuerySingleAsync<string>(new CommandDefinition(RecordedChecksum, new { row.Name }, cancellationToken: cancellationToken));
                 logger.DashboardSchemaChecksumRecorded(row.Name);
             }
-            else if (!string.Equals(row.Sha256, expected, StringComparison.Ordinal))
+
+            if (!string.Equals(recorded, expected, StringComparison.Ordinal))
             {
-                logger.DashboardSchemaChecksumMismatch(row.Name, row.Sha256, expected);
+                logger.DashboardSchemaChecksumMismatch(row.Name, recorded, expected);
                 throw new InvalidDataException($"Applied dashboard schema script {row.Name} no longer matches its released checksum.");
             }
         }
@@ -122,9 +127,9 @@ public sealed class DashboardDbUpRunner(IDashboardIdentity identity, DashboardDb
         {
             cancellationToken.ThrowIfCancellationRequested();
             await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-            await connection.ExecuteAsync(script.Contents, transaction: transaction);
-            await connection.ExecuteAsync(Record, new { script.Name, AppliedAt = time.GetUtcNow().UtcDateTime }, transaction);
-            await connection.ExecuteAsync(RecordChecksum, new { script.Name, Sha256 = scripts[script.Name] }, transaction);
+            await connection.ExecuteAsync(new CommandDefinition(script.Contents, transaction: transaction, cancellationToken: cancellationToken));
+            await connection.ExecuteAsync(new CommandDefinition(Record, new { script.Name, AppliedAt = time.GetUtcNow().UtcDateTime }, transaction, cancellationToken: cancellationToken));
+            await connection.ExecuteAsync(new CommandDefinition(RecordChecksum, new { script.Name, Sha256 = scripts[script.Name] }, transaction, cancellationToken: cancellationToken));
             await transaction.CommitAsync(cancellationToken);
             logger.DashboardSchemaScriptApplied(script.Name);
         }

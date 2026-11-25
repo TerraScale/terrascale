@@ -16,6 +16,7 @@ namespace TerraScale.Dashboard.Features.Auth
         Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task<TsAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
+        Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
         Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken);
         Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
@@ -39,6 +40,12 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken);
         Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken);
     }
+
+    public sealed record ProjectCreationRefused(string Message, int StatusCode, string Code);
+
+    public sealed record ProjectCreationUnknown(string Failure);
+
+    public readonly union ProjectCreation(TsAuthPlatformProject, ProjectCreationRefused, ProjectCreationUnknown);
 
     public sealed partial class TsAuthGateway : ITsAuthPlatform
     {
@@ -108,6 +115,23 @@ namespace TerraScale.Dashboard.Features.Auth
                 }
 
                 throw;
+            }
+        }
+
+        public async Task<ProjectCreation> TryCreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await CreateProjectAsync(session, organizationId, name, cancellationToken);
+            }
+            catch (AccountAccessException refused)
+            {
+                return new ProjectCreationRefused(refused.Message, refused.StatusCode, refused.Code);
+            }
+            catch (Exception error) when (error is HttpRequestException or IOException or System.Text.Json.JsonException or TimeoutException ||
+                                          error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                return new ProjectCreationUnknown(error.GetType().Name);
             }
         }
 

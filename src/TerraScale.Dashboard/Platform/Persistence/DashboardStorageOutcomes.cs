@@ -23,11 +23,11 @@ public static class DashboardStorageOutcomes
         {
             TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.RowConflict =>
                 new(StatusCodes.Status409Conflict, DefaultRetry, ConflictMessage),
-            TerraBaseSqlErrorCodes.TenantBusy or "storage_busy" or "system_catalog_busy" or TerraBaseSqlErrorCodes.QueryCanceled =>
+            TerraBaseSqlErrorCodes.TenantBusy or "storage_busy" or "system_catalog_busy" =>
                 new(StatusCodes.Status503ServiceUnavailable, error.RetryAfter ?? DefaultRetry, BusyMessage),
-            "strong_quorum_unreachable" or "in_region_quorum_unconfirmed" or "request_timeout" or TerraBaseSqlErrorCodes.Unavailable =>
+            "strong_quorum_unreachable" or TerraBaseSqlErrorCodes.Unavailable =>
                 new(StatusCodes.Status503ServiceUnavailable, error.RetryAfter ?? DefaultRetry, UnavailableMessage),
-            "write_outcome_unknown" or "commit_uncertain" =>
+            "write_outcome_unknown" or "commit_uncertain" or "in_region_quorum_unconfirmed" or "request_timeout" or TerraBaseSqlErrorCodes.QueryCanceled =>
                 new(StatusCodes.Status503ServiceUnavailable, null, UnknownMessage),
             TerraBaseSqlErrorCodes.CheckViolation or TerraBaseSqlErrorCodes.NotNullViolation or TerraBaseSqlErrorCodes.ForeignKeyViolation
                 or TerraBaseSqlErrorCodes.ConstraintViolation or TerraBaseSqlErrorCodes.UniqueViolation or TerraBaseSqlErrorCodes.PrimaryKeyViolation =>

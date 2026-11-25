@@ -5,6 +5,8 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 
@@ -279,19 +281,25 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
                         if (await ReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, rotating) is null)
                         {
-                            if (attempt is 0 or >= 5)
+                            if (attempt >= 5)
                             {
                                 return null;
                             }
 
+                            await DashboardDb.ConflictBackoffAsync(attempt, time, rotating);
                             continue;
                         }
                         break;
                     }
+                    catch (Exception error) when (attempt < 5 && DashboardDb.IsConflict(error))
+                    {
+                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, StorageFailure.Describe(error));
+                        await DashboardDb.ConflictBackoffAsync(attempt, time, rotating);
+                    }
                     catch (Exception error) when (attempt < 5 && (error is TimeoutException or HttpRequestException { StatusCode: null or >= HttpStatusCode.InternalServerError or HttpStatusCode.TooManyRequests } ||
                                                                   error is OperationCanceledException && !rotating.IsCancellationRequested))
                     {
-                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, error.GetType().Name);
+                        logger.SavingARefreshedTsAuthGrant(lookup.Kind, StorageFailure.Describe(error));
                         await Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), rotating);
                     }
                 }
@@ -542,6 +550,9 @@ public sealed record SessionRecord(string UserId, string Name, string Email, str
     DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null, string? IdToken = null,
     string? Device = null, bool OrganizationPicker = false, string? Actor = null)
 {
+    [JsonIgnore]
+    public McpAgent? Agent { get; init; }
+
     public override string ToString()
     {
         return "Dashboard session [REDACTED]";

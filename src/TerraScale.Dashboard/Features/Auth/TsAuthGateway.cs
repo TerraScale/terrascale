@@ -40,45 +40,55 @@ namespace TerraScale.Dashboard.Features.Auth
         private static readonly TimeSpan DiscoveryReuse = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan KeysReuse = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan KeysRefreshFloor = TimeSpan.FromSeconds(30);
+        private readonly Lock sharedGate = new();
         private SharedRead<TsAuthOidcDiscovery>? discovery;
         private SharedRead<TsAuthJwkSet>? signingKeys;
 
         private Task<TsAuthOidcDiscovery> MetadataAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
-            return Shared(ref discovery, DiscoveryReuse, false, () => client.Oidc.GetDiscoveryDocumentAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return Shared(ref discovery, DiscoveryReuse, null, () => client.Oidc.GetDiscoveryDocumentAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
         private Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, CancellationToken cancellationToken)
         {
-            return Shared(ref signingKeys, KeysReuse, false, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return Shared(ref signingKeys, KeysReuse, null, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
         private async Task<TsAuthJwkSet> SigningKeysAsync(TsAuthClient client, string? token, CancellationToken cancellationToken)
         {
             var keys = await SigningKeysAsync(client, cancellationToken);
-            if (AuthJwtClaims.KeyId(token) is not { } kid || keys.Keys.Any(key => key.KeyId == kid) ||
-                Volatile.Read(ref signingKeys) is { } current && time.GetUtcNow() - current.At < KeysRefreshFloor)
+            if (AuthJwtClaims.KeyId(token) is not { } kid || keys.Keys.Any(key => key.KeyId == kid))
             {
                 return keys;
             }
 
-            return await Shared(ref signingKeys, KeysReuse, true, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
+            return await Shared(ref signingKeys, KeysReuse, KeysRefreshFloor, () => client.Oidc.GetJwksAsync(CancellationToken.None)).WaitAsync(cancellationToken);
         }
 
-        private Task<T> Shared<T>(ref SharedRead<T>? slot, TimeSpan reuse, bool refresh, Func<Task<T>> read)
+        private Task<T> Shared<T>(ref SharedRead<T>? slot, TimeSpan reuse, TimeSpan? refreshAfter, Func<Task<T>> read)
         {
-            var now = time.GetUtcNow();
-            var current = Volatile.Read(ref slot);
-            if (!refresh && current is { Read.IsFaulted: false, Read.IsCanceled: false } && now - current.At < reuse)
+            SharedRead<T> chosen;
+            lock (sharedGate)
             {
-                return current.Read;
+                var now = time.GetUtcNow();
+                var age = refreshAfter ?? reuse;
+                if (slot is { } current && (!current.Read.IsValueCreated || Usable(current) && now - current.At < age))
+                {
+                    chosen = current;
+                }
+                else
+                {
+                    chosen = new SharedRead<T>(now, new Lazy<Task<T>>(read, LazyThreadSafetyMode.ExecutionAndPublication));
+                    slot = chosen;
+                }
             }
 
-            var next = new SharedRead<T>(now, read());
-            return Interlocked.CompareExchange(ref slot, next, current) == current ? next.Read : Volatile.Read(ref slot)?.Read ?? next.Read;
+            return chosen.Read.Value;
         }
 
-        private sealed record SharedRead<T>(DateTimeOffset At, Task<T> Read);
+        private static bool Usable<T>(SharedRead<T> read) => read.Read.Value is { IsFaulted: false, IsCanceled: false };
+
+        private sealed record SharedRead<T>(DateTimeOffset At, Lazy<Task<T>> Read);
 
         private Task<TsAuthUserInfo> SessionUserInfoAsync(TsAuthClient client, SessionRecord session, CancellationToken cancellationToken)
         {

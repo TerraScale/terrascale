@@ -28,6 +28,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             .AddSingleton<OrganizationSsoService>()
             .AddSingleton<OrganizationLifecycleService>()
             .AddSingleton<OrganizationOperations>()
+            .AddSingleton<ProjectReservations>()
             .AddSingleton<Projects.ProjectGrantService>()
             .AddSingleton<Projects.ProjectInvitationService>();
         }
