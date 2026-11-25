@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
+using TerraBase.Engine;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 
@@ -20,6 +21,8 @@ internal sealed record EnforcedSql(IReadOnlyList<SqlStatement> Statements, strin
 
 internal sealed record RewrittenSql(
     IReadOnlyList<string> Pieces, IReadOnlyDictionary<string, string> Guards, IReadOnlyDictionary<string, SqlTableScope> Tables);
+
+internal sealed record LiveTable(IReadOnlyList<string> Names, string? RowIdAlias);
 
 internal sealed record EndUserStatement(string Sql, IReadOnlyList<SqlToken> Tokens, int Start, int Main, FrozenSet<string> Ctes);
 
@@ -205,8 +208,8 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         }
 
         var restricted = rule.Columns is { Count: > 0 } listed ? listed : null;
-        var targetNames = session is null ? null : await LiveColumnsAsync(session, table, cancellationToken);
-        if (Unreadable(tokens, targetAt, restricted, targetNames) is { } hidden)
+        var targetLive = session is null ? null : await LiveTableAsync(session, table, cancellationToken);
+        if (Unreadable(tokens, targetAt, restricted, targetLive) is { } hidden)
         {
             return SqlRefusal.ColumnNotReadable(hidden, index);
         }
@@ -216,6 +219,14 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         {
             targetVisible = new(restricted ?? [], AsciiIgnoreCaseComparer.Instance);
             targetVisible.UnionWith(RowColumns(compiled));
+            if (RowIdKeys(tokens, targetAt, targetLive).Count > 0)
+            {
+                targetVisible.Add("rowid");
+                if (targetLive?.RowIdAlias is { } alias)
+                {
+                    targetVisible.Add(alias);
+                }
+            }
         }
 
         var readableColumns = restricted is not null ? restricted.ToFrozenSet(AsciiIgnoreCaseComparer.Instance)
@@ -344,7 +355,8 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 return SqlRefusal.RuleDenied(string.Concat("the rules do not allow reading ", table), index, "read", table);
             }
 
-            var liveNames = session is null ? null : await LiveColumnsAsync(session, table, cancellationToken);
+            var live = session is null ? null : await LiveTableAsync(session, table, cancellationToken);
+            var liveNames = live?.Names;
             if (liveNames is not null && rule.Columns is { Count: > 0 } listed && listed.Any(column => !liveNames.Contains(column, AsciiIgnoreCaseComparer.Instance)))
             {
                 return SqlRefusal.RulesInvalid(string.Concat("the read columns of ", table, " reference a missing column; deploy the rules again"), index);
@@ -361,7 +373,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             }
 
             var readable = rule.Columns is { Count: > 0 } listedColumns ? listedColumns : null;
-            if (Unreadable(tokens, at, readable, liveNames) is { } hiddenColumn)
+            if (Unreadable(tokens, at, readable, live) is { } hiddenColumn)
             {
                 return SqlRefusal.ColumnNotReadable(hiddenColumn, index);
             }
@@ -371,7 +383,9 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 guard = string.Concat(GuardPrefix, guards.Count.ToString(CultureInfo.InvariantCulture));
                 guards[guard] = table;
                 guardOf[table] = guard;
-                var columns = readable is null ? "*" : string.Join(", ", readable.Select(RulesCompiler.Quote));
+                var keys = RowIdKeys(tokens, at, live);
+                var columns = string.Join(", ", [.. keys.Select(static key => string.Concat("rowid AS ", RulesCompiler.Quote(key))),
+                    .. readable is null ? ["*"] : readable.Select(RulesCompiler.Quote)]);
                 definitions.Add(string.Concat(RulesCompiler.Quote(guard), " AS (SELECT ", columns, " FROM ", RulesCompiler.Quote(table), " WHERE ",
                     RulesCompiler.Render(compiled, auth, time.GetUtcNow().ToUnixTimeMilliseconds()), ")"));
                 HashSet<string>? visible = null;
@@ -379,6 +393,10 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 {
                     visible = new(readable, AsciiIgnoreCaseComparer.Instance);
                     visible.UnionWith(RowColumns(compiled));
+                    if (keys.Count > 0)
+                    {
+                        visible.Add("rowid");
+                    }
                 }
 
                 scoped[table] = new SqlTableScope(visible?.ToFrozenSet(AsciiIgnoreCaseComparer.Instance));
@@ -603,31 +621,78 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         }
     }
 
-    private static async ValueTask<IReadOnlyList<string>?> LiveColumnsAsync(ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
+    private static async ValueTask<LiveTable?> LiveTableAsync(ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
     {
-        var tableColumns = await RulesService.TableColumnsAsync(session, table, cancellationToken);
-        return tableColumns.Count > 0 ? [.. tableColumns.Select(static column => column.Name)] : null;
+        var request = new SqlStatementRequest(session.DatabaseId,
+            [new SqlStatement(string.Concat("PRAGMA table_info(", RulesCompiler.Quote(table), ")"), [], SqlBuild.NoNamed)], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
+        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+        IReadOnlyList<IReadOnlyList<SqlValue>> rows = outcome switch
+        {
+            SqlReadResult { ResultSets: [.., var last] } => last.Rows,
+            SqlReadResult or SqlError or StorageBusy or StorageTimeout => [],
+        };
+        if (rows.Count == 0)
+        {
+            return null;
+        }
+
+        var keys = rows.Where(static row => row.Count > 5 && row[5].TryGetIntegral(out var key) && key > 0).ToList();
+        var alias = keys is [var only] && string.Equals(SqlBuild.Format(only[2]), "INTEGER", StringComparison.OrdinalIgnoreCase) ? SqlBuild.Format(only[1]) : null;
+        return new LiveTable([.. rows.Select(static row => SqlBuild.Format(row[1]))], alias);
     }
 
-    private static string? Unreadable(IReadOnlyList<SqlToken> tokens, int tableAt, IReadOnlyList<string>? visibleColumns, IReadOnlyList<string>? liveNames)
+    private static bool IsRowIdReference(IReadOnlyList<SqlToken> tokens, int at) =>
+        tokens[at].IsName && RowIdNames.Contains(tokens[at].Value) && !(at > 0 && tokens[at - 1].Is("AS"))
+        && !(at + 1 < tokens.Count && tokens[at + 1].Kind is SqlTokenKind.Open or SqlTokenKind.Dot);
+
+    private static List<string> RowIdKeys(IReadOnlyList<SqlToken> tokens, int tableAt, LiveTable? live)
     {
+        List<string> keys = [];
         for (var at = 0; at < tokens.Count; at++)
         {
-            var token = tokens[at];
-            if (at == tableAt || !token.IsName || !RowIdNames.Contains(token.Value) || (at > 0 && tokens[at - 1].Is("AS"))
-                || (at + 1 < tokens.Count && tokens[at + 1].Kind is SqlTokenKind.Open or SqlTokenKind.Dot))
+            if (at == tableAt || !IsRowIdReference(tokens, at))
             {
                 continue;
             }
 
-            var declared = liveNames is not null && liveNames.Contains(token.Value, AsciiIgnoreCaseComparer.Instance);
-            if (!declared || (visibleColumns is not null && !visibleColumns.Contains(token.Value, AsciiIgnoreCaseComparer.Instance)))
+            var name = tokens[at].Value.ToLowerInvariant();
+            if (live?.Names.Contains(name, AsciiIgnoreCaseComparer.Instance) != true && !keys.Contains(name, AsciiIgnoreCaseComparer.Instance))
             {
-                return token.Value;
+                keys.Add(name);
             }
         }
 
-        return visibleColumns is null || liveNames is null ? null : FindHiddenColumn(tokens, tableAt, liveNames, visibleColumns);
+        keys.Sort(static (left, right) => (right == "rowid").CompareTo(left == "rowid"));
+        return keys;
+    }
+
+    private static string? Unreadable(IReadOnlyList<SqlToken> tokens, int tableAt, IReadOnlyList<string>? visibleColumns, LiveTable? live)
+    {
+        for (var at = 0; at < tokens.Count; at++)
+        {
+            if (at == tableAt || !IsRowIdReference(tokens, at))
+            {
+                continue;
+            }
+
+            var name = tokens[at].Value;
+            if (live is not null && live.Names.Contains(name, AsciiIgnoreCaseComparer.Instance))
+            {
+                if (visibleColumns is not null && !visibleColumns.Contains(name, AsciiIgnoreCaseComparer.Instance))
+                {
+                    return name;
+                }
+
+                continue;
+            }
+
+            if (visibleColumns is not null && (live is null || (live.RowIdAlias is { } alias && !visibleColumns.Contains(alias, AsciiIgnoreCaseComparer.Instance))))
+            {
+                return name;
+            }
+        }
+
+        return visibleColumns is null || live is null ? null : FindHiddenColumn(tokens, tableAt, live.Names, visibleColumns);
     }
 
     private static string? FindHiddenColumn(IReadOnlyList<SqlToken> tokens, int tableAt, IReadOnlyList<string> liveNames, IReadOnlyList<string> visibleColumns)
