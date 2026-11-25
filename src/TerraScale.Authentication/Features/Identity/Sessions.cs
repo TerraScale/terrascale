@@ -104,7 +104,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 return true;
             }
 
-            List<Change> changes = [Change.Update(current with { AuthEpoch = current.AuthEpoch + 1, AuthStamp = AuthIds.New() })];
+            List<Change> events = [];
             if (Tenancy.IsProject(instanceId))
             {
                 var now = clock.GetUtcNow();
@@ -112,9 +112,10 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 var revoked = await data.ReadAsync(connection => connection.QueryAsync<string>(
                     "SELECT id FROM sessions WHERE instance_id = @instanceId AND user_id = @userId AND revoked = 0 AND auth_epoch = @epoch AND expires_at > @now",
                     new { instanceId, userId, epoch, now }), cancellationToken);
-                changes.AddRange(revoked.Select(sessionId => Change.Insert(outbox.NewEvent(instanceId, "session.revoked", userId, current.Email, sessionId: sessionId))));
+                events.AddRange(revoked.Select(sessionId => Change.Insert(outbox.NewEvent(instanceId, "session.revoked", userId, current.Email, sessionId: sessionId))));
             }
 
+            List<Change> changes = [Change.Update(current with { AuthEpoch = current.AuthEpoch + 1, AuthStamp = AuthIds.New() }), .. events];
             if (await data.SaveAsync(changes, cancellationToken))
             {
                 return true;

@@ -93,6 +93,11 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             return new AuthForbidden("Sign in again before deleting a passkey.", "passkey_denied");
         }
 
+        if (caller.Version is not { } observed || user.Version != observed)
+        {
+            return new AuthConflict("The passkey list changed; read it again and retry.", "version_conflict");
+        }
+
         var entry = (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken)).FirstOrDefault(item => item.Value.CredentialId == credentialId);
         if (entry is null)
         {
