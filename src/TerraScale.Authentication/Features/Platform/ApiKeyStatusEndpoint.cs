@@ -162,10 +162,10 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
             return Busy("API key checks are waiting on storage; retry.");
         }
 
-        if (Share(string.Join('\n', keyId, generation, organization, project), deadline => keys.RefusalAsync(keyId, generation, organization, project, deadline))
-            is not { } check)
+        if (Share(string.Join('\n', keyId, generation, organization, project), started,
+                deadline => keys.RefusalAsync(keyId, generation, organization, project, deadline)) is not { } check)
         {
-            return Busy("Too many distinct API key checks are in progress; retry.");
+            return Busy("API key checks are busy; retry.");
         }
 
         var read = check.Read.Value;
@@ -200,6 +200,8 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
 
     private bool Spent(long started) => clock.GetElapsedTime(started) >= WaitTimeout;
 
+    private TimeSpan Limit(long started) => TimeSpan.FromTicks(Math.Clamp((WaitTimeout - clock.GetElapsedTime(started)).Ticks, 0, ReadTimeout.Ticks));
+
     private static async Task ReleaseAsync(Task<IReadOnlyList<Es256Key>> lookup)
     {
         await Task.WhenAny(lookup);
@@ -215,11 +217,16 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         }
     }
 
-    private SharedCheck? Share(string checkedKey, Func<CancellationToken, Task<string?>> refusal)
+    private SharedCheck? Share(string checkedKey, long budget, Func<CancellationToken, Task<string?>> refusal)
     {
         lock (CheckGate)
         {
             var now = clock.GetTimestamp();
+            if (Spent(budget))
+            {
+                return null;
+            }
+
             if (Checks.TryGetValue(checkedKey, out var current) && Live(current, now))
             {
                 return current;
@@ -230,22 +237,27 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
                 return null;
             }
 
-            var started = new SharedCheck(check => ReadAsync(check, refusal));
+            var started = new SharedCheck(check => ReadAsync(check, budget, refusal));
             Checks[checkedKey] = started;
             return started;
         }
     }
 
-    private async Task<KeyStatusRead> ReadAsync(SharedCheck check, Func<CancellationToken, Task<string?>> refusal)
+    private async Task<KeyStatusRead> ReadAsync(SharedCheck check, long budget, Func<CancellationToken, Task<string?>> refusal)
     {
-        if (!await StorageReads.WaitAsync(ReadTimeout))
+        if (!await StorageReads.WaitAsync(Limit(budget)))
         {
             return new KeyStatusBusy();
         }
 
         try
         {
-            using var deadline = new CancellationTokenSource(ReadTimeout, clock);
+            if (Spent(budget))
+            {
+                return new KeyStatusBusy();
+            }
+
+            using var deadline = new CancellationTokenSource(Limit(budget), clock);
             var read = refusal(deadline.Token);
             await Task.WhenAny(read);
             if (read.IsCanceled)

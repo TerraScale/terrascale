@@ -47,14 +47,11 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
             return;
         }
 
-        var oauth = TokenEndpointDeadline.IsOAuthTokenRequest(context.Request)
-            || context.Request.Path.Equals(DevicePath, StringComparison.OrdinalIgnoreCase)
-            || context.Request.Path.Equals(DevicePath + "/", StringComparison.OrdinalIgnoreCase);
         IResult? refusal;
         try
         {
             refusal = await this.LimitAsync(context) is not { } wait ? null
-                : oauth ? HostedAuth.TooMany(wait)
+                : TokenEndpointDeadline.UsesOAuthErrors(context.Request, StatusCodes.Status429TooManyRequests) ? HostedAuth.TooMany(wait)
                 : TooMany(context, wait);
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
@@ -62,7 +59,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
             logger.ZLogWarning(error.InnerException ?? error, $"Token request refused: its rate limit could not be checked");
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers.RetryAfter = "2";
-            refusal = oauth
+            refusal = TokenEndpointDeadline.UsesOAuthErrors(context.Request, StatusCodes.Status503ServiceUnavailable)
                 ? TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
                     statusCode: StatusCodes.Status503ServiceUnavailable)
                 : TypedResults.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),

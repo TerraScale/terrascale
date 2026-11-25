@@ -114,10 +114,15 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             context.Response.Headers.CacheControl = "no-store";
             ApplyRetryAfter(context.Response, retryAfter);
 
-            if (status >= 500 && TokenEndpointDeadline.IsOAuthTokenRequest(context.Request))
+            if ((status >= 500 || status == StatusCodes.Status429TooManyRequests) && TokenEndpointDeadline.UsesOAuthErrors(context.Request, status))
             {
                 return context.Response.WriteAsJsonAsync(new OAuthErrorBody(
-                    status == StatusCodes.Status503ServiceUnavailable ? OpenIddictConstants.Errors.TemporarilyUnavailable : OpenIddictConstants.Errors.ServerError, message),
+                    status switch
+                    {
+                        StatusCodes.Status503ServiceUnavailable => OpenIddictConstants.Errors.TemporarilyUnavailable,
+                        StatusCodes.Status429TooManyRequests => code,
+                        _ => OpenIddictConstants.Errors.ServerError,
+                    }, message),
                     OidcJson.Default.OAuthErrorBody, cancellationToken: context.RequestAborted);
             }
 

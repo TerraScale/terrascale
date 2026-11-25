@@ -15,6 +15,8 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
 
     private const string TokenPath = "/" + OidcIssuer.Slug + "/oauth/token";
 
+    private const string DevicePath = "/" + OidcIssuer.Slug + "/oauth/device";
+
     public static bool IsOAuthTokenRequest(HttpRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -23,6 +25,15 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
                 || request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
                 || TokenRateLimitMiddleware.IsProjectTokenPath(request.Path)
                 || request.Path.Value is { } path && path.TrimEnd('/').Equals(AgentIdIssuer.TokenPath, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static bool UsesOAuthErrors(HttpRequest request, int status)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return IsOAuthTokenRequest(request)
+            || HttpMethods.IsPost(request.Method) && request.Path.Value is { } device && device.TrimEnd('/').Equals(DevicePath, StringComparison.OrdinalIgnoreCase)
+            || request.Path.Value is { } authorize && authorize.TrimEnd('/').Equals(AgentIdIssuer.AuthorizePath, StringComparison.OrdinalIgnoreCase)
+            || status == StatusCodes.Status429TooManyRequests && CustomTokenEndpoint.Matches(request.Path);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -70,7 +81,7 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
             context.Response.Headers.RetryAfter = "2";
         }
 
-        if (token)
+        if (UsesOAuthErrors(context.Request, StatusCodes.Status503ServiceUnavailable))
         {
             await context.Response.WriteAsJsonAsync(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable,
                 writes.MayHaveCommitted ? "The token request did not complete in time and may have taken effect; a repeated grant can answer invalid_grant." : "The token request did not complete in time; retry it."),
