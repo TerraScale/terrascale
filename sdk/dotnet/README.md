@@ -76,7 +76,8 @@ For Npgsql and other .NET Postgres clients, see the [.NET ORM guide](https://doc
 Interactive transactions use the WebSocket session. The caller owns it; dispose closes it and rolls back an open
 transaction. A transaction lasts at most 5 seconds. Calls on one session may overlap; answers are matched by id.
 The session pings every 10 seconds and drops a connection that leaves a ping unanswered for 20 seconds or the oldest
-outstanding request unanswered for 60 seconds; waiting requests then fail with `TimeoutException`.
+outstanding request unanswered for 60 seconds. Waiting requests then fail with `WebSocketException` (missed ping) or
+`TimeoutException` (no answer), or with `write_outcome_unknown` when a request that could commit was outstanding.
 
 ```csharp
 await using TerraBaseSqlSession session = await db.ConnectAsync(ct);
@@ -91,14 +92,17 @@ long balance = await session.TransactionAsync(async (tx, token) =>
 `TransactionAsync` begins, runs the callback and commits; when the callback throws it rolls back and rethrows.
 `BeginAsync`, `CommitAsync` and `RollbackAsync` are the explicit form. After a failed statement inside a transaction
 every call throws `transaction_aborted` until rollback; commit then rolls back and throws `transaction_rolled_back`.
-Session errors have a null `StatusCode`. A refused upgrade throws a `TerraBaseException` carrying the HTTP status.
+Session errors have a null `StatusCode`. A refused upgrade throws a `TerraBaseException` carrying the HTTP status,
+error code and headers; an upgrade answered with anything but 101 over HTTP/1.x or 200 over HTTP/2 is refused.
 The upgrade goes through the caller's `HttpClient` and its handlers with
-the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT), and is
-never resent. A lost committing reply throws `write_outcome_unknown` (08007), and every later call throws the
+the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT). A refused
+upgrade is retried up to twice after `429` or `503` with `Retry-After` (never for an uncertain write code), and once with a
+fresh token after a `401` on an `ApiKey` exchange; an accepted upgrade is never resent. A lost committing reply throws `write_outcome_unknown` (08007), and every later call throws the
 same error. If no committing request was sent, a lost open transaction throws `transaction_rolled_back` until
 `RollbackAsync` clears it; only then can the next call reconnect. Cancelling a sent request closes the connection:
 a request that could commit throws `write_outcome_unknown` and every later call throws it too; any other request throws
-`OperationCanceledException` and the next call reconnects. A dropped connection throws `WebSocketException`.
+`OperationCanceledException`, and the next call reconnects, or, when a transaction was open, throws
+`transaction_rolled_back` until `RollbackAsync`. A dropped connection throws `WebSocketException`.
 
 ### Consistency and bookmarks
 

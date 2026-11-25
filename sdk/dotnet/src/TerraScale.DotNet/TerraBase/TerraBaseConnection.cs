@@ -384,7 +384,7 @@ internal sealed class TerraBaseConnection
                     using var invoker = new HttpMessageInvoker(upgrade);
                     await socket.ConnectAsync(target, invoker, deadline.Token).ConfigureAwait(false);
                 }
-                catch (WebSocketException) when (upgrade.Refusal is not null)
+                catch (Exception error) when (error is WebSocketException or TerraBaseException && upgrade.Refusal is not null)
                 {
                     var refusal = upgrade.Refusal;
                     socket.Dispose();
@@ -400,7 +400,6 @@ internal sealed class TerraBaseConnection
                     continue;
                 }
 
-                if (upgrade.Refusal is { } accepted) throw accepted;
 
                 return socket.SubProtocol == subprotocol
                     ? socket
@@ -521,17 +520,21 @@ internal sealed class TerraBaseConnection
             var upgraded = response.Version.Major >= 2
                 ? response.StatusCode == HttpStatusCode.OK
                 : response.StatusCode == HttpStatusCode.SwitchingProtocols;
-            if (upgraded) return response;
-            if (response.IsSuccessStatusCode)
+            if (upgraded)
             {
-                Refusal = new TerraBaseException(response.StatusCode,
-                    $"TerraBase answered the WebSocket upgrade with HTTP {(int)response.StatusCode} over HTTP/{response.Version}.", "invalid_response", null);
-                Refusal.CaptureResponse(response);
                 return response;
             }
 
-            Refusal = await TerraBaseException.FromResponseAsync(response, null, cancellationToken).ConfigureAwait(false);
-            return response;
+            using (response)
+            {
+                var refusal = response.IsSuccessStatusCode
+                    ? new TerraBaseException(response.StatusCode,
+                        $"TerraBase answered the WebSocket upgrade with HTTP {(int)response.StatusCode} over HTTP/{response.Version}.", "invalid_response", null)
+                    : await TerraBaseException.FromResponseAsync(response, null, cancellationToken).ConfigureAwait(false);
+                refusal.CaptureResponse(response);
+                Refusal = refusal;
+                throw refusal;
+            }
         }
     }
 

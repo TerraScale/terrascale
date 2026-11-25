@@ -10,7 +10,10 @@ internal readonly record struct TerraBaseSqlFrame(string Kind, bool Wrapped)
     {
         var expected = Kind != "execute" ? 0 : Wrapped ? statements - 2 : statements;
         if (bodies is null || bodies.Count != expected)
+        {
             throw new TerraBaseException(status, "TerraBase returned a result count that does not match the statements.", "invalid_response", null);
+        }
+
         IReadOnlyList<TerraBaseSqlStatementResult> results = [.. bodies.Select(static body => body.ToResult())];
         return Kind != "execute" ? [.. Enumerable.Repeat(Acknowledged, statements)]
             : Wrapped ? [Acknowledged, .. results, Acknowledged]
@@ -97,15 +100,35 @@ internal static class TerraBaseSqlScript
             if (c == '?')
             {
                 i++;
-                while (i < sql.Length && char.IsAsciiDigit(sql[i])) i++;
+                while (i < sql.Length && char.IsAsciiDigit(sql[i]))
+                {
+                    i++;
+                }
+
                 tokens.Add(null);
                 continue;
             }
 
-            if (c is ':' or '@' or '$' && WordPart(next) || char.IsAsciiDigit(c) || c == '.' && char.IsAsciiDigit(next))
+            if (c is ':' or '@' or '$' && WordPart(next))
             {
                 i++;
-                while (i < sql.Length && (WordPart(sql[i]) || sql[i] == '.')) i++;
+                while (i < sql.Length && WordPart(sql[i]))
+                {
+                    i++;
+                }
+
+                tokens.Add(null);
+                continue;
+            }
+
+            if (char.IsAsciiDigit(c) || c == '.' && char.IsAsciiDigit(next))
+            {
+                i++;
+                while (i < sql.Length && (WordPart(sql[i]) || sql[i] == '.' || sql[i] is '+' or '-' && sql[i - 1] is 'e' or 'E'))
+                {
+                    i++;
+                }
+
                 tokens.Add(null);
                 continue;
             }
@@ -113,7 +136,11 @@ internal static class TerraBaseSqlScript
             if (WordStart(c))
             {
                 var start = i;
-                while (i < sql.Length && WordPart(sql[i])) i++;
+                while (i < sql.Length && WordPart(sql[i]))
+                {
+                    i++;
+                }
+
                 tokens.Add(sql[start..i].ToUpperInvariant());
                 continue;
             }
@@ -129,7 +156,11 @@ internal static class TerraBaseSqlScript
     {
         for (var j = open + 1; j < sql.Length; j++)
         {
-            if (sql[j] != quote) continue;
+            if (sql[j] != quote)
+            {
+                continue;
+            }
+
             if (j + 1 < sql.Length && sql[j + 1] == quote)
             {
                 j++;
