@@ -383,11 +383,8 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
     private static bool Retired(string hash) => hash.StartsWith(RetiredPrefix, StringComparison.Ordinal);
 
-    private async Task<bool> HeldAsync(IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken)
-    {
-        var claimed = bindings.Where(binding => binding != Credentials.UserState(binding.Key, binding.OwnerId)).ToArray();
-        return claimed.Length == 0 || await credentials.AreCurrentAsync(Instance, claimed, cancellationToken);
-    }
+    private async Task<bool> HeldAsync(IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken) =>
+        bindings.Count == 0 || await credentials.AreCurrentAsync(Instance, bindings, cancellationToken);
 
     private async Task<IReadOnlyDictionary<string, string?>> CreatorRolesAsync(string organizationId, string? projectId, string[] creators, CancellationToken cancellationToken) =>
         creators.Length == 0

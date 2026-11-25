@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.OpenApi;
@@ -173,7 +174,7 @@ public static class EndpointServiceCollectionExtensions
                 return Task.CompletedTask;
             })
             .AddOperationTransformer(AddRequestParametersAsync)
-            .AddOperationTransformer((operation, _, _) =>
+            .AddOperationTransformer((operation, context, _) =>
             {
                 if (operation.Responses is null)
                 {
@@ -188,6 +189,19 @@ public static class EndpointServiceCollectionExtensions
                         Description = "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.",
                         Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 26, MaxLength = 26 },
                     };
+                }
+
+                foreach (var header in context.Description.ActionDescriptor.EndpointMetadata.OfType<ResponseHeaderMetadata>())
+                {
+                    if (operation.Responses.TryGetValue(header.StatusCode.ToString(CultureInfo.InvariantCulture), out var declared) && declared is OpenApiResponse response)
+                    {
+                        (response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal))[header.Name] = new OpenApiHeader
+                        {
+                            Description = header.Description,
+                            Required = true,
+                            Schema = new OpenApiSchema { Type = header.Type },
+                        };
+                    }
                 }
 
                 return Task.CompletedTask;

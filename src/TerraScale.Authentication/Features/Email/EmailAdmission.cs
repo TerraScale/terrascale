@@ -114,7 +114,7 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
             List<TimeSpan> waits = [];
             foreach (var (quota, excess) in binding)
             {
-                waits.Add(await this.WaitAsync(quota, excess, global.Value, purpose, tenant, now, cancellationToken));
+                waits.Add(await this.WaitAsync(quota, excess, counts, global.Value, purpose, tenant, now, cancellationToken));
             }
 
             return new EmailRefused(waits.Max());
@@ -174,7 +174,8 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         }
     }
 
-    private async Task<TimeSpan> WaitAsync(Quota quota, int excess, EmailBudgetRecord global, EmailPurpose purpose, string tenant, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<TimeSpan> WaitAsync(Quota quota, int excess, AdmissionCounts counts, EmailBudgetRecord global, EmailPurpose purpose, string tenant, DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         var authentication = (long)EmailPurpose.Authentication;
         var purposeValue = (long)purpose;
@@ -182,7 +183,9 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         {
             Quota.Attempt => now + AttemptRetry - Window,
             Quota.Pause => global.PausedUntil - Window,
-            Quota.Overflow => await this.OverflowFreedAsync(excess, cancellationToken),
+            Quota.Overflow => Earliest(await this.OverflowFreedAsync(excess, cancellationToken),
+                await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant ORDER BY at LIMIT 1 OFFSET @excess",
+                    counts.Tenant - TenantFairShare, authentication, purposeValue, tenant, cancellationToken)),
             Quota.Total => await this.NthOldestAsync("SELECT at FROM email_reservations ORDER BY at LIMIT 1 OFFSET @excess",
                 excess, authentication, purposeValue, tenant, cancellationToken),
             Quota.Shared => await this.NthOldestAsync("SELECT at FROM email_reservations WHERE purpose <> @authentication ORDER BY at LIMIT 1 OFFSET @excess",
@@ -198,6 +201,9 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         };
         return freedAt is { } at && at + Window > now ? at + Window - now : MinimumWait;
     }
+
+    private static DateTimeOffset? Earliest(DateTimeOffset? first, DateTimeOffset? second) =>
+        first is { } one && second is { } two ? (one < two ? one : two) : first ?? second;
 
     private async Task<DateTimeOffset?> NthOldestAsync(string sql, int excess, long authentication, long purposeValue, string tenant, CancellationToken cancellationToken) =>
         (await data.ReadAsync(connection => connection.QueryAsync<ReservationTime>(sql, new { excess, authentication, purposeValue, tenant }), cancellationToken))
@@ -245,7 +251,7 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         Remaining.Record(Math.Max(0, TotalLimit - SharedLimit - authentication), new KeyValuePair<string, object?>("pool", "auth_reserve"));
     }
 
-    internal async Task PauseAsync(DateTimeOffset? reset, TimeSpan? delay, CancellationToken cancellationToken)
+    internal async Task<DateTimeOffset> PauseAsync(DateTimeOffset? reset, TimeSpan? delay, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
         var until = reset ?? (delay is { } relative ? now + relative : now + TimeSpan.FromMinutes(1));
@@ -253,9 +259,14 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         for (var attempt = 0; attempt < 16; attempt++)
         {
             var budget = await this.GlobalAsync(cancellationToken);
-            if (budget.Value.PausedUntil >= until || await data.SaveAsync(Change.Update(budget, budget.Value with { PausedUntil = until }), cancellationToken))
+            if (budget.Value.PausedUntil >= until)
             {
-                return;
+                return budget.Value.PausedUntil;
+            }
+
+            if (await data.SaveAsync(Change.Update(budget, budget.Value with { PausedUntil = until }), cancellationToken))
+            {
+                return until;
             }
         }
 
@@ -293,37 +304,52 @@ public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailS
 
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
+        var delivery = await this.DeliverUnlessPausedAsync(recipient, message, cancellationToken);
+        return Outcome(delivery);
+    }
+
+    public async Task<EmailDelivery> DeliverUnlessPausedAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(message);
         var outcome = EmailDeliveryOutcome.Retryable;
         try
         {
-            var reserved = message.AdmissionId is { } admitted && await admission.ReservedAsync(admitted, cancellationToken);
-            if (reserved && await admission.PausedUntilAsync(cancellationToken) is not null)
+            if (await admission.PausedUntilAsync(cancellationToken) is { } pausedUntil)
             {
                 AuthMetrics.Email("provider_paused");
-                return EmailDeliveryOutcome.Retryable;
+                return new EmailPaused(pausedUntil);
             }
 
+            var reserved = message.AdmissionId is { } admitted && await admission.ReservedAsync(admitted, cancellationToken);
             if (!reserved && !await admission.AcquireAsync(message, cancellationToken))
             {
                 AuthMetrics.Email("capacity_refused");
-                return EmailDeliveryOutcome.Retryable;
+                return new EmailSent(EmailDeliveryOutcome.Retryable);
             }
+
             outcome = EmailDeliveryOutcome.Unknown;
             var result = await provider.DeliverResultAsync(recipient, message, cancellationToken);
             outcome = result.Outcome;
             if (result.Outcome == EmailDeliveryOutcome.Retryable)
             {
                 AuthMetrics.Email("provider_exhausted");
-                await admission.PauseAsync(result.Reset, result.ResetDelay, cancellationToken);
+                return new EmailPaused(await admission.PauseAsync(result.Reset, result.ResetDelay, cancellationToken));
             }
-            return result.Outcome;
+
+            return new EmailSent(result.Outcome);
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
             cancellationToken.ThrowIfCancellationRequested();
             AuthMetrics.Email("admission_unavailable");
             logger.ZLogError($"Email admission failed ({error.GetType().Name:@FailureType})");
-            return outcome;
+            return new EmailSent(outcome);
         }
     }
+
+    private static EmailDeliveryOutcome Outcome(EmailDelivery delivery) => delivery switch
+    {
+        EmailSent sent => sent.Outcome,
+        EmailPaused => EmailDeliveryOutcome.Retryable,
+    };
 }

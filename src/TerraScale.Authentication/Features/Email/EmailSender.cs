@@ -34,7 +34,16 @@ public interface IEmailSender
         await this.SendAsync(recipient, message, cancellationToken);
         return EmailDeliveryOutcome.Unknown;
     }
+
+    async Task<EmailDelivery> DeliverUnlessPausedAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
+        new EmailSent(await this.DeliverAsync(recipient, message, cancellationToken));
 }
+
+public sealed record EmailSent(EmailDeliveryOutcome Outcome);
+
+public sealed record EmailPaused(DateTimeOffset Until);
+
+public readonly union EmailDelivery(EmailSent, EmailPaused);
 
 public enum EmailDeliveryOutcome
 {

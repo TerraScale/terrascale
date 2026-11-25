@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing.Patterns;
+using Microsoft.OpenApi;
 
 namespace TerraScale.Endpoints;
 
@@ -180,6 +181,14 @@ public sealed class EndpointDefinition
         return this;
     }
 
+    public EndpointDefinition ProducesHeader(int statusCode, string name, string description, JsonSchemaType type)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description);
+        metadata.Add(new ResponseHeaderMetadata(statusCode, name, description, type));
+        return this;
+    }
+
     public EndpointDefinition WithMetadata(params object[] values)
     {
         ArgumentNullException.ThrowIfNull(values);
@@ -289,6 +298,8 @@ public sealed class EndpointDefinition
         return builder;
     }
 }
+
+internal sealed record ResponseHeaderMetadata(int StatusCode, string Name, string Description, JsonSchemaType Type);
 
 internal sealed record RequestParametersMetadata(Type? RequestType, IReadOnlyList<JsonPropertyInfo>? Properties, bool Validated);
 

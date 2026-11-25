@@ -20,7 +20,7 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.SignIn;
 
 public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, ProjectAuthSettings projects, PlatformDirectory platform,
-    AuthSchema schema, AuthData data, Passcodes passcodes, Users users, EmailAdmission emailAdmission, AuthOptions options, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
+    AuthSchema schema, AuthData data, Passcodes passcodes, Users users, AuthOptions options, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
 {
     public const int Capacity = 256;
 
@@ -274,12 +274,6 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
 
         var values = work.Values!;
-        if (values.AdmissionId is not null && await emailAdmission.PausedUntilAsync(CancellationToken.None) is { } pausedUntil)
-        {
-            await this.SaveAsync(row with { LeaseUntil = pausedUntil }, version);
-            return;
-        }
-
         var message = await emails.RenderAsync(work.Kind!.Value, row.Locale, values, await this.ConfigAsync(values.Tenant, work.Kind.Value), cancellationToken: CancellationToken.None);
         if (await this.SaveAsync(row with { State = "sending" }, version) is not { } sending)
         {
@@ -288,19 +282,26 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
         AuthMetrics.EmailStage("prepare", Stopwatch.GetElapsedTime(preparing).TotalSeconds);
         var sendingAt = Stopwatch.GetTimestamp();
-        EmailDeliveryOutcome outcome;
+        EmailDelivery delivery;
         try
         {
-            outcome = await email.DeliverAsync(values.Email, message, CancellationToken.None);
+            delivery = await email.DeliverUnlessPausedAsync(values.Email, message, CancellationToken.None);
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
             logger.ZLogError(failure, $"Authentication email delivery failed");
-            outcome = EmailDeliveryOutcome.Unknown;
+            delivery = new EmailSent(EmailDeliveryOutcome.Unknown);
         }
         finally
         {
             AuthMetrics.EmailStage("send", Stopwatch.GetElapsedTime(sendingAt).TotalSeconds);
+        }
+
+        var (outcome, pausedUntil) = Settled(delivery);
+        if (pausedUntil is { } until)
+        {
+            await this.SaveAsync(row with { LeaseUntil = until }, sending.Version);
+            return;
         }
 
         await this.SaveAsync(outcome == EmailDeliveryOutcome.Retryable && row.Attempts + 1 < MaxAttempts
@@ -317,6 +318,12 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 Payload = null,
             }, sending.Version);
     }
+
+    private static (EmailDeliveryOutcome Outcome, DateTimeOffset? PausedUntil) Settled(EmailDelivery delivery) => delivery switch
+    {
+        EmailSent sent => (sent.Outcome, null),
+        EmailPaused paused => (EmailDeliveryOutcome.Retryable, paused.Until),
+    };
 
     private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.SocialLink is { } pending
         ? await passcodes.RequestSocialAsync(work.Tenant, pending, CancellationToken.None)
@@ -341,7 +348,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         var cutoff = clock.GetUtcNow() - Retention;
         var batchSize = SessionPruner.BatchSize;
         await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
-            "DELETE FROM mail_outbox WHERE id IN (SELECT id FROM mail_outbox WHERE created_at <= @cutoff ORDER BY created_at LIMIT @batchSize)", new { cutoff, batchSize }),
+            """
+            DELETE FROM mail_outbox WHERE id IN (SELECT id FROM mail_outbox WHERE created_at <= @cutoff
+                AND (state IN ('sent', 'rejected', 'failed', 'suppressed', 'unknown') OR lease_until <= @cutoff) ORDER BY created_at LIMIT @batchSize)
+            """, new { cutoff, batchSize }),
             CancellationToken.None);
     }
 
