@@ -14,13 +14,13 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
     private const int PeriodicBatchSize = 32;
 
     private readonly ConcurrentDictionary<Ulid, TrackedDatabase> _tracked = new();
-    private readonly Channel<Ulid> _catchUp = Channel.CreateBounded<Ulid>(new BoundedChannelOptions(CatchUpQueueCapacity)
+    private readonly Channel<QueuedCatchUp> _catchUp = Channel.CreateBounded<QueuedCatchUp>(new BoundedChannelOptions(CatchUpQueueCapacity)
     {
         FullMode = BoundedChannelFullMode.Wait,
         SingleReader = true,
     });
 
-    internal ChannelReader<Ulid> CatchUpRequests => _catchUp.Reader;
+    internal ChannelReader<QueuedCatchUp> CatchUpRequests => _catchUp.Reader;
 
     public void Track(Ulid databaseId) => _ = _tracked.GetOrAdd(databaseId, static _ => new TrackedDatabase());
 
@@ -48,8 +48,11 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             .Select(static entry => entry.Key)];
     }
 
-    internal TrackedDatabase? BeginSync(Ulid databaseId, bool onDemand) =>
-        _tracked.TryGetValue(databaseId, out var tracked) && tracked.BeginSync(timeProvider.GetUtcNow(), onDemand) ? tracked : null;
+    internal TrackedDatabase? BeginSync(Ulid databaseId) =>
+        _tracked.TryGetValue(databaseId, out var tracked) && tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: false) ? tracked : null;
+
+    internal TrackedDatabase? BeginSync(QueuedCatchUp request) =>
+        IsCurrent(request.DatabaseId, request.Tracked) && request.Tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: true) ? request.Tracked : null;
 
     public bool RequestCatchUp(Ulid databaseId) => RequestCatchUp(databaseId, null);
 
@@ -58,8 +61,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
 
     internal void EndSync(Ulid databaseId, TrackedDatabase tracked, bool progressed, bool requeue)
     {
-        if (tracked.EndSync(timeProvider.GetUtcNow(), progressed) && requeue
-            && _tracked.TryGetValue(databaseId, out var current) && ReferenceEquals(current, tracked))
+        if (tracked.EndSync(timeProvider.GetUtcNow(), progressed) && requeue && IsCurrent(databaseId, tracked))
         {
             _ = Enqueue(databaseId, tracked, null);
         }
@@ -74,14 +76,17 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         }
     }
 
+    private bool IsCurrent(Ulid databaseId, TrackedDatabase tracked) =>
+        _tracked.TryGetValue(databaseId, out var current) && ReferenceEquals(current, tracked);
+
     private bool Enqueue(Ulid databaseId, TrackedDatabase tracked, CausalBookmark? peerFrontier)
     {
-        if (!tracked.QueueSync(peerFrontier))
+        if (!tracked.QueueSync(peerFrontier, timeProvider.GetUtcNow()))
         {
             return false;
         }
 
-        if (_catchUp.Writer.TryWrite(databaseId))
+        if (_catchUp.Writer.TryWrite(new QueuedCatchUp(databaseId, tracked)))
         {
             return true;
         }
@@ -118,8 +123,11 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         return missing;
     }
 
+    internal readonly record struct QueuedCatchUp(Ulid DatabaseId, TrackedDatabase Tracked);
+
     internal sealed class TrackedDatabase
     {
+        private const int MaxFrontierEntries = 64;
         private static readonly TimeSpan InitialInterval = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan IdleInterval = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan MaxOnDemandBackoff = TimeSpan.FromSeconds(10);
@@ -131,6 +139,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         private CausalBookmark _exhaustedFrontier = CausalBookmark.Empty;
         private DateTimeOffset _nextSync = DateTimeOffset.MinValue;
         private DateTimeOffset _onDemandNotBefore;
+        private DateTimeOffset _bypassBlockedUntil;
         private TimeSpan _interval = InitialInterval;
         private TimeSpan _onDemandBackoff = InitialInterval;
         private bool _resync;
@@ -138,6 +147,8 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         private bool _queued;
         private bool _deferred;
         private bool _onDemandAttempt;
+        private bool _bypassGranted;
+        private bool _frontierSaturated;
 
         public CausalBookmark Bookmark => Volatile.Read(ref _bookmark);
 
@@ -190,6 +201,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
                 _syncing = true;
                 _onDemandAttempt = onDemand || _deferred || !_requestedFrontier.IsEmpty;
                 _deferred = false;
+                _bypassGranted = false;
                 _attemptedFrontier = _requestedFrontier;
                 _requestedFrontier = CausalBookmark.Empty;
                 return true;
@@ -204,22 +216,22 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
                 if (progressed)
                 {
                     _interval = InitialInterval;
-                    _onDemandBackoff = InitialInterval;
-                    _onDemandNotBefore = default;
-                    _exhaustedFrontier = CausalBookmark.Empty;
+                    ClearBackoff();
                 }
                 else
                 {
                     _interval = Doubled(_interval, IdleInterval);
-                    _exhaustedFrontier = _exhaustedFrontier.Merge(_attemptedFrontier);
+                    RecordExhausted(_attemptedFrontier);
                     if (_onDemandAttempt)
                     {
-                        _onDemandNotBefore = IsCovered(_requestedFrontier) ? now + _onDemandBackoff : default;
+                        _onDemandNotBefore = _bypassGranted ? default : now + _onDemandBackoff;
                         _onDemandBackoff = Doubled(_onDemandBackoff, MaxOnDemandBackoff);
                     }
                 }
 
                 _attemptedFrontier = CausalBookmark.Empty;
+                _onDemandAttempt = false;
+                _bypassGranted = false;
                 _nextSync = now + _interval;
                 var resync = _resync;
                 _resync = false;
@@ -227,14 +239,13 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             }
         }
 
-        public bool QueueSync(CausalBookmark? peerFrontier)
+        public bool QueueSync(CausalBookmark? peerFrontier, DateTimeOffset now)
         {
             lock (_gate)
             {
                 if (peerFrontier is not null && !IsCovered(peerFrontier))
                 {
-                    _requestedFrontier = _requestedFrontier.Merge(peerFrontier);
-                    _onDemandNotBefore = default;
+                    RequestFrontier(peerFrontier, now);
                 }
 
                 if (_queued)
@@ -268,11 +279,15 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         {
             lock (_gate)
             {
-                _onDemandBackoff = InitialInterval;
-                _onDemandNotBefore = default;
-                _exhaustedFrontier = CausalBookmark.Empty;
+                ClearBackoff();
                 _attemptedFrontier = CausalBookmark.Empty;
                 _onDemandAttempt = false;
+                if (_syncing)
+                {
+                    _resync = true;
+                    return;
+                }
+
                 if (_deferred || _interval > InitialInterval)
                 {
                     _interval = InitialInterval;
@@ -281,13 +296,59 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             }
         }
 
+        private void ClearBackoff()
+        {
+            _onDemandBackoff = InitialInterval;
+            _onDemandNotBefore = default;
+            _bypassBlockedUntil = default;
+            _exhaustedFrontier = CausalBookmark.Empty;
+            _frontierSaturated = false;
+        }
+
+        private void RequestFrontier(CausalBookmark peerFrontier, DateTimeOffset now)
+        {
+            var requested = _requestedFrontier.Merge(peerFrontier);
+            if (requested.Entries.Count > MaxFrontierEntries)
+            {
+                return;
+            }
+
+            _requestedFrontier = requested;
+            if (now < _bypassBlockedUntil)
+            {
+                return;
+            }
+
+            _bypassBlockedUntil = now + _onDemandBackoff;
+            _bypassGranted = true;
+            _onDemandNotBefore = default;
+        }
+
+        private void RecordExhausted(CausalBookmark attempted)
+        {
+            var exhausted = _exhaustedFrontier.Merge(attempted);
+            if (exhausted.Entries.Count > MaxFrontierEntries)
+            {
+                _frontierSaturated = true;
+                return;
+            }
+
+            _exhaustedFrontier = exhausted;
+        }
+
         private bool IsCovered(CausalBookmark frontier)
         {
+            if (_frontierSaturated)
+            {
+                return true;
+            }
+
             var entries = frontier.Entries;
             for (var index = 0; index < entries.Count; index++)
             {
                 var (origin, sequence) = entries[index];
-                if (Math.Max(_bookmark.Get(origin), _exhaustedFrontier.Get(origin)) < sequence)
+                var applied = _bookmark.Get(origin);
+                if (_exhaustedFrontier.Get(origin) <= applied && applied < sequence)
                 {
                     return false;
                 }

@@ -28,7 +28,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             return;
         }
 
-        var (_, previous, next) = state.ObserveInbound(0, timeProvider.GetUtcNow());
+        var (_, previous, next) = state.ObserveInbound(0, 0, timeProvider.GetUtcNow());
         if (previous == next)
         {
             return;
@@ -111,7 +111,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             QuicTimeout => (false, true, false, 0L),
             PongMessage or QuicUnavailable or QuicRemoteError => (false, false, false, 0L),
         };
-        var restarted = remoteInstanceId != 0 && state.ObserveInstance(remoteInstanceId);
+        var restarted = state.ObserveInstance(remoteInstanceId, started);
         if (timedOut)
         {
             client.ResetPeer(state.Info.NodeId);
@@ -202,7 +202,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             return ValueTask.FromResult<QuicHandlerOutcome<PongMessage>>(ClusterTopology.PeerForbidden());
         }
 
-        var (restarted, previous, next) = state.ObserveInbound(message.InstanceId, timeProvider.GetUtcNow());
+        var (restarted, previous, next) = state.ObserveInbound(message.InstanceId, timeProvider.GetTimestamp(), timeProvider.GetUtcNow());
         if (previous != next)
         {
             ClusterLog.PeerStatusChanged(logger, state.Info.NodeId, state.Info.Region, previous, next);
@@ -227,7 +227,9 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
         private PeerHealth _health = new(info, PeerStatus.Suspect, TimeSpan.Zero, DateTimeOffset.MinValue);
         private IPAddress? _resolvedAddress;
         private long _instanceId;
+        private long _instanceObservedAt;
         private int _failures;
+        private bool _inboundPromoted;
 
         public PeerNodeInfo Info { get; } = info;
 
@@ -264,6 +266,7 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             {
                 var previous = _health.Status;
                 _failures = success ? 0 : _failures + 1;
+                _inboundPromoted &= !success;
                 var status = success ? PeerStatus.Healthy : _failures >= unreachableAfter ? PeerStatus.Unreachable : PeerStatus.Suspect;
                 _health = success
                     ? new PeerHealth(Info, status, roundTrip, now)
@@ -272,30 +275,24 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
             }
         }
 
-        public bool ObserveInstance(long instanceId)
+        public bool ObserveInstance(long instanceId, long observedAt)
         {
             lock (_gate)
             {
-                var restarted = _instanceId != 0 && _instanceId != instanceId;
-                _instanceId = instanceId;
-                return restarted;
+                return AcceptInstance(instanceId, observedAt);
             }
         }
 
-        public (bool Restarted, PeerStatus Previous, PeerStatus Next) ObserveInbound(long instanceId, DateTimeOffset now)
+        public (bool Restarted, PeerStatus Previous, PeerStatus Next) ObserveInbound(long instanceId, long observedAt, DateTimeOffset now)
         {
             lock (_gate)
             {
-                var restarted = _instanceId != 0 && instanceId != 0 && _instanceId != instanceId;
-                if (instanceId != 0)
-                {
-                    _instanceId = instanceId;
-                }
-
+                var restarted = AcceptInstance(instanceId, observedAt);
                 var previous = _health.Status;
-                if (previous == PeerStatus.Unreachable)
+                if (previous == PeerStatus.Unreachable && !_inboundPromoted)
                 {
                     _failures = 0;
+                    _inboundPromoted = true;
                     _health = _health with { Status = PeerStatus.Suspect, LastSeenUtc = now };
                 }
                 else
@@ -305,6 +302,20 @@ public sealed class PeerHealthMonitor(ClusterOptions options, ClusterTopology to
 
                 return (restarted, previous, _health.Status);
             }
+        }
+
+        private bool AcceptInstance(long instanceId, long observedAt)
+        {
+            if (instanceId == 0 || observedAt < _instanceObservedAt)
+            {
+                return false;
+            }
+
+            var restarted = _instanceId != 0 && _instanceId != instanceId;
+            _instanceId = instanceId;
+            _instanceObservedAt = observedAt;
+            _inboundPromoted &= !restarted;
+            return restarted;
         }
     }
 }
