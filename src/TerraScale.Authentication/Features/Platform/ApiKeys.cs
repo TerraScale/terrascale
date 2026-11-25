@@ -62,15 +62,15 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public static bool IsKeyId(string? value) =>
         TerraScaleIds.IsValid(value);
 
-    public static (string Id, string Presented)? Parse(string? secret)
-    {
-        if (secret is null)
-        {
-            return null;
-        }
+    public static (string Id, string Presented)? Parse(string? secret) =>
+        secret is { Length: 79 } && secret[26] == '_' ? (secret[..26], secret) : null;
 
-        var body = secret.StartsWith("sk_", StringComparison.Ordinal) ? secret[3..] : secret;
-        return body.Length == 79 && body[26] == '_' ? (body[..26], secret) : null;
+    public static bool Covers(ApiKeyRecord key, string? role)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return key.ProjectId is null
+            ? Roles.Rank(role) >= Roles.Rank(Roles.Admin)
+            : Roles.Rank(role) >= Roles.Rank(Roles.Member) && !key.Scopes.Except(TerraBaseScopes.For(role), StringComparer.Ordinal).Any();
     }
 
     public static IReadOnlyList<string>? NormalizeCidrs(IReadOnlyList<string>? values)
@@ -135,10 +135,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             }
 
             var (id, secret) = Generate();
-            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt, allowedCidrs)
-            {
-                SecretBindings = [Credentials.UserState(caller.Id, caller.AuthStamp!)],
-            };
+            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt, allowedCidrs);
             List<Change> operations = [.. await this.RequirementsAsync(caller, cancellationToken), .. authority.Assertions, Change.Insert(key)];
 
             operations.Add(directory.Audit(organizationId, caller.Id, "api_key.created", id, string.Join(' ', scopes)));
@@ -160,7 +157,6 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             var key = new ApiKeyRecord(id, Instance, parent.OrganizationId, projectId, database, "scoped " + database, scopes, Tokens.Sha256Hex(secret), null, null,
                 parent.CreatedBy, clock.GetUtcNow(), expiresAt, parent.AllowedCidrs ?? [])
             {
-                SecretBindings = parent.SecretBindings,
                 ParentKeyId = parent.Id,
                 ParentGeneration = generation,
             };
@@ -182,7 +178,16 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         var rows = (await data.ReadAsync(connection => connection.QueryAsync<ApiKeyRecord>(
             "SELECT * FROM api_keys WHERE organization_id = @organizationId AND project_id IS @projectId AND id > @from ORDER BY id LIMIT @take",
             new { organizationId, projectId, from, take }), cancellationToken)).AsList();
-        return PlatformDirectory.Paged(rows, limit, key => key.Id);
+        var page = PlatformDirectory.Paged(rows, limit, key => key.Id);
+        var creators = page.Items.Select(key => key.CreatedBy).Distinct(StringComparer.Ordinal).ToArray();
+        var roles = (await data.ReadAsync(connection => connection.QueryAsync<CreatorRole>(
+            """
+            SELECT m.user_id, m.role AS organization_role, g.role AS project_role FROM memberships m
+            LEFT JOIN project_members g ON g.project_id = @projectId AND g.organization_id = m.organization_id AND g.user_id = m.user_id
+            WHERE m.organization_id = @organizationId AND m.user_id IN @creators
+            """, new { organizationId, projectId, creators }), cancellationToken))
+            .ToDictionary(role => role.UserId, role => projectId is null ? role.OrganizationRole : Roles.Higher(Roles.Implied(role.OrganizationRole), role.ProjectRole), StringComparer.Ordinal);
+        return page with { Items = [.. page.Items.Where(key => Covers(key, roles.GetValueOrDefault(key.CreatedBy)))] };
     }
 
     public async Task<ApiKeyRecord> GetAsync(string userId, string organizationId, string? projectId, string keyId, CancellationToken cancellationToken)
@@ -240,7 +245,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
                 SecretHash = Tokens.Sha256Hex(secret),
                 PreviousSecretHash = previousTtl > TimeSpan.Zero ? key.Value.SecretHash : null,
                 PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null,
-                SecretBindings = caller.StepUpBindings,
+                SecretBindings = [],
                 PreviousSecretBindings = previousTtl > TimeSpan.Zero ? key.Value.SecretBindings : [],
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
@@ -256,14 +261,14 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         }
 
         if (await this.ReadAsync(keyId, cancellationToken) is not { } key
-            || key.ExpiresAt <= clock.GetUtcNow() || !await this.ParentActsAsync(key, cancellationToken))
+            || key.ExpiresAt <= clock.GetUtcNow() || !await this.CreatorActsAsync(key, cancellationToken) || !await this.ParentActsAsync(key, cancellationToken))
         {
             return null;
         }
 
-        var current = key.SecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.SecretBindings, cancellationToken);
+        var current = await this.HeldAsync(key.SecretBindings, cancellationToken);
         var previous = key.PreviousSecretHash is not null && key.PreviousSecretExpiresAt > clock.GetUtcNow()
-            && (key.PreviousSecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken));
+            && await this.HeldAsync(key.PreviousSecretBindings, cancellationToken);
         return current || previous ? key with { SecretHash = current ? key.SecretHash : string.Empty, PreviousSecretHash = previous ? key.PreviousSecretHash : null } : null;
     }
 
@@ -294,7 +299,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             return "key_expired";
         }
 
-        if (!await this.ParentActsAsync(key, cancellationToken))
+        if (!await this.CreatorActsAsync(key, cancellationToken) || !await this.ParentActsAsync(key, cancellationToken))
         {
             return "key_revoked";
         }
@@ -374,6 +379,23 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             && parent.OrganizationId == key.OrganizationId
             && this.Digests(parent).Any(digest => digest.StartsWith(generation, StringComparison.Ordinal));
 
+    private async Task<bool> HeldAsync(IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken)
+    {
+        var claimed = bindings.Where(binding => binding != Credentials.UserState(binding.Key, binding.OwnerId)).ToArray();
+        return claimed.Length == 0 || await credentials.AreCurrentAsync(Instance, claimed, cancellationToken);
+    }
+
+    private async Task<bool> CreatorActsAsync(ApiKeyRecord key, CancellationToken cancellationToken)
+    {
+        var (organizationId, projectId, creator) = (key.OrganizationId, key.ProjectId, key.CreatedBy);
+        var held = await data.ReadAsync(connection => connection.QuerySingleAsync<CreatorRoles>(
+            """
+            SELECT (SELECT role FROM memberships WHERE organization_id = @organizationId AND user_id = @creator) AS organization_role,
+                (SELECT role FROM project_members WHERE project_id = @projectId AND organization_id = @organizationId AND user_id = @creator) AS project_role
+            """, new { organizationId, projectId, creator }), cancellationToken);
+        return Covers(key, projectId is null ? held.OrganizationRole : Roles.Higher(Roles.Implied(held.OrganizationRole), held.ProjectRole));
+    }
+
     private static (string Id, string Secret) Generate()
     {
         var id = AuthIds.New();
@@ -424,6 +446,10 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
                 "SELECT * FROM api_keys WHERE id = @keyId AND instance_id = @Instance AND organization_id = @organizationId AND project_id IS @projectId",
                 new { keyId, Instance, organizationId, projectId }), cancellationToken))
             : null;
+
+    internal sealed record CreatorRoles(string? OrganizationRole, string? ProjectRole);
+
+    internal sealed record CreatorRole(string UserId, string? OrganizationRole, string? ProjectRole);
 
     internal sealed record KeyScope(bool Organization, string? ProjectOrganization)
     {

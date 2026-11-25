@@ -70,7 +70,7 @@ A non-owner can leave a business organization from **Danger zone** when another 
 
 ## Remove access safely
 
-Removing a member or collaborator removes their membership access. It does **not** revoke independent organization/project service keys they created or copied. As an owner or admin:
+Removing a member or collaborator removes their membership access, revokes the organization and project API keys they created in that organization and cancels the invitations they sent that are still pending. Lowering a member's organization or project role does the same for the keys and invitations the new role no longer covers. An API key works only while the person who created it keeps a role that covers it. Keys created by other people that the departing person could have copied stay valid. As an owner or admin:
 
 1. Review the departing person's responsibilities and application secrets before removal.
 2. Remove the membership and verify the person no longer has access to the affected organization or project.

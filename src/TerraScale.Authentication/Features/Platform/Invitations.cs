@@ -12,11 +12,13 @@ using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-public sealed class Invitations(AuthData data, PlatformDirectory directory, Users users, SignInMail mail, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
+public sealed class Invitations(AuthData data, PlatformDirectory directory, Users users, SignInMail mail, AttemptLimiter limiter, EmailAdmission admission, AuthOptions options, TimeProvider clock)
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(7);
 
     public const int PerOrganizationPerHour = 100;
+
+    public const int PerUserPerDay = 50;
 
     private const string Instance = PlatformDirectory.Instance;
     private const string Prefix = "tsi_";
@@ -55,7 +57,17 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "This organization sent too many invitations; retry within the hour.");
         }
 
+        if (await limiter.AcquireAsync(Instance, "invitation-sender", caller.Id, PerUserPerDay, TimeSpan.FromDays(1), cancellationToken) is { } senderWait)
+        {
+            throw ApiException.RateLimited("You sent too many invitations today; retry after the Retry-After delay.", senderWait);
+        }
+
         var dashboard = options.DashboardClient;
+        if (dashboard is not null && await admission.RefusalAsync(EmailPurpose.Invitation, organizationId, cancellationToken) is { } emailWait)
+        {
+            throw ApiException.RateLimited("This organization's invitation email capacity is used up; retry after the Retry-After delay.", emailWait);
+        }
+
         using var reservation = dashboard is not null ? mail.Reserve() : null;
         cancellationToken.ThrowIfCancellationRequested();
         var (invitation, token, organizationName) = await directory.CommitAsync(async () =>
@@ -237,24 +249,10 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
     private Change Close(Versioned<InvitationRecord> invitation, string status, string userId) =>
         Change.Update(invitation, invitation.Value with { Status = status, DecidedAt = clock.GetUtcNow(), DecidedBy = userId });
 
-    private async Task<bool> AlreadyHasAsync(string organizationId, string? projectId, string email, string role, CancellationToken cancellationToken)
-    {
-        if (await users.FindByEmailAsync(Instance, email, cancellationToken) is not { } invitee)
-        {
-            return false;
-        }
-
-        try
-        {
-            return projectId is null
-                ? (await directory.OrganizationAccessAsync(invitee.Id, organizationId, cancellationToken)).Role is not null
-                : Roles.Rank((await directory.ProjectAccessAsync(invitee.Id, organizationId, projectId, cancellationToken)).Role) >= Roles.Rank(role);
-        }
-        catch (ApiException error) when (error.Status == StatusCodes.Status404NotFound)
-        {
-            return false;
-        }
-    }
+    private async Task<bool> AlreadyHasAsync(string organizationId, string? projectId, string email, string role, CancellationToken cancellationToken) =>
+        await users.FindByEmailAsync(Instance, email, cancellationToken) is { } invitee
+        && await directory.HeldRoleAsync(invitee.Id, organizationId, projectId, cancellationToken) is { } held
+        && (projectId is null || Roles.Rank(held) >= Roles.Rank(role));
 
     private async Task<Versioned<InvitationRecord>?> ByTokenAsync(string token, CancellationToken cancellationToken)
     {

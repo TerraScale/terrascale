@@ -47,10 +47,10 @@ public abstract class SelfUserApiKeyEndpoint(PlatformAuthentication authenticati
         return await this.HandleAsync(live.User, cancellationToken);
     }
 
-    protected void DescribeSelf(string operation, string summary, Type? request, int status, Type? response)
+    protected void DescribeSelf(string operation, string summary, Type? request, int status, Type? response, bool paged = false)
     {
         this.Describe(operation, summary, "The signed-in end user manages only their own keys. Uses the project's hosted session cookie; mutations require the auth public Origin. Creation requires sign-in within 10 minutes and an expiry at most 365 days ahead (default 90 days).", "User API keys",
-            request, status, response, conflict: true);
+            request, status, response, paged: paged, conflict: true);
         Metadata(new RequiresSecurity(SecuritySchemes.SessionCookie));
     }
 }

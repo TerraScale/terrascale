@@ -92,7 +92,7 @@ public sealed class CreateOrganizationEndpoint(PlatformDirectory platform, Platf
             throw Invalid("idempotency_key must be at most 128 characters.");
         }
 
-        var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        var name = PlatformDirectory.Name(request.Name) ?? throw Invalid(PlatformDirectory.NameRule);
         var organization = await platform.CreateOrganizationAsync(caller, name, request.IdempotencyKey, cancellationToken);
         var access = await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken);
         return TypedResults.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody, statusCode: StatusCodes.Status201Created)
@@ -143,8 +143,10 @@ public sealed class RenameOrganizationEndpoint(PlatformDirectory platform, Platf
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var organization = await platform.RenameOrganizationAsync(caller.Id, this.RouteId("organization"), name, cancellationToken);
+        var organizationId = this.RouteId("organization");
+        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name, PlatformDirectory.IsPlatformOrganization(organizationId))
+            ?? throw Invalid(PlatformDirectory.NameRule);
+        var organization = await platform.RenameOrganizationAsync(caller.Id, organizationId, name, cancellationToken);
         var access = await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken);
         return TypedResults.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody);
     }
@@ -344,8 +346,10 @@ public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAu
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var project = await platform.CreateProjectAsync(caller.Id, this.RouteId("organization"), name, caller.ActingAgentId is null ? Roles.Member : Roles.Admin, cancellationToken);
+        var organizationId = this.RouteId("organization");
+        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name, PlatformDirectory.IsPlatformOrganization(organizationId))
+            ?? throw Invalid(PlatformDirectory.NameRule);
+        var project = await platform.CreateProjectAsync(caller.Id, organizationId, name, caller.ActingAgentId is null ? Roles.Member : Roles.Admin, cancellationToken);
         return TypedResults.Json(Map(project, Roles.Admin), PlatformApiJson.Default.ProjectBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"{Organizations}/{project.OrganizationId}/projects/{project.Id}");
     }
@@ -394,8 +398,10 @@ public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAu
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var access = await platform.RenameProjectAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), name, cancellationToken);
+        var organizationId = this.RouteId("organization");
+        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name, PlatformDirectory.IsPlatformOrganization(organizationId))
+            ?? throw Invalid(PlatformDirectory.NameRule);
+        var access = await platform.RenameProjectAsync(caller.Id, organizationId, this.RouteId("project"), name, cancellationToken);
         return TypedResults.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody);
     }
 }

@@ -179,7 +179,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
     {
         ArgumentNullException.ThrowIfNull(caller);
         var body = await this.BodyAsync(PlatformApiJson.Default.CreateApiKeyRequest, cancellationToken);
-        var name = PlatformDirectory.Name(body.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        var name = PlatformDirectory.Name(body.Name) ?? throw Invalid(PlatformDirectory.NameRule);
         if (body.Scopes is not { Count: > 0 } scopes || scopes.Distinct(StringComparer.Ordinal).Count() != scopes.Count || scopes.Except(TerraBaseScopes.All).Any())
         {
             throw Invalid("scopes must be a non-empty set of databases:read, databases:write, sql:read, sql:write, auth:read, auth:write and auth:tokens:mint.");

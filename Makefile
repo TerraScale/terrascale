@@ -128,6 +128,8 @@ auth-openapi-check: auth-build
 	mkdir -p artifacts
 	.github/scripts/auth/export-openapi.sh $(AUTH_HOST_DLL) artifacts/openapi.json
 	$(REDOCLY) lint artifacts/openapi.json src/TerraScale.Authentication/platform-api.openapi.yaml
+	$(REDOCLY) bundle src/TerraScale.Authentication/platform-api.openapi.yaml --ext json --output artifacts/platform-api.json
+	python3 -I .github/scripts/auth/check-openapi-drift.py artifacts/openapi.json artifacts/platform-api.json
 
 auth-check: auth-audit auth-openapi-check
 

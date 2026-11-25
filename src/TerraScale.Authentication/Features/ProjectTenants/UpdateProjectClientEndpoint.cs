@@ -22,7 +22,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateClientRequest, cancellationToken);
-        var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        var name = PlatformDirectory.Name(request.Name, PlatformDirectory.IsPlatformProject(projectId)) ?? throw Invalid(PlatformDirectory.NameRule);
         var origins = ClientOrigins.Validate(request.AllowedOrigins);
         List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
         if (redirects.Count > 10)
@@ -43,7 +43,8 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         this.HttpContext.Items[Tenancy.ItemKey] = projectId;
         try
         {
-            if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application)
+            if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application
+                || application.InstanceId != projectId)
             {
                 throw PlatformDirectory.NotFound();
             }

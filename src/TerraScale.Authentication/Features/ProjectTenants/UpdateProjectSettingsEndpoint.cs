@@ -19,7 +19,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateSettingsRequest, cancellationToken);
         if (request.Branding is { } branding)
         {
-            if (branding.Name is { } name && (PlatformDirectory.Name(name) != name || name.Length > 64)
+            if (branding.Name is { } name && (PlatformDirectory.Name(name, PlatformDirectory.IsPlatformProject(projectId)) != name || name.Length > 64)
                 || branding.LogoUrl is { } logo && !Https(logo)
                 || new[] { branding.ThemeColor, branding.BackgroundColor, branding.TextColor }.Any(color => color is not null && !Color().IsMatch(color))
                 || branding.TitleSize is < 20 or > 40
