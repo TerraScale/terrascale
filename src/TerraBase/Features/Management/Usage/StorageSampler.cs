@@ -197,7 +197,7 @@ internal sealed class StorageSampler(
 {
     public const int SlotHours = 1;
 
-    private const int CatalogPage = 64;
+    private const int CatalogPage = StorageFileProbeRequest.MaxDatabases;
 
     public static readonly TimeSpan Slot = TimeSpan.FromHours(SlotHours);
 

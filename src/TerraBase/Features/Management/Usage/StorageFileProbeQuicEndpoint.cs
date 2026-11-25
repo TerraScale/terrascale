@@ -13,8 +13,13 @@ internal sealed record StorageFileProbeRequest(IReadOnlyList<Ulid> Databases) : 
     public static StorageFileProbeRequest ReadFrom(ref WireReader reader)
     {
         var count = reader.ReadLength();
-        List<Ulid> databases = new(Math.Min(count, MaxDatabases));
-        for (var index = 0; index < count; index++)
+        if (count > MaxDatabases)
+        {
+            return new StorageFileProbeRequest([]);
+        }
+
+        List<Ulid> databases = new(count);
+        for (var index = 0; index < count && !reader.IsFaulted; index++)
         {
             databases.Add(reader.ReadUlid());
         }
@@ -38,8 +43,13 @@ internal sealed record StorageFileProbeReply(IReadOnlyList<long> Bytes) : IBinar
     public static StorageFileProbeReply ReadFrom(ref WireReader reader)
     {
         var count = reader.ReadLength();
-        List<long> bytes = new(Math.Min(count, StorageFileProbeRequest.MaxDatabases));
-        for (var index = 0; index < count; index++)
+        if (count > StorageFileProbeRequest.MaxDatabases)
+        {
+            return new StorageFileProbeReply([]);
+        }
+
+        List<long> bytes = new(count);
+        for (var index = 0; index < count && !reader.IsFaulted; index++)
         {
             bytes.Add(reader.ReadVarInt64());
         }
