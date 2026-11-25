@@ -47,6 +47,7 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
     private const int DatabasePage = 1000;
     private const int ChunkSlice = 256;
     private const int CreateAttempts = 2;
+    private const int RetirePasses = 32;
     private static readonly TimeSpan DeletionGrace = TimeSpan.FromDays(1);
 
     private const string RecordColumns =
@@ -333,45 +334,104 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
 
     public async ValueTask<RetireShapeOutcome> RetireShapeAsync(string handle, CancellationToken cancellationToken)
     {
+        var state = new RetireProgress(null, false, "");
+        for (var pass = 0; pass < RetirePasses; pass++)
+        {
+            var step = await RetirePassAsync(handle, state, cancellationToken);
+            (state, var finished) = step switch
+            {
+                RetireProgress next => (next, (RetireShapeOutcome?)null),
+                ShapeRetirement retired => (state, retired),
+                PlatformUnavailable unavailable => (state, unavailable),
+            };
+            if (finished is { } outcome)
+            {
+                return outcome;
+            }
+        }
+
+        return new PlatformUnavailable($"retiring shape {handle} needs more than {RetirePasses} passes", "platform_state");
+    }
+
+    private sealed record RetireProgress(long? Head, bool Drained, string Bookmark);
+
+    private readonly union RetireStep(RetireProgress, ShapeRetirement, PlatformUnavailable);
+
+    private ValueTask<RetireStep> RetirePassAsync(string handle, RetireProgress state, CancellationToken cancellationToken) =>
+        state switch
+        {
+            { Head: null } => ReadHeadAsync(handle, state, cancellationToken),
+            { Drained: false } => DrainChunksAsync(handle, state, cancellationToken),
+            { Head: { } head } => FinishRetirementAsync(handle, head, state, cancellationToken),
+        };
+
+    private async ValueTask<RetireStep> ReadHeadAsync(string handle, RetireProgress state, CancellationToken cancellationToken)
+    {
+        var context = state.Bookmark.Length == 0 ? SqlContext.Fast : SqlContext.After(state.Bookmark);
+        var outcome = await store.ExecuteAsync([SqlValues.Statement("SELECT head FROM platform_shapes WHERE handle = ?", SqlValues.Text(handle))], context, cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse { Results: var results } read when results[0].FirstRow() is { } row => new RetireProgress(row.Number(0), false, read.Bookmark),
+            SqlExecuteResponse => new ShapeRetirement([]),
+            PlatformConflict => state,
+            PlatformUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<RetireStep> DrainChunksAsync(string handle, RetireProgress state, CancellationToken cancellationToken)
+    {
         const string sliced =
             "handle = ? AND chunk_offset IN (SELECT chunk_offset FROM platform_shape_chunks WHERE handle = ? ORDER BY chunk_offset LIMIT ?)";
-        const string drained = "NOT EXISTS (SELECT 1 FROM platform_shape_chunks WHERE handle = ?)";
         var key = SqlValues.Text(handle);
-        var due = SqlValues.Number((timeProvider.GetUtcNow() + DeletionGrace).UnixMs());
-        var pointer = SqlValues.Text(PointerObject);
         var slice = SqlValues.Number(ChunkSlice);
         IReadOnlyList<SqlHttpStatement> statements =
         [
             SqlValues.Statement(
                 "INSERT OR IGNORE INTO platform_shape_object_deletions (id, handle, name, due_at) "
                 + $"SELECT handle || '/' || object, handle, object, ? FROM platform_shape_chunks WHERE {sliced}",
-                due,
+                SqlValues.Number((timeProvider.GetUtcNow() + DeletionGrace).UnixMs()),
                 key,
                 key,
                 slice),
             SqlValues.Statement($"DELETE FROM platform_shape_chunks WHERE {sliced}", key, key, slice),
-            SqlValues.Statement(
-                "INSERT OR IGNORE INTO platform_shape_object_deletions (id, handle, name, due_at) "
-                + $"SELECT handle || '/' || ?, handle, ?, ? FROM platform_shapes WHERE handle = ? AND {drained}",
-                pointer,
-                pointer,
-                due,
-                key,
-                key),
-            SqlValues.Statement(
-                $"DELETE FROM platform_shape_lineages WHERE shape_id = (SELECT shape_id FROM platform_shapes WHERE handle = ?) AND handle = ? AND {drained}",
-                key,
-                key,
-                key),
-            SqlValues.Statement($"DELETE FROM platform_shapes WHERE handle = ? AND {drained}", key, key),
         ];
-        var outcome = await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken);
+        var outcome = await store.ExecuteAsync(statements, new SqlContext(state.Bookmark, SqlConsistencyHint.Strong), cancellationToken);
         return outcome switch
         {
-            SqlExecuteResponse { Results: var results } when results[4].RowsAffected == 1 => new ShapeRetirement([handle]),
-            SqlExecuteResponse { Results: var results } when results[1].RowsAffected == 0 => new ShapeRetirement([]),
-            SqlExecuteResponse => await RetireShapeAsync(handle, cancellationToken),
-            PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
+            SqlExecuteResponse { Results: var results } drained => state with { Drained = results[1].RowsAffected < ChunkSlice, Bookmark = drained.Bookmark },
+            PlatformConflict => state,
+            PlatformUnavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<RetireStep> FinishRetirementAsync(string handle, long head, RetireProgress state, CancellationToken cancellationToken)
+    {
+        var key = SqlValues.Text(handle);
+        var at = SqlValues.Number(head);
+        var pointer = SqlValues.Text(PointerObject);
+        IReadOnlyList<SqlHttpStatement> statements =
+        [
+            SqlValues.Statement(
+                "INSERT OR IGNORE INTO platform_shape_object_deletions (id, handle, name, due_at) "
+                + "SELECT handle || '/' || ?, handle, ?, ? FROM platform_shapes WHERE handle = ? AND head = ?",
+                pointer,
+                pointer,
+                SqlValues.Number((timeProvider.GetUtcNow() + DeletionGrace).UnixMs()),
+                key,
+                at),
+            SqlValues.Statement(
+                "DELETE FROM platform_shape_lineages WHERE shape_id = (SELECT shape_id FROM platform_shapes WHERE handle = ? AND head = ?) AND handle = ?",
+                key,
+                at,
+                key),
+            SqlValues.Statement("DELETE FROM platform_shapes WHERE handle = ? AND head = ?", key, at),
+        ];
+        var outcome = await store.ExecuteAsync(statements, new SqlContext(state.Bookmark, SqlConsistencyHint.Strong), cancellationToken);
+        return outcome switch
+        {
+            SqlExecuteResponse { Results: var results } when results[2].RowsAffected == 1 => new ShapeRetirement([handle]),
+            SqlExecuteResponse finished => new RetireProgress(null, false, finished.Bookmark),
+            PlatformConflict => state,
             PlatformUnavailable unavailable => unavailable,
         };
     }

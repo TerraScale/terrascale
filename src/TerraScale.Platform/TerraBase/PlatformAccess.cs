@@ -134,6 +134,11 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
         DateTimeOffset now)
     {
         var token = grant.EndUser ? EndUserToken.Read(credential) : null;
+        if (grant.EndUser && token is null)
+        {
+            return new PlatformUnauthorized("the end-user token's claims are unreadable", "invalid_token");
+        }
+
         if (grant.Anonymous && !IsGuest(grant, credential, token))
         {
             return new PlatformUnauthorized("a credential is required", "invalid_key");
