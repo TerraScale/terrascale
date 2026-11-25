@@ -101,7 +101,7 @@ export async function transport(surface, region, project, database, credential, 
   const describeBind = (name, text, values, binary = false) => new Promise((resolve, reject) => {
     let oids;
     const parameters = message => { oids = message.dataTypeIDs; };
-    const query = new pg.Query({ name, text, values, types: [0], rowMode: 'array' }, undefined, (error, result) => {
+    const query = new pg.Query({ name, text, values, rowMode: 'array' }, undefined, (error, result) => {
       client.connection.removeListener('parameterDescription', parameters);
       if (error) reject(Object.assign(new Error(error.message), { sqlstate: error.code }));
       else resolve({ oids, rows: result.rows });
