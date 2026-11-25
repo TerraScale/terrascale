@@ -77,6 +77,8 @@ internal sealed class ControlSnapshotEndpoint(ControlSnapshots snapshots, Contro
                     StateConflict conflict => conflict,
                 },
                 SnapshotKeyRefused refused => new StateConflict(refused.Message, refused.Code),
+                SnapshotDuplicateDatabase duplicate => new InvalidInput(
+                    string.Concat("the control snapshot lists database ", duplicate.DatabaseId.ToString(), " more than once"), "invalid_snapshot"),
                 BackendUnavailable unavailable => unavailable,
             },
             InvalidInput invalid => invalid,

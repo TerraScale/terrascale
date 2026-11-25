@@ -2,7 +2,6 @@ using System.Buffers;
 using System.Buffers.Text;
 using System.Collections.Frozen;
 using System.Text.Json;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -22,7 +21,7 @@ internal sealed record UntrustedIssuer
 
 internal readonly union IssuerTrust(TrustedIssuer, UntrustedIssuer, BackendUnavailable);
 
-internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory http, CatalogStore catalog, TimeProvider time) : IDisposable
+internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory http, CatalogStore catalog, AuthenticationGate gate, TimeProvider time)
 {
     public const string HttpClientName = "ts-auth";
 
@@ -51,7 +50,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private readonly IssuerEntry? _platform = options.AuthIssuer is { } issuer ? CreateIssuer(http, issuer) : null;
 
-    private readonly MemoryCache _projects = new(new MemoryCacheOptions { SizeLimit = MaxProjectIssuers });
+    private readonly Dictionary<string, IssuerSlot> _projects = new(StringComparer.Ordinal);
 
     private readonly Lock _issuers = new();
 
@@ -90,6 +89,12 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         {
             if (trusted.Tenant is { } project)
             {
+                using var permit = await gate.EnterAsync(cancellationToken);
+                if (!permit.IsAcquired)
+                {
+                    return AuthenticationGate.Busy;
+                }
+
                 var known = await catalog.GetProjectAsync(project, cancellationToken);
                 var refusal = known switch
                 {
@@ -119,8 +124,6 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         return trusted.Tenant is { } tenant ? ClassifyTenant(jwt, tenant) : Classify(jwt);
     }
 
-    public void Dispose() => _projects.Dispose();
-
     private async ValueTask<IssuerTrust> TrustAsync(JsonWebToken token, string platformIssuer, CancellationToken cancellationToken)
     {
         if (string.Equals(token.Issuer, platformIssuer, StringComparison.Ordinal) && _platform is { } platform)
@@ -141,9 +144,15 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
 
         var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, last)).ToArray();
-        if (_projects.TryGetValue(projectIssuer, out IssuerEntry? cached) && cached is { } existing)
+        if (CachedIssuer(projectIssuer) is { } existing)
         {
             return new TrustedIssuer(projectIssuer, existing, audiences, project);
+        }
+
+        using var permit = await gate.EnterAsync(cancellationToken);
+        if (!permit.IsAcquired)
+        {
+            return AuthenticationGate.Busy;
         }
 
         var known = await catalog.GetProjectAsync(project, cancellationToken);
@@ -155,17 +164,45 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         };
     }
 
+    private IssuerEntry? CachedIssuer(string issuer)
+    {
+        lock (_issuers)
+        {
+            if (!_projects.TryGetValue(issuer, out var slot))
+            {
+                return null;
+            }
+
+            var now = time.GetTimestamp();
+            if (time.GetElapsedTime(slot.LastUsed, now) > ProjectIssuerIdle)
+            {
+                _projects.Remove(issuer);
+                return null;
+            }
+
+            slot.LastUsed = now;
+            return slot.Entry;
+        }
+    }
+
     private IssuerEntry ProjectIssuer(string issuer)
     {
         lock (_issuers)
         {
-            if (_projects.TryGetValue(issuer, out IssuerEntry? cached) && cached is { } existing)
+            var now = time.GetTimestamp();
+            if (_projects.TryGetValue(issuer, out var slot))
             {
-                return existing;
+                slot.LastUsed = now;
+                return slot.Entry;
+            }
+
+            if (_projects.Count >= MaxProjectIssuers)
+            {
+                _projects.Remove(_projects.MinBy(static pair => pair.Value.LastUsed).Key);
             }
 
             var created = CreateIssuer(http, issuer);
-            _projects.Set(issuer, created, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = ProjectIssuerIdle });
+            _projects.Add(issuer, new IssuerSlot(created) { LastUsed = now });
             return created;
         }
     }
@@ -313,7 +350,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     {
         try
         {
-            return await manager.GetConfigurationAsync(cancellationToken);
+            return await manager.GetConfigurationAsync(cancellationToken).WaitAsync(cancellationToken);
         }
         catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
             || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
@@ -385,7 +422,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     {
         try
         {
-            return await OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, cancellationToken);
+            return await OpenIdConnectConfigurationRetriever.GetAsync(entry.MetadataAddress, entry.Retriever, cancellationToken).WaitAsync(cancellationToken);
         }
         catch (Exception error) when (error is InvalidOperationException or HttpRequestException or IOException
             || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
@@ -407,6 +444,13 @@ internal sealed class IssuerEntry(string metadataAddress, HttpDocumentRetriever 
     public long LastRefreshAttemptTimestamp;
     public long LastConfigurationFailureTimestamp;
     public bool LastRefreshFailed;
+}
+
+internal sealed class IssuerSlot(IssuerEntry entry)
+{
+    public IssuerEntry Entry { get; } = entry;
+
+    public long LastUsed { get; set; }
 }
 
 internal sealed record TrustedIssuer(string Issuer, IssuerEntry Entry, IReadOnlyList<string> Audiences, Ulid? Tenant);

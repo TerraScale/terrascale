@@ -9,7 +9,9 @@ namespace TerraBase.Features.ControlPlane;
 
 internal sealed record SnapshotKeyRefused(Ulid DatabaseId, string Message, string Code);
 
-internal readonly union SnapshotApplyOutcome(Completed, SnapshotKeyRefused, BackendUnavailable);
+internal sealed record SnapshotDuplicateDatabase(Ulid DatabaseId);
+
+internal readonly union SnapshotApplyOutcome(Completed, SnapshotKeyRefused, SnapshotDuplicateDatabase, BackendUnavailable);
 
 internal readonly union SnapshotDatabaseCheck(Completed, SnapshotKeyRefused, BackendUnavailable);
 
@@ -23,6 +25,16 @@ internal sealed class ControlSnapshotSync(
     public async ValueTask<SnapshotApplyOutcome> ApplyAsync(ControlSnapshot snapshot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        HashSet<Ulid> seen = [];
+        foreach (var database in snapshot.Databases)
+        {
+            if (!seen.Add(database.Id))
+            {
+                logger.ZLogError($"Control snapshot refused: database {database.Id:@DatabaseId} appears more than once");
+                return new SnapshotDuplicateDatabase(database.Id);
+            }
+        }
+
         foreach (var database in snapshot.Databases)
         {
             var check = await CheckAsync(database, cancellationToken);

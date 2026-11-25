@@ -182,6 +182,8 @@ internal static class Listeners
 
                     if (context.Features.Get<AdmittedCaller>() is { Identity: { } identity }
                         && context.Request.Path.Value is { } path
+                        && !(context.Request.Headers.ContainsKey(CallerAuthentication.UserHeader) && identity.Grants.Contains("act-as")
+                            && CallerAuthenticationExtensions.ActingPathAllowed(path))
                         && !CallerAuthenticationExtensions.ServicePathAllowed(new ServiceCaller(identity.Key.Caller, identity.Grants), path))
                     {
                         await ErrorResults.WriteAsync(context, StatusCodes.Status403Forbidden, "forbidden_caller",

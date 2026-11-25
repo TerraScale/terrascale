@@ -59,7 +59,7 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     });
     builder.Logging.AddTerraScaleLogging("terrabase");
 
-    builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = TimeSpan.FromSeconds(25));
+    builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = ApplicationRunCompletion.ShutdownBudget);
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<HostFaults>();
     builder.Services.AddSingleton(options);

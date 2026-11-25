@@ -7,7 +7,7 @@ namespace TerraBase.Features.Callers;
 
 internal readonly union CallerAuthenticationOutcome(Caller, CredentialRejected, BackendUnavailable);
 
-internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier tokens, ApiKeyExchange exchange)
+internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier tokens, ApiKeyExchange exchange, AuthenticationGate gate)
 {
     public const string UserHeader = "X-TerraBase-User-Id";
 
@@ -45,6 +45,12 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         if (!token.StartsWith(ApiKeyStore.SecretPrefix, StringComparison.Ordinal))
         {
             return await tokens.VerifyAsync(token, cancellationToken);
+        }
+
+        using var permit = await gate.EnterAsync(cancellationToken);
+        if (!permit.IsAcquired)
+        {
+            return AuthenticationGate.Busy;
         }
 
         var outcome = await keys.FindAsync(token, cancellationToken);
@@ -160,6 +166,9 @@ internal static class CallerAuthenticationExtensions
 
         return false;
     }
+
+    public static bool ActingPathAllowed(string path) =>
+        path.StartsWith("/v1/management/", StringComparison.Ordinal) || path.StartsWith("/v1/projects/", StringComparison.Ordinal);
 
     public static bool OperatesNode(Caller caller) => caller switch
     {

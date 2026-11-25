@@ -119,6 +119,15 @@ internal sealed class TenantAdmission(TimeProvider time, IMeterFactory meters)
     }
 }
 
+internal sealed record UpgradeAdmission(IDisposable Lease)
+{
+    public static void Release(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.Features.Get<UpgradeAdmission>()?.Lease.Dispose();
+    }
+}
+
 internal sealed record CallerTenantMetadata
 {
     public static CallerTenantMetadata Instance { get; } = new();
@@ -197,7 +206,7 @@ internal static class TenantAdmissionExtensions
         {
             if (context.WebSockets.IsWebSocketRequest)
             {
-                lease.Dispose();
+                context.Features.Set(new UpgradeAdmission(lease));
             }
 
             await next(context);

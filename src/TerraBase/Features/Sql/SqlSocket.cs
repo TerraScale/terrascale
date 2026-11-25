@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Net.WebSockets;
 using System.Text.Json;
+using System.Threading.Channels;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Qos;
@@ -33,6 +34,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private const int MaxAuthFrameBytes = 32 * 1024;
 
+    private const int MaxPendingFrames = 4;
+
     private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(5);
 
     private readonly SqlRunner runner = services.Runner;
@@ -40,6 +43,9 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private readonly IClusterCoordinator coordinator = services.Coordinator;
     private readonly TimeProvider time = services.Time;
     private readonly long _accepted = services.Time.GetTimestamp();
+    private readonly CancellationTokenSource _pumpStop = new();
+    private Channel<SocketMessage>? _inbox;
+    private Task _pump = Task.CompletedTask;
 
     private ResolvedDatabase? _target;
     private ISqlDatabaseSession? _session;
@@ -70,7 +76,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var message = await ReceiveAsync(cancellationToken);
+            var message = _target is null ? await ReceiveAsync(cancellationToken) : await NextAsync(Inbox(), cancellationToken);
             if (message is null)
             {
                 return;
@@ -85,6 +91,9 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     public async ValueTask DisposeAsync()
     {
+        await _pumpStop.CancelAsync();
+        await _pump;
+        _pumpStop.Dispose();
         if (_transaction is { } transaction)
         {
             _transaction = null;
@@ -198,6 +207,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private async ValueTask<SqlRefusal?> AdmitAsync(long? id, ResolvedDatabase target, SqlCausality causality, CancellationToken cancellationToken)
     {
         var tenant = await services.Tenants.ForAsync(target.Project, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         var admitted = tenant switch
         {
             Tenant known => services.Sessions.TryOpen(known) switch
@@ -472,14 +482,87 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
         using var deadline = new ReceiveDeadline(time, IdleBudget(), ExpireAsync);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        var authenticating = _target is null;
-        input.Progress = authenticating ? null : deadline.Progress;
+        try
+        {
+            var message = await ReadMessageAsync(buffer, MaxAuthFrameBytes, "the auth frame is at most 32 KiB", linked.Token);
+            return message is not null && deadline.Complete() ? message : null;
+        }
+        finally
+        {
+            deadline.Complete();
+            await deadline.Expiry;
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private ChannelReader<SocketMessage> Inbox()
+    {
+        if (_inbox is { } existing)
+        {
+            return existing.Reader;
+        }
+
+        var inbox = Channel.CreateBounded<SocketMessage>(new BoundedChannelOptions(MaxPendingFrames)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true,
+        });
+        _inbox = inbox;
+        _pump = PumpAsync(inbox.Writer, _pumpStop.Token);
+        return inbox.Reader;
+    }
+
+    private async Task PumpAsync(ChannelWriter<SocketMessage> inbox, CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            while (await ReadMessageAsync(buffer, MaxFrameBytes, "frames are at most 1 MiB", cancellationToken) is { } message)
+            {
+                await inbox.WriteAsync(message, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            inbox.TryComplete();
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private async Task<SocketMessage?> NextAsync(ChannelReader<SocketMessage> inbox, CancellationToken cancellationToken)
+    {
+        using var deadline = new ReceiveDeadline(time, IdleBudget(), ExpireAsync);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        input.Progress = deadline.Progress;
+        try
+        {
+            return await inbox.WaitToReadAsync(linked.Token) && inbox.TryRead(out var message) && deadline.Complete() ? message : null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            input.Progress = null;
+            deadline.Complete();
+            await deadline.Expiry;
+        }
+    }
+
+    private async Task<SocketMessage?> ReadMessageAsync(byte[] buffer, int limit, string limitReason, CancellationToken cancellationToken)
+    {
         try
         {
             using var message = new MemoryStream();
             while (true)
             {
-                var read = await socket.ReceiveAsync(buffer.AsMemory(), linked.Token);
+                var read = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
                     await CloseAsync(WebSocketCloseStatus.NormalClosure, "closed");
@@ -492,36 +575,22 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                     return null;
                 }
 
-                if (authenticating && message.Length + read.Count > MaxAuthFrameBytes)
+                if (message.Length + read.Count > limit)
                 {
-                    await CloseAsync(WebSocketCloseStatus.MessageTooBig, "the auth frame is at most 32 KiB");
-                    return null;
-                }
-
-                if (message.Length + read.Count > MaxFrameBytes)
-                {
-                    await CloseAsync(WebSocketCloseStatus.MessageTooBig, "frames are at most 1 MiB");
+                    await CloseAsync(WebSocketCloseStatus.MessageTooBig, limitReason);
                     return null;
                 }
 
                 message.Write(buffer, 0, read.Count);
                 if (read.EndOfMessage)
                 {
-                    var started = input.Complete() ?? time.GetTimestamp();
-                    return deadline.Complete() ? new SocketMessage(message.ToArray(), started) : null;
+                    return new SocketMessage(message.ToArray(), input.Complete() ?? time.GetTimestamp());
                 }
             }
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)
         {
             return null;
-        }
-        finally
-        {
-            input.Progress = null;
-            deadline.Complete();
-            await deadline.Expiry;
-            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

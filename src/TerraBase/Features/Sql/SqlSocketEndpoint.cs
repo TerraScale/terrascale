@@ -108,6 +108,7 @@ internal sealed class SqlSockets(
             SubProtocol = protocol,
             KeepAliveInterval = KeepAlive,
         });
+        UpgradeAdmission.Release(context);
         await using var connection = new SqlSocket(socket, input, v2, project, database,
             new SocketServices(runner, access, authentication, coordinator, tenants, sessions, time));
         await connection.RunAsync(target, pending, causality, cancellationToken);
