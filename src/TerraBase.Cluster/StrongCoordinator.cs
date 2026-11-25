@@ -182,6 +182,8 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
 
 public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases databases, StrongVoteCollector votes, StrongTransactionRegistry registry, CommitFinalizer finalizer, AntiEntropyService antiEntropy, StrongCommitRecovery recovery, HlcClock clock, TimeProvider timeProvider, ILogger<StrongCoordinator> logger)
 {
+    private const string WoundedReason = "wounded";
+
     private static readonly TimeSpan SiblingSyncTimeout = TimeSpan.FromMilliseconds(500);
 
     public async ValueTask<ClusterWriteOutcome> ExecuteAsync(ISqlDatabaseSession session, SqlStatementRequest request, CancellationToken cancellationToken)
@@ -349,6 +351,9 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
         }
     }
 
+    private static LogLevel AbortLevel(string reason) =>
+        string.Equals(reason, WoundedReason, StringComparison.Ordinal) ? LogLevel.Debug : LogLevel.Warning;
+
     private static string AbortReason(ClusterCommitTransactionOutcome outcome) => outcome switch
     {
         CommitMetadata => "committed",
@@ -403,7 +408,7 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
             Prepared or ReadSetStale or SchemaEpochStale => false,
         }) || handle.State == StrongTransactionState.Aborted)
         {
-            return Conflict(staged, "wounded");
+            return Conflict(staged, WoundedReason);
         }
 
         if (tally.Prepared >= tally.Required && !tally.WithinLease)
@@ -426,6 +431,7 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
             StagedWriteMissing => false,
         };
         finalizer.Abort(session.DatabaseId, staged.TxId, payload.Priority, tally.RemoteParticipants);
-        ClusterLog.StrongAborted(logger, session.DatabaseId, staged.TxId, reason, tally.Prepared, tally.Required, released);
+        var level = AbortLevel(reason);
+        ClusterLog.StrongAborted(logger, level, session.DatabaseId, staged.TxId, reason, tally.Prepared, tally.Required, released);
     }
 }

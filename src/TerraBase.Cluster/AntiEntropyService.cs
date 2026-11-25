@@ -268,7 +268,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             SchemaMismatch mismatch => Stuck(session, nodeId, page, string.Concat(
                 "schema epoch mismatch: expected ",
                 mismatch.ExpectedEpoch.ToString(CultureInfo.InvariantCulture),
-                ", local ",
+                ", commit ",
                 mismatch.ActualEpoch.ToString(CultureInfo.InvariantCulture))),
             StorageCorrupted corrupted => Stuck(session, nodeId, page, corrupted.Message),
             StorageBusy busy => (page.Entries.Count, 0, false, busy.Message, false),

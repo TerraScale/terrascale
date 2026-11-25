@@ -149,7 +149,6 @@ internal sealed partial class DatabaseSession
                 return status.ToSqlError(index);
             }
 
-            var schemaChanged = false;
             if (isDdl)
             {
                 status = _writer.ReadSchemaCookie(out var cookieAfter);
@@ -158,18 +157,16 @@ internal sealed partial class DatabaseSession
                     return status.ToSqlError(index);
                 }
 
-                schemaChanged = cookieAfter != cookieBefore;
-            }
-
-            if (schemaChanged)
-            {
-                context.Ddl.Add(segment.Trim().TrimEnd(';'));
-                if (populatedTable is not null)
+                if (cookieAfter != cookieBefore)
                 {
-                    status = _writer.CheckCreatedTable(populatedTable, _capture);
-                    if (!status.IsOk)
+                    context.Ddl.Add(segment.Trim().TrimEnd(';'));
+                    if (populatedTable is not null)
                     {
-                        return status.ToSqlError(index);
+                        status = _writer.CheckCreatedTable(populatedTable, _capture);
+                        if (!status.IsOk)
+                        {
+                            return status.ToSqlError(index);
+                        }
                     }
                 }
 

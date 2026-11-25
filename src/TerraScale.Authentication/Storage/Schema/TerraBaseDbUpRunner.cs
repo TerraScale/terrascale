@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Dapper;
@@ -92,9 +93,18 @@ public sealed class TerraBaseDbUpRunner(AuthConnectionFactory connections, TimeP
 
     private async Task<SchemaJournalProbe> ProbeJournalAsync(DbConnection connection, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var command = connection.CreateCommand();
+        command.CommandText = JournalColumns;
         try
         {
-            return await connection.ExecuteScalarAsync<long>(JournalColumns) > 0 ? new SchemaJournalPresent() : new SchemaJournalMissing();
+            var columns = await command.ExecuteScalarAsync(cancellationToken);
+            return columns switch
+            {
+                long count when count > 0 => new SchemaJournalPresent(),
+                long => new SchemaJournalMissing(),
+                _ => throw new UnreachableException("COUNT(*) did not return an integer."),
+            };
         }
         catch (TerraBaseException failure) when (!cancellationToken.IsCancellationRequested)
         {
