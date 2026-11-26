@@ -153,6 +153,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 return new DashboardValidation("Use a project name with 100 characters or fewer.");
             }
+            name = name.Length == 0 ? name : AccountService.ValidName(name);
             var database = DatabaseService.ValidName(form["database"].ToString());
             var regions = DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"));
             var outcome = await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
