@@ -1,5 +1,5 @@
 name: Qualify the exact main revision
-description: Require successful code checks and journey shards on a completed main push CI run.
+description: Require a completed main push CI run whose changes and all-green jobs succeeded for the exact revision.
 inputs:
   revision:
     description: Exact source revision being published or deployed.
@@ -10,7 +10,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Require successful code checks and journey for the exact revision
+    - name: Require a successful main push CI run for the exact revision
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -38,21 +38,12 @@ runs:
               and ([.steps[] | select(.conclusion != "success" and .conclusion != "skipped")] | length == 1
                 and all(.[]; .status == "completed" and .conclusion == "failure"
                   and (.name | IN("Report live ts-auth readiness HTTP 503", "Record the released source for the production journey"))));
-            ["changes", "checks", "all-green",
-              ("journey / " + ("build terrabase", "build ts-platform", "build ts-auth", "build dashboard", "runner go", "runner rust",
-                "build engine rollback baseline", "engine crash selection guard",
-                "engine crash recovery (recovery)", "engine crash recovery (integrity)",
-                "engine crash recovery (isolation)", "engine crash recovery (lifecycle)", "engine crash recovery (idle)",
-                "keyring recovery and rotation", "replication frontier",
-                "journey desktop and paid", "journey phone pages and hosted", "journey phone interactions", "journey session limits", "journey write guarantees",
-                "journey multi-region faults"))] as $required
-            | [.[].jobs[]] as $jobs
+            [.[].jobs[]] as $jobs
             | [$jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] as $unsuccessful
             | all($jobs[]; .status == "completed")
-              and all($jobs[] | select(.name | startswith("journey / ")); .conclusion == "success")
-              and all($required[]; . as $name
-                | any($jobs[]; .name == $name and .conclusion == "success"))
-              and (if $conclusion == "success" then $unsuccessful == []
-                   else ($unsuccessful | length == 1 and all(.[]; live_auth_failure)) end)
-          ' > /dev/null || { echo "::error::Main CI run $id lacks successful code and journey qualification for $REVISION"; exit 1; }
-        echo "Qualified $REVISION with main CI run $id and its successful journey" >> "$GITHUB_STEP_SUMMARY"
+              and any($jobs[]; .name == "changes" and .conclusion == "success")
+              and (if $conclusion == "success" then $unsuccessful == [] and any($jobs[]; .name == "all-green" and .conclusion == "success")
+                   else ($unsuccessful | map(.name) | sort) == ["all-green", "main-auth"]
+                     and all($unsuccessful[] | select(.name == "main-auth"); live_auth_failure) end)
+          ' > /dev/null || { echo "::error::Main CI run $id lacks successful qualification for $REVISION"; exit 1; }
+        echo "Qualified $REVISION with main CI run $id" >> "$GITHUB_STEP_SUMMARY"

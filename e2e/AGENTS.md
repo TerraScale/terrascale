@@ -4,10 +4,10 @@ Read the root [AGENTS.md](../AGENTS.md).
 
 Playwright Test (TypeScript) drives TerraBase, ts-platform, ts-auth and Dashboard builds from the commit under
 test. The harness provides a per-run CA, Caddy for HTTPS, a PostgreSQL TLS edge, Mailpit for SMTP, a Cloudflare
-send-API sink, and stand-ins for Stripe and S3-compatible object storage. PR CI selects affected lanes on the
-GitHub merge commit. The shard matrix lives in `.github/workflows/ci.yml` and `.github/workflows/journey.yml`
-runs those shards. Main pushes select the full local journey. The production journey runs after a successful
-release and on its daily schedule.
+send-API sink, and stand-ins for Stripe and S3-compatible object storage. CI never runs the journey: PR CI only
+compiles and `main` pushes only build and deploy (root `AGENTS.md`, "CI"). Before opening a PR, run the lanes your
+change affects on your machine (below) on the PR's tree and cite the result for the pre-PR council review. The
+production journey runs asynchronously after a successful release and on its daily schedule; it never blocks a deploy.
 
 ## Quarantine
 
@@ -22,17 +22,14 @@ by ` › `. Use one issue per test, shared across projects. Automatic entries al
 with the spec and title segments in the issue body. Long names use the file-only title with that exact identity;
 this quarantines sibling tests only when they belong to the same serial group. PR discovery excludes the whole outermost serial group to preserve setup dependencies, together with transitive dependent projects and teardowns. The group and project exclusions are collision checked together; the summary lists every excluded test and its reason.
 
-The Journey quarantine workflow compares per-attempt journey result artifacts after a successful CI rerun
-of the same commit. It opens an issue for each failed-then-passed test whose spec the PR did not change,
-or comments on its open issue, with the failing and passing attempt links. It never runs code from the PR.
-For a manual entry, open the issue with the label and both attempt links, then rerun the journey.
+The Journey quarantine workflow reads the per-attempt journey result artifacts of each completed `Production journey`
+run and comments on the open issue of each quarantined failure with the run link. It never runs code from a PR.
+To quarantine a flaky test, open the issue with the label and the failing and passing run links.
 
-Before each CI Playwright invocation, the journey reads the open issues once, following all response pages, and lists them
-in the job summary. An API error warns in the summary and quarantines nothing. PR runs exclude the matching
-tests before execution using Playwright discovery, exact structural resolution and fully anchored filters checked for collisions. The summary names the actual
-excluded tests; ambiguous or tagged identities stay runnable. Main pushes, dispatches and the production journey still run them; their failures
-appear in the summary and the reporting workflow comments on their issues with the run link, without
-failing the gate. Other test failures, global setup/teardown errors, interruption and timeouts still fail.
+Before the production journey's Playwright invocation, the journey reads the open issues once, following all response
+pages, and lists them in the job summary. An API error warns in the summary and quarantines nothing. The production
+journey still runs quarantined tests; their failures appear in the summary and the reporting workflow comments on
+their issues with the run link, without failing the run. Other test failures, global setup/teardown errors, interruption and timeouts still fail.
 When quarantine excludes every selected test, discovery confirms the original selection was nonempty and the
 invocation reports that no tests remain. Invalid selections and discovery errors still fail. Local runs without
 the CI issue snapshot run every test normally.
@@ -305,10 +302,12 @@ branch action. `env/local.sh` refuses to run when `E2E_TARGET` is set, before it
 For a manual run against an older deployment, record the serving image digests for TerraBase, ts-platform,
 ts-auth and Dashboard using `ts-orch status --region <region> --json`. Verify their build provenance with
 `gh attestation verify`, using `--repo TerraScale/terrascale`, `--source-ref refs/heads/main`,
-`--signer-workflow` and `--bundle-from-oci` with each digest-pinned OCI reference. The signer workflow is `CI`
-(`TerraScale/terrascale/.github/workflows/ci.yml`) for TerraBase, ts-platform and ts-auth, and
-`Images (OCIR)` (`TerraScale/terrascale/.github/workflows/images-ghcr.yml`) for Dashboard.
-Record each attestation's `sourceRepositoryDigest` and use it as `signed_source` in the input comparison.
+`--signer-workflow` and `--bundle-from-oci` with each digest-pinned OCI reference. The signer workflow is
+`Attest images` (`TerraScale/terrascale/.github/workflows/attest-images.yml`) for all four services; it attests
+asynchronously, so an image deployed minutes ago may not carry its bundles yet. The attestation's
+`sourceRepositoryDigest` is the `main` head when `Attest images` ran, so take `signed_source` from the image's
+`org.opencontainers.image.revision` label (`docker buildx imagetools inspect <image> --format '{{json .Image}}'`)
+and use it in the input comparison.
 
 Choose the exact current `origin/main` SHA as `dispatch_sha`. For each verified regional image, run this
 conservative harness-only check from the repository root. It compares a superset of that service's app, SDK,
@@ -562,7 +561,7 @@ The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.
 ## Keyring recovery lane
 
 The `keyring recovery and rotation` job uses the TerraBase service artifact and its lifecycle driver.
-The keyring lane runs on applicable PRs and on main pushes. `bash e2e/keyring/proof.sh` runs the
+Run the keyring lane locally before a PR that touches it. `bash e2e/keyring/proof.sh` runs the
 proof in an isolated network namespace. Set `E2E_STATE` to a throwaway directory, `E2E_BUILD` to the
 service build directory, and `E2E_KEYRING_DRIVER` to the lifecycle driver's DLL. The proof uses encrypted
 files and key records to verify the keyring lifecycle.

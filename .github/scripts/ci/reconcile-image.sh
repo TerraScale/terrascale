@@ -17,12 +17,13 @@ if [[ ${IMAGE_CACHED:?} == false ]]; then
     context=$RUNNER_TEMP/image-payloads
     dockerfile=$context/Dockerfile
   else
+    npm ci --prefix src/TerraScale.Dashboard/web --no-audit --no-fund &
+    web=$!
     dotnet restore src/TerraScale.Dashboard/TerraScale.Dashboard.csproj --locked-mode
-    npm ci --prefix src/TerraScale.Dashboard/web
+    wait "$web"
     context=$RUNNER_TEMP/dashboard-publish
     dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore --runtime linux-arm64 --self-contained false \
       --output "$context" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$REVISION"
-    make dashboard-lint CONFIGURATION=Release
     dockerfile=$RUNNER_TEMP/Dockerfile.dashboard
     bash .github/scripts/ci/image-payloads.sh runtime-dockerfile dashboard > "$dockerfile"
   fi

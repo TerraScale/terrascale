@@ -2,14 +2,13 @@ name: CI
 
 on:
   pull_request:
-    # No `labeled`: a label must not re-run and cancel the running check.
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
       reconcile_auth:
-        description: Reconcile ts-auth with the newest journey-qualified main commit
+        description: Reconcile ts-auth with main
         type: boolean
         default: false
       publication:
@@ -22,12 +21,10 @@ on:
         type: string
         default: ''
       pr_gate:
-        description: Run the full PR gate on this ref without publication
+        description: Run every PR build leg on this ref without publication
         type: boolean
         default: false
 
-# A new push cancels the older run of the same PR. Every other run has its own group: each main push publishes the
-# images of the areas it changed, so none may be cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_gate && format('pr-gate-{0}', github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.pr_gate == true }}
@@ -40,6 +37,7 @@ env:
   TERRABASE_REVISION: ${{ github.sha }}
   TS_AUTH_REVISION: ${{ github.sha }}
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
   ASPNETCORE_HTTP_PORTS: ''
 
 jobs:
@@ -51,31 +49,17 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      dotnet: ${{ steps.areas.outputs.dotnet }}
-      main: ${{ steps.areas.outputs.main }}
-      sha: ${{ github.sha }}
+      build: ${{ steps.areas.outputs.build }}
       sdks: ${{ steps.areas.outputs.sdks }}
-      docs: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.docs }}
-      landing: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.landing }}
-      status: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.status }}
-      dashboard: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.dashboard }}
-      aspire: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.aspire }}
-      journey: ${{ steps.areas.outputs.journey }}
-      shards: ${{ steps.areas.outputs.shards }}
-      services: ${{ steps.areas.outputs.services }}
-      keyring: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.keyring }}
-      engine: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.engine }}
-      frontier: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.frontier }}
+      deploy: ${{ steps.areas.outputs.deploy }}
     steps:
-      # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - if: github.event_name == 'push'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
       - id: filter
         if: github.event_name != 'workflow_dispatch'
-        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad
         with:
           base: ${{ github.event_name == 'push' && github.event.before || '' }}
           ref: ${{ github.event_name == 'push' && github.sha || '' }}
@@ -93,11 +77,14 @@ jobs:
               - src/TerraScale.Logging/**/!(AGENTS.md)
               - src/TerraScale.Contracts/**/!(AGENTS.md)
             dotnet-sdk: &dotnet-sdk
-              - sdk/dotnet/Directory.*
-              - sdk/dotnet/NuGet.config
-              - sdk/dotnet/BannedSymbols.txt
-              - sdk/dotnet/contracts/auth/error-codes.json
-              - sdk/dotnet/src/**/!(AGENTS.md)
+              - sdk/dotnet/**/!(AGENTS.md)
+            image: &image
+              - .github/scripts/ci/image-payloads.sh
+              - .github/scripts/ci/deploy-v2.sh
+              - .github/scripts/ci/publish-ocir.sh
+              - .github/scripts/ci/publish-image.sh
+              - .github/scripts/ci/ocir-repositories.sh
+              - .github/scripts/ci/release-only.sh
             libs:
               - *shared
               - benchmark/dotnet/TerraScale.Endpoints.Benchmarks/**/!(AGENTS.md)
@@ -105,52 +92,27 @@ jobs:
             auth:
               - *shared
               - *dotnet-sdk
+              - *image
               - .github/docker/ts-auth.Dockerfile
-              - .github/scripts/ci/image-payloads.sh
-              - .github/scripts/ci/deploy-v2.sh
-              - .github/scripts/ci/publish-ocir.sh
-              - .github/scripts/ci/publish-image.sh
-              - .github/scripts/ci/ocir-repositories.sh
-              - .github/scripts/ci/attach-image-bundles.sh
+              - .github/scripts/ci/{site-deploy-gate.mjs,reconcile-image.sh,inspect-app-image.sh}
+              - .github/scripts/auth/**
               - src/TerraScale.Authentication*/**/!(AGENTS.md)
-              - src/TerraScale.Authentication/platform-api.openapi.yaml
-              - .github/scripts/auth/export-openapi.sh
-              - .github/scripts/auth/check-openapi-drift.py
-              - sdk/dotnet/scripts/{check-nuget-vulnerabilities{,.lib}.cs,packages.lock.json}
-            auth-server:
-              - src/TerraBase*/**/!(AGENTS.md)
-              - src/TerraScale.QuicRpc/**/!(AGENTS.md)
-              - src/TerraScale.Platform/**/!(AGENTS.md)
-              - native/{build-native.sh,native-pin.env}
-            auth-client:
-              - *dotnet-sdk
-              - src/TerraScale.Authentication*/**/!(AGENTS.md)
-            terrabase: &terrabase
+            terrabase:
               - *shared
-              - .github/actions/**
+              - *image
+              - .github/actions/native-libs/**
               - .github/docker/terrabase.Dockerfile
-              - .github/scripts/ci/image-payloads.sh
-              - .github/scripts/ci/deploy-v2.sh
               - .github/scripts/ci/check-live-ahead.sh
-              - .github/scripts/ci/publish-ocir.sh
-              - .github/scripts/ci/publish-image.sh
-              - .github/scripts/ci/ocir-repositories.sh
-              - .github/scripts/ci/attach-image-bundles.sh
               - src/TerraBase*/**/!(AGENTS.md)
               - src/TerraScale.QuicRpc/**/!(AGENTS.md)
               - native/{build-native.sh,native-pin.env}
               - sites/landing/static/pricing.json
             platform:
               - *shared
-              - .github/actions/**
+              - *image
+              - .github/actions/native-libs/**
               - .github/docker/ts-platform.Dockerfile
-              - .github/scripts/ci/image-payloads.sh
-              - .github/scripts/ci/deploy-v2.sh
               - .github/scripts/ci/check-live-ahead.sh
-              - .github/scripts/ci/publish-ocir.sh
-              - .github/scripts/ci/publish-image.sh
-              - .github/scripts/ci/ocir-repositories.sh
-              - .github/scripts/ci/attach-image-bundles.sh
               - src/TerraScale.Platform/**/!(AGENTS.md)
               - src/TerraScale.QuicRpc/**/!(AGENTS.md)
               - native/{build-native.sh,native-pin.env}
@@ -159,95 +121,6 @@ jobs:
               - src/TerraScale.Aspire/**/!(AGENTS.md)
               - .github/scripts/check-aspire-host.py
               - .github/scripts/ci/release-only.sh
-            journey-shared: &journey-shared
-              - .github/workflows/{ci,journey}.yml
-              - .github/actions/**
-              - e2e/env/**
-              - e2e/support/**
-              - e2e/*.{json,ts}
-              - Makefile
-              - Directory.*
-              - global.json
-              - NuGet.config
-              - .editorconfig
-              - BannedSymbols.txt
-              - TerraScale.slnx
-              - native/{build-native.sh,native-pin.env}
-              - src/TerraScale.Endpoints*/**/!(AGENTS.md)
-              - src/TerraScale.Logging/**/!(AGENTS.md)
-              - src/TerraScale.Contracts/**/!(AGENTS.md)
-            journey-server: &journey-server
-              - *journey-shared
-              - src/TerraBase*/**/!(AGENTS.md)
-              - src/TerraScale.QuicRpc/**/!(AGENTS.md)
-              - src/TerraScale.Platform/**/!(AGENTS.md)
-            journey-browser: &journey-browser
-              - *journey-server
-              - src/TerraScale.Authentication*/**/!(AGENTS.md)
-              - src/TerraScale.Dashboard*/**/!(AGENTS.md)
-              - sdk/dotnet/**/!(AGENTS.md)
-              - sites/landing/static/pricing.json
-              - e2e/journey/{setup,close}.spec.ts
-              - e2e/pages/inventory.ts
-            journey-desktop:
-              - *journey-browser
-              - e2e/pages/**
-              - e2e/journey/{paid*,invitation}.spec.ts
-              - e2e/usage/**
-              - e2e/billing/**
-              - e2e/sdk/**
-              - sdk/{go,js,python,rust}/**/!(AGENTS.md)
-            journey-phone:
-              - *journey-browser
-              - e2e/pages/**
-              - e2e/hosted/**
-              - e2e/interactions/**
-              - e2e/clock/**
-              - e2e/storage/**
-              - sites/status/**/!(AGENTS.md)
-              - e2e/social/**
-              - e2e/billing/**
-              - e2e/journey/{finish,invitation}.spec.ts
-              - e2e/sdk/**
-              - sdk/{go,js,python,rust}/**/!(AGENTS.md)
-            journey-session:
-              - *journey-browser
-              - e2e/placement/{support,fleet}.ts
-              - e2e/placement/{session-limits,close}.spec.ts
-            journey-write:
-              - *journey-browser
-              - e2e/placement/{support,fleet}.ts
-              - e2e/placement/{database-functions,write-guarantees,storage-lifecycle,region-restore,catalog-guards,close}.spec.ts
-              - e2e/fault/support.ts
-            journey-faults:
-              - *journey-browser
-              - e2e/placement/{support,fleet}.ts
-              - e2e/placement/{close,regions}.spec.ts
-              - e2e/placement/forwarding.ts
-              - e2e/clock/replay.c
-              - e2e/fault/**
-            engine:
-              - *journey-shared
-              - src/TerraBase/Engine/**/!(AGENTS.md)
-              - src/TerraBase.Storage/**/!(AGENTS.md)
-              - src/TerraBase.Cluster/**/!(AGENTS.md)
-              - src/TerraBase.Continuity/**/!(AGENTS.md)
-              - src/TerraBase/Features/Backup/**/!(AGENTS.md)
-              - src/TerraBase/Hosting/ApplicationRunCompletion.cs
-              - src/TerraBase/Hosting/Listeners.cs
-              - src/TerraBase/Features/Health/ReadyzEndpoint.cs
-              - src/TerraBase/Configuration/TerraBaseOptions.cs
-              - src/TerraBase/Features/Qos/QosAdmission.cs
-              - src/TerraBase/Program.cs
-              - src/TerraBase/TerraBase.csproj
-              - src/TerraBase/Features/Sql/SqlSocket.cs
-              - src/TerraBase/Features/Management/CreateDatabaseEndpoint.cs
-            frontier:
-              - *journey-server
-              - e2e/replication/**
-            keyring:
-              - *journey-server
-              - e2e/keyring/**
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md)
               - src/TerraScale.Contracts/**/!(AGENTS.md)
@@ -285,246 +158,218 @@ jobs:
               - sites/status/**/!(AGENTS.md)
               - .github/workflows/ci.yml
             dashboard:
+              - *shared
+              - *dotnet-sdk
               - src/TerraScale.Dashboard*/**/!(AGENTS.md)
               - .github/docker/dashboard.Dockerfile
-              - src/TerraScale.Contracts/**/!(AGENTS.md)
-              - src/TerraScale.Endpoints/**/!(AGENTS.md)
-              - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md)
+              - .github/scripts/dashboard/check-stripe-dependency.py
               - sites/landing/static/pricing.json
-              - .github/scripts/dashboard/{check-simple-ui.py,check-stripe-dependency.py,verify-sdk.py,format.sh}
               - .github/scripts/ci/release-only.sh
-              - *dotnet-sdk
-              - Directory.*
-              - .editorconfig
-              - BannedSymbols.txt
-              - global.json
-              - NuGet.config
-              - Makefile
-              - .github/workflows/ci.yml
       - id: areas
         env:
-          ALL_LANES: ${{ github.event_name != 'pull_request' }}
-          DESKTOP: ${{ steps.filter.outputs.journey-desktop }}
-          PHONE: ${{ steps.filter.outputs.journey-phone }}
-          SESSION: ${{ steps.filter.outputs.journey-session }}
-          WRITE: ${{ steps.filter.outputs.journey-write }}
-          FAULTS: ${{ steps.filter.outputs.journey-faults }}
-          ENGINE: ${{ steps.filter.outputs.engine }}
-          FRONTIER: ${{ steps.filter.outputs.frontier }}
-          KEYRING: ${{ steps.filter.outputs.keyring }}
-          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.pr_gate && '["libs","auth","terrabase","platform","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' || inputs.publication == 'release-only' && '[]' || inputs.publication == 'build-only' && '["terrabase","platform"]' || '["libs","auth","terrabase","platform"]') || steps.filter.outputs.changes }}
+          EVENT: ${{ github.event_name }}
+          PR_GATE: ${{ inputs.pr_gate == true }}
+          PUBLICATION: ${{ inputs.publication }}
+          CHANGES: ${{ steps.filter.outputs.changes || '[]' }}
         run: |
+          case "$EVENT:$PR_GATE:$PUBLICATION" in
+            pull_request:*) build=$CHANGES deploy='[]' ;;
+            workflow_dispatch:true:*) build='["libs","auth","terrabase","dashboard","aspire","docs","landing","status","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' deploy='[]' ;;
+            push:*) build='[]' deploy=$CHANGES ;;
+            workflow_dispatch:false:release) build='[]' deploy='["terrabase","platform"]' ;;
+            *) build='[]' deploy='[]' ;;
+          esac
           {
-            echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase" or . == "platform")]' <<< "$CHANGES")"
-            echo "dotnet=$(jq -c '[.[] | if . == "platform" then "terrabase" else . end | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")"
-            echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")"
-          } >> "$GITHUB_OUTPUT"
-          jq -cn '
-            [
-              {shard: "desktop and paid", projects: "--project pages-desktop --project paid-invitation", selected: env.DESKTOP},
-              {shard: "phone pages and hosted", projects: "pages/ hosted/ journey/invitation interactions/f --project pages-mobile --project hosted --project invitation --project interactions", selected: env.PHONE},
-              {shard: "phone interactions", projects: "interactions/[^f] interactions/files\\. --project interactions", selected: env.PHONE},
-              {shard: "session limits", projects: "placement/session-limits.spec.ts --project placement --workers 1", regions: 2, nodes: 2, selected: env.SESSION},
-              {shard: "write guarantees", projects: "placement/database-functions.spec.ts placement/write-guarantees.spec.ts placement/storage-lifecycle.spec.ts placement/region-restore.spec.ts placement/catalog-guards.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
-              {shard: "multi-region faults", projects: "--project fault", regions: 2, nodes: 2, selected: env.FAULTS}
-            ] | map(select(env.ALL_LANES == "true" or .selected == "true") | del(.selected)) as $shards
-            | ($shards | length > 0) as $browser
-            | ($browser or env.ALL_LANES == "true" or env.ENGINE == "true" or env.FRONTIER == "true" or env.KEYRING == "true") as $journey
-            | "shards=\($shards | tojson)\nservices=\((if $browser then ["terrabase", "ts-platform", "ts-auth", "dashboard"] elif $journey then ["terrabase"] else [] end) | tojson)\njourney=\($journey)"
-          ' -r >> "$GITHUB_OUTPUT"
-
-  checks:
-    services:
-      registry:
-        image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
-        ports: [5000:5000]
-    if: ${{ inputs.pr_gate || !inputs.reconcile_auth }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-          fetch-depth: 2
-      - name: Start the legacy scan
-        run: |
-          (status=0
-            python3 .github/scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 || status=$?
-            echo "$status" > legacy-scan.exit.tmp && mv legacy-scan.exit.tmp legacy-scan.exit) > /dev/null 2>&1 &
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        id: workflow-linter
-        if: github.event_name == 'pull_request'
-        with:
-          path: ~/.cache/terrascale-ci/actionlint
-          key: actionlint-${{ runner.os }}-${{ runner.arch }}-644076a59742c2d1540ebd4686eab3c308f0e562-${{ hashFiles('sdk/go/.go-version') }}
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
-        if: github.event_name == 'pull_request' && steps.workflow-linter.outputs.cache-hit != 'true'
-        with:
-          go-version-file: sdk/go/.go-version
-          cache: false
-      - name: Build the workflow linter
-        if: github.event_name == 'pull_request' && steps.workflow-linter.outputs.cache-hit != 'true'
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/archive/644076a59742c2d1540ebd4686eab3c308f0e562.tar.gz
-          sha256sum --check --strict <<EOF
-          747636d922cb81e66613ef80c5d08ff748de58d6d5250b9151853e8f680da3e1  $RUNNER_TEMP/actionlint.tar.gz
-          EOF
-          mkdir -p "$RUNNER_TEMP/actionlint-source" "$HOME/.cache/terrascale-ci/actionlint"
-          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint-source" --strip-components=1
-          cd "$RUNNER_TEMP/actionlint-source"
-          CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=readonly -trimpath -ldflags="-s -w" -o "$HOME/.cache/terrascale-ci/actionlint/actionlint" ./cmd/actionlint
-      - name: Lint workflows
-        if: github.event_name == 'pull_request' || inputs.pr_gate
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
-          sha256sum --check --strict <<EOF
-          8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $RUNNER_TEMP/shellcheck.tar.xz
-          EOF
-          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 shellcheck-v0.11.0/shellcheck
-          "$HOME/.cache/terrascale-ci/actionlint/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck"
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        if: github.event_name == 'pull_request' || inputs.pr_gate
-        with:
-          version: 1.3.6
-      - name: Prove OCI fallback publication and release ordering
-        if: github.event_name == 'pull_request' || inputs.pr_gate
-        run: bash .github/scripts/ci/prove-image-transport.sh
-      - name: No test file outside the journey
-        if: github.event_name == 'pull_request' || inputs.pr_gate
-        run: |
-          added=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD)
-          if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)([Tt]ests?|[Tt]esting|__tests__|__mocks__|[^/]*-tests)/|\.(Test[^/]*|E2E)/|(^|/)(tests?|test_[^/]*|conftest)\.py$|(^|/)tests?\.rs$|_tests?\.(go|rs|py)$|\.(test|spec)\.[cm]?[jt]sx?$|([.-]t|T)ests?\.cs$|(^|/)test-[^/]*\.(sh|py|[cm]?js|ts)$|-tests?\.(sh|py|[cm]?js|ts)$|(^|/)(vitest|jest|playwright)[^/]*\.config\.[cm]?[jt]s$'; then
-            echo '::error::This pull request adds the test files above. The journey in e2e/ is the only test.'
-            exit 1
-          fi
-      # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
-      # these lines from matching themselves.
-      - name: Workflows name no retired hosting provider
-        if: github.event_name != 'push'
-        run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
-      - name: Storage format migrations
-        if: github.event_name == 'pull_request' || inputs.pr_gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-        run: bash .github/scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"}
-      - name: Scan for legacy terms (fail)
-        if: ${{ !cancelled() }}
-        run: |
-          until [ -f legacy-scan.exit ]; do sleep 1; done
-          head -1 legacy-scan.log
-          exit "$(cat legacy-scan.exit)"
-      - name: Retain legacy hits
-        if: ${{ !cancelled() && hashFiles('legacy-hits.md') != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: legacy-hits
-          path: |
-            legacy-hits.md
-            legacy-scan.log
+            echo "build=$(jq -c '[.[] | if . == "platform" then "terrabase" else . end | select(IN("libs", "auth", "terrabase", "dashboard", "aspire", "docs", "landing", "status"))] | unique' <<< "$build")"
+            echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$build")"
+            echo "deploy=$(jq -c '[.[] | select(IN("terrabase", "platform", "auth"))]' <<< "$deploy")"
+          } | tee -a "$GITHUB_OUTPUT"
 
   libs:
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.dotnet), 'libs')
+    if: contains(fromJSON(needs.changes.outputs.build), 'libs')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - &checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          path: terrascale
           persist-credentials: false
-          ref: ${{ needs.changes.outputs.sha }}
       - &setup-dotnet
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with:
-          global-json-file: terrascale/global.json
-      - name: Locked restore
-        working-directory: terrascale
-        run: make libs-restore
-      - name: Checked build, whitespace and style
-        working-directory: terrascale
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+      - name: Release build
         run: |
-          make -o libs-restore libs-fmt-check libs-build CONFIGURATION=Release
-          make -o libs-restore -o libs-build libs-check CONFIGURATION=Release
+          make libs-build CONFIGURATION=Release
           .github/scripts/ci/release-only.sh
 
   auth:
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.dotnet), 'auth')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - *checkout
-      - *setup-dotnet
-      - name: Locked restore
-        working-directory: terrascale
-        run: make auth-restore
-      - name: Checked build, whitespace, NuGet audit and OpenAPI contract
-        working-directory: terrascale
-        run: |
-          make -o auth-restore auth-fmt-check CONFIGURATION=Release
-          make -o auth-restore auth-check CONFIGURATION=Release
-          .github/scripts/ci/release-only.sh
-
-  terrabase:
-    needs: changes
-    if: contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase')
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    steps:
-      - *checkout
-      - *setup-dotnet
-      - name: Pinned native libraries
-        uses: ./terrascale/.github/actions/native-libs
-        with:
-          dir: terrascale
-          runtimes: linux-arm64
-      - name: Locked restore
-        working-directory: terrascale
-        run: make terrabase-restore platform-restore
-      - name: Whitespace
-        working-directory: terrascale
-        run: make -o terrabase-restore -o platform-restore terrabase-fmt-check CONFIGURATION=Release
-      - name: Checked ts-platform build
-        working-directory: terrascale
-        run: make -o platform-restore -o native-libs platform-build CONFIGURATION=Release
-      - name: Checked release publish keeps the natives inside the single file
-        working-directory: terrascale
-        run: |
-          make terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/terrabase-publish"
-          make platform-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/platform-publish"
-          .github/scripts/ci/release-only.sh
-
-  aspire:
-    needs: changes
-    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.aspire == 'true'
+    if: contains(fromJSON(needs.changes.outputs.build), 'auth')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - *checkout
       - *setup-dotnet
-      - name: Locked restore
-        working-directory: terrascale
-        run: make aspire-restore
-      - name: Checked build and whitespace
-        working-directory: terrascale
+      - name: Release build
         run: |
-          make -o aspire-restore aspire-fmt-check aspire-build CONFIGURATION=Release
+          make auth-build CONFIGURATION=Release
           .github/scripts/ci/release-only.sh
 
+  terrabase:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.build), 'terrabase')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - *checkout
+      - *setup-dotnet
+      - name: Pinned native libraries
+        uses: ./.github/actions/native-libs
+        with:
+          runtimes: linux-arm64
+      - name: Release build of TerraBase and ts-platform
+        run: |
+          make -o native-libs terrabase-build CONFIGURATION=Release
+          make -o native-libs platform-build CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
+
+  dashboard:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.build), 'dashboard')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - *checkout
+      - *setup-dotnet
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
+      - name: Release build with the web assets
+        run: |
+          npm ci --prefix src/TerraScale.Dashboard/web --no-audit --no-fund &
+          web=$!
+          make dashboard-restore
+          wait "$web"
+          make -o dashboard-restore dashboard-build CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
+
+  aspire:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.build), 'aspire')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - *checkout
+      - *setup-dotnet
+      - name: Release build
+        run: |
+          make aspire-build CONFIGURATION=Release
+          .github/scripts/ci/release-only.sh
+
+  sdk:
+    needs: changes
+    if: needs.changes.outputs.sdks != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        area: ${{ fromJSON(needs.changes.outputs.sdks) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      AREA: ${{ matrix.area }}
+    steps:
+      - *checkout
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: matrix.area == 'sdk-dotnet'
+        with:
+          dotnet-version: |
+            10.0.401
+            11.0.100
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b
+        if: matrix.area != 'sdk-dotnet'
+        with:
+          install: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: matrix.area == 'sdk-go'
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: sdk-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk/go/.go-version', 'sdk/go/go.sum') }}
+      - name: Install the pinned SDK toolchain
+        run: |
+          set -euo pipefail
+          case "$AREA" in
+            sdk-go) mise use -g "go@$(cat sdk/go/.go-version)"; dirname "$(mise which go)" >> "$GITHUB_PATH" ;;
+            sdk-python) mise use -g uv@0.13.7; dirname "$(mise which uv)" >> "$GITHUB_PATH" ;;
+            sdk-rust) rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy ;;
+          esac
+      - name: Build the SDK
+        run: make "$AREA-check"
+
+  docs:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.build), 'docs')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: sites/docs/.node-version
+          cache: npm
+          cache-dependency-path: sites/docs/package-lock.json
+      - name: Build the docs site
+        run: make docs-build
+
+  landing:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.build), 'landing')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: sites/landing/.node-version
+          cache: npm
+          cache-dependency-path: sites/landing/package-lock.json
+      - name: Build the static site
+        working-directory: sites/landing
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+  status:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.build), 'status')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: sites/status/.node-version
+          cache: npm
+          cache-dependency-path: sites/status/package-lock.json
+      - name: Type-check and build the Worker
+        working-directory: sites/status
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run build
+
   main:
-    needs: [changes, checks]
-    if: >-
-      !cancelled() && needs.checks.result == 'success'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
-    outputs:
-      qualified: ${{ steps.qualify.outputs.qualified }}
+    needs: changes
+    if: github.ref == 'refs/heads/main' && contains(fromJSON(needs.changes.outputs.deploy), 'terrabase')
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
@@ -532,69 +377,58 @@ jobs:
     env:
       AREA: terrabase
       SERVICE: terrabase
+      BUILD_ONLY: 'false'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
-      attestations: write
-      # ts-orch accepts this job's OIDC token to release the image it just published.
       id-token: write
-      actions: read
-      pull-requests: read
     steps: &production-steps
       - *checkout
-      - id: qualify
-        name: Check if commit tree already passed PR CI (all-green + journey)
-        if: (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only') && env.QUALIFIED_BY_ALL_GREEN != 'true'
-        working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node .github/scripts/ci/site-deploy-gate.mjs "$AREA" --qualify-main
-      - uses: ./terrascale/.github/actions/qualified-main
-        if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+      - uses: ./.github/actions/qualified-main
+        if: env.BUILD_ONLY == 'true'
         with:
           revision: ${{ github.sha }}
           qualification: terrabase-maintenance
       - name: Authenticate to OCIR with GitHub OIDC
-        if: steps.qualify.outputs.qualified != 'false'
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
         with:
           regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
           domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
           client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
           client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
-      # A queued or late release must never roll production back: skip when ts-orch already runs this or a newer commit.
       - id: liveguard
         name: Skip when live is already at or ahead of this commit
-        if: steps.qualify.outputs.qualified != 'false' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
-        working-directory: terrascale
+        if: env.BUILD_ONLY != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci/check-live-ahead.sh "$SERVICE"
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: steps.liveguard.outputs.skip != 'true'
         with:
-          global-json-file: terrascale/global.json
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
       - name: Pinned native libraries
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        uses: ./terrascale/.github/actions/native-libs
+        if: steps.liveguard.outputs.skip != 'true'
+        uses: ./.github/actions/native-libs
         with:
-          dir: terrascale
           runtimes: linux-arm64
-      # Production runs linux/arm64 natively on ubuntu-24.04-arm: publish once, wrap in the chiseled image, attest, and roll out via ts-orch.
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: steps.liveguard.outputs.skip != 'true'
+        with:
+          version: 1.3.6
       - name: Publish the linux/arm64 runtime payload
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        working-directory: terrascale
+        if: steps.liveguard.outputs.skip != 'true'
         run: |
           docker buildx create --use --driver docker-container --bootstrap > "$RUNNER_TEMP/builder.log" 2>&1 &
           builder=$!
           bash .github/scripts/ci/image-payloads.sh publish "$AREA"
           bash .github/scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
           wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
-      # Private OCIR images ts-orch pulls via Instance Principal from each region's local OCIR mirror.
       - id: image
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        if: steps.liveguard.outputs.skip != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: ${{ runner.temp }}/image-payloads
           file: ${{ runner.temp }}/image-payloads/Dockerfile
@@ -606,125 +440,51 @@ jobs:
           push: true
       - id: digest
         name: Verify the published linux/arm64 child
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
+        if: steps.liveguard.outputs.skip != 'true'
         env:
           INDEX: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
           image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}"
-          { echo '```'; docker buildx imagetools inspect "${image}@${INDEX}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-          arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
-            jq -r 'if .manifests then (.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest) else empty end')
-          if [[ -z "$arm64" ]]; then
-            arm64=$INDEX
-          fi
-          test -n "$arm64"
+          manifest=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}')
+          arm64=$(jq -r 'if .manifests then (.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest) else empty end' <<< "$manifest")
+          arm64=${arm64:-$INDEX}
+          [[ $arm64 =~ ^sha256:[0-9a-f]{64}$ ]]
           docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
-      - name: Record the build-only digest (no release)
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+          echo "${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${arm64} build_only=${BUILD_ONLY}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - id: mirror
+        name: Mirror the image to every OCIR region
+        if: steps.liveguard.outputs.skip != 'true'
         env:
-          INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
-        run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
-      - id: provenance
-        name: Attest build provenance (linux/arm64 child)
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}
-          subject-digest: ${{ steps.digest.outputs.arm64 }}
-          push-to-registry: false
-      - name: Generate the linux/arm64 child SBOM
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          image: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/sbom.spdx.json
-          upload-artifact: false
-      - id: sbom
-        name: Attest the SBOM
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
-        with:
-          subject-name: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}
-          subject-digest: ${{ steps.digest.outputs.arm64 }}
-          sbom-path: ${{ runner.temp }}/sbom.spdx.json
-          push-to-registry: false
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        with:
-          version: 1.3.6
-      - name: Mirror image and Sigstore bundles to every OCIR region
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        working-directory: terrascale
-        env:
-          SOURCE: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-          PUBLICATION: ${{ inputs.publication }}
         run: |
+          set -euo pipefail
+          image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}"
           tags=$GITHUB_SHA
-          if [[ $PUBLICATION != build-only ]]; then tags+=,main; fi
-          bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "$tags" "$PROVENANCE" "$SBOM"
-      - name: Verify the attestations
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARM64: ${{ steps.digest.outputs.arm64 }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: |
-          subject="oci://sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}"
-          gh attestation verify "$subject" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
-          provenance=$!
-          gh attestation verify "$subject" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
-          sbom=$!
-          status=0
-          wait "$provenance" || status=$?
-          wait "$sbom" || status=$?
-          exit "$status"
+          if [[ $BUILD_ONLY != true ]]; then tags+=,main; fi
+          bash .github/scripts/ci/publish-ocir.sh "${image}@${ARM64}" "$tags"
+          mkdir -p "$RUNNER_TEMP/attest-target"
+          jq -n --arg service "$SERVICE" --arg image "$image" --arg arm64 "$ARM64" --arg revision "$GITHUB_SHA" --arg tags "$tags" \
+            '{service: $service, image: $image, arm64: $arm64, revision: $revision, tags: ($tags | split(","))}' > "$RUNNER_TEMP/attest-target/attest-target.json"
       - name: Deploy through ts-orch
-        if: steps.qualify.outputs.qualified != 'false' && steps.liveguard.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.publication != 'build-only')
-        working-directory: terrascale
+        if: steps.liveguard.outputs.skip != 'true' && env.BUILD_ONLY != 'true'
         env:
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}"
-
-  main-fallback:
-    needs: [changes, checks, all-green, main]
-    if: >-
-      !cancelled() && needs.all-green.result == 'success' && needs.main.outputs.qualified == 'false'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
-    concurrency:
-      group: production-terrabase
-      cancel-in-progress: false
-      queue: max
-    env:
-      AREA: terrabase
-      SERVICE: terrabase
-      QUALIFIED_BY_ALL_GREEN: 'true'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      attestations: write
-      id-token: write
-      actions: read
-      pull-requests: read
-    steps: *production-steps
+      - name: Hand the published image to the attestation workflow
+        if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: attest-targets-${{ env.SERVICE }}
+          path: ${{ runner.temp }}/attest-target/attest-target.json
+          if-no-files-found: error
+          retention-days: 7
 
   main-platform:
-    needs: [changes, checks]
-    if: >-
-      !cancelled() && needs.checks.result == 'success'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'platform') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
-    outputs:
-      qualified: ${{ steps.qualify.outputs.qualified }}
+    needs: changes
+    if: github.ref == 'refs/heads/main' && contains(fromJSON(needs.changes.outputs.deploy), 'platform')
     concurrency:
       group: production-platform
       cancel-in-progress: false
@@ -732,73 +492,43 @@ jobs:
     env:
       AREA: platform
       SERVICE: ts-platform
+      BUILD_ONLY: 'false'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
-      attestations: write
       id-token: write
-      actions: read
-      pull-requests: read
-    steps: *production-steps
-
-  main-platform-fallback:
-    needs: [changes, checks, all-green, main-platform]
-    if: >-
-      !cancelled() && needs.all-green.result == 'success' && needs.main-platform.outputs.qualified == 'false'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'platform') && inputs.publication != 'build-only' && inputs.publication != 'release-only' && !inputs.pr_gate
-    concurrency:
-      group: production-platform
-      cancel-in-progress: false
-      queue: max
-    env:
-      AREA: platform
-      SERVICE: ts-platform
-      QUALIFIED_BY_ALL_GREEN: 'true'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      attestations: write
-      id-token: write
-      actions: read
-      pull-requests: read
     steps: *production-steps
 
   main-build-only:
-    needs: [changes, checks, terrabase, test]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
-      && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only' && github.ref == 'refs/heads/main'
-      && !inputs.pr_gate
+      github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only' && github.ref == 'refs/heads/main'
+      && !inputs.pr_gate && !inputs.reconcile_auth
     concurrency:
       group: build-${{ github.run_id }}
       cancel-in-progress: false
     env:
       AREA: terrabase
       SERVICE: terrabase
+      BUILD_ONLY: 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     permissions:
       contents: read
-      attestations: write
-      id-token: write
       actions: read
-      pull-requests: read
+      id-token: write
     steps: *production-steps
 
   release-only:
-    needs: checks
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.publication == 'release-only' && github.ref == 'refs/heads/main'
-      && !inputs.pr_gate
+      && !inputs.pr_gate && !inputs.reconcile_auth
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
       queue: max
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -815,7 +545,7 @@ jobs:
         with:
           revision: ${{ github.sha }}
           qualification: terrabase-maintenance
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Authenticate to OCIR with GitHub OIDC
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
         with:
@@ -833,27 +563,27 @@ jobs:
           image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA"
+          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/attest-images.yml --source-ref refs/heads/main
+          gh attestation verify "oci://${image}" --owner TerraScale --predicate-type https://spdx.dev/Document/v2.3 --signer-workflow TerraScale/terrascale/.github/workflows/attest-images.yml --source-ref refs/heads/main
           bash .github/scripts/ci/deploy-v2.sh terrabase "$image"
 
   main-auth:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && !inputs.pr_gate))
-    outputs:
-      deploy: ${{ steps.live.outputs.deploy }}
+    needs: changes
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main'
+      && ((github.event_name == 'push' && needs.changes.result == 'success' && contains(fromJSON(needs.changes.outputs.deploy), 'auth'))
+      || (github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && !inputs.pr_gate))
     concurrency:
       group: production-auth
       cancel-in-progress: false
       queue: max
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
+    timeout-minutes: 20
     permissions:
       contents: read
-      actions: read
-      pull-requests: read
       issues: write
-      attestations: write
       id-token: write
-    steps: &auth-steps
+    steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
@@ -866,11 +596,10 @@ jobs:
         if: steps.probe.outputs.unavailable == 'true'
         run: echo 'Live ts-auth readiness is currently unavailable; proceeding with reconciliation'
       - id: live
-        name: Reconcile qualified main with live ts-auth
+        name: Reconcile main with live ts-auth
         env:
           GH_TOKEN: ${{ github.token }}
           AUTH_LIVE_REVISION: ${{ steps.probe.outputs.revision }}
-          SITE_DEPLOY_GATE_FALLBACK: ${{ github.job == 'main-auth-fallback' }}
         run: node .github/scripts/ci/site-deploy-gate.mjs auth --reconcile
       - name: Authenticate to OCIR with GitHub OIDC
         if: steps.live.outputs.deploy == 'true'
@@ -892,70 +621,22 @@ jobs:
           cache-dependency-path: "**/packages.lock.json"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - name: Build or reuse the target image
-        if: steps.live.outputs.deploy == 'true'
-        run: bash .github/scripts/ci/reconcile-image.sh auth
-      - id: authdigest
-        name: Extract the released arm64 child digest
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          IMAGE: ${{ env.IMAGE }}
-        run: |
-          echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
-          echo "name=${IMAGE%@*}" >> "$GITHUB_OUTPUT"
-      - id: provenance
-        name: Attest build provenance (linux/arm64 child)
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
-        with:
-          subject-name: ${{ steps.authdigest.outputs.name }}
-          subject-digest: ${{ steps.authdigest.outputs.arm64 }}
-          push-to-registry: false
-      - name: Generate the linux/arm64 child SBOM
-        if: steps.live.outputs.deploy == 'true'
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          image: ${{ steps.authdigest.outputs.name }}@${{ steps.authdigest.outputs.arm64 }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/sbom.spdx.json
-          upload-artifact: false
-      - id: sbom
-        name: Attest the SBOM
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
-        with:
-          subject-name: ${{ steps.authdigest.outputs.name }}
-          subject-digest: ${{ steps.authdigest.outputs.arm64 }}
-          sbom-path: ${{ runner.temp }}/sbom.spdx.json
-          push-to-registry: false
       - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
         if: steps.live.outputs.deploy == 'true'
         with:
           version: 1.3.6
-      - name: Mirror image and Sigstore bundles to every OCIR region
+      - name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
-        env:
-          SOURCE: ${{ env.IMAGE }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "${REVISION},main" "$PROVENANCE" "$SBOM"
-      - name: Verify the attestations
+        run: bash .github/scripts/ci/reconcile-image.sh auth
+      - id: mirror
+        name: Mirror the image to every OCIR region
         if: steps.live.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARM64: ${{ steps.authdigest.outputs.arm64 }}
-          NAME: ${{ steps.authdigest.outputs.name }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
-          provenance=$!
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
-          sbom=$!
-          status=0
-          wait "$provenance" || status=$?
-          wait "$sbom" || status=$?
-          exit "$status"
+          set -euo pipefail
+          bash .github/scripts/ci/publish-ocir.sh "$IMAGE" "${REVISION},main"
+          mkdir -p "$RUNNER_TEMP/attest-target"
+          jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
+            '{service: "ts-auth", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
       - name: Deploy ts-auth through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-auth "$IMAGE"
@@ -971,356 +652,21 @@ jobs:
           path: ${{ runner.temp }}/deploy-revision
           if-no-files-found: error
           retention-days: 1
-
-  # main-auth starts with the push and finds its commit qualified only through a matching PR run. When none matched,
-  # this locked job reconciles again after this run's all-green, so ts-auth cannot starve; it fails rather than skips.
-  main-auth-fallback:
-    needs: [changes, all-green, main-auth]
-    if: >-
-      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-      && needs.all-green.result == 'success' && needs.main-auth.result == 'success' && needs.main-auth.outputs.deploy == 'false'
-    concurrency:
-      group: production-auth
-      cancel-in-progress: false
-      queue: max
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-      issues: write
-      attestations: write
-      id-token: write
-    steps: *auth-steps
-
-  # The dashboard twin of main-auth-fallback: images-ghcr.yml releases early through a matching PR run, and this locked
-  # job reconciles after all-green. A commit that is already live leaves it with deploy=false, so nothing deploys twice.
-  main-dashboard-fallback:
-    needs: [changes, all-green]
-    if: >-
-      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-      && needs.all-green.result == 'success'
-    concurrency:
-      group: dashboard-release
-      cancel-in-progress: false
-      queue: max
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-      issues: write
-      attestations: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-          filter: blob:none
-      - id: live
-        name: Reconcile qualified main with the live dashboard
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SITE_DEPLOY_GATE_FALLBACK: 'true'
-        run: node .github/scripts/ci/site-deploy-gate.mjs dashboard
-      - name: Authenticate to OCIR with GitHub OIDC
-        if: steps.live.outputs.deploy == 'true'
-        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
-        with:
-          regions: sa-saopaulo-1 eu-frankfurt-1 us-sanjose-1
-          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
-          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
-          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
-      - id: cached
-        name: Inspect the immutable target image
-        if: steps.live.outputs.deploy == 'true'
-        run: bash .github/scripts/ci/inspect-app-image.sh dashboard
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
-        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-        with:
-          global-json-file: global.json
-          cache: true
-          cache-dependency-path: "**/packages.lock.json"
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-        with:
-          node-version: '24.21.0'
-          cache: npm
-          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - name: Build or reuse the target image
-        if: steps.live.outputs.deploy == 'true'
-        run: bash .github/scripts/ci/reconcile-image.sh dashboard
-      - id: dashboarddigest
-        name: Extract the released arm64 child digest
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          IMAGE: ${{ env.IMAGE }}
-        run: |
-          echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
-          echo "name=${IMAGE%@*}" >> "$GITHUB_OUTPUT"
-      - id: provenance
-        name: Attest build provenance (linux/arm64 child)
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
-        with:
-          subject-name: ${{ steps.dashboarddigest.outputs.name }}
-          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
-          push-to-registry: false
-      - name: Generate the linux/arm64 child SBOM
-        if: steps.live.outputs.deploy == 'true'
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          image: ${{ steps.dashboarddigest.outputs.name }}@${{ steps.dashboarddigest.outputs.arm64 }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/sbom.spdx.json
-          upload-artifact: false
-      - id: sbom
-        name: Attest the SBOM
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
-        with:
-          subject-name: ${{ steps.dashboarddigest.outputs.name }}
-          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
-          sbom-path: ${{ runner.temp }}/sbom.spdx.json
-          push-to-registry: false
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        if: steps.live.outputs.deploy == 'true'
-        with:
-          version: 1.3.6
-      - name: Mirror image and Sigstore bundles to every OCIR region
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          SOURCE: ${{ env.IMAGE }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "${REVISION},main" "$PROVENANCE" "$SBOM"
-      - name: Verify the attestations
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARM64: ${{ steps.dashboarddigest.outputs.arm64 }}
-          NAME: ${{ steps.dashboarddigest.outputs.name }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: |
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
-          provenance=$!
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main &
-          sbom=$!
-          status=0
-          wait "$provenance" || status=$?
-          wait "$sbom" || status=$?
-          exit "$status"
-      - name: Deploy ts-dashboard through ts-orch
-        if: steps.live.outputs.deploy == 'true'
-        run: bash .github/scripts/ci/deploy-v2.sh ts-dashboard "$IMAGE"
-      - name: Prove the live revision
-        if: steps.live.outputs.deploy == 'true'
-        run: node .github/scripts/ci/site-deploy-gate.mjs dashboard --prove
-      - name: Record the released source for the production journey
-        if: steps.live.outputs.deploy == 'true'
+      - name: Hand the published image to the attestation workflow
+        if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: deploy-revision-dashboard
-          overwrite: true
-          path: ${{ runner.temp }}/deploy-revision
+          name: attest-targets-ts-auth
+          path: ${{ runner.temp }}/attest-target/attest-target.json
           if-no-files-found: error
-          retention-days: 1
-
-  test:
-    name: test
-    needs: [changes, checks, libs, auth, terrabase, dashboard, aspire, sdk]
-    if: >-
-      ${{ !cancelled()
-      && (needs.changes.result != 'success' || needs.checks.result != 'success'
-      || needs.changes.outputs.dotnet != '[]' || needs.changes.outputs.sdks != '[]' || needs.dashboard.result != 'skipped'
-      || needs.aspire.result != 'skipped' || needs.changes.outputs.main != '[]') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Check upstream results
-        env:
-          LEGS: ${{ needs.changes.outputs.dotnet }}
-          RESULTS: ${{ toJSON(needs) }}
-        run: |
-          if grep -qE 'failure|cancelled' <<< '${{ join(needs.*.result, ' ') }}'; then exit 1; fi
-          for leg in $(jq -r '.[]' <<< "$LEGS"); do
-            [[ $(jq -r --arg leg "$leg" '.[$leg].result' <<< "$RESULTS") == success ]] || exit 1
-          done
-
-  dashboard:
-    needs: changes
-    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.dashboard == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
-        with:
-          global-json-file: global.json
-      - name: Restore the dashboard
-        run: make dashboard-restore
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: '24.21.0'
-          cache: npm
-          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
-      - name: Install the web asset build
-        run: npm ci --prefix src/TerraScale.Dashboard/web
-      - name: Checked build
-        run: |
-          make -o dashboard-restore dashboard-build CONFIGURATION=Release
-          .github/scripts/ci/release-only.sh
-      - name: Dashboard lint
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
-          make dashboard-lint CONFIGURATION=Release
-
-  sdk:
-    needs: changes
-    if: needs.changes.outputs.sdks != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        area: ${{ fromJSON(needs.changes.outputs.sdks) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      AREA: ${{ matrix.area }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
-        if: matrix.area == 'sdk-dotnet'
-        with:
-          dotnet-version: |
-            10.0.401
-            11.0.100
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
-        if: matrix.area != 'sdk-dotnet'
-        with:
-          install: false
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        if: matrix.area == 'sdk-go'
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: sdk-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk/go/.go-version', 'sdk/go/go.sum') }}
-      - name: Install the pinned SDK toolchain
-        run: |
-          set -euo pipefail
-          case "$AREA" in
-            sdk-go) mise use -g "go@$(cat sdk/go/.go-version)"; dirname "$(mise which go)" >> "$GITHUB_PATH" ;;
-            sdk-python) mise use -g uv@0.13.7; dirname "$(mise which uv)" >> "$GITHUB_PATH" ;;
-            sdk-rust) rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy ;;
-          esac
-      - name: Build and type-check the SDK
-        run: make "$AREA-check"
-
-  docs:
-    needs: changes
-    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.docs == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: sites/docs/.node-version
-          package-manager-cache: false
-      - name: Build and check the docs site
-        run: make docs-build
-
-  landing:
-    needs: changes
-    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.landing == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: sites/landing/.node-version
-          cache: npm
-          cache-dependency-path: sites/landing/package-lock.json
-      - name: Install dependencies
-        working-directory: sites/landing
-        run: npm ci --no-audit --no-fund
-      - name: Validate the static build
-        working-directory: sites/landing
-        run: npm run build
-
-  status:
-    needs: changes
-    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.status == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: sites/status/.node-version
-          cache: npm
-          cache-dependency-path: sites/status/package-lock.json
-      - name: Install dependencies
-        working-directory: sites/status
-        run: npm ci --no-audit --no-fund
-      - name: Check, lint and build
-        working-directory: sites/status
-        run: |
-          npm run check
-          npm run lint
-          npm run build
-          if grep -n ROUND_NOW wrangler.jsonc dist/*/wrangler.json; then
-            echo "ROUND_NOW is not a production binding" >&2
-            exit 1
-          fi
-
-  journey:
-    permissions:
-      contents: read
-      issues: read
-    needs: changes
-    if: >-
-      (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
-      || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
-      || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && inputs.publication == 'release')))
-      || (github.event_name == 'workflow_dispatch' && inputs.pr_gate)
-    uses: ./.github/workflows/journey.yml
-    with:
-      shards: ${{ needs.changes.outputs.shards }}
-      services: ${{ needs.changes.outputs.services }}
-      keyring: ${{ github.event_name != 'pull_request' || needs.changes.outputs.keyring == 'true' }}
-      engine: ${{ github.event_name != 'pull_request' || needs.changes.outputs.engine == 'true' }}
-      frontier: ${{ github.event_name != 'pull_request' || needs.changes.outputs.frontier == 'true' }}
+          retention-days: 7
 
   all-green:
     name: all-green
     if: always()
-    needs: [changes, checks, libs, auth, terrabase, dashboard, aspire, sdk, docs, landing, status, journey, test]
+    needs: [changes, libs, auth, terrabase, dashboard, aspire, sdk, docs, landing, status, main, main-platform, main-build-only, release-only, main-auth]
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
       - name: Check upstream results
-        run: |
-          test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
-          test "${{ needs.changes.outputs.engine != 'true' || needs.journey.result == 'success' }}" = true
+        run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false

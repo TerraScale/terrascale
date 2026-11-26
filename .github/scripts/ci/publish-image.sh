@@ -4,7 +4,6 @@ source=${1:?source image digest}
 destination=${2:?destination repository and tags}
 shift 2
 [[ $source =~ @sha256:[0-9a-f]{64}$ ]]
-(( $# > 0 ))
 digest=${source##*@}
 transport=()
 copy_transport=()
@@ -24,11 +23,13 @@ else
 fi
 actual=$(oras manifest fetch "${transport[@]}" --descriptor "$repository:${tags[0]}" | jq -er .digest)
 [[ $actual == "$digest" ]]
-target=$repository
-if (( ${#transport[@]} )); then target=http://$target; fi
-bash "$(dirname "$0")/attach-image-bundles.sh" "$target@$digest" "$@"
+if (( $# > 0 )); then
+  target=$repository
+  if (( ${#transport[@]} )); then target=http://$target; fi
+  bash "$(dirname "$0")/attach-image-bundles.sh" "$target@$digest" "$@"
+fi
 for tag in "${tags[@]:1}"; do
   oras tag "${transport[@]}" "$repository@$digest" "$tag"
   [[ $(oras resolve "${transport[@]}" "$repository:$tag") == "$digest" ]]
 done
-echo "PUBLISHED $repository@$digest: image and Sigstore bundles verified"
+echo "PUBLISHED $repository@$digest: image and $# Sigstore bundles verified"

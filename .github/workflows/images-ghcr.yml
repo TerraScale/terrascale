@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 env:
   OCIR_NAMESPACE: ${{ vars.OCIR_NAMESPACE }}
@@ -21,13 +20,10 @@ jobs:
       cancel-in-progress: false
       queue: max
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 25
+    timeout-minutes: 20
     permissions:
       contents: read
-      actions: read
-      pull-requests: read
       issues: write
-      attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -36,7 +32,7 @@ jobs:
           fetch-depth: 0
           filter: blob:none
       - id: live
-        name: Reconcile qualified main with the live dashboard
+        name: Reconcile main with the live dashboard
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/ci/site-deploy-gate.mjs dashboard
@@ -66,70 +62,22 @@ jobs:
           cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - name: Build or reuse the target image
-        if: steps.live.outputs.deploy == 'true'
-        run: bash .github/scripts/ci/reconcile-image.sh dashboard
-      - id: dashboarddigest
-        name: Extract the released arm64 child digest
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          IMAGE: ${{ env.IMAGE }}
-        run: |
-          echo "arm64=${IMAGE#*@}" >> "$GITHUB_OUTPUT"
-          echo "name=${IMAGE%@*}" >> "$GITHUB_OUTPUT"
-      - id: provenance
-        name: Attest build provenance (linux/arm64 child)
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
-        with:
-          subject-name: ${{ steps.dashboarddigest.outputs.name }}
-          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
-          push-to-registry: false
-      - name: Generate the linux/arm64 child SBOM
-        if: steps.live.outputs.deploy == 'true'
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          image: ${{ steps.dashboarddigest.outputs.name }}@${{ steps.dashboarddigest.outputs.arm64 }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/sbom.spdx.json
-          upload-artifact: false
-      - id: sbom
-        name: Attest the SBOM
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e
-        with:
-          subject-name: ${{ steps.dashboarddigest.outputs.name }}
-          subject-digest: ${{ steps.dashboarddigest.outputs.arm64 }}
-          sbom-path: ${{ runner.temp }}/sbom.spdx.json
-          push-to-registry: false
       - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
         if: steps.live.outputs.deploy == 'true'
         with:
           version: 1.3.6
-      - name: Mirror image and Sigstore bundles to every OCIR region
+      - name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
-        env:
-          SOURCE: ${{ env.IMAGE }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash .github/scripts/ci/publish-ocir.sh "$SOURCE" "${REVISION},main" "$PROVENANCE" "$SBOM"
-      - name: Verify the attestations
+        run: bash .github/scripts/ci/reconcile-image.sh dashboard
+      - id: mirror
+        name: Mirror the image to every OCIR region
         if: steps.live.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARM64: ${{ steps.dashboarddigest.outputs.arm64 }}
-          NAME: ${{ steps.dashboarddigest.outputs.name }}
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
         run: |
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$PROVENANCE" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main &
-          provenance=$!
-          gh attestation verify "oci://${NAME}@${ARM64}" --bundle "$SBOM" --predicate-type https://spdx.dev/Document/v2.3 --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/images-ghcr.yml --source-ref refs/heads/main &
-          sbom=$!
-          status=0
-          wait "$provenance" || status=$?
-          wait "$sbom" || status=$?
-          exit "$status"
+          set -euo pipefail
+          bash .github/scripts/ci/publish-ocir.sh "$IMAGE" "${REVISION},main"
+          mkdir -p "$RUNNER_TEMP/attest-target"
+          jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
+            '{service: "ts-dashboard", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
       - name: Deploy ts-dashboard through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-dashboard "$IMAGE"
@@ -145,3 +93,11 @@ jobs:
           path: ${{ runner.temp }}/deploy-revision
           if-no-files-found: error
           retention-days: 1
+      - name: Hand the published image to the attestation workflow
+        if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: attest-targets-dashboard
+          path: ${{ runner.temp }}/attest-target/attest-target.json
+          if-no-files-found: error
+          retention-days: 7
