@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 {
     public sealed class ApiKeysPageEndpoint(DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/api-keys");
+        public override void Configure() => Get("/api-keys").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

@@ -7,6 +7,7 @@ public sealed class GetProjectUserEndpoint(TenantDirectory tenants, PlatformAuth
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/users/{user}");
         this.Describe("get_project_user", "Get an end user", "Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserBody));
     }

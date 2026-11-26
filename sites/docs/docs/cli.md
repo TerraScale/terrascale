@@ -247,7 +247,9 @@ ts backup policy-set example "0 3 * * *" 14
 
 `backup policy` reads the snapshot schedule and retention.
 `backup policy-set <db> <cron|none> <days>` sets a five-field UTC cron
-schedule and a retention of 1 to 35 days; `none` stops scheduled backups.
+schedule and a retention from 1 day up to the plan's backup retention (1 day on
+Free, 3 on Starter, 7 on Pro, 14 on Team, 30 on Enterprise); `none` stops
+scheduled backups.
 
 ### Destination
 

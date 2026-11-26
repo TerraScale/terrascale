@@ -7,6 +7,7 @@ public sealed class GetAgentEndpoint(TenantDirectory tenants, PlatformAuthentica
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/agents/{agent}");
         this.Describe("get_agent", "Get agent", "Agent identities. Requires the viewer role or the corresponding project key scope.", "Agents", null, 200, typeof(AgentBody));
     }

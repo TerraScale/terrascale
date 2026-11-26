@@ -4,7 +4,7 @@ namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed class DatabaseOverviewEndpoint(DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/databases/{databaseId}");
+        public override void Configure() => Get("/databases/{databaseId}").AuthenticateInHandler();
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
             new(DatabaseEndpoints.TabAsync(HttpContext, sessions, accounts, backend, databases, "overview"));

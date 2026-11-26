@@ -67,7 +67,7 @@ internal sealed partial class BenchJsonContext : JsonSerializerContext;
 
 public sealed class HealthEndpoint : EndpointWithoutRequest<HealthResponse>
 {
-    public override void Configure() => Get("/ts/health");
+    public override void Configure() => Get("/ts/health").AllowAnonymous();
 
     public override ValueTask<HealthResponse> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(new HealthResponse("ok"));
@@ -75,7 +75,7 @@ public sealed class HealthEndpoint : EndpointWithoutRequest<HealthResponse>
 
 public sealed class EchoEndpoint : Endpoint<EchoRequest, EchoResponse>
 {
-    public override void Configure() => Post("/ts/echo");
+    public override void Configure() => Post("/ts/echo").AllowAnonymous();
 
     public override ValueTask<EchoResponse> HandleAsync(EchoRequest request, CancellationToken cancellationToken) =>
         ValueTask.FromResult(new EchoResponse(request.Name));
@@ -83,7 +83,7 @@ public sealed class EchoEndpoint : Endpoint<EchoRequest, EchoResponse>
 
 public sealed class SendEndpoint : Endpoint<EchoRequest, IResult>
 {
-    public override void Configure() => Post("/ts/send");
+    public override void Configure() => Post("/ts/send").AllowAnonymous();
 
     public override ValueTask<IResult> HandleAsync(EchoRequest request, CancellationToken cancellationToken) =>
         ValueTask.FromResult<IResult>(TypedResults.Ok(new EchoResponse(request.Name)));
@@ -91,14 +91,14 @@ public sealed class SendEndpoint : Endpoint<EchoRequest, IResult>
 
 public sealed class ScopedEndpoint(ScopedDependency dependency) : EndpointWithoutRequest<string>
 {
-    public override void Configure() => Get("/ts/scoped");
+    public override void Configure() => Get("/ts/scoped").AllowAnonymous();
 
     public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(dependency.Value);
 }
 
 public sealed class TextEndpoint : EndpointWithoutRequest<string>
 {
-    public override void Configure() => Get("/ts/text");
+    public override void Configure() => Get("/ts/text").AllowAnonymous();
 
     public override ValueTask<string> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult("ok");
 }

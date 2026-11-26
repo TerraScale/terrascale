@@ -10,6 +10,7 @@ public sealed class ListImpersonationsEndpoint(TenantDirectory tenants, Platform
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/impersonations");
         this.Describe("list_impersonations", "List active impersonations",
             "Requires a person with the project admin role. Returns up to 100 active impersonations in the project.",

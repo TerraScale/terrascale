@@ -44,10 +44,10 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         public async Task<bool> AnyDueAsync(IReadOnlyList<OrganizationRecord> organizations, CancellationToken cancellationToken)
         {
-            List<BackgroundJobRow> states;
+            Dictionary<string, BackgroundJobRow> states;
             await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                states = (await connection.QueryAsync<BackgroundJobRow>(PlanJobs)).AsList();
+                states = (await connection.QueryAsync<BackgroundJobRow>(PlanJobs)).ToDictionary(row => row.Id, StringComparer.Ordinal);
             }
 
             foreach (var organization in organizations)
@@ -56,8 +56,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 string plan;
                 try { plan = PlanFor(organization); }
                 catch (IOException) { continue; }
-                var state = states.SingleOrDefault(row => row.Id == "plan/" + organization.Id);
-                if (state is null || Due(state, plan))
+                if (!states.TryGetValue("plan/" + organization.Id, out var state) || Due(state, plan))
                 {
                     return true;
                 }

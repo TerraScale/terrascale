@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Usage
 {
     public sealed class UsagePageEndpoint(DashboardSessions sessions, AccountService accounts, UsageService usage) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/usage");
+        public override void Configure() => Get("/usage").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

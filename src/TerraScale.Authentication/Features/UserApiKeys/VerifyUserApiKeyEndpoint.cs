@@ -9,6 +9,7 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/api-keys/verify");
         this.Describe("verify_user_api_key", "Verify user api key", "Project-scoped user-owned keys. Requires an unrestricted project secret API key with auth:read; sign-in tokens are refused. Reads current storage without caching and compares hashes in constant time.", "User API keys", typeof(VerifyUserApiKeyRequest), 200, typeof(VerifyUserApiKeyBody));
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);

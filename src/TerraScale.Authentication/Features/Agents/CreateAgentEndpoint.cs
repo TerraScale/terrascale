@@ -8,6 +8,7 @@ public sealed class CreateAgentEndpoint(TenantDirectory tenants, PlatformAuthent
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/users/{user}/agents");
         this.Describe("create_agent", "Create agent", "Agent identities. Requires the admin role or the corresponding project key scope.", "Agents", typeof(CreateAgentRequest), 201, typeof(AgentBody), conflict: true);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);

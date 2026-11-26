@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 {
     public sealed class McpTokenEndpoint(DashboardDb storage, AccessTokens tokens, TimeProvider time) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/oauth/token");
+        public override void Configure() => Post("/oauth/token").AuthenticateInHandler();
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
             new(McpOAuth.TokenAsync(HttpContext, storage, tokens, time));

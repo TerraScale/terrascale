@@ -7,6 +7,7 @@ public sealed class RevokeUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/users/{user}/api-keys/{key}");
         this.Describe("revoke_user_api_key", "Revoke user api key", "Project-scoped user-owned keys. Requires the admin role or the corresponding project key scope.", "User API keys", null, 204, null, conflict: true);
     }

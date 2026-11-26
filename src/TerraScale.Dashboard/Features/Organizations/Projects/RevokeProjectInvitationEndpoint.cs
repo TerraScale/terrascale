@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
     public sealed class RevokeProjectInvitationEndpoint(DashboardSessions sessions, AccountService accounts, ProjectInvitationService invitations) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/project/invitations/revoke");
+        public override void Configure() => Post("/api/v1/dashboard/project/invitations/revoke").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

@@ -246,6 +246,7 @@ public sealed class DeviceAuthorizationEndpoint : EndpointWithoutRequest<IResult
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
         Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<OAuthErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
     }
 

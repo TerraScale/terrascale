@@ -4,7 +4,7 @@ namespace TerraScale.Dashboard.Features.Databases;
 
 public sealed class DatabaseConnectEndpoint(DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) : EndpointWithoutRequest<IResult>
 {
-    public override void Configure() => Get("/databases/{databaseId}/connect");
+    public override void Configure() => Get("/databases/{databaseId}/connect").AuthenticateInHandler();
 
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         new(DatabaseEndpoints.TabAsync(HttpContext, sessions, accounts, backend, databases, "connect"));

@@ -10,6 +10,7 @@ using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Storage;
 using TerraScale.Endpoints;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -65,6 +66,7 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/terrascale/api-keys/self");
         Name("get_api_key_status");
         Summary("Check an API key token");
@@ -127,6 +129,7 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         {
             if (signing is null)
             {
+                await bounded.CancelAsync();
                 _ = ReleaseAsync(lookup);
             }
         }
@@ -260,7 +263,7 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
             using var deadline = new CancellationTokenSource(Limit(budget), clock);
             var read = refusal(deadline.Token);
             await Task.WhenAny(read);
-            if (read.IsCanceled)
+            if (read.IsCanceled || read.Exception?.InnerException is { } failure && AuthData.IsUnavailable(failure))
             {
                 return new KeyStatusBusy();
             }

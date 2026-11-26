@@ -17,6 +17,7 @@ public sealed class UpdateSelfProfileEndpoint(Sessions sessions, UserProfiles pr
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Patch("/v1/{project}/me/profile");
         Name("update_self_profile");
         Summary("Update your name and unsafe metadata");

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using TerraScale.Contracts.Continuity;
@@ -23,6 +24,9 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
 {
     private const int MaxPagesPerPeer = 64;
     private const string CommitLogGapCode = "commit_log_gap";
+    private const int LoggedFailures = 3;
+    private static readonly TimeSpan FailureLogInterval = TimeSpan.FromMinutes(5);
+    private readonly ConcurrentDictionary<Ulid, long> _failuresLogged = new();
 
     public void Map(QuicRpcHost host)
     {
@@ -76,11 +80,30 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         {
             var report = await SyncAsync(databaseId, cancellationToken);
             progressed = report.Applied > 0;
+            ReportFailures(report);
         }
         finally
         {
             databases.EndSync(databaseId, tracked, progressed, requeue: !cancellationToken.IsCancellationRequested);
         }
+    }
+
+    private void ReportFailures(CatchUpReport report)
+    {
+        if (report.Failures.Count == 0)
+        {
+            _ = _failuresLogged.TryRemove(report.DatabaseId, out _);
+            return;
+        }
+
+        var now = timeProvider.GetTimestamp();
+        if (_failuresLogged.TryGetValue(report.DatabaseId, out var logged) && timeProvider.GetElapsedTime(logged, now) < FailureLogInterval)
+        {
+            return;
+        }
+
+        _failuresLogged[report.DatabaseId] = now;
+        ClusterLog.CatchUpFailed(logger, report.DatabaseId, report.Failures.Count, string.Join("; ", report.Failures.Take(LoggedFailures)));
     }
 
     public ValueTask<CatchUpReport> SyncAsync(Ulid databaseId, CancellationToken cancellationToken) =>

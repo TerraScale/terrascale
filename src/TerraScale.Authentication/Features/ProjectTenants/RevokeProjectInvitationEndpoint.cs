@@ -7,6 +7,7 @@ public sealed class RevokeProjectInvitationEndpoint(TenantDirectory tenants, Pla
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/invitations/{invitation}");
         this.Describe("revoke_project_invitation", "Revoke a project invitation", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }

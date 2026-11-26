@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Platform.Development
 {
     public sealed class DevelopmentEventsEndpoint(AssetUrls assets) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/__dev/events");
+        public override void Configure() => Get("/__dev/events").AllowAnonymous();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

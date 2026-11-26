@@ -14,6 +14,7 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/terrascale/email/admission");
         Name("email_admission");
         Summary("Reserve one infrastructure notification attempt");

@@ -12,6 +12,7 @@ public sealed class AccountDeletionHistoryEndpoint(AccountDeletion accounts) : E
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/terrascale/account/deletion/history");
         Name("account_deletion_history");
         Summary("Read your deletion's history request metadata");

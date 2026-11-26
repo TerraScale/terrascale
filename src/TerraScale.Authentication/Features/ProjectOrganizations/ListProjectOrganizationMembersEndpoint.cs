@@ -8,6 +8,7 @@ public sealed class ListProjectOrganizationMembersEndpoint(ProjectOrganizationDi
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(OrganizationRoute + "/memberships");
         this.Describe("list_project_organization_members", "List organization members", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", null, 200, typeof(ProjectMembershipPage), paged: true, conflict: true);
     }

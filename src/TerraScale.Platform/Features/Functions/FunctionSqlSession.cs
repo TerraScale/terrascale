@@ -28,15 +28,15 @@ public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposabl
             await socket.ConnectAsync(target, terraBase.Invoker(), cancellationToken);
             return new FunctionSqlSession(socket);
         }
-        catch (WebSocketException error)
+        catch (WebSocketException)
         {
             socket.Dispose();
-            return new PlatformUnavailable($"TerraBase refused the SQL session: {error.Message}", "sql_session_unavailable");
+            return new PlatformUnavailable("TerraBase refused the SQL session", "sql_session_unavailable");
         }
-        catch (HttpRequestException error)
+        catch (HttpRequestException)
         {
             socket.Dispose();
-            return new PlatformUnavailable($"TerraBase is unreachable: {error.Message}", "terrabase_unreachable");
+            return new PlatformUnavailable("TerraBase is unreachable", "terrabase_unreachable");
         }
     }
 
@@ -74,9 +74,9 @@ public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposabl
                 }
             }
         }
-        catch (WebSocketException error)
+        catch (WebSocketException)
         {
-            return new PlatformUnavailable($"the SQL session broke: {error.Message}", "sql_session_broken");
+            return new PlatformUnavailable("the SQL session broke", "sql_session_broken");
         }
 
         return TerraBaseAnswers.Parse(buffer.WrittenSpan, TerraScaleContractsJsonContext.Default.SqlWsServerFrame) is { } answer && answer.Id == id

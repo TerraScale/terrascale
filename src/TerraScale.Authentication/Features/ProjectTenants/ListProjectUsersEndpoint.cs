@@ -7,6 +7,7 @@ public sealed class ListProjectUsersEndpoint(TenantDirectory tenants, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/users");
         this.Describe("list_project_users", "List end users", "q matches an email substring; limit is 1 to 100 (default 50) and after the previous page's next. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserPageBody), paged: true);
     }

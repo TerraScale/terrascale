@@ -4,7 +4,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
 {
     public sealed class AuditEventsEndpoint(DashboardSessions sessions, AccountService accounts, IOrganizationAccess access) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/api/v1/dashboard/audit-events");
+        public override void Configure() => Get("/api/v1/dashboard/audit-events").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

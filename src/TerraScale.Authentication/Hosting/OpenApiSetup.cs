@@ -43,6 +43,8 @@ public static class SecuritySchemes
 
 public sealed record RequiresSecurity(string Scheme, bool PublicClientAlternative = false);
 
+public sealed record PagedQuery;
+
 public static partial class OpenApiSetup
 {
     private static readonly string[] UnlockParameters = ["user", "token"];
@@ -256,6 +258,24 @@ public static partial class OpenApiSetup
                     }
                 }
 
+                if (operation.OperationId == "account_deletion_history")
+                {
+                    Query(operation, "organization", "Candidate organization ULID covered by the deletion receipt.",
+                        new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" });
+                }
+
+                if (operation.OperationId == "list_invitations")
+                {
+                    Query(operation, "project_id", "Only invitations to this project.",
+                        new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" });
+                }
+
+                if (metadata.OfType<PagedQuery>().Any())
+                {
+                    Query(operation, "limit", "Page size, 1 to 100.", new OpenApiSchema { Type = JsonSchemaType.Integer, Minimum = "1", Maximum = "100" });
+                    Query(operation, "after", "The previous page's next cursor; omit to start.", new OpenApiSchema { Type = JsonSchemaType.String });
+                }
+
                 foreach (var response in operation.Responses?.Values ?? Enumerable.Empty<IOpenApiResponse>())
                 {
                     foreach (var media in response.Content?.Values ?? Enumerable.Empty<IOpenApiMediaType>())
@@ -275,6 +295,16 @@ public static partial class OpenApiSetup
                 return Task.CompletedTask;
             });
         });
+
+    private static void Query(OpenApiOperation operation, string name, string description, OpenApiSchema schema)
+    {
+        if (operation.Parameters?.Any(parameter => parameter.In == ParameterLocation.Query && parameter.Name == name) == true)
+        {
+            return;
+        }
+
+        (operation.Parameters ??= []).Add(new OpenApiParameter { Name = name, In = ParameterLocation.Query, Required = false, Description = description, Schema = schema });
+    }
 
     private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
     {

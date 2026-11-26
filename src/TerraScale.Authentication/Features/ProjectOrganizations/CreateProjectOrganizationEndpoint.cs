@@ -8,6 +8,7 @@ public sealed class CreateProjectOrganizationEndpoint(ProjectOrganizationDirecto
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(OrganizationRoot);
         this.Describe("create_project_organization", "Create an organization", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", typeof(ProjectOrganizationRequest), 201, typeof(ProjectOrganizationBody), paged: false, conflict: true);
     }

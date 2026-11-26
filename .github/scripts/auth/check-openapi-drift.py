@@ -55,8 +55,8 @@ def main(served_file, contract_file):
             offered.discard(("slug", "path"))
         for name, location in sorted(offered - promised):
             problems.append(f"served parameter missing from the contract: {label} {location} {name}")
-        for name, location in sorted({entry for entry in promised - offered if entry[1] == "path"}):
-            problems.append(f"contract path parameter not served: {label} {name}")
+        for name, location in sorted(promised - offered):
+            problems.append(f"contract parameter not served: {label} {location} {name}")
 
     promised_paths = {(method, served_path(path)) for method, path in contract}
     for method, path in sorted(served):

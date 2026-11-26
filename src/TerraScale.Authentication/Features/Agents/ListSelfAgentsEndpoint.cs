@@ -10,6 +10,7 @@ public sealed class ListSelfAgentsEndpoint(PlatformAuthentication authentication
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root);
         this.DescribeSelf("list_self_agents", "List self agents", StatusCodes.Status200OK, typeof(AgentPageBody));
     }

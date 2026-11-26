@@ -137,7 +137,8 @@ public sealed class ContinuitySessions(
         await using (system)
         {
             var statement = new SqlStatement(
-                "SELECT retention_days FROM backup_policies WHERE database_id = ?",
+                "SELECT b.retention_days, COALESCE(p.plan, o.plan, 'hobby') FROM databases d JOIN projects p ON p.id = d.project_id "
+                + "LEFT JOIN organizations o ON o.id = p.organization_id LEFT JOIN backup_policies b ON b.database_id = d.id WHERE d.id = ?",
                 [SqlValue.FromText(databaseId.ToString())],
                 FrozenDictionary<string, SqlValue>.Empty);
             var request = new SqlStatementRequest(system.DatabaseId, [statement], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
@@ -145,8 +146,10 @@ public sealed class ContinuitySessions(
             return read switch
             {
                 SqlReadResult { ResultSets: [{ Rows: [] }] } => new ArchiveRetentionPolicy(DefaultRetentionDays),
-                SqlReadResult { ResultSets: [{ Rows: [[var value]] }] } when value.TryGetIntegral(out var days) && days is >= 1 and <= 3650 =>
-                    new ArchiveRetentionPolicy((int)days),
+                SqlReadResult { ResultSets: [{ Rows: [[{ Kind: SqlValueKind.Null }, var plan]] }] } when plan.TryGetText(out var name) =>
+                    new ArchiveRetentionPolicy(Math.Min(DefaultRetentionDays, BackupRetention.PlanCapDays(name))),
+                SqlReadResult { ResultSets: [{ Rows: [[var value, var plan]] }] } when value.TryGetIntegral(out var days) && days is >= 1 and <= 3650 && plan.TryGetText(out var name) =>
+                    new ArchiveRetentionPolicy((int)Math.Min(days, BackupRetention.PlanCapDays(name))),
                 SqlReadResult => new ContinuityUnavailable("invalid archive retention policy", "invalid_retention"),
                 SqlError error => new ContinuityUnavailable(error.Message, "system_catalog_error"),
                 StorageBusy busy => new ContinuityUnavailable(busy.Message, "storage_busy"),

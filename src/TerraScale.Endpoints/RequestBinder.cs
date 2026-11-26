@@ -207,7 +207,7 @@ internal sealed class RequestBinder<TRequest>
 
     private async ValueTask<Bound<TRequest>> MergeAsync(HttpRequest request, bool hasJson, CancellationToken cancellationToken)
     {
-        var overrides = CollectParameters(request);
+        var parameters = CollectParameters(request);
         var options = typeInfo.Options;
         if (hasJson)
         {
@@ -217,16 +217,16 @@ internal sealed class RequestBinder<TRequest>
                 Validation invalid => invalid,
                 UnsupportedMediaType unsupported => unsupported,
                 null => throw new UnreachableException(),
-                JsonDocument parsed => MergeJson(parsed, overrides, options),
+                JsonDocument parsed => MergeJson(parsed, parameters, options),
             };
         }
 
-        return MergeJson(null, overrides, options);
+        return MergeJson(null, parameters, options);
     }
 
-    private Bound<TRequest> MergeJson(JsonDocument? document, Dictionary<JsonPropertyInfo, JsonNode?> overrides, JsonSerializerOptions options)
+    private Bound<TRequest> MergeJson(JsonDocument? document, RequestParameters parameters, JsonSerializerOptions options)
     {
-
+        var comparison = options.PropertyNameCaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var buffer = new ArrayBufferWriter<byte>();
         using (document)
         using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { MaxDepth = options.MaxDepth }))
@@ -241,23 +241,23 @@ internal sealed class RequestBinder<TRequest>
 
                 foreach (var member in document.RootElement.EnumerateObject())
                 {
-                    if (!IsOverridden(member.Name, overrides, options))
+                    if (!Names(parameters.Route.Keys, member.Name, comparison))
                     {
                         member.WriteTo(writer);
                     }
                 }
             }
 
-            foreach (var (property, value) in overrides)
+            foreach (var (property, value) in parameters.Route)
             {
-                writer.WritePropertyName(property.Name);
-                if (value is null)
+                Write(writer, property, value);
+            }
+
+            foreach (var (property, value) in parameters.Query)
+            {
+                if (!parameters.Route.ContainsKey(property) && !InBody(document, property.Name, comparison))
                 {
-                    writer.WriteNullValue();
-                }
-                else
-                {
-                    value.WriteTo(writer);
+                    Write(writer, property, value);
                 }
             }
 
@@ -282,9 +282,9 @@ internal sealed class RequestBinder<TRequest>
         }
     }
 
-    private Dictionary<JsonPropertyInfo, JsonNode?> CollectParameters(HttpRequest request)
+    private RequestParameters CollectParameters(HttpRequest request)
     {
-        var overrides = new Dictionary<JsonPropertyInfo, JsonNode?>(ReferenceEqualityComparer.Instance);
+        var query = new Dictionary<JsonPropertyInfo, JsonNode?>(ReferenceEqualityComparer.Instance);
         if (request.QueryString.HasValue)
         {
             var queried = new Dictionary<JsonPropertyInfo, List<string>>(ReferenceEqualityComparer.Instance);
@@ -303,19 +303,51 @@ internal sealed class RequestBinder<TRequest>
 
             foreach (var (property, values) in queried)
             {
-                overrides[property] = RequestValues.ToJson(property, new StringValues([.. values]), fromRoute: false);
+                query[property] = RequestValues.ToJson(property, new StringValues([.. values]), fromRoute: false);
             }
         }
 
+        var route = new Dictionary<JsonPropertyInfo, JsonNode?>(ReferenceEqualityComparer.Instance);
         foreach (var (key, value) in request.RouteValues)
         {
             if (TryFind(key, out var property))
             {
-                overrides[property] = RequestValues.ToJson(property, Convert.ToString(value, CultureInfo.InvariantCulture), fromRoute: true);
+                route[property] = RequestValues.ToJson(property, Convert.ToString(value, CultureInfo.InvariantCulture), fromRoute: true);
             }
         }
 
-        return overrides;
+        return new RequestParameters(route, query);
+    }
+
+    private static void Write(Utf8JsonWriter writer, JsonPropertyInfo property, JsonNode? value)
+    {
+        writer.WritePropertyName(property.Name);
+        if (value is null)
+        {
+            writer.WriteNullValue();
+        }
+        else
+        {
+            value.WriteTo(writer);
+        }
+    }
+
+    private static bool InBody(JsonDocument? document, string name, StringComparison comparison)
+    {
+        if (document is null)
+        {
+            return false;
+        }
+
+        foreach (var member in document.RootElement.EnumerateObject())
+        {
+            if (string.Equals(member.Name, name, comparison))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private Validation? RejectCaseInsensitiveDuplicates(JsonElement root, JsonSerializerOptions options)
@@ -337,10 +369,9 @@ internal sealed class RequestBinder<TRequest>
         return null;
     }
 
-    private static bool IsOverridden(string name, Dictionary<JsonPropertyInfo, JsonNode?> overrides, JsonSerializerOptions options)
+    private static bool Names(IEnumerable<JsonPropertyInfo> properties, string name, StringComparison comparison)
     {
-        var comparison = options.PropertyNameCaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        foreach (var property in overrides.Keys)
+        foreach (var property in properties)
         {
             if (string.Equals(property.Name, name, comparison))
             {
@@ -467,6 +498,8 @@ internal sealed class RequestBinder<TRequest>
         context.Request.ContentLength > 0
         || context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true;
 }
+
+internal sealed record RequestParameters(IReadOnlyDictionary<JsonPropertyInfo, JsonNode?> Route, IReadOnlyDictionary<JsonPropertyInfo, JsonNode?> Query);
 
 internal static class RequestValues
 {

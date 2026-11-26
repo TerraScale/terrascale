@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Usage
 {
     public sealed class SpendingCapEndpoint(DashboardSessions sessions, AccountService accounts, SpendingService spending, UsageService usage) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/usage/spending-cap");
+        public override void Configure() => Post("/api/v1/dashboard/usage/spending-cap").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

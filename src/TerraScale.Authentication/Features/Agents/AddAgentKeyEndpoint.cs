@@ -7,6 +7,7 @@ public sealed class AddAgentKeyEndpoint(TenantDirectory tenants, PlatformAuthent
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/agents/{agent}/keys");
         this.Describe("add_agent_key", "Add agent key", "An agent has at most two active keys. Agent identities. Requires the admin role or the corresponding project key scope.", "Agents", typeof(AddAgentKeyRequest), 201, typeof(AgentKeyBody), conflict: true);
     }

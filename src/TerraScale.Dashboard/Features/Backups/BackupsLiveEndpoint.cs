@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Backups;
 
 public sealed class BackupsLiveEndpoint(BackupService backups) : EndpointWithoutRequest<IResult>
 {
-    public override void Configure() => Get("/databases/{databaseId}/backups/live");
+    public override void Configure() => Get("/databases/{databaseId}/backups/live").AuthenticateInHandler();
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await LiveDatabaseView.StreamAsync(HttpContext, "restore-points", async (context, database, cancellationToken) =>

@@ -8,6 +8,7 @@ public sealed class CreateProjectOrganizationInvitationEndpoint(ProjectOrganizat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(OrganizationRoute + "/invitations");
         this.Describe("create_project_organization_invitation", "Invite an organization member", "Invitation email names the organization and branded app; optional inviter_name is 1 to 100 plain-text characters without controls, bidi formatting or markup. The caller email and key name are never used. Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", typeof(ProjectInvitationRequest), 201, typeof(ProjectOrganizationInvitationBody), paged: false, conflict: true);
     }

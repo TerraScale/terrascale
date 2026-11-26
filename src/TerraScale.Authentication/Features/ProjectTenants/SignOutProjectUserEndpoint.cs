@@ -7,6 +7,7 @@ public sealed class SignOutProjectUserEndpoint(TenantDirectory tenants, Sessions
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/users/{user}/sign-out");
         this.Describe("sign_out_project_user", "Sign a user out everywhere",
             "Needs the admin project role or an auth:write project secret API key. Advances the user's authentication epoch and stamp, invalidating every hosted session, authorization code and refresh token. Existing offline access tokens remain valid until expiry.",

@@ -11,6 +11,7 @@ public sealed class CreateProjectUserEndpoint(TenantDirectory tenants, PlatformA
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/users");
         this.Describe("create_project_user", "Create an end user", "Requires auth:write or the admin project role. Password is optional. Does not send email.",
             "Project tenants", typeof(CreateProjectUserRequest), StatusCodes.Status201Created, typeof(ProjectUserBody), conflict: true);

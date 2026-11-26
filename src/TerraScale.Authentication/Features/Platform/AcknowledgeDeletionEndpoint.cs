@@ -13,6 +13,7 @@ public sealed class AcknowledgeDeletionEndpoint(AuthData data, AuthOptions optio
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/{slug}/deletions/{id}/acknowledge");
         Name("deletion_acknowledge");
         Summary("Acknowledge dashboard deletion cleanup");

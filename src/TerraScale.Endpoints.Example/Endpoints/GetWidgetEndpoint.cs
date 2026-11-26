@@ -4,6 +4,7 @@ public sealed class GetWidgetEndpoint(WidgetStore store) : Endpoint<GetWidgetReq
 {
     public override void Configure()
     {
+        AllowAnonymous();
         Get("/widgets/{id:guid}");
         Name("get-widget");
         Summary("Gets a widget by id");

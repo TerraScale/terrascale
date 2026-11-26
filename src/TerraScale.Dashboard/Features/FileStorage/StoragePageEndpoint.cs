@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Verbs("GET", "HEAD");
             Route("/storage");
         }

@@ -7,6 +7,7 @@ public sealed class DeleteProjectClientEndpoint(TenantDirectory tenants, Platfor
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/clients/{client_id}");
         this.Describe("delete_project_client", "Delete an OAuth client", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }

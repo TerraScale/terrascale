@@ -16,6 +16,7 @@ namespace TerraScale.Dashboard.Features.Billing
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Post("/billing/checkout");
             Metadata(new IntegrationEndpointGroup("integration"));
             Name("startDashboardCheckout");

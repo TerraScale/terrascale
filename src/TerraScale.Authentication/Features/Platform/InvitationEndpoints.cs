@@ -71,6 +71,7 @@ public sealed class CreateInvitationEndpoint(Invitations invitations, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Organization}/invitations");
         this.Describe("create_invitation", "Invite an email address", "Without project_id: an organization role; needs admin, and owner to invite an owner. With project_id: a role on that project; needs the project's admin role. ts-auth emails a link to the dashboard's accept page, <dashboard origin>/invitations/<token>; the token is also answered once. Valid 7 days, single use. 409 invitation_pending while an unexpired invitation for the email and target is pending, 409 already_member when the address's user already has it. 429 rate_limited with Retry-After past 100 invitations per organization per hour or 50 per inviting user per day, or when the organization's share of invitation email capacity is used up; nothing is created. A full or stopping email queue answers 503 before creating a pending invitation; failed creates release their reserved queue capacity.", "Invitations", typeof(CreateInvitationRequest), StatusCodes.Status201Created, typeof(InvitationCreatedBody), conflict: true);
         Produces<Contracts.ErrorBody>(StatusCodes.Status429TooManyRequests);
@@ -101,6 +102,7 @@ public sealed class ListInvitationsEndpoint(Invitations invitations, PlatformAut
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Organization}/invitations");
         this.Describe("list_invitations", "List invitations", "Every invitation with its status, in creation order. Needs admin; a project admin lists its project's with project_id.", "Invitations", null, StatusCodes.Status200OK, typeof(InvitationPageBody), paged: true);
     }
@@ -123,6 +125,7 @@ public sealed class RevokeInvitationEndpoint(Invitations invitations, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete($"{Organization}/invitations/{{invitation}}");
         this.Describe("revoke_invitation", "Revoke an invitation", "Needs admin, or the project's admin for a project invitation. Its status becomes revoked and its token stops working. 409 when it is no longer pending.", "Invitations", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
@@ -138,6 +141,7 @@ public sealed class LookupInvitationEndpoint(Invitations invitations, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/terrascale/invitations/lookup");
         this.Describe("lookup_invitation", "Look up an invitation by token", "Any signed-in user holding the token. A token that is unknown, expired or no longer pending answers 404.", "Invitations", typeof(InvitationTokenRequest), StatusCodes.Status200OK, typeof(InvitationLookupBody));
     }
@@ -155,6 +159,7 @@ public sealed class AcceptInvitationEndpoint(Invitations invitations, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/terrascale/invitations/accept");
         this.Describe("accept_invitation", "Accept an invitation", "The caller's verified email must equal the invitation's, ignoring case (403 email_mismatch otherwise). 404 for an unknown token, 409 invitation_expired, 409 not_pending or already_member.", "Invitations", typeof(InvitationTokenRequest), StatusCodes.Status200OK, typeof(AcceptedInvitationBody), conflict: true);
     }
@@ -171,6 +176,7 @@ public sealed class DeclineInvitationEndpoint(Invitations invitations, PlatformA
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/terrascale/invitations/decline");
         this.Describe("decline_invitation", "Decline an invitation", "Same email rule as accept. The invitation's status becomes declined.", "Invitations", typeof(InvitationTokenRequest), StatusCodes.Status204NoContent, null, conflict: true);
     }
@@ -187,6 +193,7 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Organization}/ownership-transfer");
         this.Describe("start_ownership_transfer", "Offer ownership to a member", "Needs owner and a fresh start_ownership_transfer/ts-auth X-TerraScale-Step-Up-Proof. The nominee is a member who is not an owner. Replaces a pending transfer; valid 7 days.", "Ownership transfer", typeof(StartTransferRequest), StatusCodes.Status201Created, typeof(OwnershipTransferBody));
     }
@@ -220,6 +227,7 @@ public sealed class GetOwnershipTransferEndpoint(PlatformDirectory platform, Pla
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Organization}/ownership-transfer");
         this.Describe("get_ownership_transfer", "Get the pending transfer", "Needs any organization role (a collaborator gets 403). 404 when none is pending.", "Ownership transfer", null, StatusCodes.Status200OK, typeof(OwnershipTransferBody));
     }
@@ -232,6 +240,7 @@ public sealed class CancelOwnershipTransferEndpoint(PlatformDirectory platform, 
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete($"{Organization}/ownership-transfer");
         this.Describe("cancel_ownership_transfer", "Cancel the pending transfer", "An owner or the nominee.", "Ownership transfer", null, StatusCodes.Status204NoContent, null);
     }
@@ -247,6 +256,7 @@ public sealed class ConfirmOwnershipTransferEndpoint(PlatformDirectory platform,
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Organization}/ownership-transfer/confirm");
         this.Describe("confirm_ownership_transfer", "Confirm a transfer", "Only the nominee. The nominee becomes an owner and the owner who started it an admin.", "Ownership transfer", null, StatusCodes.Status200OK, typeof(MemberBody));
     }
@@ -262,6 +272,7 @@ public sealed class ListAuditEventsEndpoint(PlatformDirectory platform, Platform
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Organization}/audit-events");
         this.Describe("list_audit_events", "List audit events", "Needs admin. Newest first; kept at least 90 days.", "Audit", null, StatusCodes.Status200OK, typeof(AuditEventPageBody), paged: true);
     }

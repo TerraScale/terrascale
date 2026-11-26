@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Databases;
 
 public sealed class DatabaseConflictsLiveEndpoint(DatabaseConflicts conflicts) : EndpointWithoutRequest<IResult>
 {
-    public override void Configure() => Get("/databases/{databaseId}/conflicts/live");
+    public override void Configure() => Get("/databases/{databaseId}/conflicts/live").AuthenticateInHandler();
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await LiveDatabaseView.StreamAsync(HttpContext, "conflict-results", async (context, database, cancellationToken) =>

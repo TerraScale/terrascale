@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed class CreateTableEndpoint(DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/databases/tables");
+        public override void Configure() => Post("/api/v1/dashboard/databases/tables").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

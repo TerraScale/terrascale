@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
@@ -13,8 +14,7 @@ public sealed class EndpointDefinition
     private readonly List<object> metadata = [];
     private readonly List<(Type? Type, int StatusCode, string? ContentType)> responses = [];
     private string[]? acceptedContentTypes;
-    private string[]? authorizationPolicies;
-    private bool allowAnonymous;
+    private EndpointAuthorization? authorization;
     private bool routeConfigured;
 
     public string Route { get; private set; } = "/";
@@ -166,18 +166,29 @@ public sealed class EndpointDefinition
         return this;
     }
 
-    public EndpointDefinition AllowAnonymous()
-    {
-        allowAnonymous = true;
-        authorizationPolicies = null;
-        return this;
-    }
+    public EndpointDefinition AllowAnonymous() => Authorize(new AnonymousAccess());
 
     public EndpointDefinition RequireAuthorization(params string[] policies)
     {
         ArgumentNullException.ThrowIfNull(policies);
-        allowAnonymous = false;
-        authorizationPolicies = policies;
+        if (policies.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("Authorization policy names cannot be empty.", nameof(policies));
+        }
+
+        return Authorize(new PolicyAuthorization([.. policies]));
+    }
+
+    public EndpointDefinition AuthenticateInHandler() => Authorize(new HandlerAuthentication());
+
+    private EndpointDefinition Authorize(EndpointAuthorization posture)
+    {
+        if (authorization is not null)
+        {
+            throw new InvalidOperationException("An endpoint declares exactly one authorization posture.");
+        }
+
+        authorization = posture;
         return this;
     }
 
@@ -201,6 +212,12 @@ public sealed class EndpointDefinition
         if (methods.Count == 0 || !routeConfigured)
         {
             throw new InvalidOperationException("An endpoint must select an HTTP method and route.");
+        }
+
+        if (authorization is null)
+        {
+            throw new InvalidOperationException(
+                $"Endpoint {string.Join(',', methods)} {Route} must declare AllowAnonymous(), RequireAuthorization(...) or AuthenticateInHandler().");
         }
     }
 
@@ -281,23 +298,30 @@ public sealed class EndpointDefinition
                 response.ContentType is null ? null : [response.ContentType]));
         }
 
-        if (allowAnonymous)
+        var authorized = authorization switch
         {
-            builder.AllowAnonymous();
-        }
-        else if (authorizationPolicies is not null)
-        {
-            builder.RequireAuthorization(authorizationPolicies);
-        }
+            AnonymousAccess => builder.AllowAnonymous(),
+            PolicyAuthorization required => builder.RequireAuthorization(required.Policies),
+            HandlerAuthentication => builder,
+            null => throw new UnreachableException(),
+        };
 
         foreach (var item in metadata)
         {
-            builder.WithMetadata(item);
+            authorized.WithMetadata(item);
         }
 
-        return builder;
+        return authorized;
     }
 }
+
+internal sealed record AnonymousAccess;
+
+internal sealed record PolicyAuthorization(string[] Policies);
+
+internal sealed record HandlerAuthentication;
+
+internal readonly union EndpointAuthorization(AnonymousAccess, PolicyAuthorization, HandlerAuthentication);
 
 internal sealed record ResponseHeaderMetadata(int StatusCode, string Name, string Description, JsonSchemaType Type);
 

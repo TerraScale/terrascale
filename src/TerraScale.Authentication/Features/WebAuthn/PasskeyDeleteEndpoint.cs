@@ -10,6 +10,7 @@ public sealed class PasskeyDeleteEndpoint(PasskeyCredentials passkeys, TotpCrede
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete("/v1/terrascale/account/passkeys/{id}");
         this.Describe("delete_passkey", "Delete a passkey",
             "Removes one enrolled passkey of the caller and releases its credential claim; the account's sessions and tokens stay. Requires a fresh approved delete_passkey/ts-auth proof in X-TerraScale-Step-Up-Proof, exactly as account deletion does. The write is conditional on the account's authentication state and the stored passkey list; a concurrent change answers 409 version_conflict, an unknown id 404 passkey_not_found. Deleting the last passkey of an account without an authenticator app that belongs to an organization requiring two-factor authentication answers 409 last_factor.",

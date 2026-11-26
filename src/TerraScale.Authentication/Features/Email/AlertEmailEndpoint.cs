@@ -23,6 +23,7 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/{slug}/email/alert");
         Name("email_alert_send");
         Summary("Notify the current organization owners of an alert transition");

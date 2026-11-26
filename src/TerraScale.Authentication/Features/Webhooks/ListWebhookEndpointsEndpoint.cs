@@ -9,6 +9,7 @@ public sealed class ListWebhookEndpointsEndpoint(TenantDirectory tenants, Platfo
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/webhook-endpoints");
         this.Describe("list_webhook_endpoints", "List webhook endpoints", "The project's registered webhook endpoints, without secrets. Needs the admin project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookEndpointPageBody));
     }

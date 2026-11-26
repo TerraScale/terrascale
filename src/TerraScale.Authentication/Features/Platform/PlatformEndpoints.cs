@@ -80,6 +80,7 @@ public sealed class CreateOrganizationEndpoint(PlatformDirectory platform, Platf
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Organizations);
         this.Describe("create_organization", "Create an organization", "The caller becomes its first member, with the owner role.", "Organizations", typeof(CreateOrganizationRequest), StatusCodes.Status201Created, typeof(OrganizationBody), scoped: false, conflict: true);
     }
@@ -104,6 +105,7 @@ public sealed class ListOrganizationsEndpoint(PlatformDirectory platform, Platfo
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Organizations);
         this.Describe("list_organizations", "List the caller's organizations", "Organizations the caller is a member of, and those where it is a collaborator on a project (role null), in id order.", "Organizations", null, StatusCodes.Status200OK, typeof(OrganizationPageBody), paged: true, roleChecked: false, scoped: false);
     }
@@ -120,6 +122,7 @@ public sealed class GetOrganizationEndpoint(PlatformDirectory platform, Platform
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Organization);
         this.Describe("get_organization", "Get an organization", "Members and collaborators. A caller who is neither gets 404, as for an unknown id.", "Organizations", null, StatusCodes.Status200OK, typeof(OrganizationBody));
     }
@@ -137,6 +140,7 @@ public sealed class RenameOrganizationEndpoint(PlatformDirectory platform, Platf
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Patch(Organization);
         this.Describe("rename_organization", "Rename an organization", "Needs the admin organization role.", "Organizations", typeof(NameRequest), StatusCodes.Status200OK, typeof(OrganizationBody));
     }
@@ -156,6 +160,7 @@ public sealed class SetMfaPolicyEndpoint(PlatformDirectory platform, PlatformAut
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put($"{Organization}/mfa-policy");
         this.Describe("set_organization_mfa_policy", "Require two-factor authentication",
             "Needs the owner role. With require_mfa true, members without an active second factor get 403 mfa_required from the organization's endpoints and token exchange until they enrol an authenticator app or a passkey; turning it on needs the caller's own factor (409 mfa_not_enrolled), which a passkey also satisfies. Recorded in the audit log as organization.mfa_required or organization.mfa_optional.",
@@ -174,6 +179,7 @@ public sealed class AccountMfaEndpoint(TotpCredentials mfa, AuthOptions options,
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/terrascale/account/mfa");
         this.Describe("get_account_mfa", "Get two-factor status", "The caller's own second-factor state and the hosted page that manages it.", "Members", null, StatusCodes.Status200OK, typeof(AccountMfaBody), roleChecked: false, scoped: false);
     }
@@ -189,6 +195,7 @@ public sealed class SignOutEverywhereEndpoint(Sessions sessions, PlatformAuthent
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/terrascale/account/sign-out");
         this.Describe("sign_out_everywhere", "Sign out everywhere",
             "Advances the caller's authentication epoch: every hosted browser session, OAuth refresh token and sign-in access token of the account, including the one making this call, is refused from then on, and pending sign-in codes and challenges die. API keys are separate credentials and stay valid. Repeating the call is harmless.",
@@ -206,6 +213,7 @@ public sealed class DeleteOrganizationEndpoint(PlatformDirectory platform, Platf
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Organization);
         this.Describe("delete_organization", "Delete an organization", "Needs the owner role and, in X-TerraScale-Step-Up-Proof, this organization's delete_organization/ts-auth proof that POST /v1/terrascale/step-up/consume already consumed for the same account and state, before the proof's five-minute deadline. The delete spends the proof first, so any retry needs a new proof. 409 not_empty while it has projects. Logically removes the auth organization and durably retries its remaining auth records. This response does not certify physical erasure or other services' data.", "Organizations", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
@@ -230,6 +238,7 @@ public sealed class ListMembersEndpoint(PlatformDirectory platform, PlatformAuth
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Organization}/members");
         this.Describe("list_members", "List organization members", "Needs any organization role. In user id order.", "Members", null, StatusCodes.Status200OK, typeof(MemberPageBody), paged: true);
     }
@@ -246,6 +255,7 @@ public sealed class ChangeMemberRoleEndpoint(PlatformDirectory platform, Platfor
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put($"{Organization}/members/{{user}}/role");
         this.Describe("change_member_role", "Change a member's organization role", "Needs admin, and owner when the member is or becomes an owner. 409 last_owner when it would demote the last owner.", "Members", typeof(RoleRequest), StatusCodes.Status200OK, typeof(MemberBody), conflict: true);
     }
@@ -267,6 +277,7 @@ public sealed class RemoveMemberEndpoint(PlatformDirectory platform, PlatformAut
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete($"{Organization}/members/{{user}}");
         this.Describe("remove_member", "Remove a member", "Needs admin, and owner to remove an owner. 409 last_owner for the last owner. Also removes the user's project roles in the organization.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
@@ -282,6 +293,7 @@ public sealed class LeaveOrganizationEndpoint(PlatformDirectory platform, Platfo
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Organization}/leave");
         this.Describe("leave_organization", "Leave an organization", "Members and collaborators. Removes the caller's organization and project roles. 409 last_owner for the last owner.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
@@ -297,6 +309,7 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete("/v1/terrascale/account");
         this.Describe("delete_account", "Delete your account", "Requires a fresh delete_account/ts-auth X-TerraScale-Step-Up-Proof, or the exact preauthorized receipt plus X-TerraScale-Deletion-Authorization for continuation. A timely initial proof consumption with a receipt returns its authorization secret in that response header; persist privately for retries. Once logical deletion completes (204), revokes auth access and frees the caller's email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects and databases, including replicas in every region. TerraBase permanently fences each project and purges its data before accepting active-copy erasure; the account waits for every catalog holder. Backup erasure remains durable background work under the database deletion deadlines. Shared organizations are left. 202 while a project closure is pending: the account stays until it finishes in the background, and new sign-ins are temporarily refused until completion or cancellation; cancellation restores sign-in without changing credentials. The background worker resumes without another submit. Optional X-TerraScale-Deletion-Receipt: a canonical 32-byte random base64url capability, retained for 15 days to read status after tokens stop working. Reuse it only for this closure generation; 409 deletion_refused otherwise. 409 platform_project_protected, before any closure starts, while the caller is the only member of TerraScale's own organization, whose projects hold its services' databases. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, scoped: false);
         Produces(StatusCodes.Status202Accepted);
@@ -340,6 +353,7 @@ public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAu
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Organization}/projects");
         this.Describe("create_project", "Create a project", "Needs the member organization role, or the admin role for an AI agent acting for the caller with mcp:write. The caller becomes the project's explicit admin. 409 name_taken.", "Projects", typeof(NameRequest), StatusCodes.Status201Created, typeof(ProjectBody), conflict: true);
     }
@@ -359,6 +373,7 @@ public sealed class ListProjectsEndpoint(PlatformDirectory platform, PlatformAut
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Organization}/projects");
         this.Describe("list_projects", "List projects", "Every project for organization members, the granted ones for collaborators; in id order.", "Projects", null, StatusCodes.Status200OK, typeof(ProjectPageBody), paged: true);
     }
@@ -375,6 +390,7 @@ public sealed class GetProjectEndpoint(PlatformDirectory platform, PlatformAuthe
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Project);
         this.Describe("get_project", "Get a project", "Needs an effective project role. Others get 404.", "Projects", null, StatusCodes.Status200OK, typeof(ProjectBody));
     }
@@ -392,6 +408,7 @@ public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAu
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Patch(Project);
         this.Describe("rename_project", "Rename a project", "Needs the project's admin role. 409 name_taken.", "Projects", typeof(NameRequest), StatusCodes.Status200OK, typeof(ProjectBody), conflict: true);
     }
@@ -410,6 +427,7 @@ public sealed class SetProjectAllowedCidrsEndpoint(PlatformDirectory platform, P
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put($"{Project}/allowed-cidrs");
         this.Describe("set_project_allowed_cidrs", "Set a project's IP allowlist", "Needs the project's admin role. Replaces the allowlist every API key token of the project is held to, on top of the key's own: up to 32 IPv4 or IPv6 CIDRs or addresses, empty allows any address. TerraBase answers 403 ip_not_allowed otherwise; a change applies to tokens issued afterwards, within 60 seconds.", "Projects", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ProjectBody));
     }
@@ -428,6 +446,7 @@ public sealed class DeleteProjectEndpoint(Closures closures, PlatformAuthenticat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Project);
         this.Describe("delete_project", "Delete a project", "Needs the project's admin role. Commits a closure intent, then asks TerraBase to fence the project permanently; the auth project is removed (204) only after every TerraBase region confirmed it empty, then its project roles, API keys and all invitation statuses are durably retried. 202 while TerraBase has not confirmed: the project refuses new roles, API keys and invitations and the closure finishes in the background; repeating the request resumes it. 409 platform_project_protected, changing nothing, for TerraScale's own projects, which hold its services' databases. 409 not_empty, closure_conflict or binding_conflict, changing nothing, when TerraBase refuses; once TerraBase showed the fence, a later refusal keeps the closure pending instead. This does not certify physical erasure.", "Projects", null, StatusCodes.Status204NoContent, null, conflict: true);
         Produces(StatusCodes.Status202Accepted);
@@ -441,6 +460,7 @@ public sealed class ListProjectMembersEndpoint(PlatformDirectory platform, Platf
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Project}/members");
         this.Describe("list_project_members", "List explicit project roles", "Needs an effective project role. Lists explicit grants only; organization members' implied roles are not repeated. In user id order.", "Project members", null, StatusCodes.Status200OK, typeof(ProjectMemberPageBody), paged: true);
     }
@@ -457,6 +477,7 @@ public sealed class SetProjectMemberRoleEndpoint(PlatformDirectory platform, Pla
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put($"{Project}/members/{{user}}");
         this.Describe("set_project_member_role", "Grant or change a project role", "Needs the project's admin role. A new grant needs a member of the organization (404 otherwise; invite anyone else).", "Project members", typeof(RoleRequest), StatusCodes.Status200OK, typeof(ProjectMemberBody));
     }
@@ -478,6 +499,7 @@ public sealed class RemoveProjectMemberEndpoint(PlatformDirectory platform, Plat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete($"{Project}/members/{{user}}");
         this.Describe("remove_project_member", "Remove a project role", "Needs the project's admin role. Organization members keep the role their organization role implies.", "Project members", null, StatusCodes.Status204NoContent, null);
     }
@@ -604,6 +626,11 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
         if (request is not null || paged)
         {
             Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        }
+
+        if (paged)
+        {
+            Metadata(new PagedQuery());
         }
 
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);

@@ -7,6 +7,7 @@ public sealed class DeleteSsoConnectionEndpoint(SsoConnections connections, Plat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Connection);
         this.Describe("delete_sso_connection", "Delete the organization's SSO connection", "Needs the owner role. Members of the domain sign in with email codes and passwords again; their memberships stay.", "Single sign-on", null, StatusCodes.Status204NoContent, null, conflict: true);
     }

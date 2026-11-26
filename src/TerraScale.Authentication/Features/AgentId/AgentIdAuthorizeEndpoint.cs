@@ -27,6 +27,7 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
         Produces<AgentIdPendingBody>(StatusCodes.Status200OK);
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
         Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<OAuthErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
     }
 

@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.Features.Notifications;
 
 public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, AccountService accounts, LiveView live, ApiKeyExpiryNotifications expiry) : EndpointWithoutRequest<IResult>
 {
-    public override void Configure() => Get("/notifications/live");
+    public override void Configure() => Get("/notifications/live").AuthenticateInHandler();
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {

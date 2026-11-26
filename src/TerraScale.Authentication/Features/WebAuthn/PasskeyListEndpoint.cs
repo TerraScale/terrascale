@@ -8,6 +8,7 @@ public sealed class PasskeyListEndpoint(PasskeyCredentials passkeys, PlatformAut
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/terrascale/account/passkeys");
         this.Describe("list_passkeys", "List your passkeys",
             "The caller's enrolled passkeys: id, caller-chosen name, authenticator model (aaguid), creation time and last use. Public keys and other credential material are never returned.",

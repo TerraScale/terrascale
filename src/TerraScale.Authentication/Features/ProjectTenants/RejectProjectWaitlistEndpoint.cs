@@ -9,6 +9,7 @@ public sealed class RejectProjectWaitlistEndpoint(TenantDirectory tenants, Platf
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/waitlist/{entry}/reject");
         this.Describe("reject_project_waitlist", "Reject a waitlist entry", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }

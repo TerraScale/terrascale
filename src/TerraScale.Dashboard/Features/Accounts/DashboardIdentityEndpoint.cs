@@ -8,6 +8,7 @@ namespace TerraScale.Dashboard.Features.Accounts
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Get("/api/v1/auth/me");
             Metadata(new IntegrationEndpointGroup("integration"));
             Name("getDashboardIdentity");

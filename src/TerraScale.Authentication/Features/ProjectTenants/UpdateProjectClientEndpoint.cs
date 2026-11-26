@@ -14,6 +14,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put(Root + "/clients/{client_id}");
         this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs, or a machine app's allowed_scopes, allowed_audiences and token_lifetime_minutes (5 to 60); machine apps require no redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. allowed_origins holds at most 10 exact browser origins (https://host[:port], or http on a loopback host; lowercase, no default port, path, trailing slash, wildcard, userinfo, query or fragment) whose cross-origin token, userinfo, revocation and guest requests get CORS; allow_anonymous (default false) admits guests at /{project}/oauth/anonymous. Machine apps take neither. An omitted allowed_origins or allow_anonymous stays unchanged. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
     }

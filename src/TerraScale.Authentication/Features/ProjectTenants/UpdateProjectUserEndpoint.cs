@@ -11,6 +11,7 @@ public sealed class UpdateProjectUserEndpoint(TenantDirectory tenants, PlatformA
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Patch(Root + "/users/{user}");
         this.Describe("update_project_user", "Update an end user", "Requires auth:write or the admin project role. Omitted fields are unchanged. Metadata uses JSON merge patch; each merged object is at most 8192 UTF-8 bytes and depth 10. custom_claims replaces the trusted claims whole and null clears them: an object of at most 32 members and 1000 bytes serialized, names matching [a-z][a-z0-9_]{0,62}, values strings of at most 256 characters, finite numbers, booleans, or arrays of at most 64 strings or 64 numbers. Every later access token of the user carries them as claims. Unchanged patches emit no event.",
             "Project tenants", typeof(UserProfilePatch), StatusCodes.Status200OK, typeof(ProjectUserBody), conflict: true);

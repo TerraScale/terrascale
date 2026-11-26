@@ -7,6 +7,7 @@ public sealed class ListSelfUserApiKeysEndpoint(PlatformAuthentication authentic
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "");
         this.DescribeSelf("list_self_user_api_keys", "List self user api keys", null, 200, typeof(UserApiKeyPageBody), paged: true);
     }

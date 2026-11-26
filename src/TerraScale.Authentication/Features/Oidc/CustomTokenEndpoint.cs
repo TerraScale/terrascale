@@ -39,6 +39,7 @@ public sealed class CustomTokenEndpoint(CustomTokens tokens, ApiKeys keys, Attem
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Path);
         Name("mintCustomToken");
         Summary("Mint a custom token for one end user of the project");

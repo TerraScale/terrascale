@@ -46,6 +46,7 @@ public abstract class EndpointBase : IEndpoint
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => Definition.AllowAnonymous();
     protected EndpointDefinition RequireAuthorization(params string[] policies) => Definition.RequireAuthorization(policies);
+    protected EndpointDefinition AuthenticateInHandler() => Definition.AuthenticateInHandler();
     protected EndpointDefinition Metadata(params object[] metadata) => Definition.WithMetadata(metadata);
 
     public RouteHandlerBuilder Map(IEndpointRouteBuilder routes)

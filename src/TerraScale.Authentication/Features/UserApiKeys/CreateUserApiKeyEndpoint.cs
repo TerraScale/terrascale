@@ -8,6 +8,7 @@ public sealed class CreateUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/users/{user}/api-keys");
         this.Describe("create_user_api_key", "Create user api key", "Project-scoped user-owned keys. Requires the admin role or the corresponding project key scope.", "User API keys", typeof(UserApiKeyRequest), 201, typeof(UserApiKeyBody), conflict: true);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);

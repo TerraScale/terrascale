@@ -1,4 +1,5 @@
 using System.Globalization;
+using TerraBase.Continuity;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
@@ -172,8 +173,8 @@ internal sealed class BackupFlow(DatabaseAccess access, ManagementService manage
         {
             ResolvedDatabase resolved => await management.PlanAsync(resolved.Project, cancellationToken) switch
             {
-                string plan when write => await WritePolicyAsync(resolved, request, Plans.BackupRetentionDays(plan), cancellationToken),
-                string plan => await ReadPolicyAsync(resolved, Plans.BackupRetentionDays(plan), cancellationToken),
+                string plan when write => await WritePolicyAsync(resolved, request, BackupRetention.PlanCapDays(plan), cancellationToken),
+                string plan => await ReadPolicyAsync(resolved, BackupRetention.PlanCapDays(plan), cancellationToken),
                 BackendUnavailable unavailable => unavailable,
             },
             InvalidInput invalid => invalid,

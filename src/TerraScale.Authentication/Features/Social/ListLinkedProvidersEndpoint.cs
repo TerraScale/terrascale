@@ -10,6 +10,7 @@ public sealed class ListLinkedProvidersEndpoint(PlatformAuthentication authentic
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/terrascale/account/providers");
         this.Describe("account_linked_providers", "List my linked sign-in providers", "Requires the account's live sign-in token. Returns provider names only.", "Account", null,
             StatusCodes.Status200OK, typeof(LinkedProvidersBody), roleChecked: false, scoped: false);

@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         internal const string ReturnTo = "/profile?tab=agents";
 
-        public override void Configure() => Post("/api/v1/dashboard/profile/agents/{id}/revoke");
+        public override void Configure() => Post("/api/v1/dashboard/profile/agents/{id}/revoke").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

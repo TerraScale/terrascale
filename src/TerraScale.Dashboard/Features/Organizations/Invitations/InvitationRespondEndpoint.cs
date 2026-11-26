@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
 
     public sealed class InvitationRespondEndpoint(DashboardSessions sessions, InvitationService invitations) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/invitations/{token}/respond");
+        public override void Configure() => Post("/invitations/{token}/respond").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

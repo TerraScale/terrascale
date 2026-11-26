@@ -256,6 +256,7 @@ namespace TerraScale.Dashboard.Features.Backups
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Post("/databases/{databaseId}/point-in-time");
             Summary("Plan, rewind or restore a database to a point in time");
             Tags("Backups");

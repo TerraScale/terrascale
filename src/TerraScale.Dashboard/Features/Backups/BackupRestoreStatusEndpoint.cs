@@ -4,7 +4,7 @@ namespace TerraScale.Dashboard.Features.Backups
 {
     public sealed class BackupRestoreStatusEndpoint(DashboardSessions sessions, AccountService accounts, BackupService backups) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/api/v1/dashboard/backups/restore");
+        public override void Configure() => Get("/api/v1/dashboard/backups/restore").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

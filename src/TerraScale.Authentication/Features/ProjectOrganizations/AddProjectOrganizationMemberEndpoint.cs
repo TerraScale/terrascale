@@ -8,6 +8,7 @@ public sealed class AddProjectOrganizationMemberEndpoint(ProjectOrganizationDire
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(OrganizationRoute + "/memberships");
         this.Describe("add_project_organization_member", "Add an organization member", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", typeof(ProjectMembershipRequest), 201, typeof(ProjectOrganizationMembership), paged: false, conflict: true);
     }

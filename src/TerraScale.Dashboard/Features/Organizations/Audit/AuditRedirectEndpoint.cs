@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
     {
         private static readonly string[] Filters = ["search", "action", "severity", "range", "page"];
 
-        public override void Configure() => Get("/audit");
+        public override void Configure() => Get("/audit").AllowAnonymous();
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
