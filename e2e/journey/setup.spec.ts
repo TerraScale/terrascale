@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import { waitForCreatedDatabase } from '../support/database';
 import { test, expect } from '../support/audit';
 import { cloudflareSendCount, newAddress, nextMail } from '../support/inbox';
 import { saveJourney, saveSecret, saveSession, type SetupJourney } from '../support/state';
@@ -127,9 +126,17 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await page.locator('button[data-plan="free"]').click();
   await expect(page.locator('#projectName')).toBeVisible();
   await audit.check('onboarding project');
-  const region = await page.locator('#onboarding-region input[name="region"]:checked').inputValue();
+  const onboardingRegions = page.locator('#onboarding-region');
+  const onboardingPicked = onboardingRegions.locator('input[name="regions"]:checked');
+  await expect(onboardingPicked).toHaveCount(1);
+  const region = await onboardingPicked.inputValue();
+  await onboardingPicked.click();
+  await expect(onboardingPicked).toHaveCount(1);
+  await expect(onboardingRegions.getByRole('status')).toHaveText('A database needs one region.');
   await page.locator('#projectName').fill(projectName);
-  await page.getByRole('button', { name: 'Create project and open Dashboard' }).click();
+  await expect(page.locator('#databaseName')).toHaveValue('main');
+  await page.locator('#databaseName').fill(databaseName);
+  await page.getByRole('button', { name: 'Create project and database' }).click();
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/');
   const selection = new URL(page.url()).searchParams;
   const organizationId = selection.get('organizationId') ?? '';
@@ -137,12 +144,17 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   const identity = { email, displayName, organizationId, organizationName: 'Personal', projectId, projectName };
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Overview');
   await regionsSettled(page);
-  await expect(stat(page, 'Databases')).toHaveText('0');
+  await expect(stat(page, 'Databases')).toHaveText('1');
   await expect(stat(page, 'Organization members')).toHaveText('1');
   await shell(page, identity);
   await audit.check('overview after onboarding');
 
   await page.goto('/databases');
+  const databaseRow = page.locator('#project-databases tbody tr').filter({ hasText: databaseName });
+  await expect(databaseRow).toBeVisible();
+  const link = databaseRow.getByRole('link');
+  await expect(link).toHaveAttribute('href', /^\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
+  const databaseId = new URL(await link.getAttribute('href') ?? '', page.url()).pathname.split('/')[2];
   await page.getByRole('button', { name: 'New database', exact: true }).first().click();
   await expect(page.locator('#create-database[open]')).toBeVisible();
   await audit.check('new database dialog');
@@ -152,10 +164,8 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await picked.click();
   await expect(picked).toHaveCount(1);
   await expect(regions.getByRole('status')).toHaveText('A database needs one region.');
-  await page.locator('#database-name').fill(databaseName);
-  const databasesUrl = page.url();
-  await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
-  const { id: databaseId, link } = await waitForCreatedDatabase(page, databaseName, databasesUrl);
+  await page.locator('#create-database').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('dialog:modal')).toHaveCount(0);
   await link.click();
   await page.waitForURL(url => url.pathname === `/databases/${databaseId}`);
   await expect(page.locator('.ts-db-title')).toHaveText(databaseName);
