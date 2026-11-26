@@ -183,7 +183,7 @@ test.describe('canary credential', () => {
           origin: 'https://api.terrascale.tech',
           region: database.region,
           project: current.projectId,
-          database: name,
+          database: database.name,
           issuer: 'https://auth.terrascale.tech/terrascale',
           key: secret,
         },

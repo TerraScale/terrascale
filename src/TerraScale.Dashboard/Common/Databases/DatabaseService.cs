@@ -90,8 +90,14 @@ namespace TerraScale.Dashboard.Common.Databases
                 try { remote = await backend.CreateAsync(scope, name, home, replicas, allRegions, cancellationToken, ttlSeconds); }
                 catch (TerraBaseConflictException error) when (error.ErrorCode is "name_taken" or "database_limit")
                 {
-                    var found = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name);
-                    if (found is null) { return DatabaseMutations.MutationRefused(new DatabaseStateConflict(error.ErrorCode == "name_taken" ? "A database with this name already exists." : DatabaseResults.Message(error))); }
+                    var listed = await backend.ListAsync(scope, home, cancellationToken);
+                    var found = listed.FirstOrDefault(database => database.Name == name);
+                    if (found is null)
+                    {
+                        return DatabaseMutations.MutationRefused(new DatabaseStateConflict(error.ErrorCode == "name_taken" ? "A database with this name already exists."
+                            : listed.Count == 0 ? DatabaseResults.Message(error) : $"The organization's plan allows no more databases. This project already has {string.Join(", ", listed.Select(database => database.Name))}."));
+                    }
+
                     remote = found;
                     recovered = true;
                 }
@@ -113,6 +119,11 @@ namespace TerraScale.Dashboard.Common.Databases
                 {
                     if (recovered) { return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists in other regions.")); }
                     throw new HttpRequestException("Database provisioning returned a different placement.");
+                }
+
+                if (recovered && placement[0].Id != home.Id)
+                {
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists with another home region."));
                 }
 
                 if (discovery.Catalog.Count == 0 && !recovered && placement[0].Id != home.Id)

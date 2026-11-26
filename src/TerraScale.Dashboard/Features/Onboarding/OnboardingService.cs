@@ -176,22 +176,10 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 throw new IOException("The provisioned project identity changed.");
             }
 
-            await accounts.UpdateOrganizationAsync(context, organization =>
-            {
-                if (!organization.CanManage(session.UserId))
-                {
-                    throw new AccountAccessException("Project management is required.");
-                }
-
-                var current = organization.Projects.GetValueOrDefault(project.Id) ?? throw new AccountAccessException("The personal project is unavailable.", 404);
-                current.Name = project.Name;
-                current.Slug = project.Slug;
-                current.Regions = project.Regions;
-            }, cancellationToken);
             var created = await FirstDatabaseAsync(context, context.Project, database, regions, cancellationToken);
             return created switch
             {
-                DatabaseRecord => await FinishAsync(session, cancellationToken),
+                DatabaseRecord => await FinishAsync(session, context, project, cancellationToken),
                 DatabaseRefusal refused => refused
             };
         }
@@ -207,8 +195,20 @@ namespace TerraScale.Dashboard.Features.Onboarding
             return await databases.CreateAsync(context, name, regions[0], cancellationToken, replicaRegions: [.. regions.Skip(1)]);
         }
 
-        private async Task<OnboardingSaveResult> FinishAsync(SessionRecord session, CancellationToken cancellationToken)
+        private async Task<OnboardingSaveResult> FinishAsync(SessionRecord session, AccountContext context, ProjectRecord project, CancellationToken cancellationToken)
         {
+            await accounts.UpdateOrganizationAsync(context, organization =>
+            {
+                if (!organization.CanManage(session.UserId))
+                {
+                    throw new AccountAccessException("Project management is required.");
+                }
+
+                var current = organization.Projects.GetValueOrDefault(project.Id) ?? throw new AccountAccessException("The personal project is unavailable.", 404);
+                current.Name = project.Name;
+                current.Slug = project.Slug;
+                current.Regions = project.Regions;
+            }, cancellationToken);
             await accounts.UpdateAccountAsync(session, account =>
             {
                 if (account.OnboardingStep != "project")
