@@ -4,7 +4,7 @@ import { expect, test as base } from '../support/audit';
 import { mcpTool } from '../support/mcp';
 import { signInToken, stepUp } from '../support/auth-management';
 import { auth, dash } from '../support/stack';
-import { waitForCreatedDatabase } from '../support/database';
+import { deleteDatabase } from '../support/database';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { saveSecret } from '../support/state';
 
@@ -23,24 +23,11 @@ const test = base.extend<{ rulesAccount: RulesAccount }>({
   rulesAccount: async ({ browser }, use, info) => {
     const account = await createDedicatedProjectOwner(browser, info, 'Rules owner');
     try {
-      const { page } = account;
-      const name = 'rules-' + randomBytes(6).toString('hex');
-      await page.goto('/databases');
-      await page.getByRole('button', { name: 'New database', exact: true }).first().click();
-      await page.locator('#database-name').fill(name);
-      const databasesUrl = page.url();
-      await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
-      const created = await waitForCreatedDatabase(page, name, databasesUrl);
+      const { page, database } = account;
       try {
-        await use({ ...account, current: { ...account.current, databaseId: created.id, databaseName: name } });
+        await use({ ...account, current: { ...account.current, databaseId: database.id, databaseName: database.name } });
       } finally {
-        await page.goto(`/databases/${created.id}/danger`);
-        await page.locator('main').getByRole('button', { name: 'Delete database', exact: true }).click();
-        const dialog = page.locator('dialog[open]');
-        await dialog.locator('input[name="confirmName"]').fill(name);
-        await dialog.getByRole('button', { name: 'Delete database', exact: true }).click();
-        await page.waitForURL(url => url.pathname === '/databases');
-        await expect(page.locator('main tr').filter({ hasText: name })).toHaveCount(0);
+        await deleteDatabase(page, database.id, database.name);
         if (info.status === info.expectedStatus) await account.audit.finish();
       }
     } finally {

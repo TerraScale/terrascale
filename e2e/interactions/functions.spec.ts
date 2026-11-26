@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import type { APIResponse, Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { signInToken, stepUp } from '../support/auth-management';
@@ -596,10 +595,7 @@ test('guest and end-user tokens get 403 on every function route while developer 
     const developerToken = (await exchanged.json()).access_token as string;
     saveSecret('functions-access-developer-token', developerToken);
     developer.Authorization = 'Bearer ' + developerToken;
-    const created = await request.post(`https://api.terrascale.tech/v1/projects/${project}/databases`,
-      { headers: developer, data: { name: 'functions-access-' + randomBytes(4).toString('hex') } });
-    expect(created.status(), await created.text()).toBe(201);
-    databaseId = (await created.json()).id as string;
+    databaseId = account.database.id;
     const functions = `https://api.terrascale.tech/v1/projects/${project}/databases/${databaseId}/functions`;
     const url = `${functions}/${unique('access')}`;
     const padding = '\u00e9'.repeat(200_000);

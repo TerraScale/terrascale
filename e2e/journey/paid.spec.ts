@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { onboard, signUp, verify } from '../support/hosted';
 import { regionsSettled } from '../support/overview';
-import { createApiKey, createDatabase, databaseNames, stripeLog, type PaidJourney } from '../support/paid';
+import { createApiKey, createDatabase, databaseNames, openOnboardedDatabase, stripeLog, type PaidJourney } from '../support/paid';
 import { shell } from '../support/shell';
 import { dash, stateDir, stripeStandIn } from '../support/stack';
 import { journey, ownerSession, saveJourney, saveSecret, saveSession } from '../support/state';
@@ -48,7 +48,7 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
 
   await signUp(page, audit, email, password, 'paid owner');
   await verify(page, email);
-  const region = await onboard(page, audit, displayName, projectName, 'paid owner');
+  const region = await onboard(page, audit, displayName, projectName, 'paid owner', databaseName);
   const selection = new URL(page.url()).searchParams;
   const organizationId = selection.get('organizationId') ?? '';
   const projectId = selection.get('projectId') ?? '';
@@ -69,7 +69,7 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   await shell(page, identity);
   await audit.check('paid owner organization renamed');
 
-  const databaseId = await createDatabase(page, audit, databaseName, region, 'paid owner database on Free');
+  const databaseId = await openOnboardedDatabase(page, audit, databaseName, region, 'paid owner database on Free');
 
   await page.goto('/organization?tab=billing');
   await expect(page.locator('#billing-summary .ts-billing-plan-name')).toHaveText('Free');

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Browser, TestInfo } from '@playwright/test';
 import { Audit, auditedContext, expect } from './audit';
 import { signInToken, stepUp, type AuthOwner } from './auth-management';
+import { deleteDatabase, listedDatabase } from './database';
 import { onboard, signUp, verify } from './hosted';
 import { newAddress } from './inbox';
 import { auth, desktop, stateDir } from './stack';
@@ -24,12 +25,15 @@ export async function createDedicatedProjectOwner(browser: Browser, info: TestIn
   const audit = new Audit(page, info);
   await signUp(page, audit, email, password, label);
   await verify(page, email);
-  await onboard(page, audit, label, label + ' ' + runId, label);
+  const databaseName = 'main-' + runId;
+  const region = await onboard(page, audit, label, label + ' ' + runId, label, databaseName);
   const url = new URL(page.url());
   const projectId = url.searchParams.get('projectId')!;
   const organizationId = url.searchParams.get('organizationId')!;
   expect(projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
   expect(organizationId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+  const { id: databaseId } = await listedDatabase(page, databaseName);
+  const database = { id: databaseId, name: databaseName, region: region.toLowerCase() };
   await page.goto('/api-keys?create=key');
   const dialog = page.locator('#create-key[open]');
   await dialog.locator('#key-name').fill(label);
@@ -64,11 +68,12 @@ export async function createDedicatedProjectOwner(browser: Browser, info: TestIn
       await close();
     }
   };
-  return { current, context, page, audit, close, remove };
+  return { current, database, context, page, audit, close, remove };
 }
 
 export async function provisionProjectOwner(browser: Browser, info: TestInfo): Promise<void> {
   const account = await createDedicatedProjectOwner(browser, info, 'Auth features owner');
+  await deleteDatabase(account.page, account.database.id, account.database.name);
   writeFileSync(identityFile, JSON.stringify(account.current), { mode: 0o600 });
   await account.context.storageState({ path: sessionFile });
   await account.close();

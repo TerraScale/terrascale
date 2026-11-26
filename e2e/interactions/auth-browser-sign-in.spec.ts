@@ -9,6 +9,7 @@ import { auditedContext, expect, test } from '../support/audit';
 import { signInToken, stepUp } from '../support/auth-management';
 import { hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
+import { deleteDatabase } from '../support/database';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { enterSecret } from '../support/secret';
 import { auth, desktop } from '../support/stack';
@@ -62,6 +63,7 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
   const { current, page } = account;
   const project = current.projectId;
   const redirect = app + '/callback';
+  await deleteDatabase(page, account.database.id, account.database.name);
   const dataAudience = api + '/v1/projects/' + project;
   const exchanged = await request.post(auth + '/terrascale/oauth/token', {
     form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project,

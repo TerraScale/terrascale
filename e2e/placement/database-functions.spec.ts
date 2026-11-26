@@ -5,6 +5,7 @@ import { connect } from 'node:http2';
 import { resolve, join } from 'node:path';
 import { expect } from '@playwright/test';
 import { test as base } from '../support/audit';
+import { deleteDatabase } from '../support/database';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { localPort, production, stateDir } from '../support/stack';
 import { authenticatedCells, gru, project, name, json, removeDatabase, type Cells } from './support';
@@ -24,6 +25,7 @@ base.describe('database functions', () => {
   });
   test.beforeAll(async ({ browser }, info) => {
     owner = await createDedicatedProjectOwner(browser, info, 'Database functions owner');
+    await deleteDatabase(owner.page, owner.database.id, owner.database.name);
     await publish(owner.current.organizationId);
   });
   test.afterAll(async () => { if (owner) await owner.remove(); });
