@@ -135,23 +135,38 @@ namespace TerraScale.Dashboard.Common.Usage
             var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
             long? units = null;
             long projectUnits = 0;
+            var counted = false;
             foreach (var id in projectIds)
             {
-                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading } || counter(reading) is not ({ } organizationUnits, var project) ||
+                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading } ||
                     reading.Month != month || reading.ReadUnits < 0 || reading.Invocations < 0 || reading.Units < reading.WriteUnits)
                 {
                     return null;
                 }
 
-                if (organizationUnits < project || units is not null && units != organizationUnits)
+                var (organizationUnits, project) = counter(reading);
+                counted = true;
+                try { projectUnits = checked(projectUnits + project); } catch (OverflowException) { return null; }
+                if (organizationUnits is { } organization)
+                {
+                    if (organization < project || units is not null && units != organization)
+                    {
+                        return null;
+                    }
+
+                    units = organization;
+                }
+                else if (units is not null)
                 {
                     return null;
                 }
-
-                try { projectUnits = checked(projectUnits + project); } catch (OverflowException) { return null; }
-                units = organizationUnits;
             }
-            return units is { } total && total >= projectUnits ? total : null;
+            if (!counted)
+            {
+                return null;
+            }
+
+            return units is { } total ? total >= projectUnits ? total : null : projectUnits;
         }
     }
     public interface IUsageMeasurements
