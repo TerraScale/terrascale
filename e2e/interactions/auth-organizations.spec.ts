@@ -287,6 +287,15 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     });
     expect(revoked.status()).toBe(400);
     expect((await revoked.json()).error).toBe('invalid_grant');
+    const revocable = await tokens(page, other);
+    expect(claims(revocable.access_token)).toMatchObject({ org_id: other });
+    const userinfo = (token: string) => page.request.get(auth + '/' + current.projectId + '/oauth/userinfo', { headers: { Authorization: 'Bearer ' + token } });
+    expect((await userinfo(revocable.access_token)).status(), 'a live organization access token reads userinfo').toBe(200);
+    const revocation = await page.request.post(auth + '/' + current.projectId + '/oauth/revoke', {
+      form: { token: revocable.access_token, token_type_hint: 'access_token', client_id: client },
+    });
+    expect(revocation.status()).toBe(200);
+    expect((await userinfo(revocable.access_token)).status(), 'a revoked access token carrying org_id is refused at once').toBe(401);
     const succession = value(await organizations.createOrganization(key, current.projectId, { ...input, slug: input.slug + '-succession' })).id;
     extraOrganizations.push(succession);
     value(await organizations.addOrganizationMember(key, current.projectId, succession, { user_id: invitedId, role: 'member' }));

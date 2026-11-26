@@ -9,7 +9,7 @@ namespace TerraBase.Cluster;
 
 public sealed record PeerCatchUp(string NodeId, bool Complete, bool HeadEmpty);
 
-public sealed record CatchUpReport(Ulid DatabaseId, int Fetched, int Applied, int PeersContacted, IReadOnlyList<string> Failures, IReadOnlyList<PeerCatchUp> Peers)
+public sealed record CatchUpReport(Ulid DatabaseId, int Fetched, int Applied, int PeersContacted, IReadOnlyList<string> Failures, IReadOnlyList<PeerCatchUp> Peers, bool DatabaseMissing = false)
 {
     public static CatchUpReport Empty(Ulid databaseId) => new(databaseId, 0, 0, 0, [], []);
 }
@@ -90,7 +90,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
 
     private void ReportFailures(CatchUpReport report)
     {
-        if (report.Failures.Count == 0)
+        if (report.Failures.Count == 0 || report.DatabaseMissing)
         {
             _ = _failuresLogged.TryRemove(report.DatabaseId, out _);
             return;
@@ -131,7 +131,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         return resolved switch
         {
             ISqlDatabaseSession session => await SyncLeasedAsync(session, peers, perPeerTimeout, cancellationToken),
-            DatabaseNotFound notFound => new CatchUpReport(databaseId, 0, 0, 0, [notFound.Message], []),
+            DatabaseNotFound notFound => new CatchUpReport(databaseId, 0, 0, 0, [notFound.Message], [], DatabaseMissing: true),
             ClusterUnavailable unavailable => new CatchUpReport(databaseId, 0, 0, 0, [unavailable.Message], []),
         };
     }

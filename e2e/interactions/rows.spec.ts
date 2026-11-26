@@ -72,9 +72,15 @@ test('end users write rows only as the database rules allow, checked in the home
   const ownerToken = (await exchanged.json()).access_token as string;
   saveSecret('rows-owner-token', ownerToken);
   const owner = { authorization: 'Bearer ' + ownerToken };
-  const created = await request.post(`${api}/v1/projects/${project}/databases`, { headers: owner, data: { name: 'rows-' + randomBytes(4).toString('hex') } });
-  expect(created.status(), await created.text()).toBe(201);
-  const database = `${api}/v1/projects/${project}/databases/${(await created.json()).id}`;
+  const databaseName = 'rows-' + randomBytes(4).toString('hex');
+  const created = await request.post(`${api}/v1/projects/${project}/databases?name=${databaseName}-query`, {
+    headers: owner, data: { name: databaseName, project: '00000000000000000000000000' },
+  });
+  expect(created.status(), 'the route project wins over the body: ' + await created.text()).toBe(201);
+  const createdBody = await created.json() as { id: string; projectId: string; name: string };
+  expect(createdBody.name, 'the JSON body wins over the query string').toBe(databaseName);
+  expect(createdBody.projectId, 'the route project wins over the body').toBe(project);
+  const database = `${api}/v1/projects/${project}/databases/${createdBody.id}`;
   const table = 'todos';
   const rows = `${database}/tables/${table}/rows`;
   const signIn = await signInToken(page.request, 'rows-owner');

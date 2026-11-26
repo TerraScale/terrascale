@@ -1540,7 +1540,7 @@ paths:
         '503':
           description: temporarily_unavailable; the request could not be checked, or storage did not answer within 10 seconds. Retry-After is set unless a write may already have committed; a repeated grant can then answer invalid_grant.
           headers:
-            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+            Retry-After: { $ref: '#/components/headers/OptionalRetryAfter' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
@@ -1889,6 +1889,10 @@ components:
     RetryAfter:
       description: Minimum delay in whole seconds before retrying.
       required: true
+      schema: { type: integer }
+    OptionalRetryAfter:
+      description: Minimum delay in whole seconds before retrying; absent when the request may already have taken effect.
+      required: false
       schema: { type: integer }
   parameters:
     Organization:

@@ -39,7 +39,7 @@ Paged like other management lists (`after` and `limit` query parameters, `next` 
 GET /v1/projects/{project}/databases/{database}/backup-policy
 ```
 
-Until a policy is saved this returns the default: a full backup daily at 02:00 UTC, kept 7 days, with `updatedAt` null. The scheduler applies the default from the database's creation, as it applies a saved policy from its save. The response also reports whether scheduled backups are actually succeeding:
+Until a policy is saved this returns the default: a full backup daily at 02:00 UTC, kept 7 days or the plan's backup retention when that is shorter (see [limits](/limits)), with `updatedAt` null. The scheduler applies the default from the database's creation, as it applies a saved policy from its save. The response also reports whether scheduled backups are actually succeeding:
 
 ```json
 {"fullBackupCron":"0 2 * * *","retentionDays":7,"updatedAt":null,"lastSucceededAt":"2026-10-07T02:00:04Z","lastFailedAt":null,"lastError":null,"nextDueAt":"2026-10-08T02:00:00Z"}

@@ -5,7 +5,7 @@ namespace TerraScale.Platform.TerraBase;
 
 public readonly union PlatformStoreOutcome(SqlExecuteResponse, PlatformConflict, PlatformUnavailable);
 
-public sealed class PlatformStore(TerraBaseClient terraBase, PlatformOptions options)
+public sealed class PlatformStore(TerraBaseClient terraBase, PlatformOptions options, ILogger<PlatformStore> logger)
 {
     public async ValueTask<PlatformStoreOutcome> ExecuteAsync(
         IReadOnlyList<SqlHttpStatement> statements,
@@ -17,12 +17,24 @@ public sealed class PlatformStore(TerraBaseClient terraBase, PlatformOptions opt
         {
             SqlExecuteResponse response => response,
             SqlFailure { Error.Code: var code } failure when code.Contains("constraint", StringComparison.OrdinalIgnoreCase)
-                || code.Contains("unique", StringComparison.OrdinalIgnoreCase) => new PlatformConflict(failure.Error.Message, "conflict"),
-            SqlFailure { Error.Code: "serialization_conflict" } failure => new PlatformConflict(failure.Error.Message, "serialization_conflict"),
-            SqlFailure failure => new PlatformUnavailable($"the platform state database refused a statement: {failure.Error.Message}", "platform_state"),
+                || code.Contains("unique", StringComparison.OrdinalIgnoreCase) => Conflict(failure, "conflict"),
+            SqlFailure { Error.Code: "serialization_conflict" } failure => Conflict(failure, "serialization_conflict"),
+            SqlFailure failure => Refused(failure),
             PlatformNotFound => new PlatformUnavailable("the platform state database does not exist", "platform_state_missing"),
             PlatformUnavailable unavailable => unavailable,
         };
+    }
+
+    private PlatformConflict Conflict(SqlFailure failure, string code)
+    {
+        logger.ZLogWarning($"The platform state database answered {failure.Error.Code}: {failure.Error.Message}");
+        return new PlatformConflict("the request conflicts with existing platform state", code);
+    }
+
+    private PlatformUnavailable Refused(SqlFailure failure)
+    {
+        logger.ZLogWarning($"The platform state database answered {failure.Error.Code}: {failure.Error.Message}");
+        return new PlatformUnavailable("the platform state database refused the statement; retry", "platform_state");
     }
 
     public ValueTask<PlatformStoreOutcome> ReadAsync(

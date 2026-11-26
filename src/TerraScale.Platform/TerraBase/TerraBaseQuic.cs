@@ -4,6 +4,7 @@ using TerraScale.Contracts;
 using TerraScale.Contracts.Continuity;
 using TerraScale.Contracts.Quic;
 using TerraScale.QuicRpc;
+using ZLogger;
 
 namespace TerraScale.Platform.TerraBase;
 
@@ -38,7 +39,7 @@ public sealed class TerraBaseQuic : IAsyncDisposable
             timeProvider,
             logger);
         client.UpsertPeer(new QuicPeer(endpoint.NodeId, endpoint.Region, endpoint.EndPoint));
-        _link = new QuicLink(client, endpoint.NodeId);
+        _link = new QuicLink(client, endpoint.NodeId, logger);
     }
 
     public bool IsEnabled => _link is not null;
@@ -49,7 +50,7 @@ public sealed class TerraBaseQuic : IAsyncDisposable
         SqlContext context,
         CancellationToken cancellationToken)
     {
-        if (_link is not { Client: var client, Peer: var peer })
+        if (_link is not { Client: var client, Peer: var peer } link)
         {
             return new PlatformUnavailable("the QUIC TerraBase transport is not configured", "quic_disabled");
         }
@@ -60,9 +61,9 @@ public sealed class TerraBaseQuic : IAsyncDisposable
         return reply switch
         {
             InternalSqlReply answer => TerraBaseAnswers.Sql(answer.Status, answer.Body.Span),
-            QuicUnavailable unavailable => new PlatformUnavailable(unavailable.Message, unavailable.Code),
-            QuicTimeout timeout => new PlatformUnavailable(timeout.Message, "terrabase_timeout"),
-            QuicRemoteError remote => new PlatformUnavailable(remote.Message, remote.Code),
+            QuicUnavailable unavailable => Unavailable(link, unavailable.Code, unavailable.Message),
+            QuicTimeout timeout => Unavailable(link, "terrabase_timeout", timeout.Message),
+            QuicRemoteError remote => Unavailable(link, remote.Code, remote.Message),
         };
     }
 
@@ -71,7 +72,7 @@ public sealed class TerraBaseQuic : IAsyncDisposable
         string after,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (_link is not { Client: var client, Peer: var peer })
+        if (_link is not { Client: var client, Peer: var peer } link)
         {
             yield return new PlatformUnavailable("the QUIC TerraBase transport is not configured", "quic_disabled");
             yield break;
@@ -95,11 +96,11 @@ public sealed class TerraBaseQuic : IAsyncDisposable
                 ChangefeedEntryMessage message => message.ToEntry() switch
                 {
                     ChangefeedEntry entry => Advance(ref position, entry),
-                    QuicRemoteError invalid => new PlatformUnavailable(invalid.Message, invalid.Code),
+                    QuicRemoteError invalid => Unavailable(link, invalid.Code, invalid.Message),
                 },
-                QuicUnavailable unavailable => new PlatformUnavailable(unavailable.Message, unavailable.Code),
-                QuicTimeout timeout => new PlatformUnavailable(timeout.Message, "terrabase_timeout"),
-                QuicRemoteError remote => new PlatformUnavailable(remote.Message, remote.Code),
+                QuicUnavailable unavailable => Unavailable(link, unavailable.Code, unavailable.Message),
+                QuicTimeout timeout => Unavailable(link, "terrabase_timeout", timeout.Message),
+                QuicRemoteError remote => Unavailable(link, remote.Code, remote.Message),
             };
         }
     }
@@ -112,5 +113,11 @@ public sealed class TerraBaseQuic : IAsyncDisposable
         return new ChangefeedHttpItem(entry.DatabaseId, entry.TxId, entry.OriginRegion, entry.Sequence, entry.SchemaEpoch, entry.Mode, entry.CommittedAtUtc, position.Encode());
     }
 
-    private sealed record QuicLink(QuicRpcClient Client, string Peer);
+    private static PlatformUnavailable Unavailable(QuicLink link, string code, string detail)
+    {
+        link.Logger.ZLogWarning($"TerraBase QUIC call failed with {code}: {detail}");
+        return new PlatformUnavailable("TerraBase did not answer the request; retry", code);
+    }
+
+    private sealed record QuicLink(QuicRpcClient Client, string Peer, ILogger Logger);
 }
