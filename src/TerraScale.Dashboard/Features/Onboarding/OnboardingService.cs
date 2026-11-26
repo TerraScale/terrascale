@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Billing;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
@@ -10,7 +9,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
     internal readonly union PersonalWorkspace(AccountContext, DashboardValidation);
 
-    public sealed class OnboardingService(AccountService accounts, StripeBilling payments, IOnboardingProjectProvisioner projects, DatabaseService databases)
+    public sealed class OnboardingService(AccountService accounts, StripeBilling payments, IOnboardingProjectProvisioner projects)
     {
         public async Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken)
         {
@@ -153,24 +152,23 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 return new DashboardValidation("Use a project name with 100 characters or fewer.");
             }
-            var database = DatabaseService.ValidName(form["database"].ToString());
-            var regions = DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"));
+            var region = form["region"].ToString().Trim().ToUpperInvariant();
             var outcome = await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
             return outcome switch
             {
                 DashboardValidation invalid => invalid,
-                AccountContext personal => await CompleteProjectAsync(session, personal, name, regions, database, cancellationToken)
+                AccountContext personal => await CompleteProjectAsync(session, personal, name, region, cancellationToken)
             };
         }
 
-        private async Task<OnboardingSaveResult> CompleteProjectAsync(SessionRecord session, AccountContext context, string name, IReadOnlyList<string> regions, string database, CancellationToken cancellationToken)
+        private async Task<OnboardingSaveResult> CompleteProjectAsync(SessionRecord session, AccountContext context, string name, string region, CancellationToken cancellationToken)
         {
             if (context.Organization is null || context.Project is null || !context.CanManage)
             {
                 return new DashboardForbidden("Project membership is required.");
             }
 
-            var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, regions, cancellationToken);
+            var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, region, cancellationToken);
             if (project.Id != context.Project.Id || project.OrganizationId != context.Organization.Id)
             {
                 throw new IOException("The provisioned project identity changed.");
@@ -185,26 +183,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
                 organization.Projects[project.Id] = project;
             }, cancellationToken);
-            var created = await FirstDatabaseAsync(context, context.Project, database, regions, cancellationToken);
-            return created switch
-            {
-                DatabaseRecord => await FinishAsync(session, cancellationToken),
-                DatabaseRefusal refused => new DashboardValidation(refused.Message)
-            };
-        }
-
-        private async Task<DatabaseMutation> FirstDatabaseAsync(AccountContext context, ProjectRecord project, string name, IReadOnlyList<string> regions, CancellationToken cancellationToken)
-        {
-            if (project.Databases.Values.FirstOrDefault(existing => existing.Name == name) is { } existing)
-            {
-                return existing;
-            }
-
-            return await databases.CreateAsync(context, name, regions[0], cancellationToken, replicaRegions: [.. regions.Skip(1)]);
-        }
-
-        private async Task<OnboardingSaveResult> FinishAsync(SessionRecord session, CancellationToken cancellationToken)
-        {
             await accounts.UpdateAccountAsync(session, account =>
             {
                 if (account.OnboardingStep != "project")
