@@ -33,6 +33,8 @@ public static class Plans
 {
     public const string Hobby = "hobby";
 
+    public const string TerraScale = PlatformIdentity.PlanKey;
+
     public static IReadOnlyList<string> All { get; } = [Hobby, "starter", "pro", "team", "enterprise"];
 
     public static bool IsPlan([NotNullWhen(true)] string? plan) => plan is not null && All.Contains(plan, StringComparer.Ordinal);
@@ -43,6 +45,7 @@ public static class Plans
         "starter" => 5,
         "pro" => 25,
         "team" => 100,
+        TerraScale => int.MaxValue,
         _ => 1000,
     };
 }

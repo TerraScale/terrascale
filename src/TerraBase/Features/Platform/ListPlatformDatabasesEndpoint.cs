@@ -16,7 +16,7 @@ internal sealed class ListPlatformDatabasesEndpoint(CatalogStore catalog, TerraB
     {
         Get("/v1/platform/databases");
         Name("listPlatformDatabases");
-        Summary("Lists the platform's own databases (ts-auth, ts-dashboard)");
+        Summary("Lists the platform's own databases (ts-auth, ts-dashboard, ts-platform)");
         Tags("Administration");
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);

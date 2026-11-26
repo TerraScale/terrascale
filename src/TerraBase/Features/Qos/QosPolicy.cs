@@ -1,3 +1,5 @@
+using TerraBase.Features.Catalog;
+
 namespace TerraBase.Features.Qos;
 
 internal sealed record QosPolicy(int RequestsPerSecond, int Burst, int Concurrency)
@@ -28,7 +30,7 @@ internal sealed record QosPolicy(int RequestsPerSecond, int Burst, int Concurren
     {
         "starter" => Starter,
         "pro" or "team" => Pro,
-        "enterprise" => Enterprise,
+        "enterprise" or Plans.TerraScale => Enterprise,
         Tenant.UnownedPlan => Unowned,
         Tenant.AnonymousPlan => Anonymous,
         _ => Hobby,

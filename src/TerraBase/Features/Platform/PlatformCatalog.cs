@@ -10,19 +10,19 @@ internal sealed record PlatformDatabase(Ulid Id, Ulid ProjectId, string Name, st
 
 internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases databases, TerraBaseOptions options, TimeProvider time)
 {
-    public static readonly Ulid OrganizationId = Ulid.Parse("00000000000000000000000001");
+    public static readonly Ulid OrganizationId = Ulid.Parse(PlatformIdentity.OrganizationId);
 
-    public static readonly Ulid AuthProjectId = Ulid.Parse("00000000000000000000000002");
+    public static readonly Ulid AuthProjectId = Ulid.Parse(PlatformIdentity.AuthProjectId);
 
-    public static readonly Ulid DashboardProjectId = Ulid.Parse("00000000000000000000000005");
+    public static readonly Ulid DashboardProjectId = Ulid.Parse(PlatformIdentity.DashboardProjectId);
 
-    public static readonly Ulid PlatformProjectId = Ulid.Parse("00000000000000000000000006");
+    public static readonly Ulid PlatformProjectId = Ulid.Parse(PlatformIdentity.PlatformProjectId);
 
     public static IReadOnlyList<PlatformDatabase> Databases { get; } =
     [
-        new(Ulid.Parse("00000000000000000000000003"), AuthProjectId, "ts-auth", "TerraScale Authentication"),
-        new(Ulid.Parse("00000000000000000000000004"), DashboardProjectId, "ts-dashboard", "TerraScale Dashboard"),
-        new(Ulid.Parse("00000000000000000000000007"), PlatformProjectId, "ts-platform", "TerraScale Platform"),
+        new(Ulid.Parse(PlatformIdentity.AuthDatabaseId), AuthProjectId, PlatformIdentity.AuthDatabaseName, PlatformIdentity.AuthProjectName),
+        new(Ulid.Parse(PlatformIdentity.DashboardDatabaseId), DashboardProjectId, PlatformIdentity.DashboardDatabaseName, PlatformIdentity.DashboardProjectName),
+        new(Ulid.Parse(PlatformIdentity.PlatformDatabaseId), PlatformProjectId, PlatformIdentity.PlatformDatabaseName, PlatformIdentity.PlatformProjectName),
     ];
 
     public static bool IsPlatformProject(Ulid projectId) => projectId == AuthProjectId || projectId == DashboardProjectId || projectId == PlatformProjectId;
@@ -31,7 +31,7 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
     {
         var now = time.GetUtcNow();
         var mode = allowFastFallback ? ConsistencyMode.Fast : ConsistencyMode.Strong;
-        var organization = await catalog.UpsertOrganizationAsync(new OrganizationRecord(OrganizationId, "TerraScale", "platform", now, "enterprise", false), cancellationToken, mode);
+        var organization = await catalog.UpsertOrganizationAsync(new OrganizationRecord(OrganizationId, PlatformIdentity.OrganizationName, "platform", now, Plans.TerraScale, false), cancellationToken, mode);
         if (organization switch { Completed => null, ResourceNotFound missing => missing.Message, BackendUnavailable error => error.Message } is { } failed)
         {
             return new ConfigurationError(string.Concat("the platform organization could not be seeded: ", failed));
@@ -39,7 +39,7 @@ internal sealed class PlatformCatalog(CatalogStore catalog, TenantDatabases data
 
         foreach (var platform in Databases)
         {
-            var project = await catalog.UpsertProjectAsync(new ProjectRecord(platform.ProjectId, OrganizationId, platform.ProjectName, now, "enterprise"), cancellationToken, mode);
+            var project = await catalog.UpsertProjectAsync(new ProjectRecord(platform.ProjectId, OrganizationId, platform.ProjectName, now, Plans.TerraScale), cancellationToken, mode);
             if (project switch { Completed => null, BackendUnavailable error => error.Message } is { } projectFailure)
             {
                 return new ConfigurationError(string.Concat("the platform project could not be seeded: ", projectFailure));

@@ -140,7 +140,7 @@ internal sealed class DatabaseAccess(
         Caller caller, Ulid projectId, string scope, CancellationToken cancellationToken)
     {
         if (caller is not ProjectCaller { OrganizationId: { } organizationId } token || token.ProjectId != projectId
-            || PlatformCatalog.IsPlatformProject(projectId) || organizationId == PlatformCatalog.OrganizationId)
+            || PlatformCatalog.IsPlatformProject(projectId))
         {
             return UnknownProject;
         }
@@ -276,7 +276,7 @@ internal sealed class DatabaseAccess(
         Caller caller, ProjectRecord project, DatabaseRecord? database, string scope, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
-        if ((PlatformCatalog.IsPlatformProject(project.Id) || project.OrganizationId == PlatformCatalog.OrganizationId) && IsCustomer(caller))
+        if (PlatformCatalog.IsPlatformProject(project.Id) && IsCustomer(caller))
         {
             return UnknownProject;
         }
