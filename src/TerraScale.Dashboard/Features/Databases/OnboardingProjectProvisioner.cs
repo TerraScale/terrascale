@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed class OnboardingProjectProvisioner(ITsAuthPlatform platform, IDatabaseBackend backend) : IOnboardingProjectProvisioner
     {
-        public async Task<ProjectRecord> CompleteProjectAsync(AccountContext context, string name, IReadOnlyList<string> regions, CancellationToken cancellationToken)
+        public async Task<ProjectRecord> CompleteProjectAsync(AccountContext context, string name, string region, CancellationToken cancellationToken)
         {
             name = AccountService.ValidName(name);
             if (context.Organization is null || !context.CanManage || context.Organization.Kind != "personal")
@@ -14,9 +14,8 @@ namespace TerraScale.Dashboard.Features.Databases
                 throw new AccountAccessException("Select your personal organization to complete onboarding.");
             }
 
-            var healthy = (await backend.RegionsAsync(cancellationToken)).Where(item => item.Healthy).ToArray();
-            string[] placement = [.. regions.Select(region => Array.Find(healthy, item => item.Code.Equals(region, StringComparison.OrdinalIgnoreCase))?.Code
-                ?? throw new OnboardingValidationException("Choose supported project regions."))];
+            var placement = (await backend.RegionsAsync(cancellationToken)).FirstOrDefault(item => item.Code == region && item.Healthy)
+                ?? throw new OnboardingValidationException("Choose a supported project region.");
             var project = context.Organization.Projects.Values.FirstOrDefault(item => item.IsDefault)
                 ?? throw new AccountAccessException("The personal project is unavailable.", 404);
             if (context.Project?.Id != project.Id)
@@ -35,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 OrganizationId = project.OrganizationId,
                 Name = name,
                 Slug = AccountService.Slug(name),
-                Regions = [.. placement],
+                Regions = [placement.Code],
                 Status = project.Status,
                 IsDefault = true,
                 Databases = project.Databases,

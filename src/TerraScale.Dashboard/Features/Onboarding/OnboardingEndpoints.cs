@@ -48,8 +48,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 PaymentCanceled = payment == "canceled",
                 Error = error,
                 ProjectName = draft?["name"].ToString() ?? "Personal",
-                SelectedRegions = draft is null ? null : Drafted(draft),
-                DatabaseName = draft?["database"].ToString() ?? "main",
+                Region = draft?["region"].ToString() ?? "",
                 Plan = OfferedPlan(plans, requested).Length == 0 ? (plans is [var firstPlan, ..] ? firstPlan?.Key ?? "" : "") : requested,
                 RequestedPlan = OfferedPlan(plans, requested),
                 Document = new("Activate your TerraScale account", DocumentModel.NonceFor(context))
@@ -102,14 +101,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 return await RenderAsync(context, sessions, accounts, service, backend, form, error.Message, 422);
             }
             catch (AccountAccessException error) { return await RenderAsync(context, sessions, accounts, service, backend, form, error.Message, error.StatusCode); }
-            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return await RenderAsync(context, sessions, accounts, service, backend, form, DatabaseResults.Message(error), DatabaseResults.Status(error)); }
-        }
-
-        private static IReadOnlyList<string> Drafted(IFormCollection draft)
-        {
-            var chosen = draft["regions"].OfType<string>().ToArray();
-            return [.. draft["regionOrder"].ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Where(code => chosen.Contains(code, StringComparer.OrdinalIgnoreCase)).Concat(chosen).Distinct(StringComparer.OrdinalIgnoreCase)];
         }
 
         private static OnboardingPage Page(HttpContext context)
