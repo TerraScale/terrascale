@@ -41,3 +41,4 @@ fi
 docker buildx imagetools inspect "$image@$arm64" --format '{{json .Image}}' | \
   jq -e --arg revision "$REVISION" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
 echo "IMAGE=$image@$arm64" >> "$GITHUB_ENV"
+printf 'name=%s\narm64=%s\n' "$image" "$arm64" >> "$GITHUB_OUTPUT"

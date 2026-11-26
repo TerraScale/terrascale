@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -52,8 +53,12 @@ jobs:
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         with:
           global-json-file: global.json
-          cache: true
-          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-publish-dashboard-${{ hashFiles('src/TerraScale.Dashboard/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-publish-dashboard-
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         with:
@@ -66,16 +71,28 @@ jobs:
         if: steps.live.outputs.deploy == 'true'
         with:
           version: 1.3.6
-      - name: Build or reuse the target image
+      - id: image
+        name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/reconcile-image.sh dashboard
+      - id: provenance
+        name: Attest build provenance of the linux/arm64 child
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.arm64 }}
+          push-to-registry: false
       - id: mirror
         name: Mirror the image to every OCIR region
         if: steps.live.outputs.deploy == 'true'
+        env:
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
         run: |
           set -euo pipefail
           bash .github/scripts/ci/publish-ocir.sh "$IMAGE" "${REVISION},main"
           mkdir -p "$RUNNER_TEMP/attest-target"
+          cp "$PROVENANCE" "$RUNNER_TEMP/attest-target/provenance.json"
           jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
             '{service: "ts-dashboard", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
       - name: Deploy ts-dashboard through ts-orch
@@ -95,9 +112,11 @@ jobs:
           retention-days: 1
       - name: Hand the published image to the attestation workflow
         if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: attest-targets-dashboard
-          path: ${{ runner.temp }}/attest-target/attest-target.json
+          name: attest-targets-ts-dashboard
+          path: ${{ runner.temp }}/attest-target
           if-no-files-found: error
+          overwrite: true
           retention-days: 7

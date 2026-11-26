@@ -302,12 +302,11 @@ branch action. `env/local.sh` refuses to run when `E2E_TARGET` is set, before it
 For a manual run against an older deployment, record the serving image digests for TerraBase, ts-platform,
 ts-auth and Dashboard using `ts-orch status --region <region> --json`. Verify their build provenance with
 `gh attestation verify`, using `--repo TerraScale/terrascale`, `--source-ref refs/heads/main`,
-`--signer-workflow` and `--bundle-from-oci` with each digest-pinned OCI reference. The signer workflow is
-`Attest images` (`TerraScale/terrascale/.github/workflows/attest-images.yml`) for all four services; it attests
-asynchronously, so an image deployed minutes ago may not carry its bundles yet. The attestation's
-`sourceRepositoryDigest` is the `main` head when `Attest images` ran, so take `signed_source` from the image's
-`org.opencontainers.image.revision` label (`docker buildx imagetools inspect <image> --format '{{json .Image}}'`)
-and use it in the input comparison.
+`--signer-workflow` and `--bundle-from-oci` with each digest-pinned OCI reference. The signer workflow is `CI`
+(`TerraScale/terrascale/.github/workflows/ci.yml`) for TerraBase, ts-platform and ts-auth, and
+`Images (OCIR)` (`TerraScale/terrascale/.github/workflows/images-ghcr.yml`) for Dashboard. `Attest images`
+attaches the bundles to every OCIR region asynchronously, so an image deployed minutes ago may not carry them yet.
+Record each attestation's `sourceRepositoryDigest` and use it as `signed_source` in the input comparison.
 
 Choose the exact current `origin/main` SHA as `dispatch_sha`. For each verified regional image, run this
 conservative harness-only check from the repository root. It compares a superset of that service's app, SDK,
@@ -353,7 +352,7 @@ deletion, which waits for ts-auth's deletion cleanup (every 60 s) to prove the o
 dashboard's deletion reconciler (every 30 s) to cancel the subscription at the stand-in; the wait is bounded by the
 two periods plus 20 s for the reconciler's passes. It then reads the dashboard's `/metrics` until
 `terrascale_deletion_cleanup_failing_entries` is 0, within one more period plus 20 s. CI runs the
-users in two shards, each with the `projects` of its row in the journey matrix of `journey.yml`: the phone owner's
+users in two shards, each a `projects` list for `support/quarantine-run.mjs`: the phone owner's
 projects in one, `pages-desktop` and the paid flow in the other. In the phone shard, once `setup` has passed, the
 tests of `pages-mobile`, `hosted`, `interactions` and `invitation` share six workers. Playwright queues them in the
 order `playwright.config.ts` lists the projects, so in practice the flows start once every page test has started;
@@ -450,7 +449,7 @@ SHA-256 to its archive's.
   in the list fails with "… matches no audited hosted page".
 - A flow or a project: a project in `playwright.config.ts` with `dependencies: ['setup']` and
   `metadata: { setup: 'setup' }` (the user whose journey and session it reads; `desktop-setup` for the desktop user),
-  added to one shard's `projects` in `journey.yml` (a project in no shard never runs in CI). A project that types or
+  added to one shard's `projects` (a project in no shard never runs). A project that types or
   shows a secret outside the registered owner session uses `secretFree` (no trace); only the two page projects keep
   traces. A flow that opens its own browser context does it through `auditedContext` and calls `saveCookies` on it.
 - A screen that shows a secret: `saveSecret` the value the moment the test reads it, and add the element's selector
@@ -536,9 +535,8 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
   every process inside, so nothing the suite started writes after the scrub lists its files; on production the scrub
   step ends them itself ("The production target"). Text is redacted; pixels are not scanned: screenshots mask the
   secret fields by selector and videos are off. The 6-digit codes are not redacted
-  (single use, under 16 characters). Every secret of a PR run is generated in that run and dies with the VM: `ci.yml`
-  passes no secret to `journey.yml`, which grants `contents: read` and `issues: read`, checks out with `persist-credentials: false`
-  and uses no repository secret. Never print a secret.
+  (single use, under 16 characters). Every secret of a local run is generated in that run and dies with its
+  namespace. Never print a secret.
 
 
 ## SDK placement runners

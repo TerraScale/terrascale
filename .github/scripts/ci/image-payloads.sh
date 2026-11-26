@@ -12,7 +12,7 @@ case ${1:-} in
   publish)
     output=$RUNNER_TEMP/image-payloads/arm64
     dotnet restore "$project" --locked-mode
-    make "$area-publish" RUNTIME=linux-arm64 PUBLISH_DIR="$output"
+    make "$area-publish" RUNTIME=linux-arm64 PUBLISH_DIR="$output" PUBLISH_RESTORE_FLAGS=--no-restore
     test -x "$output/$binary"
     test "$(od -An -tx1 -j18 -N2 "$output/$binary" | tr -d ' \n')" = b700
     ;;

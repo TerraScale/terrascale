@@ -105,7 +105,8 @@ function ancestor(base, head) {
 }
 
 function qualifiedJobs(jobs) {
-  return jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success');
+  return jobs.some((job) => job.name === 'changes' && job.conclusion === 'success')
+    && !jobs.some((job) => job.name === 'all-green' && job.conclusion === 'cancelled');
 }
 
 async function qualified(revision) {
@@ -131,7 +132,7 @@ function inputs(thing) {
   const shared = ['Directory.*', 'global.json', 'NuGet.config', '.editorconfig', 'BannedSymbols.txt', 'Makefile', 'sdk/dotnet', ':(glob)src/TerraScale.Endpoints*/**', 'src/TerraScale.Contracts', '.github/scripts/ci/image-payloads.sh', '.github/scripts/ci/reconcile-image.sh', '.github/scripts/ci/inspect-app-image.sh', '.github/scripts/ci/deploy-v2.sh', '.github/scripts/ci/publish-ocir.sh', '.github/scripts/ci/publish-image.sh', '.github/scripts/ci/ocir-repositories.sh', '.github/scripts/ci/release-only.sh'];
   return [...common, ...shared, ...(thing === 'auth'
     ? [':(glob)src/TerraScale.Authentication*/**', 'src/TerraScale.Logging', '.github/docker/ts-auth.Dockerfile', '.github/scripts/auth', '.github/workflows/ci.yml']
-    : [':(glob)src/TerraScale.Dashboard*/**', 'sites/landing/static/pricing.json', '.github/docker/dashboard.Dockerfile', '.github/scripts/dashboard', '.github/workflows/images-ghcr.yml', '.github/workflows/ci.yml'])];
+    : [':(glob)src/TerraScale.Dashboard*/**', 'sites/landing/static/pricing.json', '.github/docker/dashboard.Dockerfile', '.github/scripts/dashboard', '.github/workflows/images-ghcr.yml'])];
 }
 
 function work(kind, name, deployed, revision) {

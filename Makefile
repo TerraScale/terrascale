@@ -2,6 +2,7 @@ SOLUTION := TerraScale.slnx
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
+PUBLISH_RESTORE_FLAGS ?=
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
 DOTNET ?= dotnet
@@ -134,7 +135,7 @@ auth-openapi-check: auth-build
 auth-check: auth-audit auth-openapi-check
 
 auth-publish:
-	$(DOTNET) publish src/TerraScale.Authentication --configuration Release --runtime $(RUNTIME) --self-contained --no-restore --output "$(PUBLISH_DIR)"
+	$(DOTNET) publish src/TerraScale.Authentication --configuration Release --runtime $(RUNTIME) --self-contained $(PUBLISH_RESTORE_FLAGS) --output "$(PUBLISH_DIR)"
 
 terrabase-restore:
 	$(DOTNET) restore $(TERRABASE_PROJECT) --locked-mode
@@ -151,7 +152,7 @@ terrabase-run: native-libs
 terrabase-publish platform-publish: NATIVE_RUNTIMES = $(RUNTIME)
 
 terrabase-publish: native-libs
-	$(DOTNET) publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --no-restore --output "$(PUBLISH_DIR)"
+	$(DOTNET) publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained $(PUBLISH_RESTORE_FLAGS) --output "$(PUBLISH_DIR)"
 	test -x "$(PUBLISH_DIR)/terrabase"
 	test ! -e "$(PUBLISH_DIR)/libsqlite3mc.so"
 	test ! -e "$(PUBLISH_DIR)/libmsquic.so.2"
@@ -167,7 +168,7 @@ platform-build: platform-restore native-libs
 	$(DOTNET) build $(PLATFORM_PROJECT) --configuration $(CONFIGURATION) --no-restore
 
 platform-publish: native-libs
-	$(DOTNET) publish src/TerraScale.Platform --configuration Release --runtime $(RUNTIME) --self-contained --no-restore --output "$(PUBLISH_DIR)"
+	$(DOTNET) publish src/TerraScale.Platform --configuration Release --runtime $(RUNTIME) --self-contained $(PUBLISH_RESTORE_FLAGS) --output "$(PUBLISH_DIR)"
 	test -x "$(PUBLISH_DIR)/ts-platform"
 	test ! -e "$(PUBLISH_DIR)/libmsquic.so.2"
 	test ! -e "$(PUBLISH_DIR)/libnuma.so.1"

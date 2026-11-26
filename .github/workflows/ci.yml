@@ -199,8 +199,11 @@ jobs:
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with:
           global-json-file: global.json
-          cache: true
-          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-libs-${{ hashFiles('src/TerraScale.Contracts/packages.lock.json', 'src/TerraScale.Endpoints*/packages.lock.json', 'src/TerraScale.Logging/packages.lock.json', 'benchmark/dotnet/*/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-libs-
       - name: Release build
         run: |
           make libs-build CONFIGURATION=Release
@@ -214,6 +217,11 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-auth-${{ hashFiles('src/TerraScale.Authentication*/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-auth-
       - name: Release build
         run: |
           make auth-build CONFIGURATION=Release
@@ -227,6 +235,11 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-terrabase-${{ hashFiles('src/TerraBase*/packages.lock.json', 'src/TerraScale.QuicRpc/packages.lock.json', 'src/TerraScale.Platform/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-terrabase-
       - name: Pinned native libraries
         uses: ./.github/actions/native-libs
         with:
@@ -245,6 +258,11 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-dashboard-${{ hashFiles('src/TerraScale.Dashboard/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-dashboard-
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '24.21.0'
@@ -267,6 +285,11 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-aspire-${{ hashFiles('src/TerraScale.Aspire/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-aspire-
       - name: Release build
         run: |
           make aspire-build CONFIGURATION=Release
@@ -291,8 +314,12 @@ jobs:
           dotnet-version: |
             10.0.401
             11.0.100
-          cache: true
-          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: matrix.area == 'sdk-dotnet'
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-sdk-dotnet-${{ hashFiles('sdk/dotnet/**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-sdk-dotnet-
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b
         if: matrix.area != 'sdk-dotnet'
         with:
@@ -313,7 +340,12 @@ jobs:
             sdk-rust) rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy ;;
           esac
       - name: Build the SDK
-        run: make "$AREA-check"
+        run: |
+          if [[ $AREA == sdk-go ]]; then
+            cd sdk/go && go build ./...
+          else
+            make "$AREA-check"
+          fi
 
   docs:
     needs: changes
@@ -382,6 +414,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      attestations: write
       id-token: write
     steps: &production-steps
       - *checkout
@@ -407,8 +440,12 @@ jobs:
         if: steps.liveguard.outputs.skip != 'true'
         with:
           global-json-file: global.json
-          cache: true
-          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: steps.liveguard.outputs.skip != 'true'
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-publish-${{ env.AREA }}-${{ env.AREA == 'platform' && hashFiles('src/TerraScale.Platform/packages.lock.json') || hashFiles('src/TerraBase/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-publish-${{ env.AREA }}-
       - name: Pinned native libraries
         if: steps.liveguard.outputs.skip != 'true'
         uses: ./.github/actions/native-libs
@@ -454,11 +491,20 @@ jobs:
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
           echo "${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${arm64} build_only=${BUILD_ONLY}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - id: provenance
+        name: Attest build provenance of the linux/arm64 child
+        if: steps.liveguard.outputs.skip != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: sa-saopaulo-1.ocir.io/${{ vars.OCIR_NAMESPACE }}/terrascale/${{ env.SERVICE }}
+          subject-digest: ${{ steps.digest.outputs.arm64 }}
+          push-to-registry: false
       - id: mirror
         name: Mirror the image to every OCIR region
         if: steps.liveguard.outputs.skip != 'true'
         env:
           ARM64: ${{ steps.digest.outputs.arm64 }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
         run: |
           set -euo pipefail
           image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}"
@@ -466,6 +512,7 @@ jobs:
           if [[ $BUILD_ONLY != true ]]; then tags+=,main; fi
           bash .github/scripts/ci/publish-ocir.sh "${image}@${ARM64}" "$tags"
           mkdir -p "$RUNNER_TEMP/attest-target"
+          cp "$PROVENANCE" "$RUNNER_TEMP/attest-target/provenance.json"
           jq -n --arg service "$SERVICE" --arg image "$image" --arg arm64 "$ARM64" --arg revision "$GITHUB_SHA" --arg tags "$tags" \
             '{service: $service, image: $image, arm64: $arm64, revision: $revision, tags: ($tags | split(","))}' > "$RUNNER_TEMP/attest-target/attest-target.json"
       - name: Deploy through ts-orch
@@ -475,11 +522,13 @@ jobs:
         run: bash .github/scripts/ci/deploy-v2.sh "${SERVICE}" "sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/${SERVICE}@${ARM64}"
       - name: Hand the published image to the attestation workflow
         if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: attest-targets-${{ env.SERVICE }}
-          path: ${{ runner.temp }}/attest-target/attest-target.json
+          path: ${{ runner.temp }}/attest-target
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   main-platform:
@@ -497,6 +546,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      attestations: write
       id-token: write
     steps: *production-steps
 
@@ -516,6 +566,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      attestations: write
       id-token: write
     steps: *production-steps
 
@@ -557,14 +608,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ inputs.terrabase_arm64 }}
+          REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           [[ "$ARM64" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'terrabase_arm64 must be sha256:<64 hex>' >&2; exit 1; }
           image="sa-saopaulo-1.ocir.io/${OCIR_NAMESPACE:?}/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
-            jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/attest-images.yml --source-ref refs/heads/main
-          gh attestation verify "oci://${image}" --owner TerraScale --predicate-type https://spdx.dev/Document/v2.3 --signer-workflow TerraScale/terrascale/.github/workflows/attest-images.yml --source-ref refs/heads/main
+            jq -e --arg revision "$REVISION" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
+          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$REVISION"
+          gh attestation verify "oci://${image}" --owner TerraScale --predicate-type https://spdx.dev/Document/v2.3 --signer-regex '^https://github\.com/TerraScale/terrascale/\.github/workflows/(ci|attest-images)\.yml@' --source-ref refs/heads/main
           bash .github/scripts/ci/deploy-v2.sh terrabase "$image"
 
   main-auth:
@@ -582,6 +634,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -617,24 +670,40 @@ jobs:
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         with:
           global-json-file: global.json
-          cache: true
-          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-publish-auth-${{ hashFiles('src/TerraScale.Authentication/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-publish-auth-
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
       - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
         if: steps.live.outputs.deploy == 'true'
         with:
           version: 1.3.6
-      - name: Build or reuse the target image
+      - id: image
+        name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/reconcile-image.sh auth
+      - id: provenance
+        name: Attest build provenance of the linux/arm64 child
+        if: steps.live.outputs.deploy == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.arm64 }}
+          push-to-registry: false
       - id: mirror
         name: Mirror the image to every OCIR region
         if: steps.live.outputs.deploy == 'true'
+        env:
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
         run: |
           set -euo pipefail
           bash .github/scripts/ci/publish-ocir.sh "$IMAGE" "${REVISION},main"
           mkdir -p "$RUNNER_TEMP/attest-target"
+          cp "$PROVENANCE" "$RUNNER_TEMP/attest-target/provenance.json"
           jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
             '{service: "ts-auth", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
       - name: Deploy ts-auth through ts-orch
@@ -654,11 +723,13 @@ jobs:
           retention-days: 1
       - name: Hand the published image to the attestation workflow
         if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: attest-targets-ts-auth
-          path: ${{ runner.temp }}/attest-target/attest-target.json
+          path: ${{ runner.temp }}/attest-target
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   all-green:
