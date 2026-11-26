@@ -1,15 +1,16 @@
 using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
-    public readonly union OnboardingSaveResult(string, DashboardValidation, DashboardForbidden);
+    public readonly union OnboardingSaveResult(string, DashboardValidation, DashboardForbidden, DatabaseRefusal);
 
     public readonly union DisplayNameInput(string, DashboardValidation);
 
     internal readonly union PersonalWorkspace(AccountContext, DashboardValidation);
 
-    public sealed class OnboardingService(AccountService accounts, StripeBilling payments, IOnboardingProjectProvisioner projects)
+    public sealed class OnboardingService(AccountService accounts, StripeBilling payments, IOnboardingProjectProvisioner projects, DatabaseService databases)
     {
         public async Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken)
         {
@@ -152,28 +153,61 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 return new DashboardValidation("Use a project name with 100 characters or fewer.");
             }
-            var region = form["region"].ToString().Trim().ToUpperInvariant();
+            name = name.Length == 0 ? name : AccountService.ValidName(name);
+            var database = DatabaseService.ValidName(form["database"].ToString());
+            var regions = DatabaseService.Capped(DatabasePlacementEndpoints.Selection(form, "regionOrder"));
             var outcome = await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken);
             return outcome switch
             {
                 DashboardValidation invalid => invalid,
-                AccountContext personal => await CompleteProjectAsync(session, personal, name, region, cancellationToken)
+                AccountContext personal => await CompleteProjectAsync(session, personal, name, regions, database, cancellationToken)
             };
         }
 
-        private async Task<OnboardingSaveResult> CompleteProjectAsync(SessionRecord session, AccountContext context, string name, string region, CancellationToken cancellationToken)
+        private async Task<OnboardingSaveResult> CompleteProjectAsync(SessionRecord session, AccountContext context, string name, IReadOnlyList<string> regions, string database, CancellationToken cancellationToken)
         {
             if (context.Organization is null || context.Project is null || !context.CanManage)
             {
                 return new DashboardForbidden("Project membership is required.");
             }
 
-            var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, region, cancellationToken);
-            if (project.Id != context.Project.Id || project.OrganizationId != context.Organization.Id)
+            var created = await FirstDatabaseAsync(context, context.Project, database, regions, cancellationToken);
+            return created switch
+            {
+                DatabaseRecord => await FinishAsync(session, context, await ProjectAsync(context, context.Organization.Id, context.Project, name, regions, cancellationToken), cancellationToken),
+                DatabaseRefusal refused => refused
+            };
+        }
+
+        private async Task<ProjectRecord> ProjectAsync(AccountContext context, string organizationId, ProjectRecord personal, string name, IReadOnlyList<string> regions, CancellationToken cancellationToken)
+        {
+            var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? personal.Name : name, regions, cancellationToken);
+            if (project.Id != personal.Id || project.OrganizationId != organizationId)
             {
                 throw new IOException("The provisioned project identity changed.");
             }
 
+            return project;
+        }
+
+        private async Task<DatabaseMutation> FirstDatabaseAsync(AccountContext context, ProjectRecord project, string name, IReadOnlyList<string> regions, CancellationToken cancellationToken)
+        {
+            if (project.Databases.Values.FirstOrDefault(existing => existing.Name == name) is { } existing)
+            {
+                return existing.Region.Equals(regions[0], StringComparison.OrdinalIgnoreCase) && existing.Regions.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(regions)
+                    ? existing : new DatabaseStateConflict($"Database {name} already exists in {RegionNames.List(existing.Regions)}. Pick those regions to finish setup, or change them later from the database page.");
+            }
+
+            if (project.Databases.Count > 0)
+            {
+                return new DatabaseStateConflict($"Your first database {string.Join(", ", project.Databases.Values.Select(existing => existing.Name))} already exists. Enter that name to finish setup.");
+            }
+
+            return await databases.CreateAsync(context, name, regions[0], cancellationToken, replicaRegions: [.. regions.Skip(1)]);
+        }
+
+        private async Task<OnboardingSaveResult> FinishAsync(SessionRecord session, AccountContext context, ProjectRecord project, CancellationToken cancellationToken)
+        {
             await accounts.UpdateOrganizationAsync(context, organization =>
             {
                 if (!organization.CanManage(session.UserId))
@@ -181,7 +215,10 @@ namespace TerraScale.Dashboard.Features.Onboarding
                     throw new AccountAccessException("Project management is required.");
                 }
 
-                organization.Projects[project.Id] = project;
+                var current = organization.Projects.GetValueOrDefault(project.Id) ?? throw new AccountAccessException("The personal project is unavailable.", 404);
+                current.Name = project.Name;
+                current.Slug = project.Slug;
+                current.Regions = project.Regions;
             }, cancellationToken);
             await accounts.UpdateAccountAsync(session, account =>
             {

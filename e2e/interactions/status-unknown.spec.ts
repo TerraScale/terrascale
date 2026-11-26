@@ -1,6 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { expect, test, type APIRequestContext, type APIResponse, type Page } from '@playwright/test';
-import { waitForCreatedDatabase } from '../support/database';
+import { expect, test, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { keyId } from '../support/api-key';
 import { signInToken } from '../support/auth-management';
 import { createDedicatedProjectOwner } from '../support/project-owner';
@@ -84,19 +83,6 @@ async function writeToken(context: APIRequestContext, apiKey: string, projectId:
   return token;
 }
 
-async function createOwnedDatabase(page: Page, name: string): Promise<{ id: string; region: string }> {
-  await page.goto('/databases');
-  await page.getByRole('button', { name: 'New database', exact: true }).first().click();
-  await expect(page.locator('#create-database[open]')).toBeVisible();
-  const picked = page.locator('#create-database-regions input[name="regions"]:checked');
-  const region = (await picked.inputValue()).toLowerCase();
-  await page.locator('#database-name').fill(name);
-  const databasesUrl = page.url();
-  await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
-  const { id } = await waitForCreatedDatabase(page, name, databasesUrl);
-  return { id, region };
-}
-
 async function sql(context: APIRequestContext, token: string, projectId: string, databaseId: string, statements: { sql: string }[]): Promise<void> {
   const response = await context.post(`https://api.terrascale.tech/v1/projects/${projectId}/databases/${databaseId}/sql/execute`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -160,8 +146,7 @@ test.describe('canary credential', () => {
     const current = account.current;
     const context = account.page.request;
     const writer = await writeToken(context, current.apiKey, current.projectId);
-    const name = `canary-${current.runId}`;
-    const database = await createOwnedDatabase(account.page, name);
+    const database = account.database;
     const token = await signInToken(context, `status-canary-${current.runId}`);
     const created = await context.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -198,7 +183,7 @@ test.describe('canary credential', () => {
           origin: 'https://api.terrascale.tech',
           region: database.region,
           project: current.projectId,
-          database: name,
+          database: database.name,
           issuer: 'https://auth.terrascale.tech/terrascale',
           key: secret,
         },

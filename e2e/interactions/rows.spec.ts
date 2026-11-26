@@ -6,6 +6,7 @@ import { hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop } from '../support/stack';
+import { deleteDatabase } from '../support/database';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { saveSecret } from '../support/state';
 
@@ -64,6 +65,7 @@ test('end users write rows only as the database rules allow, checked in the home
   const { current, page } = account;
   const project = current.projectId;
   const redirect = dash + '/auth/rows';
+  await deleteDatabase(page, account.database.id, account.database.name);
   const exchanged = await request.post(auth + '/terrascale/oauth/token', {
     form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project,
       scope: 'sql:read sql:write databases:read databases:write' },

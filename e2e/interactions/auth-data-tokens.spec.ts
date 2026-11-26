@@ -143,9 +143,7 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
     expect(exchanged.status()).toBe(200);
     owner.Authorization = 'Bearer ' + (await exchanged.json()).access_token;
     saveSecret('data-token-project-token', owner.Authorization.slice(7));
-    const homeDatabase = await request.post(api + '/databases', { headers: owner, data: { name: 'custom-token-' + randomBytes(4).toString('hex') } });
-    expect(homeDatabase.status(), await homeDatabase.text()).toBe(201);
-    databases.push((await homeDatabase.json()).id as string);
+    databases.push(account.database.id);
     const home = api + '/databases/' + databases[0];
     const schema = await request.post(home + '/sql/execute', {
       headers: owner, data: { statements: [{ sql: 'CREATE TABLE notes (id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL)' }] },

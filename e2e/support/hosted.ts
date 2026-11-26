@@ -40,7 +40,7 @@ export async function verify(page: Page, email: string): Promise<void> {
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/onboarding');
 }
 
-export async function onboard(page: Page, audit: Audit, displayName: string, projectName: string, label: string): Promise<string> {
+export async function onboard(page: Page, audit: Audit, displayName: string, projectName: string, label: string, databaseName = 'main'): Promise<string> {
   await audit.check(`${label} onboarding account information`);
   await page.locator('#displayName').fill(displayName);
   await page.getByRole('button', { name: 'Save and continue' }).click();
@@ -49,9 +49,13 @@ export async function onboard(page: Page, audit: Audit, displayName: string, pro
   await page.locator('button[data-plan="free"]').click();
   await expect(page.locator('#projectName')).toBeVisible();
   await audit.check(`${label} onboarding project`);
-  const region = await page.locator('#onboarding-region input[name="region"]:checked').inputValue();
+  const picked = page.locator('#onboarding-region input[name="regions"]:checked');
+  await expect(picked).toHaveCount(1);
+  const region = await picked.inputValue();
   await page.locator('#projectName').fill(projectName);
-  await page.getByRole('button', { name: 'Create project and open Dashboard' }).click();
+  await expect(page.locator('#databaseName')).toHaveValue('main');
+  await page.locator('#databaseName').fill(databaseName);
+  await page.getByRole('button', { name: 'Create project and database' }).click();
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/');
   return region;
 }
