@@ -231,7 +231,7 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
     private static TerraBaseProjectUsage ProjectUsage(TerraBaseUsageBody usage, DateTimeOffset from, DateTimeOffset until) =>
         new(ScopeId(usage, "project:"), 0, usage.Metric("file_bytes"), 0, usage.Metric("reads"), usage.Metric("writes"), Period(usage, from, until), [], [],
             usage.Metric("file_bytes"),
-            new TerraBaseUsageMonth(usage.Month, usage.Metric("reads"), usage.Metric("writes"), usage.Metric("reads") + usage.Metric("writes"),
+            new TerraBaseUsageMonth(usage.Month, usage.Metric("reads"), usage.Metric("writes"), usage.Metric("writes") + usage.Metric("invocations"),
                 Invocations: usage.Metric("invocations")));
 
     private static TerraBaseDatabaseUsage DatabaseUsage(TerraBaseUsageBody usage, DateTimeOffset from, DateTimeOffset until) =>
