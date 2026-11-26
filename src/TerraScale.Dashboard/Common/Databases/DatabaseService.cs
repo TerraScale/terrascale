@@ -88,10 +88,10 @@ namespace TerraScale.Dashboard.Common.Databases
                 ManagedDatabase remote;
                 var recovered = false;
                 try { remote = await backend.CreateAsync(scope, name, home, replicas, allRegions, cancellationToken, ttlSeconds); }
-                catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
+                catch (TerraBaseConflictException error) when (error.ErrorCode is "name_taken" or "database_limit")
                 {
                     var found = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name);
-                    if (found is null) { return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists.")); }
+                    if (found is null) { return DatabaseMutations.MutationRefused(new DatabaseStateConflict(error.ErrorCode == "name_taken" ? "A database with this name already exists." : DatabaseResults.Message(error))); }
                     remote = found;
                     recovered = true;
                 }

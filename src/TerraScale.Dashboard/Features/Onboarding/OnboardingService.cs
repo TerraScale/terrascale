@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
-    public readonly union OnboardingSaveResult(string, DashboardValidation, DashboardForbidden);
+    public readonly union OnboardingSaveResult(string, DashboardValidation, DashboardForbidden, DatabaseRefusal);
 
     public readonly union DisplayNameInput(string, DashboardValidation);
 
@@ -183,13 +183,16 @@ namespace TerraScale.Dashboard.Features.Onboarding
                     throw new AccountAccessException("Project management is required.");
                 }
 
-                organization.Projects[project.Id] = project;
+                var current = organization.Projects.GetValueOrDefault(project.Id) ?? throw new AccountAccessException("The personal project is unavailable.", 404);
+                current.Name = project.Name;
+                current.Slug = project.Slug;
+                current.Regions = project.Regions;
             }, cancellationToken);
             var created = await FirstDatabaseAsync(context, context.Project, database, regions, cancellationToken);
             return created switch
             {
                 DatabaseRecord => await FinishAsync(session, cancellationToken),
-                DatabaseRefusal refused => new DashboardValidation(refused.Message)
+                DatabaseRefusal refused => refused
             };
         }
 
@@ -197,7 +200,8 @@ namespace TerraScale.Dashboard.Features.Onboarding
         {
             if (project.Databases.Values.FirstOrDefault(existing => existing.Name == name) is { } existing)
             {
-                return existing;
+                return existing.Region.Equals(regions[0], StringComparison.OrdinalIgnoreCase) && existing.Regions.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(regions)
+                    ? existing : new DatabaseStateConflict($"Database {name} already exists in {RegionNames.List(existing.Regions)}. Pick those regions to finish setup, or change them later from the database page.");
             }
 
             return await databases.CreateAsync(context, name, regions[0], cancellationToken, replicaRegions: [.. regions.Skip(1)]);

@@ -62,6 +62,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 try { page = page with { Regions = [.. (await backend.RegionsAsync(context.RequestAborted)).Where(region => region.Healthy).Select(region => region.Code)] }; }
                 catch (HttpRequestException) { page = page with { Regions = [] }; }
+                page = await StartedAsync(page, accounts, session, account.PersonalOrganizationId, draft is null, context.RequestAborted);
             }
             var view = OnboardingView.Create(page);
             view.StatusCode = status;
@@ -94,7 +95,8 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 {
                     string destination => HttpRedirects.SeeOther(destination),
                     DashboardValidation invalid => await RenderAsync(context, sessions, accounts, service, backend, form, invalid.Message, 422),
-                    DashboardForbidden refused => await RenderAsync(context, sessions, accounts, service, backend, form, refused.Message, 403)
+                    DashboardForbidden refused => await RenderAsync(context, sessions, accounts, service, backend, form, refused.Message, 403),
+                    DatabaseRefusal refusal => await RenderAsync(context, sessions, accounts, service, backend, form, refusal.Message, refusal.Status)
                 };
             }
             catch (OnboardingValidationException error)
@@ -103,6 +105,18 @@ namespace TerraScale.Dashboard.Features.Onboarding
             }
             catch (AccountAccessException error) { return await RenderAsync(context, sessions, accounts, service, backend, form, error.Message, error.StatusCode); }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return await RenderAsync(context, sessions, accounts, service, backend, form, DatabaseResults.Message(error), DatabaseResults.Status(error)); }
+        }
+
+        private static async Task<OnboardingPage> StartedAsync(OnboardingPage page, AccountService accounts, SessionRecord session, string personalOrganizationId, bool fresh, CancellationToken cancellationToken)
+        {
+            var available = page.Regions ?? [];
+            var current = await accounts.GetContextAsync(session, cancellationToken);
+            if (fresh && current.Organization?.Id == personalOrganizationId && current.Project?.Databases.Values.FirstOrDefault() is { } started)
+            {
+                page = page with { DatabaseName = started.Name, SelectedRegions = started.Regions };
+            }
+
+            return page.SelectedRegions is { } chosen ? page with { SelectedRegions = [.. chosen.Where(code => available.Contains(code, StringComparer.OrdinalIgnoreCase))] } : page;
         }
 
         private static IReadOnlyList<string> Drafted(IFormCollection draft)

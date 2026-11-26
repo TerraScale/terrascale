@@ -49,7 +49,8 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 string saved => saved,
                 DashboardValidation invalid => throw new AccountAccessException(invalid.Message, 422),
-                DashboardForbidden refused => throw new AccountAccessException(refused.Message, 403)
+                DashboardForbidden refused => throw new AccountAccessException(refused.Message, 403),
+                DatabaseRefusal refusal => throw new AccountAccessException(refusal.Message, refusal.Status)
             };
             var account = (await accounts.GetContextAsync(session, Cancellation)).Account;
             return new(account.OnboardingCompleted, account.OnboardingCompleted ? "" : account.OnboardingStep,
