@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Organizations
     public sealed class OrganizationPageEndpoint(DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement,
         StripeBilling billing, SpendingService spending, TimeProvider time, InternalBillingService internalBilling, UsageOverageReporter reporter) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/organization");
+        public override void Configure() => Get("/organization").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

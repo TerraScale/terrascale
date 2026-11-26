@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
     public sealed class ProjectInvitationsPageEndpoint(DashboardSessions sessions, AccountService accounts, ProjectInvitationService invitations) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/project/invitations");
+        public override void Configure() => Get("/project/invitations").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

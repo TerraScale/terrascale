@@ -7,6 +7,7 @@ public sealed class DeleteAgentIdClientEndpoint(PlatformAuthentication authentic
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/{client_id}");
         this.Describe("delete_agentid_client", "Delete a Sign in as agent client",
             "Deletes a client the signed-in account owns: its next authorization request, token redemption and secret are refused at once. Another account's client is 404. Needs a delete_oauth_client step-up proof in X-TerraScale-Step-Up-Proof, spent in the same save as the change, so a sign-out everywhere that commits first refuses it with 409; a token an agent acts with is 403 owner_required.",

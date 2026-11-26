@@ -23,6 +23,7 @@ public sealed class AllowanceEmailEndpoint(PlatformDirectory directory, OwnerDel
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/{slug}/email/allowance");
         Name("email_allowance_send");
         Summary("Notify the current organization owners of an allowance threshold");

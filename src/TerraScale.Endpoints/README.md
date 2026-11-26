@@ -62,8 +62,12 @@ constructor injection of scoped services just works.
 
 `Configure()` exposes `Get`, `Post`, `Put`, `Patch`, `Delete`, `Verbs`,
 `Route`, `Name`, `Summary`, `Description`, `Tags`, `Produces<T>`,
-`ProducesSse`, `Accepts<T>`, `AllowAnonymous`, `RequireAuthorization`, and
-`Metadata`. Endpoints without `Tags` are tagged with their first route segment.
+`ProducesSse`, `Accepts<T>`, `AllowAnonymous`, `RequireAuthorization`,
+`AuthenticateInHandler`, and `Metadata`. Endpoints without `Tags` are tagged with
+their first route segment. Every endpoint declares exactly one authorization
+posture: `AllowAnonymous()` for public routes, `RequireAuthorization(...)` for
+ASP.NET Core policies, or `AuthenticateInHandler()` when the handler checks the
+caller's credentials itself. Mapping an endpoint without one throws at startup.
 OpenAPI is served at `/openapi/v1.json`; Scalar is served at
 `/scalar`.
 
@@ -76,8 +80,9 @@ TS-795 describes this contract and inventories existing integration inputs; it d
 ## Binding and serialization
 
 Object request models bind from the JSON body, the query string, and route
-values, matched to the model's JSON property names (route wins over query, query
-over body). Values are converted by the model's own JSON contract, so `Guid`,
+values, matched to the model's JSON property names. Route values win over the
+body and the query string; the body wins over the query string, which only fills
+properties the body omits. Values are converted by the model's own JSON contract, so `Guid`,
 numbers, enums, and arrays (`?tag=a&tag=b`) just work:
 
 ```csharp
@@ -85,7 +90,7 @@ public sealed record GetOrderRequest(Guid Id, int Page = 1, string[]? Tags = nul
 
 public sealed class GetOrderEndpoint : Endpoint<GetOrderRequest, Order>
 {
-    public override void Configure() => Get("/orders/{id:guid}");
+    public override void Configure() => Get("/orders/{id:guid}").AllowAnonymous();
     public override ValueTask<Order> HandleAsync(GetOrderRequest request, CancellationToken ct) => /* ... */;
 }
 ```
@@ -104,7 +109,7 @@ Non-object models (`int`, arrays) still bind from the JSON body only. Override
 ```csharp
 public sealed class GetOrderByNumberEndpoint : Endpoint<int, Order>
 {
-    public override void Configure() => Get("/orders/by-number/{number}");
+    public override void Configure() => Get("/orders/by-number/{number}").AllowAnonymous();
 
     protected override ValueTask<Bound<int>> BindAsync(CancellationToken ct) =>
         int.TryParse(HttpContext.Request.RouteValues["number"] as string, out var number)
@@ -152,7 +157,7 @@ works without `AddValidation()`, and its errors merge with the attribute errors:
 ```csharp
 public sealed class CreateWidgetEndpoint(WidgetStore store) : Endpoint<CreateWidgetRequest, Widget>
 {
-    public override void Configure() => Post("/widgets");
+    public override void Configure() => Post("/widgets").AllowAnonymous();
 
     protected override async IAsyncEnumerable<ValidationResult> ValidateAsync(
         CreateWidgetRequest request, [EnumeratorCancellation] CancellationToken ct)
@@ -184,7 +189,7 @@ For FastEndpoints-style command handlers, derive from `Endpoint<TRequest>` (or
 ```csharp
 public sealed class EchoEndpoint : Endpoint<EchoRequest>
 {
-    public override void Configure() => Post("/echo");
+    public override void Configure() => Post("/echo").AllowAnonymous();
 
     public override ValueTask HandleAsync(EchoRequest request, CancellationToken ct) =>
         Send.OkAsync(new EchoResponse(request.Value));
@@ -219,6 +224,7 @@ public sealed class EventsEndpoint : EndpointWithoutRequest<IResult>
     {
         Get("/events");
         ProducesSse();
+        AllowAnonymous();
     }
 
     public override ValueTask<IResult> HandleAsync(CancellationToken ct) =>

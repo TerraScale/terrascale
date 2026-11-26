@@ -11,6 +11,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Get("/api/v1/dashboard/credentials");
             Metadata(new IntegrationEndpointGroup("integration"));
             Name("listDashboardCredentials");

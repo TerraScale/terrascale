@@ -8,6 +8,7 @@ public sealed class DeleteProjectOrganizationDomainEndpoint(ProjectOrganizationD
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(OrganizationRoute + "/domains/{domain}");
         this.Describe("delete_project_organization_domain", "Delete an organization domain", "Project-scoped verified domains. Publish record_name with record_value as DNS TXT before verifying. A domain belongs to one organization per project.", "Project tenants", null, 204, null, conflict: true);
     }

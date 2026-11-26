@@ -10,6 +10,7 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/terrascale/account/deletion");
         Name("account_deletion_status");
         Summary("Read your account deletion status");

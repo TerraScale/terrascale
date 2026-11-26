@@ -7,6 +7,7 @@ public sealed class RevokeAgentKeyEndpoint(TenantDirectory tenants, PlatformAuth
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/agents/{agent}/keys/{kid}");
         this.Describe("revoke_agent_key", "Revoke agent key", "Idempotent; the key stays listed with revoked_at. Agent identities. Requires the admin role or the corresponding project key scope.", "Agents", null, 204, null, conflict: true);
     }

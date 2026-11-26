@@ -7,6 +7,7 @@ public sealed class ListProjectClientsEndpoint(TenantDirectory tenants, Platform
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/clients");
         this.Describe("list_project_clients", "List OAuth clients", "The tenant's clients without secrets; limit is 1 to 100 (default 100) and after the previous page's next. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ClientPageBody), paged: true);
     }

@@ -33,6 +33,7 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/terrascale/api-keys/self/scoped-keys");
         Name("create_scoped_api_key");
         Summary("Mint a scoped API key for an agent");

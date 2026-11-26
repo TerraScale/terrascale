@@ -12,6 +12,7 @@ public sealed class SendUnlinkCodeEndpoint(PlatformAuthentication authentication
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/terrascale/account/providers/{provider}/code");
         this.Describe("account_send_unlink_code", "Email me a code to unlink a provider", "Requires a live sign-in token and a linked provider. Emails a sign-in code to the account's verified email, subject to the sign-in mail limits; use it with DELETE /v1/terrascale/account/providers/{provider}.",
             "Account", null, StatusCodes.Status202Accepted, null, scoped: false);

@@ -12,6 +12,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Post("/api/v1/dashboard/credentials/rotate");
             Metadata(new IntegrationEndpointGroup("integration"));
             Name("rotateDashboardCredential");

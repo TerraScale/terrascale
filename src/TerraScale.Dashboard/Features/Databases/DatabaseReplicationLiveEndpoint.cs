@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Databases;
 
 public sealed class DatabaseReplicationLiveEndpoint(DatabaseService databases) : EndpointWithoutRequest<IResult>
 {
-    public override void Configure() => Get("/databases/{databaseId}/replication/live");
+    public override void Configure() => Get("/databases/{databaseId}/replication/live").AuthenticateInHandler();
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await LiveDatabaseView.StreamAsync(HttpContext, "replication", async (context, database, cancellationToken) =>

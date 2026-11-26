@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public sealed class RevokeSessionEndpoint(DashboardSessions sessions, AccountService accounts) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/profile/sessions/{id}/revoke");
+        public override void Configure() => Post("/api/v1/dashboard/profile/sessions/{id}/revoke").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

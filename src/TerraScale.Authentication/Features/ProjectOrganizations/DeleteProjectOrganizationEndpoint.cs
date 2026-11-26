@@ -8,6 +8,7 @@ public sealed class DeleteProjectOrganizationEndpoint(ProjectOrganizationDirecto
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(OrganizationRoute);
         this.Describe("delete_project_organization", "Delete an organization", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", null, 204, null, paged: false, conflict: true);
     }

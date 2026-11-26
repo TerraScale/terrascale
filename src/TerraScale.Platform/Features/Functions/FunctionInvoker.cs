@@ -10,7 +10,8 @@ public sealed class FunctionInvoker(
     FunctionSecretSeal seal,
     TerraBaseClient terraBase,
     PlatformMetrics metrics,
-    TimeProvider timeProvider) : IDisposable
+    TimeProvider timeProvider,
+    ILogger<FunctionInvoker> logger) : IDisposable
 {
     private const int MaxConcurrent = 64;
     private static readonly PlatformUnavailable Busy = new("function capacity is temporarily unavailable", "function_busy");
@@ -83,7 +84,7 @@ public sealed class FunctionInvoker(
     {
         var started = timeProvider.GetUtcNow();
         var clock = timeProvider.GetTimestamp();
-        await using var sql = new FunctionSql(terraBase, target.Database, bookmark, timeProvider);
+        await using var sql = new FunctionSql(terraBase, target.Database, bookmark, timeProvider, logger);
         var run = await FunctionRunner.RunAsync(source, eventJson, secrets, sql, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         var elapsed = timeProvider.GetElapsedTime(clock);

@@ -7,6 +7,7 @@ public sealed class SetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put(Root + "/agent-policy");
         this.Describe("set_agent_policy", "Set agent policy", "Agent identities. Requires the admin role or the corresponding project key scope.", "Agents", typeof(AgentPolicyBody), 200, typeof(AgentPolicyBody), conflict: true);
     }

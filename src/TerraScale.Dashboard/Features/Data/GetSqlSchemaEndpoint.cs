@@ -8,6 +8,7 @@ public sealed class GetSqlSchemaEndpoint(DashboardSessions sessions, AccountServ
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/api/v1/dashboard/data/schema");
         Name("getDashboardSqlSchema");
         Summary("Lists the selected database's tables, columns and declared types for editor completion");

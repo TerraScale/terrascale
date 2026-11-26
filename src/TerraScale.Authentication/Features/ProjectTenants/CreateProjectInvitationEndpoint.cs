@@ -9,6 +9,7 @@ public sealed class CreateProjectInvitationEndpoint(TenantDirectory tenants, Pla
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/invitations");
         this.Describe("create_project_invitation", "Invite an end user", "Needs the admin project role.", "Project tenants", typeof(CreateProjectInvitationRequest), StatusCodes.Status201Created, typeof(ProjectInvitationBody));
     }

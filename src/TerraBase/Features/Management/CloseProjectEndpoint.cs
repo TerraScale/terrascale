@@ -69,7 +69,7 @@ internal sealed class CloseProjectEndpoint(
     {
         if (options.PlatformUrl is not { } platformUrl)
         {
-            return new ProjectClosureBody("accepted", closureId, 0, 2);
+            return new BackendUnavailable("platform project file erasure is not configured on this node; retry", "platform_unavailable");
         }
 
         var endpoint = new Uri(platformUrl, $"/internal/projects/{projectId}/close");

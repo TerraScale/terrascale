@@ -8,6 +8,7 @@ public sealed class ListAccountAgentsEndpoint(PlatformAuthentication authenticat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/terrascale/me/agents");
         this.Describe("list_account_agents", "List your agents",
             "The agents the signed-in TerraScale account owns, enrolled through /v1/terrascale/agent-enrollments, with their scopes (mcp:read, mcp:write), keys and last_used_at.",

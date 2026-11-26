@@ -10,6 +10,7 @@ public sealed class RevokeSelfAgentEndpoint(PlatformAuthentication authenticatio
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/{agent}");
         this.DescribeSelf("revoke_self_agent", "Revoke self agent", StatusCodes.Status204NoContent, null);
     }

@@ -8,6 +8,7 @@ public sealed class ListProjectOrganizationDomainsEndpoint(ProjectOrganizationDi
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(OrganizationRoute + "/domains");
         this.Describe("list_project_organization_domains", "List organization domains", "Project-scoped verified domains. Publish record_name with record_value as DNS TXT before verifying. A domain belongs to one organization per project.", "Project tenants", null, 200, typeof(ProjectOrganizationDomainPage), conflict: true);
     }

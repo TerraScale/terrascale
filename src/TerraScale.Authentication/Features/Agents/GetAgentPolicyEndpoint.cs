@@ -7,6 +7,7 @@ public sealed class GetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/agent-policy");
         this.Describe("get_agent_policy", "Get agent policy", "Agent identities. Requires the viewer role or the corresponding project key scope.", "Agents", null, 200, typeof(AgentPolicyBody));
     }

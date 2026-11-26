@@ -2,6 +2,7 @@ using System.Net;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using ZLogger;
 
 namespace TerraScale.Platform.Features.Shapes;
 
@@ -18,12 +19,15 @@ public readonly union DeleteShapeObjectOutcome(ShapeObjectDeleted, PlatformUnava
 public sealed class ShapeObjectStore : IDisposable
 {
     private static readonly PlatformUnavailable Unconfigured = new("shape object storage is not configured", "shapes_unconfigured");
+    private static readonly PlatformUnavailable Unavailable = new("shape object storage is unavailable; retry", "shapes_unavailable");
     private readonly AmazonS3Client? _client;
     private readonly ShapeStorageOptions? _options;
+    private readonly ILogger<ShapeObjectStore> _logger;
 
-    public ShapeObjectStore(PlatformOptions options)
+    public ShapeObjectStore(PlatformOptions options, ILogger<ShapeObjectStore> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
+        _logger = logger;
         if (options.Shapes is not { } shapes)
         {
             return;
@@ -180,5 +184,9 @@ public sealed class ShapeObjectStore : IDisposable
 
     public void Dispose() => _client?.Dispose();
 
-    private static PlatformUnavailable Failed(Exception error) => new($"shape object storage is unavailable ({error.Message})", "shapes_unavailable");
+    private PlatformUnavailable Failed(Exception error)
+    {
+        _logger.ZLogWarning(error, $"Shape object storage request failed");
+        return Unavailable;
+    }
 }

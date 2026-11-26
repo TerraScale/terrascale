@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Data
 {
     public sealed class SavedQueriesListEndpoint(DashboardSessions sessions, AccountService accounts, SavedQueryService saved) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/api/v1/dashboard/data/saved-queries");
+        public override void Configure() => Get("/api/v1/dashboard/data/saved-queries").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

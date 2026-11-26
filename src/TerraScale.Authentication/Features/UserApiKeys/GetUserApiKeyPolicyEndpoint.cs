@@ -7,6 +7,7 @@ public sealed class GetUserApiKeyPolicyEndpoint(TenantDirectory tenants, Platfor
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/user-api-key-policy");
         this.Describe("get_user_api_key_policy", "Get user api key policy", "Project-scoped user-owned keys. Requires the viewer role or the corresponding project key scope.", "User API keys", null, 200, typeof(UserApiKeyPolicyBody));
     }

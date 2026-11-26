@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 {
     public sealed class SetCredentialAllowedCidrsEndpoint(DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/credentials/allowed-cidrs");
+        public override void Configure() => Post("/api/v1/dashboard/credentials/allowed-cidrs").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

@@ -7,6 +7,7 @@ public sealed class GetProjectSettingsEndpoint(TenantDirectory tenants, ProjectA
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/settings");
         this.Describe("get_project_settings", "Get a project tenant's settings", "Its issuer, sign-in methods, branding and counts. Needs the viewer project role; a project the caller cannot see is 404.", "Project tenants", null, StatusCodes.Status200OK, typeof(SettingsBody));
     }

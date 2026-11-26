@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 {
     public sealed class SetMfaPolicyEndpoint(DashboardSessions sessions, AccountService accounts, ITsAuthMfa mfa, IWorkspacePlacement placement) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/organization/mfa-policy");
+        public override void Configure() => Post("/api/v1/dashboard/organization/mfa-policy").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

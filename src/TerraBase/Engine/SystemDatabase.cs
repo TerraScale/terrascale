@@ -39,7 +39,11 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
 
     private ISqlDatabaseSession? _session;
 
+    public static BackendUnavailable Opening { get; } = new("the system database is opening; retry", "system_opening");
+
     public ISqlDatabaseSession Session => Volatile.Read(ref _session) ?? throw new InvalidOperationException("the system database is not open");
+
+    public bool IsOpen => Volatile.Read(ref _session) is not null;
 
     public string KeyId => FileText.Read(Path.Combine(options.DataDirectory, KeyIdFile))?.Trim() ?? keyring.ActiveKeyId;
 
@@ -95,6 +99,11 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
 
     public async ValueTask<SystemQueryOutcome> QueryAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
+        if (!IsOpen)
+        {
+            return Opening;
+        }
+
         var request = new SqlStatementRequest(Id, [statement], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
         var session = await UsableSessionAsync(cancellationToken);
         var outcome = await session.ExecuteReadAsync(request, cancellationToken);
@@ -110,6 +119,11 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
     public async ValueTask<SystemWriteOutcome> WriteAsync(
         IReadOnlyList<SqlStatement> statements, ConsistencyMode mode, CancellationToken cancellationToken)
     {
+        if (!IsOpen)
+        {
+            return Opening;
+        }
+
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, mode, CausalBookmark.Empty);
         var session = await UsableSessionAsync(cancellationToken);
         var outcome = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);

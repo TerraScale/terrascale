@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using ZLogger;
 
 namespace TerraScale.Platform.Features.FileStorage;
 
@@ -26,14 +27,17 @@ public sealed class S3FileObjectStore : IDisposable
     private const int ProjectPageSize = 100;
     private const int ParallelDeletes = 16;
     private static readonly PlatformUnavailable Unconfigured = new("file object storage is not configured", "files_unconfigured");
+    private static readonly PlatformUnavailable Unavailable = new("file storage is unavailable; retry", "files_unavailable");
     private readonly AmazonS3Client? _client;
     private readonly Protocol _protocol;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<S3FileObjectStore> _logger;
 
-    public S3FileObjectStore(PlatformOptions options, TimeProvider timeProvider)
+    public S3FileObjectStore(PlatformOptions options, TimeProvider timeProvider, ILogger<S3FileObjectStore> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
         _timeProvider = timeProvider;
+        _logger = logger;
         if (options.Files is not { } files)
         {
             return;
@@ -239,7 +243,7 @@ public sealed class S3FileObjectStore : IDisposable
         return (page.Truncated, failure);
     }
 
-    private static async ValueTask<ListProjectObjectsOutcome> ListProjectObjectsAsync(
+    private async ValueTask<ListProjectObjectsOutcome> ListProjectObjectsAsync(
         AmazonS3Client client, string region, string prefix, CancellationToken cancellationToken)
     {
         try
@@ -281,7 +285,7 @@ public sealed class S3FileObjectStore : IDisposable
 
     public void Dispose() => _client?.Dispose();
 
-    private static PresignFileObjectOutcome Presign(AmazonS3Client client, GetPreSignedUrlRequest request)
+    private PresignFileObjectOutcome Presign(AmazonS3Client client, GetPreSignedUrlRequest request)
     {
         try
         {
@@ -293,7 +297,11 @@ public sealed class S3FileObjectStore : IDisposable
         }
     }
 
-    private static PlatformUnavailable Failed(Exception error) => new($"file storage is unavailable; retry ({error.Message})", "files_unavailable");
+    private PlatformUnavailable Failed(Exception error)
+    {
+        _logger.ZLogWarning(error, $"File object storage request failed");
+        return Unavailable;
+    }
 
     private readonly record struct ProjectObjectPage(IReadOnlyList<string> Keys, bool Truncated);
 

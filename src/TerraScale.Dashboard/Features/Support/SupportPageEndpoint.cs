@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Support
 {
     public sealed class SupportPageEndpoint(DashboardSessions sessions, AccountService accounts) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/support");
+        public override void Configure() => Get("/support").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

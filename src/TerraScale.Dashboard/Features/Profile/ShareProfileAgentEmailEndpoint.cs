@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public sealed class ShareProfileAgentEmailEndpoint(DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/profile/agents/{id}/share-email");
+        public override void Configure() => Post("/api/v1/dashboard/profile/agents/{id}/share-email").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

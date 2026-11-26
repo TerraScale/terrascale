@@ -8,6 +8,7 @@ public sealed class GetProjectOrganizationEndpoint(ProjectOrganizationDirectory 
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(OrganizationRoute);
         this.Describe("get_project_organization", "Get an organization", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", null, 200, typeof(ProjectOrganizationBody), paged: false, conflict: true);
     }

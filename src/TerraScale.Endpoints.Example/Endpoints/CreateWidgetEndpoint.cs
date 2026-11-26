@@ -8,6 +8,7 @@ public sealed class CreateWidgetEndpoint(WidgetStore store) : Endpoint<CreateWid
 {
     public override void Configure()
     {
+        AllowAnonymous();
         Post("/widgets");
         Name("create-widget");
         Summary("Creates a widget");

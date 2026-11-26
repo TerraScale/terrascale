@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class BillingPortalEndpoint(DashboardSessions sessions, AccountService accounts, StripeBilling billing) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/billing/portal");
+        public override void Configure() => Post("/billing/portal").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

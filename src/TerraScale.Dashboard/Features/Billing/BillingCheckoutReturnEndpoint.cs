@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class BillingCheckoutReturnEndpoint(DashboardSessions sessions, AccountService accounts, StripeBilling billing) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/billing/checkout/return");
+        public override void Configure() => Get("/billing/checkout/return").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

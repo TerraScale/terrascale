@@ -10,6 +10,7 @@ public sealed class EndImpersonationEndpoint(TenantDirectory tenants, PlatformAu
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/impersonations/{impersonation}/end");
         this.Describe("end_impersonation", "End an impersonation",
             "Requires a person with the project admin role. Ends the selected impersonation and records a manual end in the audit log and event outbox.",

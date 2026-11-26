@@ -82,6 +82,7 @@ var terrabase = mesh.Select(node => builder.AddDotnetProject($"terrabase-{node.R
         .WithEnvironment("TERRABASE_MASTER_KEY", terrabaseMasterKey)
         .WithEnvironment("TERRABASE_AUTH_ISSUER", authIssuer)
         .WithEnvironment("TERRABASE_AUTH_AUDIENCE", Audience)
+        .WithEnvironment("TERRABASE_PLATFORM_URL", platformUrl)
         .WithHttpEndpoint(port: node.Http, targetPort: node.Http, name: "http", isProxied: false)
         .WithHttpEndpoint(port: node.Internal, targetPort: node.Internal, name: "internal", isProxied: false)
         .WithHttpEndpoint(port: node.Metrics, targetPort: node.Metrics, name: "metrics", isProxied: false)

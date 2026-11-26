@@ -9,6 +9,7 @@ public sealed class CreateSelfUserApiKeyEndpoint(PlatformAuthentication authenti
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "");
         this.DescribeSelf("create_self_user_api_key", "Create self user api key", typeof(UserApiKeyRequest), 201, typeof(UserApiKeyBody));
     }

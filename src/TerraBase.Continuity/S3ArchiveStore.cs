@@ -4,6 +4,7 @@ using System.Net;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Microsoft.Extensions.Logging;
 
 namespace TerraBase.Continuity;
 
@@ -47,10 +48,13 @@ public sealed class S3ArchiveStore : IDisposable
 
     private readonly AmazonS3Client? _client;
     private readonly string? _bucket;
+    private readonly ILogger<S3ArchiveStore> _logger;
 
-    public S3ArchiveStore(ContinuityOptions options)
+    public S3ArchiveStore(ContinuityOptions options, ILogger<S3ArchiveStore> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(logger);
+        _logger = logger;
         if (options.Archive is not { } archive)
         {
             return;
@@ -391,31 +395,36 @@ public sealed class S3ArchiveStore : IDisposable
         }
         catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound && exception.ErrorCode != NoSuchBucket)
         {
-            return new ArchiveObjectMissing(exception.Message, "archive_object_not_found");
+            return new ArchiveObjectMissing("the archive object does not exist", "archive_object_not_found");
         }
         catch (AmazonS3Exception exception) when (exception.StatusCode is HttpStatusCode.PreconditionFailed or HttpStatusCode.Conflict)
         {
-            return new ArchivePreconditionFailed(exception.Message);
+            return new ArchivePreconditionFailed("the archive object changed concurrently");
         }
         catch (AmazonS3Exception exception)
         {
-            return new ArchiveUnavailable(string.Concat("archive request failed: ", exception.Message), "archive_unavailable");
+            ContinuityLog.ArchiveRequestFailed(_logger, exception);
+            return new ArchiveUnavailable("the backup archive refused the request; retry", "archive_unavailable");
         }
         catch (AmazonClientException exception)
         {
-            return new ArchiveUnavailable(string.Concat("archive client failed: ", exception.Message), "archive_client_error");
+            ContinuityLog.ArchiveRequestFailed(_logger, exception);
+            return new ArchiveUnavailable("the backup archive client failed; retry", "archive_client_error");
         }
         catch (HttpRequestException exception)
         {
-            return new ArchiveUnavailable(string.Concat("archive unreachable: ", exception.Message), "archive_unreachable");
+            ContinuityLog.ArchiveRequestFailed(_logger, exception);
+            return new ArchiveUnavailable("the backup archive is unreachable; retry", "archive_unreachable");
         }
         catch (IOException exception)
         {
-            return new ArchiveUnavailable(string.Concat("archive transfer failed: ", exception.Message), "archive_io");
+            ContinuityLog.ArchiveRequestFailed(_logger, exception);
+            return new ArchiveUnavailable("the backup archive transfer failed; retry", "archive_io");
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            return new ArchiveTimedOut(string.Concat("archive request timed out: ", exception.Message), "archive_timeout");
+            ContinuityLog.ArchiveRequestFailed(_logger, exception);
+            return new ArchiveTimedOut("the backup archive request timed out; retry", "archive_timeout");
         }
     }
 }

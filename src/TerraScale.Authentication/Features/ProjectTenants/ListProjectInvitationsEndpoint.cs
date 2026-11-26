@@ -7,6 +7,7 @@ public sealed class ListProjectInvitationsEndpoint(TenantDirectory tenants, Plat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/invitations");
         this.Describe("list_project_invitations", "List project invitations", "Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectInvitationPageBody), paged: true);
     }

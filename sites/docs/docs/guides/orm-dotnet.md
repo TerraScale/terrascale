@@ -90,6 +90,8 @@ Dispose without a commit rolls the transaction back, and so does closing or disp
 
 While a transaction is open, every command on that connection must enlist in it: set `command.Transaction` (Dapper does this from its `transaction:` argument) or the command throws.
 
+`CommandTimeout` defaults to 30 seconds and bounds each command on the client: a command still running then throws `TimeoutException`. `0` waits up to the SDK's 10-minute request limit. Raising it never extends server execution: TerraBase stops a single query at the plan's query timeout (see [limits](/limits)), so keep the default unless a command legitimately queues behind others. Dapper sets it per call with `commandTimeout:`.
+
 ## Async only
 
 The provider is async-only, like the rest of the SDK: the sync `ExecuteNonQuery`, `ExecuteScalar`, `ExecuteReader`, `BeginTransaction`, `Commit` and `Rollback` throw `NotSupportedException`. Use the async overloads and pass a `CancellationToken`.

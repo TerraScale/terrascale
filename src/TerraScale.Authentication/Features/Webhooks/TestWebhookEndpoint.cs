@@ -9,6 +9,7 @@ public sealed class TestWebhookEndpoint(TenantDirectory tenants, PlatformAuthent
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/webhook-endpoints/{id}/test");
         this.Describe("test_webhook", "Send a signed test event to a webhook endpoint", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookEventBody), conflict: true);
     }

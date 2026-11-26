@@ -41,6 +41,7 @@ public sealed class CreateOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Organization}/api-keys");
         this.Describe("create_organization_api_key", "Create an organization API key", "Needs admin. The key reaches every project of the organization, one project per token. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
@@ -53,6 +54,7 @@ public sealed class ListOrganizationApiKeysEndpoint(ApiKeys keys, PlatformAuthen
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Organization}/api-keys");
         this.Describe("list_organization_api_keys", "List organization API keys", "Needs admin. Keys that can still be used, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
     }
@@ -64,6 +66,7 @@ public sealed class GetOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthenti
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Organization}/api-keys/{{key}}");
         this.Describe("get_organization_api_key", "Get an organization API key", "Needs admin.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyBody));
     }
@@ -75,6 +78,7 @@ public sealed class RevokeOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete($"{Organization}/api-keys/{{key}}");
         this.Describe("revoke_organization_api_key", "Revoke an organization API key", "Needs admin. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.", "API keys", null, StatusCodes.Status204NoContent, null);
     }
@@ -86,6 +90,7 @@ public sealed class RotateOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Organization}/api-keys/{{key}}/rotate");
         this.Describe("rotate_organization_api_key", "Rotate an organization API key", "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
     }
@@ -97,6 +102,7 @@ public sealed class SetOrganizationApiKeyAllowedCidrsEndpoint(ApiKeys keys, Plat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put($"{Organization}/api-keys/{{key}}/allowed-cidrs");
         this.Describe("set_organization_api_key_allowed_cidrs", "Set an organization API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
     }
@@ -108,6 +114,7 @@ public sealed class CreateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Project}/api-keys");
         this.Describe("create_project_api_key", "Create a project API key", "Needs the project's member role; scopes must be within the caller's. The key string is answered once. 429 rate_limited with Retry-After past 20 API keys created per user per hour, organization and project keys together.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
@@ -120,6 +127,7 @@ public sealed class ListProjectApiKeysEndpoint(ApiKeys keys, PlatformAuthenticat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Project}/api-keys");
         this.Describe("list_project_api_keys", "List project API keys", "Needs the project's member role. Keys that can still be used, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
     }
@@ -131,6 +139,7 @@ public sealed class GetProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthenticatio
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get($"{Project}/api-keys/{{key}}");
         this.Describe("get_project_api_key", "Get a project API key", "Needs the project's member role.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyBody));
     }
@@ -142,6 +151,7 @@ public sealed class RevokeProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete($"{Project}/api-keys/{{key}}");
         this.Describe("revoke_project_api_key", "Revoke a project API key", "Needs the project's member role. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.", "API keys", null, StatusCodes.Status204NoContent, null);
     }
@@ -153,6 +163,7 @@ public sealed class RotateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post($"{Project}/api-keys/{{key}}/rotate");
         this.Describe("rotate_project_api_key", "Rotate a project API key", "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
     }
@@ -164,6 +175,7 @@ public sealed class SetProjectApiKeyAllowedCidrsEndpoint(ApiKeys keys, PlatformA
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put($"{Project}/api-keys/{{key}}/allowed-cidrs");
         this.Describe("set_project_api_key_allowed_cidrs", "Set a project API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
     }

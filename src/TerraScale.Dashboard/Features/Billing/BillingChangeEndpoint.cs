@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class BillingChangeEndpoint(DashboardSessions sessions, AccountService accounts, StripeBilling billing) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/billing/change");
+        public override void Configure() => Post("/billing/change").AuthenticateInHandler();
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
             new(BillingMutations.MutateAsync(HttpContext, sessions, accounts, billing, "change"));

@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Features.Accounts
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Post("/api/v1/dashboard/switch-organization");
             Metadata(new IntegrationEndpointGroup("integration"));
             Name("switchDashboardOrganization");

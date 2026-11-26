@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed class BillingRedirectEndpoint : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/billing");
+        public override void Configure() => Get("/billing").AllowAnonymous();
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IResult>(TypedResults.Redirect("/organization?tab=billing"));

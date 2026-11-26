@@ -7,6 +7,7 @@ public sealed class RevokeSelfUserApiKeyEndpoint(PlatformAuthentication authenti
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/{key}");
         this.DescribeSelf("revoke_self_user_api_key", "Revoke self user api key", null, 204, null);
     }

@@ -9,6 +9,7 @@ public sealed class ReplayWebhookDeliveryEndpoint(TenantDirectory tenants, Platf
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/webhook-endpoints/{id}/deliveries/{delivery}/replay");
         this.Describe("replay_webhook_delivery", "Replay a webhook delivery with the original event id", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null, conflict: true);
     }

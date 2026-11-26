@@ -9,6 +9,7 @@ public sealed class RotateWebhookSecretEndpoint(TenantDirectory tenants, Platfor
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/webhook-endpoints/{id}/rotate-secret");
         this.Describe("rotate_webhook_secret", "Rotate a webhook endpoint's secret", "Issues a new whsec_ signing secret and answers it exactly once. The previous secret keeps verifying for 24 hours, then is refused. A concurrent change to the endpoint answers 409 version_conflict. Needs the admin project role and a rotate_webhook_secret step-up proof.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookSecretBody), conflict: true);
     }

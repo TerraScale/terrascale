@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
 using TerraScale.Contracts;
+using ZLogger;
 
 namespace TerraScale.Platform.TerraBase;
 
@@ -57,7 +58,7 @@ public sealed record HttpAnswer(int Status, byte[] Body, string? Bookmark, strin
 
 public sealed record CallerSqlResponse(SqlExecuteResponse Response, string? RulesVersion);
 
-public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOptions options, TerraBaseQuic quic, PlatformMetrics metrics)
+public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOptions options, TerraBaseQuic quic, PlatformMetrics metrics, ILogger<TerraBaseClient> logger)
 {
     public const string HttpClientName = "terrabase";
 
@@ -232,7 +233,8 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         }
         catch (HttpRequestException error)
         {
-            return new PlatformUnavailable($"TerraBase changefeed is unreachable: {Describe(error)}", "terrabase_unreachable");
+            logger.ZLogWarning(error, $"TerraBase changefeed request failed");
+            return new PlatformUnavailable("TerraBase changefeed is unreachable", "terrabase_unreachable");
         }
 
         if (response.StatusCode != HttpStatusCode.OK)
@@ -244,12 +246,13 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
 
         try
         {
-            return new ChangefeedReader(response, await response.Content.ReadAsStreamAsync(cancellationToken));
+            return new ChangefeedReader(response, await response.Content.ReadAsStreamAsync(cancellationToken), logger);
         }
         catch (HttpRequestException error)
         {
             response.Dispose();
-            return new PlatformUnavailable($"TerraBase changefeed broke: {error.Message}", "terrabase_unreachable");
+            logger.ZLogWarning(error, $"TerraBase changefeed stream failed to open");
+            return new PlatformUnavailable("TerraBase changefeed broke", "terrabase_unreachable");
         }
     }
 
@@ -267,7 +270,8 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         }
         catch (HttpRequestException error)
         {
-            return new PlatformUnavailable($"TerraBase is unreachable: {Describe(error)}", "terrabase_unreachable");
+            logger.ZLogWarning(error, $"TerraBase request failed");
+            return new PlatformUnavailable("TerraBase is unreachable", "terrabase_unreachable");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -284,8 +288,6 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
     }
 
     private HttpClient Client() => httpClients.CreateClient(HttpClientName);
-
-    private static string Describe(HttpRequestException error) => error.InnerException is { } inner ? error.Message + " " + inner.Message : error.Message;
 
     private static void Consistency(HttpRequestMessage request, SqlContext context)
     {
@@ -333,7 +335,7 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         return new PlatformUnavailable(error.Message, error.Code, error.Details);
     }
 
-    private sealed class ChangefeedReader(HttpResponseMessage response, Stream stream) : IDisposable
+    private sealed class ChangefeedReader(HttpResponseMessage response, Stream stream, ILogger logger) : IDisposable
     {
         private readonly StreamReader _reader = new(stream);
 
@@ -348,11 +350,13 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
                 }
                 catch (IOException error)
                 {
-                    return new PlatformUnavailable($"TerraBase changefeed broke: {error.Message}", "changefeed_broken");
+                    logger.ZLogWarning(error, $"TerraBase changefeed stream broke");
+                    return new PlatformUnavailable("TerraBase changefeed broke", "changefeed_broken");
                 }
                 catch (HttpRequestException error)
                 {
-                    return new PlatformUnavailable($"TerraBase changefeed broke: {error.Message}", "changefeed_broken");
+                    logger.ZLogWarning(error, $"TerraBase changefeed stream broke");
+                    return new PlatformUnavailable("TerraBase changefeed broke", "changefeed_broken");
                 }
 
                 if (line is null)

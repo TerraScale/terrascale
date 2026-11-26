@@ -214,6 +214,7 @@ public sealed class GetEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/{slug}/email/branding");
         Name("email_branding_get");
         Summary("Read email branding");
@@ -234,6 +235,7 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put("/v1/{slug}/email/branding");
         Name("email_branding_put");
         Summary("Save email branding");
@@ -279,6 +281,7 @@ public sealed class ListEmailTemplatesEndpoint(EmailSettings settings, AuthOptio
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/{slug}/email/templates");
         Name("email_templates_list");
         Summary("List email templates");
@@ -311,6 +314,7 @@ public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/{slug}/email/templates/{kind}/{locale}");
         Name("email_template_get");
         Summary("Read an email template");
@@ -339,6 +343,7 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put("/v1/{slug}/email/templates/{kind}/{locale}");
         Name("email_template_put");
         Summary("Save an email template");
@@ -387,6 +392,7 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/{slug}/email/preview");
         Name("email_preview");
         Summary("Preview an email");
@@ -439,6 +445,7 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/{slug}/email/test");
         Name("email_test_send");
         Summary("Send a test email");
@@ -506,6 +513,7 @@ public sealed class ListEmailVersionsEndpoint(EmailSettings settings, AuthOption
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/{slug}/email/versions");
         Name("email_versions_list");
         Summary("List email configuration versions");
@@ -544,6 +552,7 @@ public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions 
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/{slug}/email/versions/{version}");
         Name("email_version_get");
         Summary("Read an email configuration version");
@@ -574,6 +583,7 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/{slug}/email/versions/{version}/restore");
         Name("email_version_restore");
         Summary("Roll back the email configuration");

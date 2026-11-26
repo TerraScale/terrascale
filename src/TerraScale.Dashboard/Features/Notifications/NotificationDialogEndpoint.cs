@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 {
     public sealed class NotificationDialogEndpoint(DashboardSessions sessions, AccountService accounts, ApiKeyExpiryNotifications expiry) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/notifications/dialog");
+        public override void Configure() => Get("/notifications/dialog").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

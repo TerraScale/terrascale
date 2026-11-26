@@ -9,6 +9,7 @@ public sealed class ApproveProjectWaitlistEndpoint(TenantDirectory tenants, Plat
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/waitlist/{entry}/approve");
         this.Describe("approve_project_waitlist", "Approve a waitlist entry", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }

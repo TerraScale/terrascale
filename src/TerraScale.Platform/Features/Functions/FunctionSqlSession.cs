@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Net.WebSockets;
 using TerraScale.Contracts;
+using ZLogger;
 
 namespace TerraScale.Platform.Features.Functions;
 
@@ -8,12 +9,12 @@ public readonly union OpenFunctionSqlSessionOutcome(FunctionSqlSession, Platform
 
 public readonly union SendFunctionSqlFrameOutcome(SqlWsServerFrame, PlatformUnavailable);
 
-public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposable
+public sealed class FunctionSqlSession(ClientWebSocket socket, ILogger logger) : IAsyncDisposable
 {
     private const int MaxFrameBytes = 16 * 1024 * 1024;
     private long _nextId;
 
-    public static async ValueTask<OpenFunctionSqlSessionOutcome> OpenAsync(TerraBaseClient terraBase, Ulid database, CancellationToken cancellationToken)
+    public static async ValueTask<OpenFunctionSqlSessionOutcome> OpenAsync(TerraBaseClient terraBase, Ulid database, ILogger logger, CancellationToken cancellationToken)
     {
         var target = new UriBuilder(new Uri(terraBase.BaseAddress, TerraBaseRoutes.InternalSqlSocket(database)))
         {
@@ -26,17 +27,19 @@ public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposabl
         try
         {
             await socket.ConnectAsync(target, terraBase.Invoker(), cancellationToken);
-            return new FunctionSqlSession(socket);
+            return new FunctionSqlSession(socket, logger);
         }
         catch (WebSocketException error)
         {
             socket.Dispose();
-            return new PlatformUnavailable($"TerraBase refused the SQL session: {error.Message}", "sql_session_unavailable");
+            logger.ZLogWarning(error, $"TerraBase refused a function SQL session");
+            return new PlatformUnavailable("TerraBase refused the SQL session", "sql_session_unavailable");
         }
         catch (HttpRequestException error)
         {
             socket.Dispose();
-            return new PlatformUnavailable($"TerraBase is unreachable: {error.Message}", "terrabase_unreachable");
+            logger.ZLogWarning(error, $"TerraBase was unreachable for a function SQL session");
+            return new PlatformUnavailable("TerraBase is unreachable", "terrabase_unreachable");
         }
     }
 
@@ -76,7 +79,8 @@ public sealed class FunctionSqlSession(ClientWebSocket socket) : IAsyncDisposabl
         }
         catch (WebSocketException error)
         {
-            return new PlatformUnavailable($"the SQL session broke: {error.Message}", "sql_session_broken");
+            logger.ZLogWarning(error, $"A function SQL session broke");
+            return new PlatformUnavailable("the SQL session broke", "sql_session_broken");
         }
 
         return TerraBaseAnswers.Parse(buffer.WrittenSpan, TerraScaleContractsJsonContext.Default.SqlWsServerFrame) is { } answer && answer.Id == id

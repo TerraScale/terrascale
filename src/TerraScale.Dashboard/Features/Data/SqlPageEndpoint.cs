@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Data
 {
     public sealed class SqlPageEndpoint(DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/databases/{databaseId}/sql");
+        public override void Configure() => Get("/databases/{databaseId}/sql").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

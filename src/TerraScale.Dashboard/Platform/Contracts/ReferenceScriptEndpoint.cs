@@ -7,6 +7,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
     {
         public override void Configure()
         {
+            AllowAnonymous();
             Get("/reference/terrascale.js");
             Metadata(new ExcludeFromDescriptionAttribute());
         }

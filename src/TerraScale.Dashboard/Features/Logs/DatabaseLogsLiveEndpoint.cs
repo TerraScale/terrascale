@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Logs;
 
 public sealed class DatabaseLogsLiveEndpoint(DatabaseService databases, DatabaseLogBackend logs) : EndpointWithoutRequest<IResult>
 {
-    public override void Configure() => Get("/databases/{databaseId}/logs/live");
+    public override void Configure() => Get("/databases/{databaseId}/logs/live").AuthenticateInHandler();
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await LiveDatabaseView.StreamAsync(HttpContext, "request-log-results", async (context, database, cancellationToken) =>

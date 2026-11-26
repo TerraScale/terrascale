@@ -7,6 +7,7 @@ public sealed class CreateAgentIdClientEndpoint(PlatformAuthentication authentic
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root);
         this.Describe("create_agentid_client", "Register a Sign in as agent client",
             "Registers a confidential client of the agent issuer {origin}/agents for the signed-in TerraScale account. name is 1 to 64 characters; redirect_uris holds 1 to 10 distinct absolute https URLs in canonical form (lowercase scheme and host, no default port, userinfo or fragment), matched exactly at authorization. The answer has client_id (a ULID) and client_secret, shown once; only its SHA-256 digest is kept. The client authenticates at {origin}/agents/oauth/token with client_secret_basic or client_secret_post and may request the owner_email scope. An account has at most 10 clients (409 client_limit). Needs a create_oauth_client step-up proof in X-TerraScale-Step-Up-Proof, spent in the same save as the change, so a sign-out everywhere that commits first refuses it with 409; a token an agent acts with is 403 owner_required.",

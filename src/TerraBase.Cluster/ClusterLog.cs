@@ -50,6 +50,9 @@ internal static partial class ClusterLog
     [LoggerMessage(EventId = 2115, Level = LogLevel.Warning, Message = "Anti-entropy could not apply {Fetched} commits for database {DatabaseId} from {NodeId}: {Reason}")]
     public static partial void CatchUpApplyFailed(ILogger logger, Ulid databaseId, string nodeId, int fetched, string reason);
 
+    [LoggerMessage(EventId = 2117, Level = LogLevel.Warning, Message = "Anti-entropy for database {DatabaseId} finished with {Count} failures: {Reasons}")]
+    public static partial void CatchUpFailed(ILogger logger, Ulid databaseId, int count, string reasons);
+
     [LoggerMessage(EventId = 2116, Level = LogLevel.Error, Message = "Quarantined {Count} poison remote commits for database {DatabaseId}; their effects were skipped and the origin watermark advanced to {Bookmark}")]
     public static partial void RemoteCommitsQuarantined(ILogger logger, Ulid databaseId, int count, CausalBookmark bookmark);
 }

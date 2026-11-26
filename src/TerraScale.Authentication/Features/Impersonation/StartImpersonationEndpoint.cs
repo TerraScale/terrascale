@@ -10,6 +10,7 @@ public sealed class StartImpersonationEndpoint(TenantDirectory tenants, Platform
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post(Root + "/users/{user}/impersonations");
         this.Describe("start_impersonation", "Issue a single-use impersonation ticket",
             "Requires a person with the project admin role. Tickets last 60 seconds and bind one client; starting requires a start_impersonation step-up proof.",

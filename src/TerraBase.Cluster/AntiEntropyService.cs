@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using TerraScale.Contracts.Continuity;
@@ -8,7 +9,7 @@ namespace TerraBase.Cluster;
 
 public sealed record PeerCatchUp(string NodeId, bool Complete, bool HeadEmpty);
 
-public sealed record CatchUpReport(Ulid DatabaseId, int Fetched, int Applied, int PeersContacted, IReadOnlyList<string> Failures, IReadOnlyList<PeerCatchUp> Peers)
+public sealed record CatchUpReport(Ulid DatabaseId, int Fetched, int Applied, int PeersContacted, IReadOnlyList<string> Failures, IReadOnlyList<PeerCatchUp> Peers, bool DatabaseMissing = false)
 {
     public static CatchUpReport Empty(Ulid databaseId) => new(databaseId, 0, 0, 0, [], []);
 }
@@ -23,6 +24,9 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
 {
     private const int MaxPagesPerPeer = 64;
     private const string CommitLogGapCode = "commit_log_gap";
+    private const int LoggedFailures = 3;
+    private static readonly TimeSpan FailureLogInterval = TimeSpan.FromMinutes(5);
+    private readonly ConcurrentDictionary<Ulid, long> _failuresLogged = new();
 
     public void Map(QuicRpcHost host)
     {
@@ -76,11 +80,30 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         {
             var report = await SyncAsync(databaseId, cancellationToken);
             progressed = report.Applied > 0;
+            ReportFailures(report);
         }
         finally
         {
             databases.EndSync(databaseId, tracked, progressed, requeue: !cancellationToken.IsCancellationRequested);
         }
+    }
+
+    private void ReportFailures(CatchUpReport report)
+    {
+        if (report.Failures.Count == 0 || report.DatabaseMissing)
+        {
+            _ = _failuresLogged.TryRemove(report.DatabaseId, out _);
+            return;
+        }
+
+        var now = timeProvider.GetTimestamp();
+        if (_failuresLogged.TryGetValue(report.DatabaseId, out var logged) && timeProvider.GetElapsedTime(logged, now) < FailureLogInterval)
+        {
+            return;
+        }
+
+        _failuresLogged[report.DatabaseId] = now;
+        ClusterLog.CatchUpFailed(logger, report.DatabaseId, report.Failures.Count, string.Join("; ", report.Failures.Take(LoggedFailures)));
     }
 
     public ValueTask<CatchUpReport> SyncAsync(Ulid databaseId, CancellationToken cancellationToken) =>
@@ -108,7 +131,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         return resolved switch
         {
             ISqlDatabaseSession session => await SyncLeasedAsync(session, peers, perPeerTimeout, cancellationToken),
-            DatabaseNotFound notFound => new CatchUpReport(databaseId, 0, 0, 0, [notFound.Message], []),
+            DatabaseNotFound notFound => new CatchUpReport(databaseId, 0, 0, 0, [notFound.Message], [], DatabaseMissing: true),
             ClusterUnavailable unavailable => new CatchUpReport(databaseId, 0, 0, 0, [unavailable.Message], []),
         };
     }

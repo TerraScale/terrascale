@@ -9,6 +9,7 @@ public sealed class DeleteWebhookEndpointEndpoint(TenantDirectory tenants, Platf
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/webhook-endpoints/{id}");
         this.Describe("delete_webhook_endpoint", "Delete a webhook endpoint", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }

@@ -7,6 +7,7 @@ public sealed class ListProjectWaitlistEndpoint(TenantDirectory tenants, Platfor
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/waitlist");
         this.Describe("list_project_waitlist", "List the project waitlist", "Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WaitlistPageBody), paged: true);
     }

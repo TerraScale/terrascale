@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OpenIddict.Abstractions;
 using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -129,8 +130,14 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         }
         catch (Exception error)
         {
-            var status = error is ApiException failure ? failure.Status
-                : AuthData.IsUnavailable(error) ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status500InternalServerError;
+            var status = error switch
+            {
+                ApiException failure => failure.Status,
+                OpenIddictExceptions.ConcurrencyException => StatusCodes.Status409Conflict,
+                _ when AuthData.IsConflict(error) => StatusCodes.Status409Conflict,
+                _ when AuthData.IsUnavailable(error) => StatusCodes.Status503ServiceUnavailable,
+                _ => StatusCodes.Status500InternalServerError,
+            };
             await this.Tenants.AuditKeyFailureAsync(key, operation, request.Path, status, CancellationToken.None);
             throw;
         }

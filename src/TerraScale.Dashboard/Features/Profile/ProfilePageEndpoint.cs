@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public sealed class ProfilePageEndpoint(DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa, ITsAuthProviders providers, ITsAuthPlatform platform) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/profile");
+        public override void Configure() => Get("/profile").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

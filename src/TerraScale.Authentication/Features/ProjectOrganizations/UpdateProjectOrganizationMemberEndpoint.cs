@@ -8,6 +8,7 @@ public sealed class UpdateProjectOrganizationMemberEndpoint(ProjectOrganizationD
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Put(OrganizationRoute + "/memberships/{user}");
         this.Describe("update_project_organization_member", "Change an organization role", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", typeof(ProjectMembershipRequest), 200, typeof(ProjectOrganizationMembership), paged: false, conflict: true);
     }

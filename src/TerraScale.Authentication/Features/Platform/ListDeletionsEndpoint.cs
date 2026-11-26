@@ -10,6 +10,7 @@ public sealed class ListDeletionsEndpoint(AuthData data, AuthOptions options) : 
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get("/v1/{slug}/deletions");
         Name("deletions_list");
         Summary("List pending dashboard deletion proofs");

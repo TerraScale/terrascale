@@ -9,6 +9,7 @@ public sealed class ListWebhookDeliveriesEndpoint(TenantDirectory tenants, Platf
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/webhook-endpoints/{id}/deliveries");
         this.Describe("list_webhook_deliveries", "List recent webhook deliveries and attempts", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookDeliveryPage));
     }

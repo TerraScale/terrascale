@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
     {
         public override void Configure()
         {
+            AllowAnonymous();
             Verbs("GET", "DELETE");
             Route("/");
             Metadata(new HostAttribute(McpOAuth.McpHost));

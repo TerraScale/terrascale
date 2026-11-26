@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Databases;
 
 public sealed class DatabaseTablesLiveEndpoint(IDatabaseBackend backend, DatabaseService databases) : EndpointWithoutRequest<IResult>
 {
-    public override void Configure() => Get("/databases/{databaseId}/tables/live");
+    public override void Configure() => Get("/databases/{databaseId}/tables/live").AuthenticateInHandler();
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {

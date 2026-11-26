@@ -47,6 +47,7 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
 
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/v1/{slug}/email/support");
         Name("email_support_send");
         Summary("Send a customer support request");

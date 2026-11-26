@@ -7,6 +7,7 @@ public sealed class ListUserAgentsEndpoint(TenantDirectory tenants, PlatformAuth
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/users/{user}/agents");
         this.Describe("list_user_agents", "List user agents", "limit is 1 to 100 (default 50) and after the previous page's next. Agent identities. Requires the viewer role or the corresponding project key scope.", "Agents", null, 200, typeof(AgentPageBody), paged: true);
     }

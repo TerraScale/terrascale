@@ -4,7 +4,7 @@ using TerraScale.Contracts;
 
 namespace TerraScale.Platform.Features.Functions;
 
-public sealed class FunctionSql(TerraBaseClient terraBase, Ulid database, string bookmark, TimeProvider timeProvider) : IAsyncDisposable
+public sealed class FunctionSql(TerraBaseClient terraBase, Ulid database, string bookmark, TimeProvider timeProvider, ILogger logger) : IAsyncDisposable
 {
     public const int MaxCalls = 256;
 
@@ -96,7 +96,7 @@ public sealed class FunctionSql(TerraBaseClient terraBase, Ulid database, string
             return Failure("invalid_request", "a transaction is already open", null, null);
         }
 
-        var outcome = await FunctionSqlSession.OpenAsync(terraBase, database, cancellationToken);
+        var outcome = await FunctionSqlSession.OpenAsync(terraBase, database, logger, cancellationToken);
         return outcome switch
         {
             FunctionSqlSession session => await StartAsync(session, cancellationToken),

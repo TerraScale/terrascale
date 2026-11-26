@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
 {
     public sealed class AuditExportEndpoint(DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, TimeProvider time) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/audit/export");
+        public override void Configure() => Get("/audit/export").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

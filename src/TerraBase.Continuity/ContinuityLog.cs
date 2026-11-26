@@ -28,6 +28,9 @@ internal static partial class ContinuityLog
     [LoggerMessage(EventId = 2107, Level = LogLevel.Warning, Message = "Local archive pruning for database {DatabaseId} is waiting for replica progress through {Prunable}; confirmed through {Confirmed}")]
     public static partial void ReplicaRetentionHeld(ILogger logger, Ulid databaseId, CausalBookmark prunable, CausalBookmark confirmed);
 
+    [LoggerMessage(EventId = 2108, Level = LogLevel.Warning, Message = "Backup archive request failed")]
+    public static partial void ArchiveRequestFailed(ILogger logger, Exception exception);
+
     [LoggerMessage(EventId = 2110, Level = LogLevel.Information, Message = "Continuity operation {OperationId} ({Kind}) finished as {State} for {TargetDatabaseId}")]
     public static partial void OperationFinished(ILogger logger, Ulid operationId, string kind, string state, Ulid targetDatabaseId);
 

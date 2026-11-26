@@ -8,6 +8,7 @@ public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users use
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete(Root + "/users/{user}");
         this.Describe("delete_project_user", "Delete an end user", "Needs the admin project role. Its email is released and its sessions and tokens stop working at once.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }

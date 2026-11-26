@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 {
     public sealed class DashboardContextEndpoint(DashboardSessions sessions, AccountService accounts) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Get("/api/v1/dashboard/context");
+        public override void Configure() => Get("/api/v1/dashboard/context").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

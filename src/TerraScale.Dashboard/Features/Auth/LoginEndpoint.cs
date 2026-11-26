@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.Features.Auth
     {
         public override void Configure()
         {
+            AllowAnonymous();
             Verbs("GET", "HEAD");
             Route("/login");
         }

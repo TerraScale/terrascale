@@ -82,6 +82,7 @@ public sealed class GuestSignInEndpoint(Users users, AttemptLimiter limiter, Pro
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Post("/{slug}/" + GuestSignIn.Route);
         Name("oauth_anonymous");
         Summary("Guest sign-in");

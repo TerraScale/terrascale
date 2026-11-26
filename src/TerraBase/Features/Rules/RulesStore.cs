@@ -27,6 +27,11 @@ internal sealed class RulesStore(SystemDatabase system, AntiEntropyService antiE
 
     public async ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, bool fresh, CancellationToken cancellationToken)
     {
+        if (!system.IsOpen)
+        {
+            return SystemDatabase.Opening;
+        }
+
         if (fresh)
         {
             await SyncSystemAsync(cancellationToken);

@@ -7,6 +7,7 @@ public sealed class ListUserApiKeysEndpoint(TenantDirectory tenants, PlatformAut
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Get(Root + "/users/{user}/api-keys");
         this.Describe("list_user_api_keys", "List user api keys", "Project-scoped user-owned keys; limit is 1 to 100 (default 100) and after the previous page's next. Requires the viewer role or the corresponding project key scope.", "User API keys", null, 200, typeof(UserApiKeyPageBody), paged: true);
     }

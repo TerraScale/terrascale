@@ -373,8 +373,8 @@ public sealed class SkipShortLivedTokenEntries : OpenIddict.Server.IOpenIddictSe
     public ValueTask HandleAsync(OpenIddict.Server.OpenIddictServerEvents.GenerateTokenContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.TokenType == TokenTypeIdentifiers.AccessToken
-            && (context.Principal.HasClaim(claim => claim.Type == PlatformGrants.OrganizationClaim) || context.Request?.IsClientCredentialsGrantType() == true))
+        if (context.TokenType == TokenTypeIdentifiers.AccessToken && context.Request is { } request
+            && (request.IsClientCredentialsGrantType() || request.IsTokenExchangeGrantType() || request.GrantType == GitHubActionsGrant.GrantType))
         {
             context.CreateTokenEntry = false;
         }

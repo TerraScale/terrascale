@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public sealed class CreateProfileAccessTokenEndpoint(DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/profile/access-tokens");
+        public override void Configure() => Post("/api/v1/dashboard/profile/access-tokens").AuthenticateInHandler();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

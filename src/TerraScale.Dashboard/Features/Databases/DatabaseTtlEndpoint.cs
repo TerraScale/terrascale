@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Features.Databases
     {
         public override void Configure()
         {
+            AuthenticateInHandler();
             Post("/v1/databases/ttl");
             Summary("Set or clear database expiry");
             Description("Session and CSRF protected form. Supply databaseId and ttlHours, or action=clear. TTL is between one minute and 365 days.");

@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
 {
     public sealed class InvitationSwitchAccountEndpoint : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/invitations/{token}/switch-account");
+        public override void Configure() => Post("/invitations/{token}/switch-account").AllowAnonymous();
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {

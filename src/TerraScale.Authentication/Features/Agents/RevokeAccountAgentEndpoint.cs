@@ -7,6 +7,7 @@ public sealed class RevokeAccountAgentEndpoint(PlatformAuthentication authentica
 {
     public override void Configure()
     {
+        AuthenticateInHandler();
         Delete("/v1/terrascale/me/agents/{agent}");
         this.Describe("revoke_account_agent", "Revoke your agent",
             "Revokes an agent the signed-in TerraScale account owns, and every key of it: its next token, exchange or platform call is refused. Another account's agent is 404; revoking again is 204.",
