@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraScale.Contracts.ControlPlane;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Common.Validation;
 
@@ -26,11 +27,11 @@ namespace TerraScale.Dashboard.Common.Accounts
         public string AnnualPrice => MoneyFormat.Money(AnnualPriceCents);
         public string Price => CheckoutInterval == "annual" ? AnnualPrice : MonthlyPrice;
         public string PriceUnit => CheckoutInterval == "annual" ? "/ year" : "/ month";
-        public string DatabaseAllowance => ValueFormat.Plural(Resources.Databases, "database");
-        public string StorageAllowance => (Allowances.StorageBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage";
-        public string EgressAllowance => (Allowances.MonthlyEgressBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month";
-        public string MemberAllowance => ValueFormat.Plural(Resources.Members, "team member");
-        public string OperationsAllowance => Allowances.MonthlyOperations.ToString("N0", CultureInfo.InvariantCulture) + " " + PlanCatalog.OperationUnitName.ToLowerInvariant() + "s/month (" + (PlanCatalog.OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)";
+        public string DatabaseAllowance => Resources.Databases == int.MaxValue ? "Unlimited" : ValueFormat.Plural(Resources.Databases, "database");
+        public string StorageAllowance => Allowances.StorageBytes == long.MaxValue ? "Unlimited" : (Allowances.StorageBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage";
+        public string EgressAllowance => Allowances.MonthlyEgressBytes == long.MaxValue ? "Unlimited" : (Allowances.MonthlyEgressBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month";
+        public string MemberAllowance => Resources.Members == int.MaxValue ? "Unlimited" : ValueFormat.Plural(Resources.Members, "team member");
+        public string OperationsAllowance => Allowances.MonthlyOperations == long.MaxValue ? "Unlimited" : Allowances.MonthlyOperations.ToString("N0", CultureInfo.InvariantCulture) + " " + PlanCatalog.OperationUnitName.ToLowerInvariant() + "s/month (" + (PlanCatalog.OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)";
     }
 
     public static class PlanPriceText
@@ -99,6 +100,19 @@ namespace TerraScale.Dashboard.Common.Accounts
                     Resource("projects", "project", "projects"), Resource("databases", "database", "databases"), Resource("members", "team member", "team members") ]));
         }).ToArray());
 
+        public static BillingPlan TerraScalePlan { get; } = new(PlatformIdentity.PlanId, PlatformIdentity.PlanKey, PlatformIdentity.PlanName, 0, 0, 0,
+            new(long.MaxValue, long.MaxValue, long.MaxValue), new(int.MaxValue, int.MaxValue, int.MaxValue), []);
+
+        public static bool IsTerraScale(OrganizationRecord organization)
+        {
+            return organization.Id == PlatformIdentity.OrganizationId && organization.PlanId == PlatformIdentity.PlanId;
+        }
+
+        public static bool IsUnlimited(long limit)
+        {
+            return limit == long.MaxValue;
+        }
+
         public static int BackupRetentionDays(string publishedPlan)
         {
             var key = publishedPlan == "hobby" ? "free" : publishedPlan;
@@ -134,6 +148,11 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         public static BillingPlan? For(OrganizationRecord organization)
         {
+            if (IsTerraScale(organization))
+            {
+                return TerraScalePlan;
+            }
+
             if (organization.InternalBilling is { } internalPolicy)
             {
                 internalPolicy.Validate(organization);
@@ -144,13 +163,13 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         public static PlanAllowances Limits(OrganizationRecord organization)
         {
-            return organization.InternalBilling is { } policy
+            return IsTerraScale(organization) ? TerraScalePlan.Allowances : organization.InternalBilling is { } policy
             ? Validated(organization, policy.Allowances) : Limits(organization.PlanId);
         }
 
         public static PlanResourceLimits ResourceLimits(OrganizationRecord organization)
         {
-            return organization.InternalBilling is { } policy
+            return IsTerraScale(organization) ? TerraScalePlan.Resources : organization.InternalBilling is { } policy
                 ? Validated(organization, policy.Resources) : ResourceLimits(organization.PlanId);
         }
 

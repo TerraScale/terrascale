@@ -2,6 +2,7 @@ using System.Collections;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
+using TerraScale.Contracts.ControlPlane;
 
 namespace TerraScale.Platform;
 
@@ -22,7 +23,7 @@ public sealed record PlatformOptions(
 {
     public const string PeerCredentialHeader = "X-TerraBase-Peer-Credential";
 
-    public static readonly Ulid DefaultStateDatabase = Ulid.Parse("00000000000000000000000007");
+    public static readonly Ulid DefaultStateDatabase = Ulid.Parse(PlatformIdentity.PlatformDatabaseId);
 
     private static readonly string[] SecretFileKeys =
     [

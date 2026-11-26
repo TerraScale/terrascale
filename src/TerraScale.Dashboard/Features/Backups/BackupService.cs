@@ -353,7 +353,8 @@ namespace TerraScale.Dashboard.Features.Backups
         }
         public static int RetentionCeiling(OrganizationRecord? organization)
         {
-            return PlanCatalog.BackupRetentionDays(organization is null ? "hobby" : TerraBasePlanSync.PlanFor(organization));
+            return organization is not null && PlanCatalog.IsTerraScale(organization) ? PlanCatalog.MaxBackupRetentionDays
+                : PlanCatalog.BackupRetentionDays(organization is null ? "hobby" : TerraBasePlanSync.PlanFor(organization));
         }
 
         public static string RetentionRule(int ceiling)

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TerraScale.Contracts.ControlPlane;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -12,7 +13,7 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 namespace TerraScale.Dashboard.Common.Accounts
 {
-    public sealed class AccountService(DashboardDb storage, AccountStore accountStore, OrganizationStore organizationStore, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, ControlPlaneClient control, TerraBasePlanSync plans,
+    public sealed class AccountService(DashboardDb storage, AccountStore accountStore, OrganizationStore organizationStore, TimeProvider time, ITsAuthPlatform platform, ControlPlaneClient control, TerraBasePlanSync plans,
         IHttpContextAccessor requests, ILogger<AccountService> logger)
     {
         private const string PersonalName = "Personal";
@@ -31,6 +32,11 @@ namespace TerraScale.Dashboard.Common.Accounts
         public async Task<AccountRecord> EnsureAsync(SessionRecord session, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(session.UserId);
+            if (IsPlatformOwner(session))
+            {
+                return await EnsurePlatformOwnerAsync(session, cancellationToken);
+            }
+
             var waited = Stopwatch.StartNew();
             for (var conflicts = 0; ;)
             {
@@ -116,6 +122,78 @@ namespace TerraScale.Dashboard.Common.Accounts
                     current.ActiveProjectId = personal.Projects.Values.FirstOrDefault(project => project.IsDefault)?.Id ?? "";
                 }, cancellationToken);
             }
+        }
+
+        private static bool IsPlatformOwner(SessionRecord session)
+        {
+            return string.Equals(session.Email, PlatformIdentity.OwnerEmail, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task<AccountRecord> EnsurePlatformOwnerAsync(SessionRecord session, CancellationToken cancellationToken)
+        {
+            for (var conflicts = 0; ;)
+            {
+                var stored = await accountStore.FindAsync(session.UserId, cancellationToken);
+                if (stored is null)
+                {
+                    var created = new AccountRecord { Id = NewId(), UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = time.GetUtcNow() };
+                    HealPlatformOwner(created, session);
+                    try
+                    {
+                        await accountStore.CreateAsync(created, cancellationToken);
+                        return created;
+                    }
+                    catch (DBConcurrencyException) { await DashboardDb.ConflictBackoffAsync(conflicts++, time, cancellationToken); continue; }
+                }
+
+                if (stored.Erased)
+                {
+                    throw IdentityMismatch();
+                }
+
+                var account = stored.Account;
+                return PlatformOwnerHealed(account, session) ? account : await UpdateAccountAsync(session, current => HealPlatformOwner(current, session), cancellationToken);
+            }
+        }
+
+        private static bool PlatformOwnerHealed(AccountRecord account, SessionRecord session)
+        {
+            return account.OnboardingCompleted && account.OnboardingStep.Length == 0 && account.PersonalClaimUntil is null &&
+                account.ActiveOrganizationId.Length != 0 && !NeedsOwnerName(account) && (session.Email.Length == 0 || account.Email == session.Email) &&
+                account.OrganizationIds.Contains(PlatformIdentity.OrganizationId);
+        }
+
+        private static bool NeedsOwnerName(AccountRecord account)
+        {
+            return string.IsNullOrWhiteSpace(account.Name) || string.Equals(account.Name, account.Email, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void HealPlatformOwner(AccountRecord account, SessionRecord session)
+        {
+            if (session.Email.Length != 0)
+            {
+                account.Email = session.Email;
+            }
+
+            if (!account.OnboardingCompleted || account.ActiveOrganizationId.Length == 0)
+            {
+                account.ActiveOrganizationId = PlatformIdentity.OrganizationId;
+                account.ActiveProjectId = PlatformIdentity.AuthProjectId;
+            }
+
+            if (NeedsOwnerName(account))
+            {
+                account.Name = PlatformIdentity.OwnerFullName;
+            }
+
+            if (!account.OrganizationIds.Contains(PlatformIdentity.OrganizationId))
+            {
+                account.OrganizationIds.Add(PlatformIdentity.OrganizationId);
+            }
+
+            account.OnboardingCompleted = true;
+            account.OnboardingStep = "";
+            account.PersonalClaimUntil = null;
         }
 
         private async Task<OrganizationRecord> CreatePersonalAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -233,12 +311,12 @@ namespace TerraScale.Dashboard.Common.Accounts
             var loaded = await Task.WhenAll(lives.Where(live => TerraScaleIds.IsValid(live.Id) && (live.Role is null or "owner" or "admin" or "member" or "viewer")).Select(async live =>
             {
                 var platformOrg = PlatformDatabases.IsPlatform(live.Id);
-                if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin")
+                var collaborator = live.Role is null;
+                if (platformOrg && collaborator)
                 {
                     return null;
                 }
 
-                var collaborator = live.Role is null;
                 var org = await OrganizationStateAsync(session, live, records, creating, cancellationToken, create: !collaborator);
                 if (org is null)
                 {
@@ -247,7 +325,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 var access = !collaborator && live.Id == accessFor ? FetchAccessAsync(session, live.Id, cancellationToken) : null;
                 Task<IReadOnlyList<TsAuthPlatformProject>>? projects = live.Id == accessFor
                     ? early is not null ? early : platform.ListProjectsAsync(session, live.Id, cancellationToken)
-                    : projectId is not null || collaborator ? platform.ListProjectsAsync(session, live.Id, cancellationToken) : null;
+                    : platformOrg || projectId is not null || collaborator ? platform.ListProjectsAsync(session, live.Id, cancellationToken) : null;
                 IReadOnlyList<TsAuthPlatformProject>? listed = null;
                 try { listed = projects is null ? null : await projects; }
                 catch (AccountAccessException error) when (error.Code == TsAuthGateway.MfaRequiredCode) { org.MfaRequired = true; }
@@ -271,17 +349,18 @@ namespace TerraScale.Dashboard.Common.Accounts
                         Projects = org.Projects.ToDictionary(item => item.Key, item => CollaboratorProject(item.Value))
                     };
                 }
-                if (platformOrg)
+                if (!org.ContainsMember(session.UserId))
                 {
-                    try { await PlatformDatabases.HydrateAsync(org, control, session, cancellationToken); }
+                    return null;
+                }
+
+                if (platformOrg && !org.MfaRequired)
+                {
+                    try { await PlatformDatabases.HydrateAsync(org, control, cancellationToken); }
                     catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException)
                     {
                         logger.PlatformDatabasesUnavailable(error.GetType().Name);
                     }
-                }
-                if (!org.ContainsMember(session.UserId))
-                {
-                    return null;
                 }
 
                 if (access is not null)
@@ -354,10 +433,16 @@ namespace TerraScale.Dashboard.Common.Accounts
 
             if (records.TryGetValue(live.Id, out var read))
             {
-                return read ?? throw new AccountAccessException("Organization is unavailable.", 404);
+                return read is null ? throw new AccountAccessException("Organization is unavailable.", 404)
+                    : PlatformDatabases.IsPlatform(read.Id) && UseTerraScalePlan(read) ? await HealPlatformOrganizationAsync(read.Id, cancellationToken) : read;
             }
 
             var created = new OrganizationRecord { Id = live.Id, Name = live.Name, Slug = Slug(live.Name), Kind = "business", BillingStatus = "billing_required", OwnerUserId = live.CreatedBy, CreatedAt = live.CreatedAt };
+            if (PlatformDatabases.IsPlatform(created.Id))
+            {
+                UseTerraScalePlan(created);
+            }
+
             if (!create)
             {
                 return created;
@@ -372,6 +457,42 @@ namespace TerraScale.Dashboard.Common.Accounts
             {
                 var stored = await organizationStore.FindAsync(live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
                 return stored.Erased ? throw new AccountAccessException("Organization is unavailable.", 404) : stored.Organization;
+            }
+        }
+
+        private static bool UseTerraScalePlan(OrganizationRecord org)
+        {
+            if (org.PlanId == PlatformIdentity.PlanId && org.BillingStatus == "active")
+            {
+                return false;
+            }
+
+            org.PlanId = PlatformIdentity.PlanId;
+            org.BillingStatus = "active";
+            return true;
+        }
+
+        private async Task<OrganizationRecord> HealPlatformOrganizationAsync(string id, CancellationToken cancellationToken)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                var stored = await organizationStore.FindAsync(id, cancellationToken);
+                if (stored is not { Erased: false })
+                {
+                    throw new AccountAccessException("Organization is unavailable.", 404);
+                }
+
+                if (!UseTerraScalePlan(stored.Organization))
+                {
+                    return stored.Organization;
+                }
+
+                try
+                {
+                    await organizationStore.ReplaceAsync(stored, cancellationToken);
+                    return stored.Organization;
+                }
+                catch (DBConcurrencyException) when (attempt < 3) { await DashboardDb.ConflictBackoffAsync(attempt, time, cancellationToken); }
             }
         }
 

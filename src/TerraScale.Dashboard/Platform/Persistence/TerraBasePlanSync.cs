@@ -17,6 +17,11 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         public static string PlanFor(OrganizationRecord organization)
         {
+            if (PlanCatalog.IsTerraScale(organization))
+            {
+                return PlanCatalog.TerraScalePlan.Key;
+            }
+
             if (organization.BillingStatus != "active")
             {
                 return "hobby";

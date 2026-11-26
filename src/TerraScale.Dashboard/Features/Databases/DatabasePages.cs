@@ -168,7 +168,7 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<DatabaseRecord> Branches => [.. Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal)];
     public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database);
-    public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
+    public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatformProject(Database.ProjectId);
     public DatabaseRegionsForm? RegionsForm { get; init; }
     private IReadOnlyList<string> Asked => [.. (RegionsForm?.Asked ?? []).Where(code => Serving.Contains(code, StringComparer.OrdinalIgnoreCase) ||
         Choices.Any(region => region.Code.Equals(code, StringComparison.OrdinalIgnoreCase)))];

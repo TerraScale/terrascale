@@ -65,12 +65,12 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("Organization management access is required.");
             }
 
-            if (PlatformDatabases.IsPlatform(context.Organization!.Id))
+            if (PlatformDatabases.IsPlatformProject(source.ProjectId))
             {
                 throw PlatformDatabases.ReadOnly();
             }
 
-            if (source.Status != "ready" || context.Organization.DeletionRequested)
+            if (source.Status != "ready" || context.Organization!.DeletionRequested)
             {
                 throw new AccountAccessException("Recovery requires an active, ready database.", 409);
             }

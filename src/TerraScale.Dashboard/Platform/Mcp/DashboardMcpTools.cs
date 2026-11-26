@@ -119,7 +119,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         private static DashboardMcpProject ProjectSummary(AccountContext context, ProjectRecord project)
         {
             return new(project.Id, project.Name, [.. project.Regions], project.IsDefault, project.Databases.Count,
-                PlatformDatabases.IsPlatform(context.Organization?.Id) ? "viewer" : project.Role,
+                PlatformDatabases.IsPlatformProject(project.Id) ? "viewer" : project.Role,
                 (context with { Project = project }).CanWriteProjectData);
         }
     }

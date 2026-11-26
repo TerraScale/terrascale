@@ -158,6 +158,12 @@ namespace TerraScale.Dashboard.Features.Usage
 
             UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured, string unit = "operation units/month")
             {
+                if (PlanCatalog.IsUnlimited(limit))
+                {
+                    return new(title, "Unlimited", measured ? bytes ? UsageFigure.Bytes(used) : new(ChartGeometry.Compact(used)) : new("Not metered"), measured,
+                        null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null);
+                }
+
                 return new(title, !bytes && limit > 0 ? Rounded(limit) + " " + unit : allowance,
                 measured ? bytes ? UsageFigure.Bytes(used) : new(ChartGeometry.Compact(used)) : new("Not metered"), measured,
                 measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " " + unit : null);

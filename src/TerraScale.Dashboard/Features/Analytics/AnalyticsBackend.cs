@@ -18,8 +18,9 @@ namespace TerraScale.Dashboard.Features.Analytics
             var regionCodes = regions.ToDictionary(region => region.Id, region => region.Code, StringComparer.Ordinal);
             var requestedRegion = selection.Region.Length == 0 ? "" :
                 DatabaseRegion.Resolve(regions, selection.Region)?.Id ?? throw new HttpRequestException("The selected region is unavailable.");
-            var scopedToken = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, ["databases:read"], token);
-            var answer = await terraBase.GetAnalyticsAsync(ServiceCaller.User(scopedToken), project.Id,
+            var caller = PlatformDatabases.ReadsAsOperator(context, project) ? ServiceCaller.Operator
+                : ServiceCaller.User(await projectTokens.GetAsync(context.Session, organization.Id, project.Id, ["databases:read"], token));
+            var answer = await terraBase.GetAnalyticsAsync(caller, project.Id,
                 selection.DatabaseId.Length == 0 ? null : selection.DatabaseId, token);
             if (answer is not JsonElement root || root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("bucketSeconds", out _))
             {

@@ -50,7 +50,8 @@ namespace TerraScale.Dashboard.Features.Usage
                         throw new JsonException("Usage project scope is invalid.");
                     }
 
-                    var token = await tokens.GetAsync(context.Session, context.Organization.Id, project.Id, ["databases:read"], deadline.Token);
+                    var caller = PlatformDatabases.ReadsAsOperator(context, project) ? ServiceCaller.Operator
+                        : ServiceCaller.User(await tokens.GetAsync(context.Session, context.Organization.Id, project.Id, ["databases:read"], deadline.Token));
                     authorized = true;
                     if (databaseId.Length > 0)
                     {
@@ -59,7 +60,7 @@ namespace TerraScale.Dashboard.Features.Usage
                             throw new JsonException("Usage database scope is invalid.");
                         }
 
-                        var row = (await terraBase.GetDatabaseUsageAsync(ServiceCaller.User(token), project.Id, configured.Name, first, now, deadline.Token)).Require();
+                        var row = (await terraBase.GetDatabaseUsageAsync(caller, project.Id, configured.Name, first, now, deadline.Token)).Require();
                         if (row.DatabaseId != databaseId)
                         {
                             throw new JsonException("Usage returned a different database.");
@@ -67,7 +68,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
                         return new(UsageSourceState.Measured, DatabaseReading(row, project, first, now, bucket));
                     }
-                    var totals = (await terraBase.GetProjectUsageAsync(ServiceCaller.User(token), project.Id, first, now, deadline.Token)).Require();
+                    var totals = (await terraBase.GetProjectUsageAsync(caller, project.Id, first, now, deadline.Token)).Require();
                     if (totals.ProjectId != project.Id)
                     {
                         throw new JsonException("Usage returned a different project.");

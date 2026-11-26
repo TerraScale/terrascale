@@ -34,6 +34,11 @@ namespace TerraScale.Dashboard.Common.Usage
                 return new DashboardForbidden("Selected organization is unavailable.");
             }
 
+            if (org.MfaRequired)
+            {
+                return new DashboardForbidden("Two-factor authentication is required for this organization.");
+            }
+
             var member = org.ContainsMember(context.UserId);
             var project = projectId.Length == 0 ? context.Project : org.Projects[projectId];
             if (project is not null && (project.OrganizationId != org.Id || !org.Projects.ContainsKey(project.Id)))

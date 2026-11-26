@@ -107,7 +107,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     public static bool IsPlatformOrganization(string organizationId) => organizationId is PlatformBootstrap.OrganizationId or PlatformTenant.Id;
 
-    public static bool IsPlatformProject(string projectId) => projectId is PlatformTenant.Id or PlatformBootstrap.AuthProjectId or PlatformBootstrap.DashboardProjectId;
+    public static bool IsPlatformProject(string projectId) => projectId is PlatformTenant.Id or PlatformBootstrap.AuthProjectId or PlatformBootstrap.DashboardProjectId or PlatformBootstrap.PlatformProjectId;
 
     public static bool Imitates(string name)
     {
@@ -569,6 +569,11 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         {
             var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken);
             RequireRole(access, Roles.Admin);
+            if (IsPlatformProject(projectId))
+            {
+                throw PlatformProjectProtected();
+            }
+
             await this.FenceAsync(organizationId, projectId, null, cancellationToken);
             var renamed = access.Project.Value with { Name = name };
             return new Plan<ProjectAccess>(
@@ -584,6 +589,11 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         {
             var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken);
             RequireRole(access, Roles.Admin);
+            if (IsPlatformProject(projectId))
+            {
+                throw PlatformProjectProtected();
+            }
+
             await this.FenceAsync(organizationId, projectId, null, cancellationToken);
             var changed = access.Project.Value with { AllowedCidrs = allowedCidrs };
             return new Plan<ProjectAccess>(
@@ -600,7 +610,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         {
             var access = await this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: accountId is null, cancellationToken);
             RequireRole(access, Roles.Admin);
-            if (projectId is PlatformBootstrap.AuthProjectId or PlatformBootstrap.DashboardProjectId)
+            if (projectId is PlatformBootstrap.AuthProjectId or PlatformBootstrap.DashboardProjectId or PlatformBootstrap.PlatformProjectId)
             {
                 throw PlatformProjectProtected();
             }
@@ -1282,11 +1292,11 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<ProjectMemberRecord>(
             "SELECT * FROM project_members WHERE user_id = @userId AND organization_id = @organizationId", new { userId, organizationId }), cancellationToken));
 
-    private async Task<Versioned<MembershipRecord>?> MembershipAsync(string organizationId, string userId, CancellationToken cancellationToken) =>
+    internal async Task<Versioned<MembershipRecord>?> MembershipAsync(string organizationId, string userId, CancellationToken cancellationToken) =>
         Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<MembershipRecord>(
             "SELECT * FROM memberships WHERE organization_id = @organizationId AND user_id = @userId", new { organizationId, userId }), cancellationToken));
 
-    private async Task<Versioned<ProjectMemberRecord>?> ProjectMemberAsync(string projectId, string userId, CancellationToken cancellationToken) =>
+    internal async Task<Versioned<ProjectMemberRecord>?> ProjectMemberAsync(string projectId, string userId, CancellationToken cancellationToken) =>
         Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectMemberRecord>(
             "SELECT * FROM project_members WHERE project_id = @projectId AND user_id = @userId", new { projectId, userId }), cancellationToken));
 

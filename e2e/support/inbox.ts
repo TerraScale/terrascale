@@ -87,6 +87,8 @@ export const newAddress = (name: string): Promise<string> => inbox.address(name)
 
 export const nextMail = (address: string, seen: number): Promise<Mail> => inbox.next(address, seen);
 
+export const mailCount = async (address: string): Promise<number> => (await search(address)).length;
+
 export async function cloudflareSendCount(): Promise<number> {
   const response = await fetch(`${cloudflareSink}/messages`);
   expect(response.status).toBe(200);

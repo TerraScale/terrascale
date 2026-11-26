@@ -7,8 +7,8 @@ public sealed class ControlPlaneClient(ServiceTransport catalog)
 {
     public const string HttpClientName = "control-plane";
 
-    public Task<TerraBaseJsonOutcome> ListPlatformDatabasesAsync(ServiceCaller caller, CancellationToken cancellationToken) =>
-        catalog.SendAsync<JsonElement, TerraBaseJsonOutcome>(caller, HttpMethod.Get, "/v1/platform/databases", ClientJson.Default.JsonElement, cancellationToken);
+    public Task<TerraBaseJsonOutcome> ListPlatformDatabasesAsync(CancellationToken cancellationToken) =>
+        catalog.SendAsync<JsonElement, TerraBaseJsonOutcome>(ServiceCaller.Operator, HttpMethod.Get, "/v1/platform/databases", ClientJson.Default.JsonElement, cancellationToken);
 
     public Task<TerraBaseActionOutcome> SetOrganizationPlanAsync(string organizationId, string plan, CancellationToken cancellationToken) =>
         catalog.SendAsync(ServiceCaller.Operator, HttpMethod.Put, string.Concat("/admin/organizations/", Segment(organizationId), "/plan"),

@@ -465,7 +465,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }
 
             if (organization.RoleFor(context.UserId).Length == 0 &&
-                (PlatformDatabases.IsPlatform(organization.Id) || project?.Role is not ("viewer" or "member" or "admin")))
+                (PlatformDatabases.IsPlatformProject(project?.Id) || project?.Role is not ("viewer" or "member" or "admin")))
             {
                 throw new AccountAccessException("Project is unavailable.", 404);
             }

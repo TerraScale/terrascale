@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
     {
         public static bool PlanIncludesSso(OrganizationRecord organization)
         {
-            return organization.BillingStatus != "billing_required" && PlanCatalog.For(organization) is { } plan &&
+            return PlanCatalog.IsTerraScale(organization) || organization.BillingStatus != "billing_required" && PlanCatalog.For(organization) is { } plan &&
             (plan.Key == "internal" ? organization.InternalBilling!.BasePlanKey : plan.Key) is "team" or "enterprise";
         }
 

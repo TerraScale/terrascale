@@ -61,6 +61,7 @@ public sealed record UserInfoBody(
     [property: JsonPropertyName("sub")] string Subject,
     [property: JsonPropertyName("email"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Email,
     [property: JsonPropertyName("email_verified"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? EmailVerified,
+    [property: JsonPropertyName("name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Name,
     [property: JsonPropertyName("given_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FirstName,
     [property: JsonPropertyName("family_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastName,
     [property: JsonPropertyName("picture"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ImageUrl,
@@ -525,7 +526,7 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
         var profile = principal.HasScope(Scopes.Profile);
         var mailbox = email && !user.IsAnonymous;
         return TypedResults.Ok(new UserInfoBody(user.Id, mailbox ? user.Email : null, mailbox ? user.EmailVerified : null,
-            profile ? user.FirstName : null, profile ? user.LastName : null, profile ? user.ImageUrl : null,
+            profile ? OidcResults.FullName(user) : null, profile ? user.FirstName : null, profile ? user.LastName : null, profile ? user.ImageUrl : null,
             profile ? JsonElement.Parse(user.PublicMetadata) : null, acting is null ? null : new ImpersonationActor(acting.Record.ActorId),
             user.IsAnonymous ? true : null));
     }
@@ -693,6 +694,9 @@ internal static class OidcResults
 
     public const string PlatformRoleAdmin = "admin";
 
+    public static string? FullName(UserRecord user) =>
+        $"{user.FirstName?.Trim()} {user.LastName?.Trim()}".Trim() is { Length: > 0 } name ? name : null;
+
     public static IResult SignIn(AuthOptions options, UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
         DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null, bool organizationPicker = false,
         ActingAgent? agent = null, TimeSpan? lifetime = null)
@@ -709,6 +713,7 @@ internal static class OidcResults
             .SetClaim(Claims.Email, user.IsAnonymous ? null : user.Email)
             .SetClaim(Claims.EmailVerified, user.IsAnonymous ? null : user.EmailVerified)
             .SetClaim(GuestSignIn.Claim, user.IsAnonymous ? true : null)
+            .SetClaim(Claims.Name, FullName(user))
             .SetClaim(Claims.GivenName, user.FirstName)
             .SetClaim(Claims.FamilyName, user.LastName)
             .SetClaim(Claims.Picture, user.ImageUrl)
@@ -755,7 +760,7 @@ internal static class OidcResults
         identity.SetDestinations(claim => claim.Type switch
         {
             Claims.Subject or "act" or Impersonations.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
-            Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
+            Claims.Name or Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" or GuestSignIn.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
             "ts_auth_session" or "token_use" or LiveAgents.Claim or LiveAgents.ScopeClaim or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],

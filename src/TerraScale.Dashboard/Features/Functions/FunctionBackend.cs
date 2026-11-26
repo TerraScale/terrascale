@@ -214,7 +214,7 @@ namespace TerraScale.Dashboard.Features.Functions
             }
 
             var scope = DatabaseService.Scope(context);
-            if (PlatformDatabases.IsPlatform(scope.OrganizationId))
+            if (PlatformDatabases.IsPlatformProject(scope.ProjectId))
             {
                 throw PlatformDatabases.ReadOnly();
             }

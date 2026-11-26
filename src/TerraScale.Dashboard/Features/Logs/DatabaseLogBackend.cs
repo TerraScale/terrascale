@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 throw new AccountAccessException("Choose a valid status filter.", 400);
             }
 
-            if (PlatformDatabases.IsPlatform(scope.OrganizationId))
+            if (PlatformDatabases.IsPlatformProject(scope.ProjectId))
             {
                 throw PlatformDatabases.ReadOnly();
             }
