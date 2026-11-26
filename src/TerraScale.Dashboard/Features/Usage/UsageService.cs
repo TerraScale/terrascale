@@ -113,7 +113,8 @@ namespace TerraScale.Dashboard.Features.Usage
                 Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, organizationStorage ?? 0, true, organizationStorage is not null),
                 Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
             };
-            var writesPaused = WritesPaused(plan, limits, units, time.GetUtcNow());
+            var publishedUnits = complete ? result.PublishedOperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
+            var writesPaused = WritesPaused(plan, limits, publishedUnits, time.GetUtcNow());
             var scope = result.Scope.State == UsageSourceState.Measured ? result.Scope.Reading : null;
             if (scope is not null && (scope.ProjectId != selection.Context.Project?.Id || scope.DatabaseId != selection.DatabaseId))
             {

@@ -82,12 +82,17 @@ namespace TerraScale.Dashboard.Common.Usage
         public DateTimeOffset? MonthStart { get; init; }
         public long? OperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
-            return Units(projectIds, now, month => (month.OrganizationUnits, month.Units));
+            return Units(projectIds, now, month => (month.OrganizationUnits, month.Units), requireOrganizationTotal: false);
+        }
+
+        public long? PublishedOperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
+        {
+            return Units(projectIds, now, month => (month.OrganizationUnits, month.Units), requireOrganizationTotal: true);
         }
 
         public long? SqlReadUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
-            return Units(projectIds, now, month => (month.OrganizationReadUnits, month.ReadUnits));
+            return Units(projectIds, now, month => (month.OrganizationReadUnits, month.ReadUnits), requireOrganizationTotal: false);
         }
 
         public long? FunctionInvocations(IEnumerable<string> projectIds, DateTimeOffset now)
@@ -130,35 +135,46 @@ namespace TerraScale.Dashboard.Common.Usage
             return published is { } total ? total >= projects ? total : null : projects;
         }
 
-        private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, Func<UsageMonth, (long? Organization, long Project)> counter)
+        private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, Func<UsageMonth, (long? Organization, long Project)> counter, bool requireOrganizationTotal)
         {
             var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
             long? units = null;
             long projectUnits = 0;
             var counted = false;
+            var missingOrganization = false;
             foreach (var id in projectIds)
             {
                 if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading } ||
-                    reading.Month != month || reading.ReadUnits < 0 || reading.Invocations < 0 || reading.Units < reading.WriteUnits)
+                    reading.Month != month || reading.ReadUnits < 0 || reading.WriteUnits < 0 || reading.Invocations < 0 || reading.Units < reading.WriteUnits)
                 {
                     return null;
                 }
 
                 var (organizationUnits, project) = counter(reading);
+                if (project < 0 || project > long.MaxValue - projectUnits)
+                {
+                    return null;
+                }
+
                 counted = true;
-                try { projectUnits = checked(projectUnits + project); } catch (OverflowException) { return null; }
+                projectUnits += project;
                 if (organizationUnits is { } organization)
                 {
-                    if (organization < project || units is not null && units != organization)
+                    if (missingOrganization || organization < project || units is not null && units != organization)
                     {
                         return null;
                     }
 
                     units = organization;
                 }
-                else if (units is not null)
+                else
                 {
-                    return null;
+                    if (requireOrganizationTotal || units is not null)
+                    {
+                        return null;
+                    }
+
+                    missingOrganization = true;
                 }
             }
             if (!counted)
