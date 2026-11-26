@@ -1,3 +1,4 @@
+using TerraScale.Contracts.ControlPlane;
 using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.UserApiKeys;
@@ -66,9 +67,9 @@ public static class App
         ?? (options.Development ? new("http://127.0.0.1:8081")
             : throw new AuthConfigurationException("TS_AUTH_TERRABASE_URL is required outside Development"));
 
-    public const string StorageProject = "00000000000000000000000002";
+    public const string StorageProject = PlatformIdentity.AuthProjectId;
 
-    public const string StorageDatabase = "ts-auth";
+    public const string StorageDatabase = PlatformIdentity.AuthDatabaseName;
 
     public static WebApplication Build(AuthOptions options, Action<WebApplicationBuilder>? configure = null)
     {

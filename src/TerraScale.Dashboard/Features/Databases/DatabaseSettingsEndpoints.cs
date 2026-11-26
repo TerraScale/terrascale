@@ -83,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Databases
     {
         public static readonly IReadOnlyList<(string Hours, string Label)> ExpiryOptions = [("", "Never"), ("24", "1 day"), ("168", "7 days"), ("720", "30 days"), ("2160", "90 days"), ("custom", "Custom")];
         public string ExpiryPreset => ExpiryOptions.Any(option => option.Hours == TtlHours) ? TtlHours : "custom";
-        public bool CanManage => Shell.Context.CanManage && !PlatformDatabases.IsPlatform(Shell.Context.Organization?.Id);
+        public bool CanManage => Shell.Context.CanManage && !PlatformDatabases.IsPlatformProject(Database.ProjectId);
         public bool CanRename => CanManage && Database.Status == "ready";
     }
 }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using TerraScale.Contracts.ControlPlane;
 using TerraScale.Contracts.Networking;
 using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.DotNet.TerraBase;
@@ -8,8 +9,8 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 
 public static class DashboardStorage
 {
-    public const string ProjectId = "00000000000000000000000005";
-    public const string Database = "ts-dashboard";
+    public const string ProjectId = PlatformIdentity.DashboardProjectId;
+    public const string Database = PlatformIdentity.DashboardDatabaseName;
     public const string StateHttpClientName = "dashboard-state";
 
     private static readonly TimeSpan DialTimeout = TimeSpan.FromSeconds(2);

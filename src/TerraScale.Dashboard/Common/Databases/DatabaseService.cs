@@ -234,7 +234,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 context = await CurrentAsync(context, cancellationToken);
                 var database = Database(context, id);
                 if (!context.CanManage) { throw new AccountAccessException("Organization management access is required."); }
-                if (PlatformDatabases.IsPlatform(context.Organization!.Id)) { throw PlatformDatabases.ReadOnly(); }
+                if (PlatformDatabases.IsPlatformProject(context.Project!.Id)) { throw PlatformDatabases.ReadOnly(); }
                 var remote = await backend.SetTtlAsync(Scope(context), await HomeAsync(context, database, cancellationToken), id, ttlSeconds, cancellationToken);
                 if (remote.Id != id || remote.ProjectId != context.Project!.Id || remote.Name != database.Name ||
                     ttlSeconds is null && remote.ExpiresAt is not null || ttlSeconds is not null && remote.ExpiresAt is null)
@@ -291,7 +291,7 @@ namespace TerraScale.Dashboard.Common.Databases
                     return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists."));
                 }
 
-                if (PlatformDatabases.IsPlatform(context.Organization?.Id))
+                if (PlatformDatabases.IsPlatformProject(context.Project.Id))
                 {
                     return DatabaseMutations.MutationRefused(new DatabaseStateConflict("Platform databases keep their names."));
                 }
@@ -400,7 +400,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("Only a ready database can change its placement.", 409);
             }
 
-            if (PlatformDatabases.IsPlatform(context.Organization?.Id))
+            if (PlatformDatabases.IsPlatformProject(database.ProjectId))
             {
                 throw new AccountAccessException("Platform databases keep their placement.", 409);
             }
@@ -495,7 +495,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public async Task SyncAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            if (context.Project is not { } project || PlatformDatabases.IsPlatform(context.Organization?.Id))
+            if (context.Project is not { } project || PlatformDatabases.IsPlatformProject(project.Id))
             {
                 return;
             }
@@ -548,7 +548,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public Task ViewRemoteAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            return context.Project is not { } project || PlatformDatabases.IsPlatform(context.Organization?.Id)
+            return context.Project is not { } project || PlatformDatabases.IsPlatformProject(project.Id)
                 ? Task.CompletedTask : SyncNowAsync(context, project, false, cancellationToken);
         }
 

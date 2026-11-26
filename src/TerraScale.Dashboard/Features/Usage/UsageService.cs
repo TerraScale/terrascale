@@ -113,7 +113,8 @@ namespace TerraScale.Dashboard.Features.Usage
                 Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, organizationStorage ?? 0, true, organizationStorage is not null),
                 Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
             };
-            var writesPaused = WritesPaused(plan, limits, units, time.GetUtcNow());
+            var publishedUnits = complete ? result.PublishedOperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
+            var writesPaused = WritesPaused(plan, limits, publishedUnits, time.GetUtcNow());
             var scope = result.Scope.State == UsageSourceState.Measured ? result.Scope.Reading : null;
             if (scope is not null && (scope.ProjectId != selection.Context.Project?.Id || scope.DatabaseId != selection.DatabaseId))
             {
@@ -158,6 +159,12 @@ namespace TerraScale.Dashboard.Features.Usage
 
             UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured, string unit = "operation units/month")
             {
+                if (PlanCatalog.IsUnlimited(limit))
+                {
+                    return new(title, "Unlimited", measured ? bytes ? UsageFigure.Bytes(used) : new(ChartGeometry.Compact(used)) : new("Not metered"), measured,
+                        null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null);
+                }
+
                 return new(title, !bytes && limit > 0 ? Rounded(limit) + " " + unit : allowance,
                 measured ? bytes ? UsageFigure.Bytes(used) : new(ChartGeometry.Compact(used)) : new("Not metered"), measured,
                 measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " " + unit : null);

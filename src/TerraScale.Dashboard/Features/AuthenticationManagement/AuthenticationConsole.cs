@@ -7,7 +7,7 @@ using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.NotFound;
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.Dashboard.Common.Databases;
+using TerraScale.Contracts.ControlPlane;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Dashboard.Platform.Datastar;
 
@@ -573,7 +573,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return HttpRedirects.SeeOther("/");
             }
 
-            if (key == "settings" && context.Project.Id != PlatformDatabases.AuthProjectId)
+            if (key == "settings" && context.Project.Id != PlatformIdentity.AuthProjectId)
             {
                 return await NotFoundEndpoints.PageAsync(http, sessions, accounts);
             }

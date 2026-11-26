@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 permissions, (await mfa.GetAccountMfaAsync(context.Session, Cancellation))?.Enabled,
                 listed is null ? null : [.. listed.Select(passkey => new DashboardMcpPasskey(passkey.Id, passkey.Name, passkey.Aaguid, passkey.CreatedAt, passkey.LastUsedAt))],
                 await tokens.ListAsync(context, Cancellation),
-                PlatformDatabases.IsPlatform(context.Organization?.Id) ? "viewer" : context.Project?.Role, context.CanWriteProjectData);
+                PlatformDatabases.IsPlatformProject(context.Project?.Id) ? "viewer" : context.Project?.Role, context.CanWriteProjectData);
         }
 
         [McpAccess(McpAccess.Write)]

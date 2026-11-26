@@ -6,6 +6,7 @@
     var binding = Model.Binding;
     var plan = PlanCatalog.For(org);
     var owner = Model.CanManage;
+    var terrascale = Model.TerraScalePlan;
     var subscribed = binding?.SubscriptionId is { Length: > 0 } && binding.Status is not ("canceled" or "incomplete_expired");
     var awaiting = org.BillingStatus == "billing_required" && !subscribed;
     var free = plan?.Key == "free" && !subscribed;
@@ -38,11 +39,11 @@
             <div class="ts-card-body">
                 <div class="ts-billing-current">
                     <div class="ts-billing-plan"><span class="ts-billing-plan-icon" aria-hidden="true">@Icons.Render("CreditCard", 18)</span><span class="ts-billing-plan-name">@planName</span><span class="ts-badge @statusClass"><span class="ts-dot" aria-hidden="true"></span>@status</span></div>
-                    <dl class="ts-billing-facts">@if (price > 0 && priceInterval.Length > 0) { <div><dt>Price</dt><dd>@MoneyFormat.Money(price) / @(priceInterval == "annual" ? "year" : "month")</dd></div> }<div><dt>Billing interval</dt><dd>@(effectiveInterval is "monthly" ? "Monthly" : effectiveInterval is "annual" ? "Annual" : "Not applicable")</dd></div><div><dt>@(ending ? "Ends" : "Renewal")</dt><dd>@(binding?.RenewalAt?.UtcDateTime.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) ?? "Not scheduled")</dd></div>@if (Model.InternalBill is not null || free) { <div><dt>Stripe charges</dt><dd>None</dd></div> }</dl>
+                    <dl class="ts-billing-facts">@if (price > 0 && priceInterval.Length > 0) { <div><dt>Price</dt><dd>@MoneyFormat.Money(price) / @(priceInterval == "annual" ? "year" : "month")</dd></div> }<div><dt>Billing interval</dt><dd>@(effectiveInterval is "monthly" ? "Monthly" : effectiveInterval is "annual" ? "Annual" : "Not applicable")</dd></div><div><dt>@(ending ? "Ends" : "Renewal")</dt><dd>@(binding?.RenewalAt?.UtcDateTime.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) ?? "Not scheduled")</dd></div>@if (terrascale) { <div><dt>Allowances</dt><dd>Unlimited</dd></div> }@if (Model.InternalBill is not null || free || terrascale) { <div><dt>Stripe charges</dt><dd>None</dd></div> }</dl>
                 </div>
                 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Plans.BillingPlanActions, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
                 @if (awaiting) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Choose a plan</p><p class="ts-alert-body">Projects and databases can’t be created in @org.Name until a plan is active.</p></div> }
-                @if (!owner) { <p class="ts-meta">@(Model.InternalBill is not null ? "Internal billing reports usage without Stripe charges." : "Only the organization owner can manage billing.")</p> }
+                @if (!owner && !terrascale) { <p class="ts-meta">@(Model.InternalBill is not null ? "Internal billing reports usage without Stripe charges." : "Only the organization owner can manage billing.")</p> }
             </div>
         </section>
         @if (Model.InternalBill is { } internalBill)
@@ -66,7 +67,7 @@
             </section>
         @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingDetailsView, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
         @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Invoices.BillingHistoryView, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
-        @if (Model.InternalBill is null)
+        @if (Model.InternalBill is null && !terrascale)
         {
             <section class="ts-card ts-billing-wide ts-billing-plans" id="available-plans" aria-labelledby="available-plans-title">
                 <header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="available-plans-title">Available plans</h2></div><div class="ts-card-actions">@if (intervalPlans.Count > 0) { <fieldset class="ts-segmented ts-billing-interval"><legend class="ts-sr-only">Billing interval</legend><label class="ts-segment"><input class="ts-sr-only" type="radio" name="billing-interval" value="monthly" checked="@(defaultInterval == "monthly")" data-bind="_billingInterval" /><span>Monthly</span></label><label class="ts-segment"><input class="ts-sr-only" type="radio" name="billing-interval" value="annual" checked="@(defaultInterval == "annual")" data-bind="_billingInterval" /><span>Annual</span>@if (freeMonths is [> 0 and var months]) { <span class="ts-segment-note">· @months months free</span> }</label></fieldset> }<a class="ts-link" href="https://docs.terrascale.tech/pricing#what-is-billed" @(ExternalLink.Attributes)>How billing works@(ExternalLink.Hint)</a></div></header>

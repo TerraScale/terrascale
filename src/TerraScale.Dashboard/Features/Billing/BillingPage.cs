@@ -13,7 +13,8 @@ namespace TerraScale.Dashboard.Features.Billing
         public bool DetailsUnavailable { get; init; }
         public long? OverageUnits { get; init; }
         public TerraScale.Dashboard.Features.Billing.InternalBill? InternalBill { get; init; }
-        public bool CanManage => Binding?.Kind != "internal" && Shell.Context.Role == "owner" && Shell.Context.Organization is { Status: "active", Archived: false, DeletionRequested: false, InternalBilling: null } organization && organization.OwnerUserId == Shell.Context.UserId;
+        public bool TerraScalePlan => Shell.Context.Organization is { } current && PlanCatalog.IsTerraScale(current);
+        public bool CanManage => !TerraScalePlan && Binding?.Kind != "internal" && Shell.Context.Role == "owner" && Shell.Context.Organization is { Status: "active", Archived: false, DeletionRequested: false, InternalBilling: null } organization && organization.OwnerUserId == Shell.Context.UserId;
         public BillingPlanPresentation PlanChanges { get; init; } = new(null, null, null, "");
         public BillingHistoryPresentation History { get; init; } = null!;
     }

@@ -94,8 +94,9 @@ namespace TerraScale.Dashboard.Features.Home
                 var now = time.GetUtcNow().UtcDateTime;
                 var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
                 var start = range switch { "1h" => hour, "24h" => hour.AddHours(-23), "30d" => now.Date.AddDays(-29), _ => hour.AddHours(-167) };
-                var token = await tokens.GetAsync(context.Session, context.Organization.Id, context.Project.Id, ["databases:read"], cancellationToken);
-                var answer = await terraBase.GetProjectUsageAsync(ServiceCaller.User(token), context.Project.Id, new DateTimeOffset(start), time.GetUtcNow(), cancellationToken);
+                var caller = PlatformDatabases.ReadsAsOperator(context, context.Project) ? ServiceCaller.Operator
+                    : ServiceCaller.User(await tokens.GetAsync(context.Session, context.Organization.Id, context.Project.Id, ["databases:read"], cancellationToken));
+                var answer = await terraBase.GetProjectUsageAsync(caller, context.Project.Id, new DateTimeOffset(start), time.GetUtcNow(), cancellationToken);
                 var usage = answer switch
                 {
                     TerraBaseProjectUsage answered => answered,

@@ -8,6 +8,8 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public static class AuthIdToken
     {
+        private static readonly string[] NameParts = ["given_name", "family_name"];
+
         public static AuthIdentity Validate(string? token, string issuer, string audience, string? nonce, TsAuthJwkSet keys, DateTimeOffset now)
         {
             try
@@ -38,6 +40,13 @@ namespace TerraScale.Dashboard.Features.Auth
                 }
 
                 var name = claims.TryGetProperty("name", out var claimName) ? claimName.GetString()?.Trim() : null;
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    name = string.Join(' ', NameParts
+                        .Select(claim => claims.TryGetProperty(claim, out var part) && part.ValueKind == JsonValueKind.String ? part.GetString()?.Trim() : null)
+                        .OfType<string>().Where(part => part.Length > 0));
+                }
+
                 if (string.IsNullOrWhiteSpace(name) || name.Any(char.IsControl) || name.EnumerateRunes().Count() > 128)
                 {
                     name = email;

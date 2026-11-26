@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
             context = await CurrentAsync(context, ct);
             var project = context.Project!;
-            if (PlatformDatabases.IsPlatform(context.Organization!.Id))
+            if (PlatformDatabases.IsPlatformProject(project.Id))
             {
                 if (!PlatformDatabases.Databases.TryGetValue(id, out var platform) || platform.ProjectId != project.Id)
                 {

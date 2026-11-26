@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraScale.Contracts.ControlPlane;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Common.Accounts
@@ -62,7 +63,7 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         public string RoleFor(string userId)
         {
-            return !ContainsMember(userId) ? "" : PlatformDatabases.IsPlatform(Id) ? "viewer" : Members[userId].Role;
+            return !ContainsMember(userId) ? "" : Members[userId].Role;
         }
 
         public bool CanManage(string userId)
@@ -180,7 +181,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             var project = context.Project;
             return project is { Status: "active" } && ProjectId == project.Id && project.OrganizationId == organization.Id &&
                 organization.Projects.GetValueOrDefault(project.Id) == project && (organization.ContainsMember(context.UserId) ||
-                    !PlatformDatabases.IsPlatform(organization.Id) && project.Role is "viewer" or "member" or "admin");
+                    !PlatformDatabases.IsPlatformProject(project.Id) && project.Role is "viewer" or "member" or "admin");
         }
     }
 
@@ -247,11 +248,11 @@ namespace TerraScale.Dashboard.Common.Accounts
             TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(organization.Id) &&
             Project is { Status: "active", Role: "member" or "admin" } project && TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(project.Id) &&
             project.OrganizationId == organization.Id && ReferenceEquals(organization.Projects.GetValueOrDefault(project.Id), project);
-        public bool CanWriteProjectData => HasProjectAuthority && Organization is { } organization && !PlatformDatabases.IsPlatform(organization.Id);
-        public bool CanSetOrganizationPicker => Project?.Role == "admin" && HasProjectAuthority && Project.Id == PlatformDatabases.AuthProjectId;
+        public bool CanWriteProjectData => HasProjectAuthority && !PlatformDatabases.IsPlatformProject(Project?.Id);
+        public bool CanSetOrganizationPicker => Project?.Role == "admin" && HasProjectAuthority && Project.Id == PlatformIdentity.AuthProjectId;
         public bool CanManageProject => Project?.Role == "admin" && CanWriteProjectData;
-        public bool CanManageKeys => CanManage || CanWriteProjectData;
-        public bool CanManageProjectCidrs => CanManage || CanManageProject;
+        public bool CanManageKeys => !PlatformDatabases.IsPlatformProject(Project?.Id) && (CanManage || CanWriteProjectData);
+        public bool CanManageProjectCidrs => !PlatformDatabases.IsPlatformProject(Project?.Id) && (CanManage || CanManageProject);
         [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
         [System.Text.Json.Serialization.JsonIgnore] public McpAgent? Agent => Session.Agent;
 

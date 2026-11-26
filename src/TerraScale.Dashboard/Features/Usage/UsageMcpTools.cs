@@ -177,8 +177,8 @@ namespace TerraScale.Dashboard.Features.Usage
 
         private static UsageToolAllowance Allowance(string name, string? label, long limit, long? used)
         {
-            return new(name, label ?? "Limit not published", limit, used, used is not null,
-            used is not null && limit > 0 ? ValueFormat.Percent(used, limit) : null);
+            return new(name, PlanCatalog.IsUnlimited(limit) ? "Unlimited" : label ?? "Limit not published", limit, used, used is not null,
+            used is not null && limit > 0 && !PlanCatalog.IsUnlimited(limit) ? ValueFormat.Percent(used, limit) : null);
         }
 
         private AccountContext Scope(string? organizationId, string? projectId)

@@ -348,7 +348,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         public static int ProjectLimit(OrganizationRecord org)
         {
-            return org.InternalBilling is not null
+            return org.InternalBilling is not null || PlanCatalog.IsTerraScale(org)
             ? PlanCatalog.ResourceLimits(org).Projects is > 0 and var limit ? limit : int.MaxValue
             : PlanCatalog.Plans.Any(plan => plan.Id == org.PlanId) ? PlanCatalog.ResourceLimits(org.PlanId).Projects
             : throw new AccountAccessException("The organization plan is unavailable.", 503);

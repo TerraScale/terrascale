@@ -34,6 +34,11 @@ namespace TerraScale.Dashboard.Common.Usage
                 return new DashboardForbidden("Selected organization is unavailable.");
             }
 
+            if (org.MfaRequired)
+            {
+                return new DashboardForbidden("Two-factor authentication is required for this organization.");
+            }
+
             var member = org.ContainsMember(context.UserId);
             var project = projectId.Length == 0 ? context.Project : org.Projects[projectId];
             if (project is not null && (project.OrganizationId != org.Id || !org.Projects.ContainsKey(project.Id)))
@@ -77,12 +82,17 @@ namespace TerraScale.Dashboard.Common.Usage
         public DateTimeOffset? MonthStart { get; init; }
         public long? OperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
-            return Units(projectIds, now, month => (month.OrganizationUnits, month.Units));
+            return Units(projectIds, now, month => (month.OrganizationUnits, month.Units), requireOrganizationTotal: false);
+        }
+
+        public long? PublishedOperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
+        {
+            return Units(projectIds, now, month => (month.OrganizationUnits, month.Units), requireOrganizationTotal: true);
         }
 
         public long? SqlReadUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
-            return Units(projectIds, now, month => (month.OrganizationReadUnits, month.ReadUnits));
+            return Units(projectIds, now, month => (month.OrganizationReadUnits, month.ReadUnits), requireOrganizationTotal: false);
         }
 
         public long? FunctionInvocations(IEnumerable<string> projectIds, DateTimeOffset now)
@@ -125,28 +135,54 @@ namespace TerraScale.Dashboard.Common.Usage
             return published is { } total ? total >= projects ? total : null : projects;
         }
 
-        private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, Func<UsageMonth, (long? Organization, long Project)> counter)
+        private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, Func<UsageMonth, (long? Organization, long Project)> counter, bool requireOrganizationTotal)
         {
             var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
             long? units = null;
             long projectUnits = 0;
+            var counted = false;
+            var missingOrganization = false;
             foreach (var id in projectIds)
             {
-                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading } || counter(reading) is not ({ } organizationUnits, var project) ||
-                    reading.Month != month || reading.ReadUnits < 0 || reading.Invocations < 0 || reading.Units < reading.WriteUnits)
+                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading } ||
+                    reading.Month != month || reading.ReadUnits < 0 || reading.WriteUnits < 0 || reading.Invocations < 0 || reading.Units < reading.WriteUnits)
                 {
                     return null;
                 }
 
-                if (organizationUnits < project || units is not null && units != organizationUnits)
+                var (organizationUnits, project) = counter(reading);
+                if (project < 0 || project > long.MaxValue - projectUnits)
                 {
                     return null;
                 }
 
-                try { projectUnits = checked(projectUnits + project); } catch (OverflowException) { return null; }
-                units = organizationUnits;
+                counted = true;
+                projectUnits += project;
+                if (organizationUnits is { } organization)
+                {
+                    if (missingOrganization || organization < project || units is not null && units != organization)
+                    {
+                        return null;
+                    }
+
+                    units = organization;
+                }
+                else
+                {
+                    if (requireOrganizationTotal || units is not null)
+                    {
+                        return null;
+                    }
+
+                    missingOrganization = true;
+                }
             }
-            return units is { } total && total >= projectUnits ? total : null;
+            if (!counted)
+            {
+                return null;
+            }
+
+            return units is { } total ? total >= projectUnits ? total : null : projectUnits;
         }
     }
     public interface IUsageMeasurements

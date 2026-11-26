@@ -1,10 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.AuthenticationManagement
-@using TerraScale.Dashboard.Common.Databases
+@using TerraScale.Contracts.ControlPlane
 @{
     var current = Model.Section; var manage = Model.Context.CanManageProject;
-    var sections = AuthenticationSection.All.Where(section => section.Key != "settings" || Model.Context.Project?.Id == PlatformDatabases.AuthProjectId).ToArray();
+    var sections = AuthenticationSection.All.Where(section => section.Key != "settings" || Model.Context.Project?.Id == PlatformIdentity.AuthProjectId).ToArray();
     var primary = sections.Where(section => PrimaryKeys.Contains(section.Key));
     var more = sections.Where(section => !PrimaryKeys.Contains(section.Key)).ToArray();
     var moreActive = more.Any(section => section.Key == current.Key);

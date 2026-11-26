@@ -808,6 +808,11 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw new AccountAccessException("Internal billing reports usage without Stripe charges.");
             }
 
+            if (PlanCatalog.IsTerraScale(current.Organization))
+            {
+                throw new AccountAccessException("The TerraScale plan has no Stripe billing.");
+            }
+
             var binding = await ReadAsync(current.Organization.Id, cancellationToken);
             if (binding is not null)
             {

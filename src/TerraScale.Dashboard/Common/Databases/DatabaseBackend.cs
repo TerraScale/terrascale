@@ -272,7 +272,7 @@ namespace TerraScale.Dashboard.Common.Databases
         private async Task<IReadOnlyList<SqlExecuteResult>> SqlBatchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId,
             IReadOnlyList<SqlExecuteStatement> statements, bool write, CancellationToken cancellationToken)
         {
-            if (PlatformDatabases.IsPlatform(scope.OrganizationId))
+            if (PlatformDatabases.IsPlatformProject(scope.ProjectId))
             {
                 throw PlatformDatabases.ReadOnly();
             }
@@ -362,7 +362,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         private async Task<ServiceCaller> ClientAsync(DatabaseScope scope, string permission, CancellationToken cancellationToken)
         {
-            if (PlatformDatabases.IsPlatform(scope.OrganizationId))
+            if (PlatformDatabases.IsPlatformProject(scope.ProjectId))
             {
                 throw PlatformDatabases.ReadOnly();
             }

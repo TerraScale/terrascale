@@ -30,6 +30,15 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 Binding = await billing.ReadBindingAsync(shell.Context, cancellationToken)
             };
+            if (page.TerraScalePlan)
+            {
+                return page with
+                {
+                    PlanChanges = new(page.Binding, null, null, ""),
+                    History = new([], InvoiceHistory.ForBrowser([], query, now), InvoiceHistory.Summarize([], now), now, "", 0)
+                };
+            }
+
             if (shell.Context.Organization!.InternalBilling is not null)
             {
                 var internalBill = await internalBilling.ReadAsync(shell.Context, cancellationToken);
