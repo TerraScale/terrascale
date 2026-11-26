@@ -116,6 +116,11 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 page = page with { DatabaseName = started.Name, SelectedRegions = started.Regions };
             }
 
+            if (fresh && current.Organization?.Id == personalOrganizationId && current.Project is { IsDefault: true } project)
+            {
+                page = page with { ProjectName = project.Name };
+            }
+
             return page.SelectedRegions is { } chosen ? page with { SelectedRegions = [.. chosen.Where(code => available.Contains(code, StringComparer.OrdinalIgnoreCase))] } : page;
         }
 

@@ -170,18 +170,23 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 return new DashboardForbidden("Project membership is required.");
             }
 
-            var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, regions, cancellationToken);
-            if (project.Id != context.Project.Id || project.OrganizationId != context.Organization.Id)
+            var created = await FirstDatabaseAsync(context, context.Project, database, regions, cancellationToken);
+            return created switch
+            {
+                DatabaseRecord => await FinishAsync(session, context, await ProjectAsync(context, context.Organization.Id, context.Project, name, regions, cancellationToken), cancellationToken),
+                DatabaseRefusal refused => refused
+            };
+        }
+
+        private async Task<ProjectRecord> ProjectAsync(AccountContext context, string organizationId, ProjectRecord personal, string name, IReadOnlyList<string> regions, CancellationToken cancellationToken)
+        {
+            var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? personal.Name : name, regions, cancellationToken);
+            if (project.Id != personal.Id || project.OrganizationId != organizationId)
             {
                 throw new IOException("The provisioned project identity changed.");
             }
 
-            var created = await FirstDatabaseAsync(context, context.Project, database, regions, cancellationToken);
-            return created switch
-            {
-                DatabaseRecord => await FinishAsync(session, context, project, cancellationToken),
-                DatabaseRefusal refused => refused
-            };
+            return project;
         }
 
         private async Task<DatabaseMutation> FirstDatabaseAsync(AccountContext context, ProjectRecord project, string name, IReadOnlyList<string> regions, CancellationToken cancellationToken)
@@ -190,6 +195,11 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 return existing.Region.Equals(regions[0], StringComparison.OrdinalIgnoreCase) && existing.Regions.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(regions)
                     ? existing : new DatabaseStateConflict($"Database {name} already exists in {RegionNames.List(existing.Regions)}. Pick those regions to finish setup, or change them later from the database page.");
+            }
+
+            if (project.Databases.Count > 0)
+            {
+                return new DatabaseStateConflict($"Your first database {string.Join(", ", project.Databases.Values.Select(existing => existing.Name))} already exists. Enter that name to finish setup.");
             }
 
             return await databases.CreateAsync(context, name, regions[0], cancellationToken, replicaRegions: [.. regions.Skip(1)]);

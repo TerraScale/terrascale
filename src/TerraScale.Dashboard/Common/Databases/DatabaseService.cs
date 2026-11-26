@@ -121,9 +121,9 @@ namespace TerraScale.Dashboard.Common.Databases
                     throw new HttpRequestException("Database provisioning returned a different placement.");
                 }
 
-                if (recovered && placement[0].Id != home.Id)
+                if (recovered && (placement[0].Id != home.Id || (!allRegions && !placement.Select(region => region.Id).ToHashSet(StringComparer.Ordinal).SetEquals(expected))))
                 {
-                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists with another home region."));
+                    return DatabaseMutations.MutationRefused(new DatabaseStateConflict("A database with this name already exists with a different placement."));
                 }
 
                 if (discovery.Catalog.Count == 0 && !recovered && placement[0].Id != home.Id)
