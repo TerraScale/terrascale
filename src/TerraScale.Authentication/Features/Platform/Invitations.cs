@@ -93,12 +93,8 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             MailRow? outbox = null;
             if (dashboard is not null && reservation is not null)
             {
-                if (Refusal(await admission.DecideAsync(EmailPurpose.Invitation, organizationId, null, cancellationToken), clock.GetUtcNow()) is { } capacity)
-                {
-                    throw ApiException.RateLimited("This organization's invitation email capacity is used up; no invitation was created. Retry after the Retry-After delay.",
-                        capacity);
-                }
-
+                var decision = await admission.DecideAsync(EmailPurpose.Invitation, organizationId, null, cancellationToken);
+                var admitted = Admitted(decision, clock.GetUtcNow());
                 outbox = reservation.Stage(AuthEmailKind.Invitation, new AuthEmailValues(invitation.Email)
                 {
                     Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
@@ -106,7 +102,9 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
                     Organization = organizationName,
                     Tenant = organizationId,
                     Inviter = caller.Email,
+                    AdmissionId = admitted.ReservationId,
                 }, locale);
+                operations.AddRange(admitted.Changes);
                 operations.Add(Change.Insert(outbox));
             }
 
@@ -233,12 +231,17 @@ public sealed class Invitations(AuthData data, PlatformDirectory directory, User
             return new PlatformDirectory.Plan<bool>(operations, true);
         }, cancellationToken);
 
-    private static TimeSpan? Refusal(EmailAdmissionDecision decision, DateTimeOffset now) => decision switch
+    private static EmailAdmitted Admitted(EmailAdmissionDecision decision, DateTimeOffset now) => decision switch
     {
-        EmailAdmitted => null,
-        EmailRefused refused => refused.RetryAfter,
-        EmailPaused paused => paused.Until > now ? paused.Until - now : TimeSpan.FromSeconds(1),
+        EmailAdmitted admitted => admitted,
+        EmailRefused refused => throw CapacityUsedUp(refused.RetryAfter),
+        EmailPaused paused => throw CapacityUsedUp(paused.Until - now),
     };
+
+    private static ApiException CapacityUsedUp(TimeSpan retryAfter) =>
+        ApiException.RateLimited(
+            "This organization's invitation email capacity is used up; no invitation was created. Retry after the Retry-After delay.",
+            retryAfter > TimeSpan.FromSeconds(1) ? retryAfter : TimeSpan.FromSeconds(1));
 
     private static ApiException PendingConflict() =>
         PlatformDirectory.Conflict("invitation_pending", "An invitation for this address is already pending.");

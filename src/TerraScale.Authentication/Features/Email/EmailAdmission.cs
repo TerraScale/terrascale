@@ -24,6 +24,7 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         {
             Decisions.Add(0, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "admitted"));
             Decisions.Add(0, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "refused"));
+            Decisions.Add(0, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "held"));
         }
     }
 
@@ -78,9 +79,17 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         return new EmailRefused(MinimumWait);
     }
 
-    internal Task<bool> ReservedAsync(string reservationId, CancellationToken cancellationToken) =>
-        data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+    internal async Task<bool> HeldAsync(string reservationId, EmailPurpose purpose, CancellationToken cancellationToken)
+    {
+        var held = await data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
             "SELECT EXISTS (SELECT 1 FROM email_reservations WHERE id = @reservationId)", new { reservationId }), cancellationToken);
+        if (held)
+        {
+            Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "held"));
+        }
+
+        return held;
+    }
 
     internal async Task<EmailAdmissionDecision> DecideAsync(EmailPurpose purpose, string tenant, string? attemptId, CancellationToken cancellationToken)
     {
@@ -317,7 +326,7 @@ public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailS
                 return new EmailPaused(pausedUntil);
             }
 
-            var reserved = message.AdmissionId is { } admitted && await admission.ReservedAsync(admitted, cancellationToken);
+            var reserved = message.AdmissionId is { } admitted && await admission.HeldAsync(admitted, message.Purpose, cancellationToken);
             if (!reserved)
             {
                 var acquired = await admission.AcquireAsync(message, cancellationToken);

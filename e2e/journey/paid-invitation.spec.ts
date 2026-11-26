@@ -6,12 +6,19 @@ import { nextMail } from '../support/inbox';
 import type { PaidJourney } from '../support/paid';
 import { enterSecret } from '../support/secret';
 import { shell } from '../support/shell';
-import { dash, desktop } from '../support/stack';
+import { dash, desktop, onLocalStack } from '../support/stack';
 import { journey, ownerSession, saveCookies, saveSecret, setupFinished } from '../support/state';
 
 test.beforeAll(({}, info) => {
   expect(setupFinished(info), 'setup did not finish').toBe(true);
 });
+
+async function heldInvitationEmails(): Promise<number> {
+  const metrics = await (await fetch('http://127.0.0.1:9092/metrics')).text();
+  const line = metrics.split('\n').find(row => row.startsWith('ts_auth_email_admission_total{') && row.includes('purpose="Invitation"') && row.includes('outcome="held"'));
+  if (line === undefined) throw new Error('missing ts_auth_email_admission_total purpose="Invitation" outcome="held"');
+  return Number(line.slice(line.lastIndexOf(' ') + 1));
+}
 
 test('the Pro owner invites a second user, who signs up through the emailed link, accepts, is listed with their role and chooses between their two organizations', async ({ browser }, info) => {
   const owner = journey<PaidJourney>();
@@ -29,6 +36,10 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   const settingsResponse = await ownerPage.request.get(`${dash}/auth/settings`);
   expect(settingsResponse.status()).toBe(404);
   expect(await settingsResponse.text()).not.toContain('name="organization_picker"');
+  let heldBefore = 0;
+  await onLocalStack(async () => {
+    heldBefore = await heldInvitationEmails();
+  });
   await ownerPage.goto(`${dash}/organization?tab=members`);
   await ownerPage.locator('.ts-org-header').getByRole('button', { name: 'Invite', exact: true }).click();
   await expect(ownerPage.locator('dialog#team-invite')).toBeVisible();
@@ -43,6 +54,9 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await ownerAudit.check('invitation sent on Pro');
 
   const mail = await nextMail(email, 0);
+  await onLocalStack(async () => {
+    expect(await heldInvitationEmails() - heldBefore, 'invitation emails delivered on the reservation taken when the invitation was created').toBeGreaterThanOrEqual(1);
+  });
   const link = /https:\/\/dash\.terrascale\.tech\/invitations\/[A-Za-z0-9_-]+/.exec(mail.text)?.[0] ?? '';
   expect(link, 'the invitation email links to its dashboard page').not.toBe('');
   saveSecret('invitation-link', link.split('/').at(-1) ?? '');
