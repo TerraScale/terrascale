@@ -340,6 +340,16 @@ a.ts-db-region:hover {
   }
 }
 
+@container page (width >= 960px) {
+  .ts-columns.ts-db-overview {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}
+
+.ts-db-overview #activity .ts-empty {
+  padding: var(--ts-s4);
+}
+
 #request-log-filters {
   align-items: center;
 }
