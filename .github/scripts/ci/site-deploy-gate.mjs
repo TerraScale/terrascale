@@ -106,13 +106,13 @@ function ancestor(base, head) {
 
 function qualifiedJobs(jobs) {
   return jobs.some((job) => job.name === 'changes' && job.conclusion === 'success')
-    && !jobs.some((job) => job.name === 'all-green' && job.conclusion === 'cancelled');
+    && !jobs.some((job) => job.conclusion === 'cancelled');
 }
 
 async function qualified(revision) {
   const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
   const run = runs[0];
-  if (!run) return false;
+  if (!run || run.conclusion === 'cancelled') return false;
   assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
   const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
   assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');

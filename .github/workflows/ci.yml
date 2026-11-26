@@ -616,7 +616,7 @@ jobs:
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$REVISION" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$REVISION"
-          gh attestation verify "oci://${image}" --owner TerraScale --predicate-type https://spdx.dev/Document/v2.3 --signer-regex '^https://github\.com/TerraScale/terrascale/\.github/workflows/(ci|attest-images)\.yml@' --source-ref refs/heads/main
+          gh attestation verify "oci://${image}" --owner TerraScale --predicate-type https://spdx.dev/Document/v2.3 --cert-identity-regex '^https://github\.com/TerraScale/terrascale/\.github/workflows/(ci|attest-images)\.yml@refs/heads/main$' --source-ref refs/heads/main
           bash .github/scripts/ci/deploy-v2.sh terrabase "$image"
 
   main-auth:
