@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
-public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountService accounts, DataService data, DatabaseService databases, IDatabaseBackend backend, SqlRuns runs)
+public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, SqlRuns runs)
     : EndpointWithoutRequest<IResult>
 {
     private const string WriteDenied = "Write access is required to change data or schema. Your role can run read-only statements.";
@@ -16,13 +16,25 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var http = HttpContext;
+        RequestBodies.Allow(http, 3L * TableRowMutations.PayloadBytes + 8192);
         var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null)
         {
             return TypedResults.Unauthorized();
         }
 
-        var form = await FormRequests.ReadAsync(http, cancellationToken);
+        var formOutcome = await FormRequests.TryReadAsync(http, cancellationToken);
+        if (formOutcome is FormReadRefusal formRefusal)
+        {
+            return Refused(formRefusal.Status, formRefusal.Message);
+        }
+
+        var form = formOutcome switch
+        {
+            IFormCollection parsed => parsed,
+            FormReadRefusal => throw new System.Diagnostics.UnreachableException(),
+        };
+
         if (!Csrf.Validate(http, form))
         {
             return Refused(StatusCodes.Status400BadRequest, "Invalid form token. Reload the page and try again.");
@@ -46,11 +58,36 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
             return Refused(StatusCodes.Status403Forbidden, "Platform databases are read-only here.");
         }
 
+        var regionsOutcome = await backend.TryRegionsAsync(cancellationToken);
+        if (regionsOutcome is DatabaseBackendFailure regionsFailure)
+        {
+            return Refused(regionsFailure.Status, regionsFailure.Message);
+        }
+
+        var regions = regionsOutcome switch
+        {
+            IReadOnlyList<DatabaseRegion> list => list,
+            DatabaseBackendFailure => [],
+        };
+        if (DatabaseRegion.Resolve(regions, database.Region ?? context.Project?.Region) is not { } home)
+        {
+            return Refused(StatusCodes.Status503ServiceUnavailable, "This database's region is not a TerraBase region.");
+        }
+
         var scope = DatabaseService.Scope(context);
-        var home = await databases.HomeAsync(context, database, cancellationToken);
-        var catalog = await backend.SqlTablesAsync(scope, home, database.Id, cancellationToken);
+        var catalogOutcome = await backend.TrySqlTablesAsync(scope, home, database.Id, cancellationToken);
+        if (catalogOutcome is DatabaseBackendFailure catalogFailure)
+        {
+            return Refused(catalogFailure.Status, catalogFailure.Message);
+        }
+
+        var catalog = catalogOutcome switch
+        {
+            DatabaseSqlCatalog loaded => loaded,
+            DatabaseBackendFailure => new DatabaseSqlCatalog([], false),
+        };
         var table = form["table"].ToString();
-        var outcome = await TableRowMutations.ApplyAsync(data, context, database.Id, catalog, table, form["operation"].ToString(), form["payload"].ToString(), cancellationToken);
+        var outcome = await TableRowMutations.ApplyAsync(backend, scope, home, database.Id, catalog, table, form["operation"].ToString(), form["payload"].ToString(), cancellationToken);
         return outcome switch
         {
             TableRowMutated mutated => await MutatedAsync(http, context, database.Id, scope, home, table, mutated, cancellationToken),
@@ -74,8 +111,8 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
         var snapshot = await OptionalPanel.LoadAsync<TableRowSnapshot?>(http, "table-rows", async () =>
             new TableRowSnapshot(await DatabaseTables.CountAsync(backend, scope, home, databaseId, table, cancellationToken),
                 await DatabaseTables.PreviewAsync(backend, scope, home, databaseId, table, cancellationToken)), () => null);
-        return TypedResults.Json(new TableRowMutationResponse(true, mutated.Result.RowsAffected, mutated.Sql, snapshot?.RowCount, snapshot?.Preview.Columns, snapshot?.Preview.Rows),
-            TableRowJson.Default.TableRowMutationResponse);
+        return TypedResults.Json(new TableRowMutationResponse(true, mutated.RowsAffected, mutated.ExpectedRows, mutated.MatchedRows, mutated.Sql,
+            snapshot?.RowCount, snapshot?.Preview.Columns, snapshot?.Preview.Rows), TableRowJson.Default.TableRowMutationResponse);
     }
 
     private static JsonHttpResult<TableRowMutationRefusal> Refused(int status, string message)
@@ -86,7 +123,7 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
 
 internal sealed record TableRowSnapshot(long RowCount, DatabaseSqlResult Preview);
 
-internal sealed record TableRowMutationResponse(bool Ok, long RowsAffected, string Sql, long? RowCount,
+internal sealed record TableRowMutationResponse(bool Ok, long RowsAffected, int ExpectedRows, int MatchedRows, string Sql, long? RowCount,
     IReadOnlyList<DatabaseSqlColumn>? Columns, IReadOnlyList<IReadOnlyList<JsonElement>>? Rows);
 
 internal sealed record TableRowMutationRefusal(bool Ok, string Error);
@@ -94,4 +131,6 @@ internal sealed record TableRowMutationRefusal(bool Ok, string Error);
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(TableRowMutationResponse))]
 [JsonSerializable(typeof(TableRowMutationRefusal))]
+[JsonSerializable(typeof(string[]))]
+[JsonSerializable(typeof(IReadOnlyList<DatabaseTableColumn>))]
 internal sealed partial class TableRowJson : JsonSerializerContext;

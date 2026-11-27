@@ -17,7 +17,8 @@ const load = () => {
 
 const valid = value => value !== null && typeof value === 'object' && Array.isArray(value.sheets)
   && value.sheets.every(sheet => typeof sheet?.id === 'string' && typeof sheet.title === 'string' && typeof sheet.sql === 'string'
-    && (sheet.table === undefined || typeof sheet.table === 'string'))
+    && (sheet.table === undefined || typeof sheet.table === 'string')
+    && (sheet.savedQueryId === undefined || typeof sheet.savedQueryId === 'string'))
   && typeof value.active === 'string' && Number.isInteger(value.next);
 
 const quoteIdent = name => `"${name.replaceAll('"', '""')}"`;
@@ -32,10 +33,11 @@ const persist = () => {
   }
 };
 
-const create = (title, sql, table) => {
+const create = (title, sql, table, savedQueryId) => {
   const number = state.next++;
   const sheet = { id: `sheet-${number}`, title: title ?? `Query ${number}`, sql };
   if (table) sheet.table = table;
+  if (savedQueryId) sheet.savedQueryId = savedQueryId;
   state.sheets.push(sheet);
   return sheet;
 };
@@ -162,15 +164,30 @@ const savedTitle = id => {
 
 const mount = () => {
   const params = new URL(location.href).searchParams;
-  const queryTable = params.get('queryTable');
-  const queryColumn = params.get('column');
-  const tableHandoff = queryTable ? (queryColumn ? `${queryTable}.${queryColumn}` : queryTable) : null;
-  const handoff = params.has('result') ? null : savedTitle(params.get('savedQueryId')) ?? tableHandoff;
+  const hasResult = params.has('result');
+  const savedId = !hasResult ? params.get('savedQueryId') : null;
+  const queryTable = !hasResult && !savedId ? params.get('queryTable') : null;
+  const queryColumn = queryTable ? params.get('column') : null;
   const current = textarea.value;
-  const matching = state.sheets.find(sheet => sheet.id === state.active && sheet.sql === current)
-    ?? state.sheets.find(sheet => sheet.sql === current);
-  const empty = active()?.sql === '' ? active() : null;
-  const sheet = matching ?? (handoff ? create(handoff, current, tableHandoff === handoff && !queryColumn ? queryTable : null) : empty ?? create(null, current));
+  let sheet = null;
+  if (savedId) {
+    const title = savedTitle(savedId);
+    sheet = state.sheets.find(item => item.savedQueryId === savedId)
+      ?? state.sheets.find(item => item.sql === current)
+      ?? create(title, current, null, savedId);
+    sheet.savedQueryId = savedId;
+    if (title) sheet.title = title;
+  } else if (queryTable) {
+    const title = queryColumn ? `${queryTable}.${queryColumn}` : queryTable;
+    sheet = queryColumn
+      ? state.sheets.find(item => item.title === title) ?? create(title, current, null, null)
+      : state.sheets.find(item => item.table === queryTable) ?? create(title, current, queryTable, null);
+  } else {
+    const matching = state.sheets.find(item => item.id === state.active && item.sql === current)
+      ?? state.sheets.find(item => item.sql === current);
+    const empty = active()?.sql === '' ? active() : null;
+    sheet = matching ?? empty ?? create(null, current, null, null);
+  }
   sheet.sql = current;
   state.active = sheet.id;
   persist();
@@ -192,7 +209,7 @@ if (host && textarea && strip) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
     if (target.closest('[data-new-sheet]')) {
-      show(create(null, ''));
+      show(create(null, '', null, null));
       return;
     }
     const close = target.closest('[data-close-sheet]');
@@ -226,7 +243,7 @@ if (host && textarea && strip) {
     const table = target.closest('[data-sql-table]');
     if (table) {
       const name = table.dataset.sqlTable;
-      show(state.sheets.find(sheet => sheet.table === name) ?? create(name, `SELECT *\nFROM ${quoteIdent(name)}\nLIMIT 100;`, name));
+      show(state.sheets.find(sheet => sheet.table === name) ?? create(name, `SELECT *\nFROM ${quoteIdent(name)}\nLIMIT 100;`, name, null));
     }
   });
 

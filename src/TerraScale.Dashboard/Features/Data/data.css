@@ -67,6 +67,16 @@
   text-decoration: none;
 }
 
+.ts-studio-rail .ts-tip::after {
+  top: calc(100% + var(--ts-s1));
+  bottom: auto;
+  left: auto;
+  right: 0;
+  max-width: 12rem;
+  transform: none;
+  white-space: normal;
+}
+
 .ts-studio-rail-list,
 .ts-studio-rail-columns,
 .ts-studio-rail-columns > ul {
@@ -515,11 +525,11 @@ ul.ts-studio-rail-columns {
   border-bottom: 1px solid var(--ts-line);
 }
 
-#table-rows td.ts-num {
+.ts-studio td.ts-num {
   color: var(--ts-syn-number);
 }
 
-#table-rows td[data-kind="null"] {
+.ts-studio td[data-kind="null"] {
   color: var(--ts-ink-3);
   font-style: italic;
 }
@@ -532,11 +542,11 @@ ul.ts-studio-rail-columns {
   color: var(--ts-ink-3);
 }
 
-#table-rows[data-editable="1"] tbody td:not(.ts-studio-row-actions) {
+#table-rows[data-editable="1"] tbody tr:not([data-row-editable="0"]) td:not(.ts-studio-row-actions) {
   cursor: text;
 }
 
-#table-rows[data-editable="1"] tbody td:not(.ts-studio-row-actions, [data-editing]):hover {
+#table-rows[data-editable="1"] tbody tr:not([data-row-editable="0"]) td:not(.ts-studio-row-actions, [data-editing]):hover {
   box-shadow: inset 0 0 0 1px var(--ts-line-strong);
 }
 
@@ -640,6 +650,10 @@ ul.ts-studio-rail-columns {
   display: none;
 }
 
+.ts-studio-commit[data-dirty] .ts-studio-commit-state:has(#table-commit-status:empty) {
+  display: none;
+}
+
 .ts-studio-commit-sql {
   flex: 1 1 16rem;
   min-width: 0;
@@ -732,9 +746,34 @@ ul.ts-studio-rail-columns {
 }
 
 .ts-studio-sql #sql-result > .ts-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2) var(--ts-s3);
   padding: var(--ts-s2) var(--ts-s3);
   border-bottom: 1px solid var(--ts-line);
   background: var(--ts-studio-well);
+}
+
+.ts-studio-result-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s3);
+  min-width: 0;
+}
+
+.ts-studio-result-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s1);
+  margin-left: auto;
+}
+
+.ts-studio-result-actions[hidden] {
+  display: none;
 }
 
 .ts-studio-sql #sql-result > .ts-card-head .ts-card-title {
@@ -748,11 +787,23 @@ ul.ts-studio-rail-columns {
 
 .ts-studio-sql #sql-result > .ts-card-body {
   gap: var(--ts-s2);
-  padding: var(--ts-s2) 0 var(--ts-s3);
+  padding: 0;
 }
 
-.ts-studio-sql #sql-result > .ts-card-body > :not(.ts-table-wrap) {
+.ts-studio-sql #sql-result > .ts-card-body > :not(.ts-table-wrap, .ts-empty) {
   padding-inline: var(--ts-s3);
+}
+
+.ts-studio-sql #sql-result > .ts-card-body > p:empty {
+  display: none;
+}
+
+.ts-studio-sql #sql-result > .ts-card-body > p:not(:empty) {
+  padding-block: var(--ts-s2);
+}
+
+.ts-studio-sql #sql-result > .ts-card-body > .ts-pager:not([hidden]) {
+  padding-block: var(--ts-s2);
 }
 
 .ts-studio-sql #sql-result .ts-data-result :is(th, td):first-child {

@@ -5,26 +5,26 @@ using TerraScale.Dashboard.Features.Data;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
-public sealed record TableRowStatement(string Sql);
-public sealed record TableRowMutated(DatabaseSqlResult Result, string Sql);
+public sealed record TableRowBatch(IReadOnlyList<string> Statements, string DisplaySql, int ExpectedRows);
+public sealed record TableRowMutated(DatabaseSqlResult Result, string Sql, long RowsAffected, int ExpectedRows, int MatchedRows);
 public sealed record TableRowTableMissing(string Table);
 public sealed record TableRowPayloadInvalid(string Message);
 public sealed record TableRowColumnUnknown(string Table, string Column);
 public sealed record TableRowKeyRequired(string Message);
 public sealed record TableRowSqlRefused(int Status, string Message);
 
-public readonly union TableRowPlan(TableRowStatement, TableRowPayloadInvalid, TableRowColumnUnknown, TableRowKeyRequired);
+public readonly union TableRowPlan(TableRowBatch, TableRowPayloadInvalid, TableRowColumnUnknown, TableRowKeyRequired);
 
 public readonly union TableRowMutationResult(TableRowMutated, TableRowTableMissing, TableRowPayloadInvalid, TableRowColumnUnknown, TableRowKeyRequired, TableRowSqlRefused);
 
 public static class TableRowMutations
 {
     public const int MaxEdits = 50;
-    private const int PayloadBytes = 48 * 1024;
+    public const int PayloadBytes = 48 * 1024;
     private static readonly JsonDocumentOptions Options = new() { MaxDepth = 8 };
 
-    public static async Task<TableRowMutationResult> ApplyAsync(DataService data, AccountContext context, string databaseId, DatabaseSqlCatalog catalog,
-        string tableName, string operation, string payload, CancellationToken cancellationToken)
+    public static async Task<TableRowMutationResult> ApplyAsync(IDatabaseBackend backend, DatabaseScope scope, DatabaseRegion home, string databaseId,
+        DatabaseSqlCatalog catalog, string tableName, string operation, string payload, CancellationToken cancellationToken)
     {
         if (catalog.Tables.FirstOrDefault(table => table.Name == tableName) is not { } table)
         {
@@ -34,7 +34,7 @@ public static class TableRowMutations
         var plan = Plan(table, operation, payload);
         return plan switch
         {
-            TableRowStatement statement => await ExecuteAsync(data, context, databaseId, statement.Sql, cancellationToken),
+            TableRowBatch batch => await ExecuteAsync(backend, scope, home, databaseId, batch, cancellationToken),
             TableRowPayloadInvalid invalid => invalid,
             TableRowColumnUnknown unknown => unknown,
             TableRowKeyRequired key => key,
@@ -63,21 +63,30 @@ public static class TableRowMutations
         };
     }
 
-    private static async Task<TableRowMutationResult> ExecuteAsync(DataService data, AccountContext context, string databaseId, string sql, CancellationToken cancellationToken)
+    private static async Task<TableRowMutationResult> ExecuteAsync(IDatabaseBackend backend, DatabaseScope scope, DatabaseRegion home, string databaseId,
+        TableRowBatch batch, CancellationToken cancellationToken)
     {
-        if (SqlValidation.Diagnostics(sql).FirstOrDefault(item => item.Severity == "error") is { } problem)
+        foreach (var statement in batch.Statements)
         {
-            return new TableRowSqlRefused(StatusCodes.Status422UnprocessableEntity, problem.Message);
+            if (SqlValidation.Diagnostics(statement).FirstOrDefault(item => item.Severity == "error") is { } problem)
+            {
+                return new TableRowSqlRefused(StatusCodes.Status422UnprocessableEntity, problem.Message);
+            }
         }
 
-        try
+        return await backend.TrySqlBatchAsync(scope, home, databaseId, batch.Statements, true, cancellationToken) switch
         {
-            return new TableRowMutated(await data.SqlAsync(context, databaseId, sql, true, cancellationToken), sql);
-        }
-        catch (Exception error) when (DatabaseResults.KnownFailure(error))
-        {
-            return new TableRowSqlRefused(DatabaseResults.Status(error), DatabaseResults.Message(error));
-        }
+            IReadOnlyList<DatabaseSqlResult> results => Summarize(batch, results),
+            DatabaseBackendFailure failure => new TableRowSqlRefused(failure.Status, failure.Message),
+        };
+    }
+
+    private static TableRowMutated Summarize(TableRowBatch batch, IReadOnlyList<DatabaseSqlResult> results)
+    {
+        var total = results.Aggregate(0L, (sum, item) => checked(sum + item.RowsAffected));
+        var matched = results.Count(item => item.RowsAffected > 0);
+        var lastInsert = results.Count == 1 ? results[0].LastInsertRowId : null;
+        return new TableRowMutated(new DatabaseSqlResult([], [], total, lastInsert), batch.DisplaySql, total, batch.ExpectedRows, matched);
     }
 
     private static JsonDocument? Parse(string payload)
@@ -134,19 +143,10 @@ public static class TableRowMutations
         }
 
         var target = DatabaseTables.Identifier(table.Name);
-        if (rows.Count == 1)
-        {
-            var (where, sets) = rows.First();
-            return new TableRowStatement("UPDATE " + target + "\nSET " + string.Join(", ", sets.Select(set => DatabaseTables.Identifier(set.Key) + " = " + set.Value)) +
-                "\nWHERE " + where + ";");
-        }
-
-        string[] columns = [.. rows.Values.SelectMany(sets => sets.Keys).Distinct(StringComparer.Ordinal)];
-        var assignments = columns.Select(column => DatabaseTables.Identifier(column) + " = CASE" +
-            string.Concat(rows.Where(row => row.Value.ContainsKey(column)).Select(row => " WHEN " + row.Key + " THEN " + row.Value[column])) +
-            " ELSE " + DatabaseTables.Identifier(column) + " END");
-        return new TableRowStatement("UPDATE " + target + "\nSET " + string.Join(",\n    ", assignments) +
-            "\nWHERE " + string.Join("\n   OR ", rows.Keys.Select(where => "(" + where + ")")) + ";");
+        string[] statements = [.. rows.Select(row => "UPDATE " + target + "\nSET " +
+            string.Join(", ", row.Value.Select(set => DatabaseTables.Identifier(set.Key) + " = " + set.Value)) +
+            "\nWHERE " + row.Key + ";")];
+        return new TableRowBatch(statements, string.Join("\n", statements), statements.Length);
     }
 
     private static TableRowPlan Insert(DatabaseSqlTable table, JsonElement root)
@@ -165,7 +165,7 @@ public static class TableRowMutations
             }
 
             if (column.PrimaryKey > 0 && (property.Value.ValueKind == JsonValueKind.Null ||
-                property.Value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(property.Value.GetString())))
+                DatabaseTables.NumericType(column.Decltype) && property.Value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(property.Value.GetString())))
             {
                 continue;
             }
@@ -177,9 +177,10 @@ public static class TableRowMutations
         }
 
         var target = DatabaseTables.Identifier(table.Name);
-        return new TableRowStatement(assigned.Count == 0
+        var statement = assigned.Count == 0
             ? "INSERT INTO " + target + " DEFAULT VALUES;"
-            : "INSERT INTO " + target + " (" + string.Join(", ", assigned.Keys.Select(DatabaseTables.Identifier)) + ")\nVALUES (" + string.Join(", ", assigned.Values) + ");");
+            : "INSERT INTO " + target + " (" + string.Join(", ", assigned.Keys.Select(DatabaseTables.Identifier)) + ")\nVALUES (" + string.Join(", ", assigned.Values) + ");";
+        return new TableRowBatch([statement], statement, 1);
     }
 
     private static TableRowPlan Delete(DatabaseSqlTable table, JsonElement root)
@@ -189,9 +190,13 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("Name the row to delete with a keys object.");
         }
 
-        return Match(table, keys, out var where) is { } refused
-            ? refused
-            : new TableRowStatement("DELETE FROM " + DatabaseTables.Identifier(table.Name) + "\nWHERE " + where + ";");
+        if (Match(table, keys, out var where) is { } refused)
+        {
+            return refused;
+        }
+
+        var statement = "DELETE FROM " + DatabaseTables.Identifier(table.Name) + "\nWHERE " + where + ";";
+        return new TableRowBatch([statement], statement, 1);
     }
 
     private static TableRowPlan? Match(DatabaseSqlTable table, JsonElement keys, out string where)
@@ -208,7 +213,7 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("Name the row with a keys object.");
         }
 
-        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        var predicates = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var property in keys.EnumerateObject())
         {
             if (Column(table, property.Name) is not { } column)
@@ -221,19 +226,30 @@ public static class TableRowMutations
                 return new TableRowKeyRequired(column.Name + " is not part of the primary key of " + table.Name + ".");
             }
 
-            if (Literal(property.Value, false) is not { } literal || !values.TryAdd(column.Name, literal))
+            if (KeyPredicate(column.Name, property.Value) is not { } predicate || !predicates.TryAdd(column.Name, predicate))
             {
                 return new TableRowPayloadInvalid("Key " + column.Name + " needs one text or number value.");
             }
         }
 
-        if (primary.FirstOrDefault(column => !values.ContainsKey(column.Name)) is { } missing)
+        if (primary.FirstOrDefault(column => !predicates.ContainsKey(column.Name)) is { } missing)
         {
             return new TableRowKeyRequired("Name the row's " + missing.Name + " value.");
         }
 
-        where = string.Join(" AND ", primary.Select(column => DatabaseTables.Identifier(column.Name) + " = " + values[column.Name]));
+        where = string.Join(" AND ", primary.Select(column => predicates[column.Name]));
         return null;
+    }
+
+    private static string? KeyPredicate(string columnName, JsonElement value)
+    {
+        var ident = DatabaseTables.Identifier(columnName);
+        return value.ValueKind switch
+        {
+            JsonValueKind.String when Literal(value, false) is { } literal => "typeof(" + ident + ") = 'text' AND " + ident + " COLLATE BINARY = " + literal,
+            JsonValueKind.Number => "typeof(" + ident + ") IN ('integer', 'real') AND " + ident + " = " + value.GetRawText(),
+            _ => null,
+        };
     }
 
     private static DatabaseTableColumn? Column(DatabaseSqlTable table, string name)

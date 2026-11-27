@@ -30,8 +30,8 @@ function mount(host) {
         const tr = document.createElement('tr');
         for (const raw of row) {
           const td = document.createElement('td');
-          td.textContent = text(raw);
-          td.dataset.kind = raw === 'null' ? 'null' : isText(raw) ? 'string' : 'number';
+          td.textContent = raw === 'null' ? 'NULL' : text(raw);
+          td.dataset.kind = raw === 'null' ? 'null' : isText(raw) ? 'string' : raw.startsWith('{') ? 'object' : raw.startsWith('[') ? 'array' : 'number';
           if (td.dataset.kind === 'number') td.className = 'ts-num';
           tr.append(td);
         }

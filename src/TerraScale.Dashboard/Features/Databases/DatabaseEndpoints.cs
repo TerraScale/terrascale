@@ -316,6 +316,10 @@ public static class DatabaseEndpoints
         }
         var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;
         var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
+        var savedQueriesRead = tab == "tables"
+            ? OptionalPanel.LoadAsync(http, "saved-queries",
+                () => http.RequestServices.GetRequiredService<SavedQueryService>().ListAsync(context, database.Id, http.RequestAborted), () => [])
+            : null;
         if (tab == "replication" || tab == "overview" && database.AllRegions)
         {
             try { choices = await backend.RegionsAsync(http.RequestAborted); }
@@ -343,8 +347,7 @@ public static class DatabaseEndpoints
         IReadOnlyList<SavedQuery>? savedQueries = null;
         if (tab == "tables")
         {
-            savedQueries = await OptionalPanel.LoadAsync(http, "saved-queries",
-                () => http.RequestServices.GetRequiredService<SavedQueryService>().ListAsync(context, database.Id, http.RequestAborted), () => []);
+            savedQueries = savedQueriesRead is null ? [] : await savedQueriesRead;
             try
             {
                 if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadWorkspaceAsync(context, database.Id, http.RequestAborted) is { } workspace)

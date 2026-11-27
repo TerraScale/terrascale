@@ -74,7 +74,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return decltype is { Length: > 0 } type && (type.Contains("INT", StringComparison.OrdinalIgnoreCase) ||
                 type.Contains("REAL", StringComparison.OrdinalIgnoreCase) || type.Contains("FLOA", StringComparison.OrdinalIgnoreCase) ||
                 type.Contains("DOUB", StringComparison.OrdinalIgnoreCase) || type.Contains("NUMERIC", StringComparison.OrdinalIgnoreCase) ||
-                type.Contains("DECIMAL", StringComparison.OrdinalIgnoreCase));
+                type.Contains("DECIMAL", StringComparison.OrdinalIgnoreCase) || type.Contains("BOOL", StringComparison.OrdinalIgnoreCase));
         }
 
         internal static string Identifier(string name)

@@ -8,6 +8,8 @@ const edits = new Map();
 let editing = null;
 let pending = null;
 let deleting = null;
+let saving = false;
+let suppressLiveUntil = 0;
 let tabIcon = null;
 let tabAdd = null;
 
@@ -40,8 +42,9 @@ const quoteIdent = name => `"${name.replaceAll('"', '""')}"`;
 const quoteText = value => `'${value.replaceAll("'", "''")}'`;
 const plural = (count, word) => `${count.toLocaleString('en-US')} ${count === 1 ? word : `${word}s`}`;
 const numeric = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
-const numericType = type => /INT|REAL|FLOA|DOUB|NUMERIC|DECIMAL/i.test(type ?? '');
-const busy = () => edits.size > 0 || editing !== null;
+const numericType = type => /INT|REAL|FLOA|DOUB|NUMERIC|DECIMAL|BOOL/i.test(type ?? '');
+const isNumeric = (type, origKind) => numericType(type) || (!type && origKind === 'number');
+const busy = () => edits.size > 0 || editing !== null || saving;
 
 const compactType = type => {
   const text = (type ?? '').trim().toUpperCase();
@@ -85,8 +88,10 @@ const schema = rows => {
 
 const columns = rows => [...rows.querySelectorAll('thead th[data-column]')].map(th => th.dataset.column);
 
+const columnMeta = (rows, name) => schema(rows).find(column => column.name === name) ?? null;
+
 const columnType = (rows, name) => rows.querySelector(`thead th[data-column="${CSS.escape(name)}"]`)?.dataset.type
-  ?? schema(rows).find(column => column.name === name)?.decltype ?? '';
+  ?? columnMeta(rows, name)?.decltype ?? '';
 
 const editable = rows => {
   if (rows?.dataset.editable !== '1') return false;
@@ -112,21 +117,34 @@ const sqlLiteral = cell => {
   return quoteText(text);
 };
 
-const typedJson = (value, type) => numericType(type) && numeric.test(value.trim()) ? value.trim() : JSON.stringify(value);
-const typedSql = (value, type) => numericType(type) && numeric.test(value.trim()) ? value.trim() : quoteText(value);
+const typedJson = (value, type, origKind = '') => {
+  if (value === null) return 'null';
+  return isNumeric(type, origKind) && numeric.test(value.trim()) ? value.trim() : JSON.stringify(value);
+};
+
+const typedSql = (value, type, origKind = '') => {
+  if (value === null) return 'NULL';
+  return isNumeric(type, origKind) && numeric.test(value.trim()) ? value.trim() : quoteText(value);
+};
 
 const keysOf = (rows, tr) => {
   const names = columns(rows);
   return primaryKey(rows).map(key => [key, tr.cells[names.indexOf(key)]]);
 };
 
+const rowEditable = (rows, tr) => {
+  if (!editable(rows) || !tr || tr.dataset.rowEditable === '0') return false;
+  const keys = keysOf(rows, tr);
+  return keys.length > 0 && keys.every(([, cell]) => cell && (kindOf(cell) === 'string' || kindOf(cell) === 'number'));
+};
+
 const where = keys => keys.map(([key, cell]) => `${quoteIdent(key)} = ${sqlLiteral(cell)}`).join(' AND ');
 
-const statement = (rows, edit) => `UPDATE ${quoteIdent(rows.dataset.tableName)} SET ${quoteIdent(edit.column)} = ${typedSql(edit.value, edit.type)} WHERE ${where(edit.keys)};`;
+const statement = (rows, edit) => `UPDATE ${quoteIdent(rows.dataset.tableName)} SET ${quoteIdent(edit.column)} = ${typedSql(edit.value, edit.type, edit.origKind)} WHERE ${where(edit.keys)};`;
 
 const keyJson = keys => `{${keys.map(([key, cell]) => `${JSON.stringify(key)}:${literal(cell)}`).join(',')}}`;
 
-const payload = () => `{"edits":[${[...edits.values()].map(edit => `{"keys":${keyJson(edit.keys)},"column":${JSON.stringify(edit.column)},"value":${typedJson(edit.value, edit.type)}}`).join(',')}]}`;
+const payload = () => `{"edits":[${[...edits.values()].map(edit => `{"keys":${keyJson(edit.keys)},"column":${JSON.stringify(edit.column)},"value":${typedJson(edit.value, edit.type, edit.origKind)}}`).join(',')}]}`;
 
 const setStatus = text => {
   const status = document.getElementById('table-commit-status');
@@ -143,6 +161,12 @@ const renderCommit = () => {
   if (sql) sql.textContent = first ? statement(rows, first) : '';
   const count = bar.querySelector('[data-commit-count]');
   if (count) count.textContent = plural(edits.size, 'change');
+  const apply = bar.querySelector('[data-commit-apply]');
+  if (apply) apply.disabled = saving;
+  const cancel = bar.querySelector('[data-commit-discard]');
+  if (cancel) cancel.disabled = saving;
+  const add = document.querySelector('.ts-studio-bar [commandfor="insert-row"]');
+  if (add) add.disabled = edits.size > 0 || saving;
   document.querySelector('#table-tabs [aria-current="page"]')?.toggleAttribute('data-dirty', edits.size > 0);
 };
 
@@ -157,7 +181,7 @@ const visibleCells = rows => [...rows.querySelectorAll('tbody tr:not([hidden]) t
 
 const focusCell = cell => {
   const rows = panel();
-  if (!rows || !cell) return;
+  if (!rows || !cell || !cell.isConnected) return;
   for (const other of rows.querySelectorAll('tbody td[tabindex="0"]')) {
     if (other !== cell) other.tabIndex = -1;
   }
@@ -181,18 +205,23 @@ const moveCell = (cell, dx, dy) => {
   let row = tr;
   do {
     row = dy > 0 ? row.nextElementSibling : row.previousElementSibling;
-  } while (row && row.hidden);
+  } while (row && (row.hidden || !row.cells[cell.cellIndex]?.hasAttribute('tabindex')));
   const next = row?.cells[cell.cellIndex];
   return next?.hasAttribute('tabindex') ? next : null;
 };
 
-const finishEdit = apply => {
+const finishEdit = (apply, shouldFlush = true, forceNull = false) => {
   if (!editing) return;
-  const { cell, input, key, column, type, tr, shown, original } = editing;
+  const { cell, input, key, column, type, nullable, origKind, tr, shown, original } = editing;
   editing = null;
   const value = input.value;
   input.remove();
-  const unchanged = kindOf(cell) === 'null' ? value === '' : value === original;
+  const nextValue = forceNull && nullable
+    ? null
+    : value === '' && nullable && (isNumeric(type, origKind) || origKind === 'null')
+      ? null
+      : value;
+  const unchanged = origKind === 'null' ? nextValue === null : nextValue !== null && nextValue === original;
   if (!apply) {
     cell.textContent = shown;
   } else if (unchanged) {
@@ -209,69 +238,88 @@ const finishEdit = apply => {
     const rows = panel();
     cell.dataset.original = original;
     cell.dataset.originalKind ??= cell.dataset.kind;
-    cell.dataset.kind = numericType(type) && numeric.test(value.trim()) ? 'number' : 'string';
+    if (nextValue === null) {
+      cell.dataset.kind = 'null';
+      cell.textContent = 'NULL';
+    } else {
+      cell.dataset.kind = isNumeric(type, origKind) && numeric.test(nextValue.trim()) ? 'number' : 'string';
+      cell.textContent = nextValue;
+    }
     cell.dataset.dirty = '';
-    cell.textContent = value;
-    edits.set(key, { cell, column, type, value, keys: keysOf(rows, tr) });
+    edits.set(key, { cell, column, type, origKind, value: nextValue, keys: keysOf(rows, tr) });
   }
   delete cell.dataset.editing;
   renderCommit();
-  flush();
+  if (shouldFlush) flush();
 };
 
 const beginEdit = cell => {
   const rows = panel();
-  if (!rows || !editable(rows) || cell.dataset.editing !== undefined || cell.classList.contains('ts-studio-row-actions')) return;
-  finishEdit(true);
   const tr = cell.parentElement;
+  if (saving || !rows || !rowEditable(rows, tr) || cell.dataset.editing !== undefined || cell.classList.contains('ts-studio-row-actions')) return;
+  finishEdit(true, false);
   const column = columns(rows)[cell.cellIndex];
   if (column === undefined) return;
   const key = `${tr.sectionRowIndex}:${column}`;
+  const meta = columnMeta(rows, column);
   const type = columnType(rows, column);
+  const nullable = meta?.notNull !== true;
+  const origKind = kindOf(cell) ?? 'string';
   const shown = cell.textContent;
   const original = originalText(cell);
   const input = document.createElement('input');
   input.className = 'ts-input ts-input-sm ts-mono ts-studio-cell-input';
-  input.value = kindOf(cell) === 'null' && !edits.has(key) ? '' : shown;
+  const staged = edits.get(key);
+  input.value = staged ? (staged.value ?? '') : (origKind === 'null' ? '' : shown);
   input.setAttribute('aria-label', `${column} value`);
-  if (numericType(type)) input.inputMode = 'decimal';
+  if (nullable) input.placeholder = 'NULL';
+  if (isNumeric(type, origKind)) input.inputMode = 'decimal';
   input.spellcheck = false;
   input.autocomplete = 'off';
   cell.dataset.editing = '';
   cell.replaceChildren(input);
   setStatus('');
-  editing = { cell, input, key, column, type, tr, shown, original };
+  editing = { cell, input, key, column, type, nullable, origKind, tr, shown, original };
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      finishEdit(true);
+      finishEdit(true, false);
       focusCell(cell);
+      flush();
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      finishEdit(false);
+      finishEdit(false, false);
       focusCell(cell);
+      flush();
+    } else if (event.key === 'Backspace' && event.altKey && nullable) {
+      event.preventDefault();
+      finishEdit(true, false, true);
+      focusCell(cell);
+      flush();
     } else if (event.key === 'Tab') {
       event.preventDefault();
       const next = stepCell(cell, event.shiftKey ? -1 : 1);
-      finishEdit(true);
+      finishEdit(true, false);
       if (next) {
         focusCell(next);
         beginEdit(next);
       } else {
         focusCell(cell);
+        flush();
       }
     }
   });
   input.addEventListener('blur', () => {
-    if (editing?.input === input) finishEdit(true);
+    if (editing?.input === input) finishEdit(true, true);
   });
   input.focus();
   input.select();
 };
 
 const discard = () => {
-  finishEdit(false);
+  if (saving) return;
+  finishEdit(false, false);
   for (const edit of edits.values()) {
     edit.cell.textContent = originalText(edit.cell);
     if (edit.cell.dataset.originalKind !== undefined) edit.cell.dataset.kind = edit.cell.dataset.originalKind;
@@ -287,6 +335,9 @@ const discard = () => {
 
 const parseResponse = text => JSON.parse(text, (_, value, context) => typeof value === 'number' ? { number: context?.source ?? String(value) } : value);
 
+const isNumber = value => typeof value === 'object' && value !== null && typeof value.number === 'string';
+const numberValue = (value, fallback) => isNumber(value) ? Number(value.number) : typeof value === 'number' ? value : fallback;
+
 const send = async body => {
   try {
     const response = await fetch(endpoint, { method: 'POST', body, headers: { accept: 'application/json' } });
@@ -299,11 +350,36 @@ const send = async body => {
       }
     })();
     if (!response.ok || result?.ok !== true) {
-      return { error: typeof result?.error === 'string' ? result.error : `The change failed with HTTP ${response.status}.` };
+      const detail = typeof result?.error === 'string' ? result.error : typeof result?.detail === 'string' ? result.detail : null;
+      return { error: detail ?? `The change failed with HTTP ${response.status}.` };
     }
     return result;
   } catch {
     return { error: 'The change could not be sent. Check your connection and try again.' };
+  }
+};
+
+const filterPanel = (container, query, emptyText) => {
+  if (!container) return;
+  const body = container.querySelector('tbody');
+  let matches = 0;
+  for (const tr of body?.rows ?? []) {
+    const match = query === '' || [...tr.cells].some(cell => !cell.classList.contains('ts-studio-row-actions') && cell.textContent.toLowerCase().includes(query));
+    tr.hidden = !match;
+    if (match) matches++;
+  }
+  let empty = container.querySelector('[data-filter-empty]');
+  if (body && query !== '' && matches === 0) {
+    if (!empty) {
+      empty = document.createElement('p');
+      empty.className = 'ts-studio-filter-empty';
+      empty.dataset.filterEmpty = '';
+      empty.setAttribute('role', 'status');
+      container.append(empty);
+    }
+    empty.textContent = emptyText;
+  } else {
+    empty?.remove();
   }
 };
 
@@ -312,29 +388,11 @@ const applyFilter = () => {
   const rows = panel();
   if (!input || !rows) return;
   const query = input.value.trim().toLowerCase();
-  const body = rows.querySelector('tbody');
-  let matches = 0;
-  for (const tr of body?.rows ?? []) {
-    const match = query === '' || [...tr.cells].some(cell => !cell.classList.contains('ts-studio-row-actions') && cell.textContent.toLowerCase().includes(query));
-    tr.hidden = !match;
-    if (match) matches++;
-  }
-  let empty = rows.querySelector('[data-filter-empty]');
-  if (body && query !== '' && matches === 0) {
-    if (!empty) {
-      empty = document.createElement('p');
-      empty.className = 'ts-studio-filter-empty';
-      empty.dataset.filterEmpty = '';
-      empty.setAttribute('role', 'status');
-      rows.append(empty);
-    }
-    empty.textContent = 'No rows match the filter.';
-  } else {
-    empty?.remove();
-  }
+  filterPanel(rows, query, 'No rows match the filter.');
+  filterPanel(document.getElementById('table-columns'), query, 'No columns match the filter.');
   const stop = rows.querySelector('tbody td[tabindex="0"]');
-  if (stop?.parentElement.hidden) {
-    stop.tabIndex = -1;
+  if (stop?.parentElement.hidden) stop.tabIndex = -1;
+  if (!stop || stop.parentElement.hidden) {
     const first = visibleCells(rows)[0];
     if (first) first.tabIndex = 0;
   }
@@ -359,12 +417,18 @@ const cellFor = (value, number, focusable) => {
   if (value === null) {
     td.textContent = 'NULL';
     td.dataset.kind = 'null';
-  } else if (typeof value === 'object' && typeof value.number === 'string') {
+  } else if (isNumber(value)) {
     td.textContent = value.number;
     td.dataset.kind = 'number';
   } else if (typeof value === 'string') {
     td.textContent = value;
     td.dataset.kind = 'string';
+  } else if (Array.isArray(value)) {
+    td.textContent = JSON.stringify(value);
+    td.dataset.kind = 'array';
+  } else if (typeof value === 'object') {
+    td.textContent = JSON.stringify(value);
+    td.dataset.kind = 'object';
   } else {
     td.textContent = JSON.stringify(value);
     td.dataset.kind = 'string';
@@ -387,8 +451,6 @@ const actionCell = (tag, template) => {
   return cell;
 };
 
-const isNumber = value => typeof value === 'object' && value !== null && typeof value.number === 'string';
-
 const renderRows = result => {
   const rows = panel();
   if (!rows) return;
@@ -396,7 +458,7 @@ const renderRows = result => {
     location.reload();
     return;
   }
-  const count = isNumber(result.rowCount) ? Number(result.rowCount.number) : result.rows.length;
+  const count = numberValue(result.rowCount, result.rows.length);
   updateCount(rows, count, result.rows.length);
   if (result.rows.length === 0) {
     const empty = document.createElement('div');
@@ -415,7 +477,8 @@ const renderRows = result => {
   const numbers = resultColumns.map((_, index) => numericType(types[index])
     || result.rows.every(row => row[index] === null || isNumber(row[index])) && result.rows.some(row => isNumber(row[index])));
   const keys = primaryKey(rows);
-  const canEdit = rows.dataset.editable === '1' && keys.length > 0 && keys.every(key => resultColumns.some(column => column.name === key));
+  const keyIndexes = keys.map(key => resultColumns.findIndex(column => column.name === key));
+  const canEdit = rows.dataset.editable === '1' && keys.length > 0 && keyIndexes.every(index => index >= 0);
   const wrap = document.createElement('div');
   wrap.className = 'ts-table-wrap ts-data-result-wrap';
   wrap.setAttribute('role', 'region');
@@ -440,8 +503,10 @@ const renderRows = result => {
   const body = table.createTBody();
   for (const row of result.rows) {
     const tr = body.insertRow();
-    row.forEach((value, index) => tr.append(cellFor(value, numbers[index], canEdit)));
-    if (canEdit) tr.append(actionCell('td', deleteButton));
+    const canEditRow = canEdit && keyIndexes.every(index => typeof row[index] === 'string' || isNumber(row[index]));
+    tr.dataset.rowEditable = canEditRow ? '1' : '0';
+    row.forEach((value, index) => tr.append(cellFor(value, numbers[index], canEditRow)));
+    if (canEdit) tr.append(actionCell('td', canEditRow ? deleteButton : null));
   }
   const first = body.querySelector('td[tabindex]');
   if (first) first.tabIndex = 0;
@@ -458,24 +523,37 @@ const formBody = (rows, operation, data) => new URLSearchParams({
   payload: data,
 });
 
-const commit = async button => {
-  finishEdit(true);
+const commit = async () => {
+  if (saving) return;
+  finishEdit(true, false);
   const rows = panel();
   if (!rows || edits.size === 0) return;
   const total = edits.size;
-  button.disabled = true;
+  saving = true;
+  renderCommit();
   setStatus(`Committing ${plural(total, 'change')}…`);
   const result = await send(formBody(rows, 'update', payload()));
-  button.disabled = false;
+  saving = false;
   if (result.error) {
+    renderCommit();
     setStatus(result.error);
     return;
   }
+  const affected = numberValue(result.rowsAffected, 0);
+  const expected = numberValue(result.expectedRows, 0);
+  const matched = numberValue(result.matchedRows, affected);
   edits.clear();
   pending = null;
+  suppressLiveUntil = Date.now() + 800;
   renderCommit();
   renderRows(result);
-  setStatus(`Committed ${plural(total, 'change')}.`);
+  if (affected === 0) {
+    setStatus('No rows matched — the row may have changed or been deleted. Reloaded table.');
+  } else if (expected > 0 && matched < expected) {
+    setStatus(`Updated ${plural(matched, 'row')} of ${expected} — some rows may have changed or been deleted. Reloaded table.`);
+  } else {
+    setStatus(`Committed ${plural(total, 'change')}.`);
+  }
 };
 
 const applyView = view => {
@@ -488,9 +566,15 @@ const applyView = view => {
 
 const openInsert = () => {
   const rows = panel();
+  const dialog = document.getElementById('insert-row');
   const form = document.querySelector('[data-insert-row]');
   const fields = form?.querySelector('[data-insert-fields]');
   if (!rows || !form || !fields) return;
+  if (busy()) {
+    dialog?.close();
+    setStatus('Commit or discard the staged changes before adding a row.');
+    return;
+  }
   form.querySelector('[data-insert-error]').hidden = true;
   fields.replaceChildren(...schema(rows).map((column, index) => {
     const id = `insert-row-${index}`;
@@ -519,13 +603,20 @@ const insert = async form => {
   const rows = panel();
   const alert = form.querySelector('[data-insert-error]');
   const submit = form.querySelector('[type="submit"]');
-  if (!rows) return;
+  if (!rows || busy()) {
+    setStatus('Commit or discard the staged changes before adding a row.');
+    return;
+  }
   const values = [...form.querySelectorAll('[data-insert-column]')]
     .filter(input => input.value !== '')
     .map(input => `${JSON.stringify(input.dataset.insertColumn)}:${typedJson(input.value, input.dataset.insertType)}`);
+  saving = true;
   submit.disabled = true;
+  renderCommit();
   const result = await send(formBody(rows, 'insert', `{"values":{${values.join(',')}}}`));
+  saving = false;
   submit.disabled = false;
+  renderCommit();
   if (result.error) {
     alert.querySelector('p').textContent = result.error;
     alert.hidden = false;
@@ -536,20 +627,18 @@ const insert = async form => {
   form.closest('dialog')?.close();
   applyView('data');
   store(viewKey, 'data');
-  if (busy()) {
-    if (isNumber(result.rowCount) && Array.isArray(result.rows)) updateCount(rows, Number(result.rowCount.number), result.rows.length);
-  } else {
-    pending = null;
-    renderRows(result);
-  }
-  setStatus('Added 1 row.');
+  pending = null;
+  suppressLiveUntil = Date.now() + 800;
+  renderRows(result);
+  const affected = numberValue(result.rowsAffected, 1);
+  setStatus(affected === 0 ? 'No row was added. Reloaded table.' : 'Added 1 row.');
 };
 
 const askDelete = button => {
   const rows = panel();
   const dialog = document.getElementById('delete-row');
   const tr = button.closest('tr');
-  if (!rows || !dialog || !tr || !editable(rows)) return;
+  if (!rows || !dialog || !tr || !rowEditable(rows, tr)) return;
   if (busy()) {
     setStatus('Commit or discard the staged changes before deleting a row.');
     return;
@@ -567,10 +656,14 @@ const remove = async form => {
   const target = deleting;
   const alert = form.querySelector('[data-delete-error]');
   const submit = form.querySelector('[type="submit"]');
-  if (!rows || !target) return;
+  if (!rows || !target || busy()) return;
+  saving = true;
   submit.disabled = true;
+  renderCommit();
   const result = await send(formBody(rows, 'delete', `{"keys":${target.json}}`));
+  saving = false;
   submit.disabled = false;
+  renderCommit();
   if (result.error) {
     alert.querySelector('p').textContent = result.error;
     alert.hidden = false;
@@ -579,8 +672,10 @@ const remove = async form => {
   deleting = null;
   form.closest('dialog')?.close();
   pending = null;
+  suppressLiveUntil = Date.now() + 800;
   renderRows(result);
-  setStatus('Deleted 1 row.');
+  const affected = numberValue(result.rowsAffected, 0);
+  setStatus(affected === 0 ? 'Row was already deleted or changed. Reloaded table.' : 'Deleted 1 row.');
   const remaining = panel()?.querySelectorAll('tbody tr') ?? [];
   focusCell(remaining[Math.min(target.index, remaining.length - 1)]?.querySelector('td[tabindex]') ?? null);
 };
@@ -649,10 +744,14 @@ const closeTab = name => {
 
 window.addEventListener('datastar-fetch', event => {
   const { type, argsRaw } = event.detail ?? {};
-  if (type !== 'datastar-patch-elements' || !busy()) return;
+  if (type !== 'datastar-patch-elements') return;
   if (!String(argsRaw?.elements ?? '').includes('id="tables-browser"')) return;
-  event.stopImmediatePropagation();
-  pending = event.detail;
+  if (busy()) {
+    event.stopImmediatePropagation();
+    pending = event.detail;
+  } else if (Date.now() < suppressLiveUntil) {
+    event.stopImmediatePropagation();
+  }
 }, true);
 
 document.addEventListener('datastar-fetch', event => {
@@ -693,7 +792,7 @@ document.addEventListener('click', event => {
   }
   const apply = target.closest('[data-commit-apply]');
   if (apply) {
-    commit(apply);
+    commit();
     return;
   }
   const cell = target.closest('#table-rows tbody td');

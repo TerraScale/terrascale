@@ -224,15 +224,40 @@ test('the table studio edits, adds and deletes rows, then hands the table to SQL
   await score.locator('input').fill('11');
   await score.locator('input').press('Enter');
   await expect(score).toHaveAttribute('data-dirty', '');
+  const adaId = (await body.filter({ hasText: 'Ada' }).locator('td').first().innerText()).trim();
+  const adaName = body.filter({ hasText: adaId }).locator('td').nth(1);
+  await adaName.click();
+  await adaName.locator('input').fill('Ada L');
+  await adaName.locator('input').press('Enter');
+  await expect(adaName).toHaveAttribute('data-dirty', '');
+  await expect(page.locator('.ts-studio-bar').getByRole('button', { name: 'Add row', exact: true })).toBeDisabled();
   const footer = page.locator('#table-commit');
   await expect(footer.locator('[data-commit-sql]')).toHaveText(`UPDATE "${table}" SET "score" = 11 WHERE "id" = ${graceId};`);
+  await expect(footer.locator('[data-commit-count]')).toHaveText('2 changes');
   await audit.check('table studio staged edit');
   const committed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/dashboard/databases/tables/rows');
   await footer.getByRole('button', { name: 'Commit', exact: true }).click();
   expect((await committed).status()).toBe(200);
-  await expect(page.locator('#table-commit-status')).toHaveText('Committed 1 change.');
+  await expect(page.locator('#table-commit-status')).toHaveText('Committed 2 changes.');
   await page.reload();
   await expect(body.filter({ hasText: 'Grace' }).locator('td').nth(2)).toHaveText('11');
+  await expect(body.filter({ hasText: 'Ada L' })).toHaveCount(1);
+
+  await page.locator('#table-filter').fill('nomatch_xyz');
+  await expect(rows.locator('tbody tr:not([hidden])')).toHaveCount(0);
+  await page.locator('#table-filter').fill('');
+  await expect(rows.locator('tbody td[tabindex="0"]')).toHaveCount(1);
+
+  const graceScore = body.filter({ hasText: 'Grace' }).locator('td').nth(2);
+  await graceScore.click();
+  await graceScore.locator('input').fill('');
+  await graceScore.locator('input').press('Enter');
+  await expect(graceScore).toHaveAttribute('data-kind', 'null');
+  await expect(graceScore).toHaveText('NULL');
+  const cleared = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/dashboard/databases/tables/rows');
+  await footer.getByRole('button', { name: 'Commit', exact: true }).click();
+  expect((await cleared).status()).toBe(200);
+  await expect(body.filter({ hasText: 'Grace' }).locator('td').nth(2)).toHaveAttribute('data-kind', 'null');
 
   await page.locator('.ts-studio-bar').getByRole('button', { name: 'Add row', exact: true }).click();
   await expect(adding).toBeVisible();
