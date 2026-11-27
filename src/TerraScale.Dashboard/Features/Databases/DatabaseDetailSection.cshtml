@@ -54,6 +54,13 @@ var signal = "$_dbConnect" + connection.Id;
 @(await RenderPartialAsync<DatabaseTablesView, DatabaseDetailPage>(Model))
 @if(Model.Context.CanWriteProjectData){
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Databases.CreateTableDialog, DatabaseDetailPage>(Model))
+<dialog id="insert-row" class="ts-dialog" closedby="any" aria-labelledby="insert-row-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="insert-row-title">Add row</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="insert-row">@Icons.Render("X",18)</button></header>
+<form id="insert-row-form" method="dialog" class="ts-form" data-insert-row><div class="ts-alert ts-alert-danger" role="alert" data-insert-error hidden><p class="ts-alert-body"></p></div><div class="ts-form" data-insert-fields></div>
+<div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="insert-row">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Add row</button></div></form></div></dialog>
+<dialog id="delete-row" class="ts-dialog" closedby="any" aria-labelledby="delete-row-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="delete-row-title">Delete row</h2><p class="ts-dialog-description">This permanently deletes the row.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="delete-row">@Icons.Render("X",18)</button></header>
+<form id="delete-row-form" method="dialog" class="ts-form" data-delete-row-form><div class="ts-alert ts-alert-danger" role="alert" data-delete-error hidden><p class="ts-alert-body"></p></div><code class="ts-studio-delete-sql" data-delete-sql></code>
+<div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="delete-row">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Delete row</button></div></form></div></dialog>
+<template id="table-row-delete-template"><button class="ts-icon-btn ts-studio-row-delete" type="button" data-delete-row aria-label="Delete row">@Icons.Render("Trash2",14)</button></template>
 }
 }else if(Model.Tab == "conflicts"){
 @(await RenderPartialAsync<DatabaseConflictsView, DatabaseDetailPage>(Model))

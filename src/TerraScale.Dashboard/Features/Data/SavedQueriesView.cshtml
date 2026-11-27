@@ -1,22 +1,17 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
 @using TerraScale.Dashboard.Features.Data
-<section class="ts-card ts-card-boxed ts-card-flush" id="saved-queries" aria-labelledby="saved-queries-title">
-<header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="saved-queries-title">Saved queries</h2></div>
-@if(Model.Context.CanWriteProjectData && Model.SavedQueries is { Count: > 0 }){<div class="ts-card-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">@Icons.Render("Save",16)<span>Save query</span></button></div>}
-</header>
-<div class="ts-card-body">
+@{ var savedQueryId = HttpContext?.Request.Query["savedQueryId"].ToString() ?? ""; }
+<section class="ts-studio-rail-section" id="saved-queries" aria-labelledby="saved-queries-title">
+<div class="ts-studio-rail-head"><h2 class="ts-studio-rail-title" id="saved-queries-title">Saved queries</h2></div>
 @if(Model.SavedQueries is not { Count: > 0 }){
-<div class="ts-empty" role="status"><p class="ts-empty-title">No saved queries yet.</p>
-@if(Model.Context.CanWriteProjectData){<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">@Icons.Render("Save",16)<span>Save query</span></button>}
-</div>
+<p class="ts-studio-rail-empty" role="status">No saved queries yet.</p>
 }else{
-<ul class="ts-rows">
+<ul class="ts-studio-rail-list">
 @foreach(var query in Model.SavedQueries){
-<li><a class="ts-data-query" href="@(DatabaseService.Path(Model.Database.Id,"sql")+"?savedQueryId="+Uri.EscapeDataString(query.Id))"><span class="ts-rows-title">@query.Name</span><code class="ts-rows-meta">@query.Sql</code></a>
-@if(Model.Context.CanWriteProjectData){<div class="ts-rows-actions"><button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="@("delete-query-"+query.Id)" aria-label="@("Delete "+query.Name)">@Icons.Render("Trash2",15)<span>Delete</span></button></div>}
+<li class="ts-studio-query"><a class="ts-studio-rail-link" href="@(DatabaseService.Path(Model.Database.Id,"sql")+"?savedQueryId="+Uri.EscapeDataString(query.Id))" title="@query.Sql" data-saved-query="@query.Id" aria-current="@(savedQueryId == query.Id ? "true" : null)"><span class="ts-studio-rail-icon" aria-hidden="true">@Icons.Render("ScrollText",14)</span><span class="ts-truncate">@query.Name</span></a>
+@if(Model.Context.CanWriteProjectData){<button class="ts-icon-btn ts-studio-query-delete" type="button" command="show-modal" commandfor="@("delete-query-"+query.Id)" aria-label="@("Delete "+query.Name)">@Icons.Render("Trash2",14)</button>}
 </li>}
 </ul>}
-</div>
 @if(Model.Context.CanWriteProjectData){
 @(await RenderPartialAsync<SaveQueryDialog,DataPage>(Model))
 @foreach(var query in Model.SavedQueries ?? []){
