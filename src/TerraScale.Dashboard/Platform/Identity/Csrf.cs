@@ -12,7 +12,9 @@ namespace TerraScale.Dashboard.Platform.Identity
         private const string NonceKey = "TerraScale.Dashboard/csrf-nonce";
         private const string BindingKey = "TerraScale.Dashboard/csrf-binding";
 
-        public static string Token(HttpContext context)
+        public static string Token(HttpContext context) => Sign(context, EnsureCookie(context));
+
+        public static string EnsureCookie(HttpContext context)
         {
             if (context.Items[NonceKey] is not string nonce)
             {
@@ -30,7 +32,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                 }
                 context.Items[NonceKey] = nonce;
             }
-            return Sign(context, nonce);
+            return nonce;
         }
 
         public static bool Validate(HttpContext context, IFormCollection form)

@@ -2,7 +2,7 @@
 @inject AssetUrls Assets
 @if (Model.Measurement.RegionsPending)
 {
-    <section class="ts-card" id="home-regions" aria-labelledby="home-regions-title" data-init="@("@get('" + WorkspaceUrl.For(Model.Shell.Context, "/overview/regions") + "', {retry: 'never', retryMaxCount: 0})")"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="home-regions-title">Regions</h2></div></header><div class="ts-card-body"><div class="ts-empty" role="status" aria-busy="true"><p class="ts-empty-title">Loading region health and latency…</p></div></div></section>
+    <section class="ts-card" id="home-regions" aria-labelledby="home-regions-title" data-init="@("@get('" + WorkspaceUrl.For(Model.Shell.Context, "/overview/regions") + "', {retry: 'error', retryMaxCount: 5})")"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="home-regions-title">Regions</h2></div></header><div class="ts-card-body"><div class="ts-empty" role="status" aria-busy="true"><p class="ts-empty-title">Loading region health and latency…</p></div></div></section>
 }
 else
 {
