@@ -268,21 +268,6 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
 
     private async ValueTask<DatabaseResolveOutcome> OpenPlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
     {
-        if (Databases.TryGetTracked(databaseId, placement.KeyId, out _))
-        {
-            return await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
-        }
-
-        var leased = await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
-        return leased switch
-        {
-            ISqlDatabaseSession or ClusterUnavailable => leased,
-            DatabaseNotFound => await CreatePlacedAsync(databaseId, placement, cancellationToken),
-        };
-    }
-
-    private async ValueTask<DatabaseResolveOutcome> CreatePlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
-    {
         var ready = await Databases.OpenOrCreateForReplicationAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken);
         return ready switch
         {

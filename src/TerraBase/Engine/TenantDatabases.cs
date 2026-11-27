@@ -266,6 +266,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
                     && _sessions.TryRemove(databaseId, out var removed))
                 {
                     evicted = removed.Session;
+                    cluster.UntrackDatabase(databaseId);
                 }
             }
 
