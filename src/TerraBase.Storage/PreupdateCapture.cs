@@ -96,6 +96,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
             if (row.Original is not { } original)
             {
+                row.HasCapturedFinal = false;
                 row.UnchangedMask = 0;
                 continue;
             }
@@ -108,16 +109,22 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
             if (current is not null)
             {
+                var final = row.Final;
                 var limit = Math.Min(original.Length, Math.Min(current.Length, 64));
                 for (var column = 0; column < limit; column++)
                 {
                     if ((mask & (1UL << column)) != 0)
                     {
                         original[column] = current[column];
+                        if (final is not null && column < final.Length)
+                        {
+                            final[column] = current[column];
+                        }
                     }
                 }
             }
 
+            row.HasCapturedFinal = false;
             row.UnchangedMask = 0;
         }
 

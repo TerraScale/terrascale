@@ -1651,7 +1651,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             }
         }
 
-        var (metadataChecked, hasTriggers, hasOnDeleteForeignKeys) = await LoadCoalesceSafetyAsync(session, table, cancellationToken);
+        var (metadataChecked, hasTriggers, hasOnDeleteForeignKeys, hasSelfForeignKey) = await LoadCoalesceSafetyAsync(session, table, cancellationToken);
         var frozenIndex = columnIndex.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
         var metadata = new TableMetadata(
             columns,
@@ -1662,8 +1662,8 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             nonDeterministicMask,
             frozenIndex.ContainsKey("rowid"),
             AsciiIgnoreCaseComparer.Instance.Equals(table, "_b"),
-            CanCoalesceCreate: !hasTriggers,
-            CanCoalesceDelete: !hasTriggers && !hasOnDeleteForeignKeys,
+            CanCoalesceCreate: !hasTriggers && !hasSelfForeignKey,
+            CanCoalesceDelete: !hasTriggers && !hasSelfForeignKey && !hasOnDeleteForeignKeys,
             CoalesceMetadataChecked: metadataChecked);
         if (metadataChecked && session.SchemaEpoch == epoch && session.SessionIncarnation == key.SessionIncarnation)
         {
@@ -1673,19 +1673,24 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         return metadata;
     }
 
-    private static async ValueTask<(bool Checked, bool HasTriggers, bool HasOnDeleteForeignKeys)> LoadCoalesceSafetyAsync(
+    private static async ValueTask<(bool Checked, bool HasTriggers, bool HasOnDeleteForeignKeys, bool HasSelfForeignKey)> LoadCoalesceSafetyAsync(
         ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
     {
+        var tableArg = SqlValue.FromText(table);
         var request = new SqlStatementRequest(
             session.DatabaseId,
             [
                 new SqlStatement(
                     "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND lower(tbl_name) = lower(?) LIMIT 1",
-                    [SqlValue.FromText(table)],
+                    [tableArg],
                     SqlBuild.NoNamed),
                 new SqlStatement(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND instr(lower(sql), 'on delete') > 0 LIMIT 1",
+                    "SELECT 1 FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) fk WHERE m.type = 'table' AND lower(m.name) NOT LIKE '\\_tb\\_%' ESCAPE '\\' AND lower(m.name) NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND fk.on_delete != 'NO ACTION' LIMIT 1",
                     [],
+                    SqlBuild.NoNamed),
+                new SqlStatement(
+                    "SELECT 1 FROM pragma_foreign_key_list(?) WHERE lower(\"table\") = lower(?) LIMIT 1",
+                    [tableArg, tableArg],
                     SqlBuild.NoNamed),
             ],
             SqlAccess.Read,
@@ -1694,8 +1699,8 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         var outcome = await session.ExecuteReadAsync(request, cancellationToken);
         return outcome switch
         {
-            SqlReadResult { ResultSets: [var triggers, var foreignKeys] } => (true, triggers.Rows.Count > 0, foreignKeys.Rows.Count > 0),
-            SqlReadResult or SqlError or StorageBusy or StorageTimeout => (false, true, true),
+            SqlReadResult { ResultSets: [var triggers, var foreignKeys, var selfForeignKeys] } => (true, triggers.Rows.Count > 0, foreignKeys.Rows.Count > 0, selfForeignKeys.Rows.Count > 0),
+            SqlReadResult or SqlError or StorageBusy or StorageTimeout => (false, true, true, true),
         };
     }
 
