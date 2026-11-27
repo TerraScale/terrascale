@@ -23,11 +23,16 @@ internal sealed record PlannedStatement(SqlStatement Statement, StatementKind Ki
 internal sealed record SqlBatch(IReadOnlyList<PlannedStatement> Statements, ConsistencyMode? Mode)
 {
     private readonly IReadOnlyList<SqlStatement>? _sql;
+    private readonly bool? _writes;
 
-    internal SqlBatch(IReadOnlyList<PlannedStatement> statements, ConsistencyMode? mode, IReadOnlyList<SqlStatement>? sql)
-        : this(statements, mode) => _sql = sql;
+    internal SqlBatch(IReadOnlyList<PlannedStatement> statements, ConsistencyMode? mode, IReadOnlyList<SqlStatement>? sql, bool? writes = null)
+        : this(statements, mode)
+    {
+        _sql = sql;
+        _writes = writes;
+    }
 
-    public bool Writes => HasWrites(Statements);
+    public bool Writes => _writes ?? HasWrites(Statements);
 
     public IReadOnlyList<SqlStatement> Sql => _sql ?? ExtractSql(Statements);
 
@@ -136,13 +141,15 @@ internal static class SqlPlan
             {
                 PlannedStatement single => !allowTransactionControl && single.Kind is StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback
                     ? TransactionControlRefusal(0)
-                    : new SqlBatch([single], null, statements),
+                    : new SqlBatch([single], null, statements, single.Kind is StatementKind.Write or StatementKind.Schema),
                 SqlRefusal refusal => refusal,
             };
         }
 
-        var planned = new PlannedStatement[statements.Count];
-        for (var index = 0; index < statements.Count; index++)
+        var count = statements.Count;
+        var planned = new PlannedStatement[count];
+        var hasWrites = false;
+        for (var index = 0; index < count; index++)
         {
             var failure = Classify(statements[index], index) switch
             {
@@ -152,6 +159,11 @@ internal static class SqlPlan
             if (failure is not null)
             {
                 return failure;
+            }
+
+            if (planned[index].Kind is StatementKind.Write or StatementKind.Schema)
+            {
+                hasWrites = true;
             }
         }
 
@@ -180,7 +192,7 @@ internal static class SqlPlan
             }
         }
 
-        return new SqlBatch(planned, mode, sourceSql);
+        return new SqlBatch(planned, mode, sourceSql, hasWrites);
     }
 
     private static ClassifiedSql ClassifyTokens(SqlToken[] meaningful)

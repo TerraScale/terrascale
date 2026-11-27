@@ -79,19 +79,26 @@ internal sealed class VersionVector
         TaskCompletionSource signal;
         lock (_gate)
         {
-            var updated = false;
+            var updated = 0;
+            string? singleOrigin = null;
+            var singleSequence = 0L;
             foreach (var (origin, sequence) in watermarks)
             {
                 if (sequence > _watermarks.GetValueOrDefault(origin))
                 {
                     _watermarks[origin] = sequence;
-                    updated = true;
+                    singleOrigin = origin;
+                    singleSequence = sequence;
+                    updated++;
                 }
             }
 
-            if (updated)
+            if (updated > 0)
             {
-                Volatile.Write(ref _snapshot, CausalBookmark.Create(_watermarks));
+                var nextSnapshot = updated == 1 && singleOrigin is not null
+                    ? _snapshot.With(singleOrigin, singleSequence)
+                    : CausalBookmark.Create(_watermarks);
+                Volatile.Write(ref _snapshot, nextSnapshot);
                 _ = Interlocked.Increment(ref _generation);
             }
 
@@ -112,26 +119,8 @@ internal sealed class VersionVector
 
     public CausalBookmark Snapshot() => Volatile.Read(ref _snapshot);
 
-    public bool Satisfies(CausalBookmark bookmark)
-    {
-        if (bookmark.IsEmpty)
-        {
-            return true;
-        }
-
-        lock (_gate)
-        {
-            foreach (var (origin, sequence) in bookmark.Entries)
-            {
-                if (_watermarks.GetValueOrDefault(origin) < sequence)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-    }
+    public bool Satisfies(CausalBookmark bookmark) =>
+        bookmark.IsEmpty || Volatile.Read(ref _snapshot).Dominates(bookmark);
 
     public Task WhenChanged()
     {

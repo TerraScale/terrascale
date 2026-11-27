@@ -30,6 +30,9 @@ prepare() {
   chmod 700 "$E2E_STATE"
   local pids=() pid failed=0
   (
+    unset DOTNET_PROCESSOR_COUNT
+    dotnet restore "$repo/TerraScale.slnx" --locked-mode
+    export E2E_SLN_RESTORED=1
     for service in terrabase ts-platform ts-auth dashboard; do
       bash "$here/build.sh" "$repo" "$E2E_BUILD" "$service"
     done
@@ -47,8 +50,22 @@ prepare() {
   pids+=($!)
   (
     bash "$e2e/sdk/build.sh" js
-    npm ci --prefix "$e2e" --no-audit --no-fund
-    cd "$e2e" && npx playwright install chromium
+    e2e_lock=$(sha256sum "$e2e/package-lock.json" | cut -d' ' -f1)
+    if [ ! -d "$e2e/node_modules/@playwright/test" ] \
+      || [ ! -f "$e2e/node_modules/.e2e-lock.sha256" ] \
+      || [ "$(cat "$e2e/node_modules/.e2e-lock.sha256")" != "$e2e_lock" ]; then
+      npm ci --prefix "$e2e" --no-audit --no-fund
+      printf '%s\n' "$e2e_lock" > "$e2e/node_modules/.e2e-lock.sha256"
+    fi
+    pw_ver=$(node -e 'process.stdout.write(require(process.argv[1] + "/node_modules/@playwright/test/package.json").version)' "$e2e")
+    pw_exe=$(node -e 'process.stdout.write(require(process.argv[1] + "/node_modules/@playwright/test").chromium.executablePath() || "")' "$e2e")
+    if [ ! -f "$E2E_STATE/.playwright-chromium.version" ] \
+      || [ "$(cat "$E2E_STATE/.playwright-chromium.version")" != "$pw_ver" ] \
+      || [ -z "$pw_exe" ] \
+      || [ ! -x "$pw_exe" ]; then
+      (cd "$e2e" && npx playwright install chromium)
+      printf '%s\n' "$pw_ver" > "$E2E_STATE/.playwright-chromium.version"
+    fi
   ) &
   pids+=($!)
   bash "$here/pki.sh" &
@@ -70,7 +87,7 @@ start() {
   echo $! > "$holder"
   until [ -f "$E2E_STATE/namespace/ready" ]; do
     kill -0 "$(cat "$holder")" 2> /dev/null || { cat "$E2E_STATE/namespace.log" >&2; exit 1; }
-    sleep 0.1
+    sleep 0.05
   done
   pgrep -P "$(cat "$holder")" > "$init"
 }
@@ -82,7 +99,7 @@ ended_within() {
   local deadline=$((SECONDS + $1))
   while kill -0 "$(cat "$holder")" 2> /dev/null; do
     [ "$SECONDS" -lt "$deadline" ] || return 1
-    sleep 0.1
+    sleep 0.05
   done
 }
 stop() {

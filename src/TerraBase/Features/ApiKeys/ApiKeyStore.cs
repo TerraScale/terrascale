@@ -86,7 +86,7 @@ internal sealed class ApiKeyStore(SystemDatabase system, ControlSnapshots snapsh
             return true;
         }
 
-        var generation = system.ChangeGeneration;
+        var generation = system.CatalogGeneration;
         if (generation <= 0)
         {
             outcome = default;
@@ -122,7 +122,7 @@ internal sealed class ApiKeyStore(SystemDatabase system, ControlSnapshots snapsh
         Span<byte> digestBytes = stackalloc byte[SHA256.HashSizeInBytes];
         TokenDigest.HashUtf8(secret, digestBytes);
         var digest = TokenDigest.FromHash(digestBytes);
-        var generation = system.ChangeGeneration;
+        var generation = system.CatalogGeneration;
         var snapshotVersion = snapshots.Version;
         if (generation > 0 && _cache.TryGet(generation, snapshotVersion, digest, out var cached))
         {
@@ -167,7 +167,7 @@ internal sealed class ApiKeyStore(SystemDatabase system, ControlSnapshots snapsh
             return ExpiredKey;
         }
 
-        if (generation > 0 && system.ChangeGeneration == generation && snapshots.Version == snapshotVersion)
+        if (generation > 0 && system.CatalogGeneration == generation && snapshots.Version == snapshotVersion)
         {
             _cache.Set(generation, snapshotVersion, digest, key);
         }

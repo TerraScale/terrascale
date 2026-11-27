@@ -29,26 +29,33 @@ internal sealed class RulesStore(SystemDatabase system, AntiEntropyService antiE
     public ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, CancellationToken cancellationToken) =>
         CurrentAsync(databaseId, fresh: false, cancellationToken);
 
-    public async ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, bool fresh, CancellationToken cancellationToken)
+    public ValueTask<StoredRulesLookup> CurrentAsync(Ulid databaseId, bool fresh, CancellationToken cancellationToken)
     {
         if (!system.IsOpen)
         {
-            return SystemDatabase.Opening;
+            return ValueTask.FromResult<StoredRulesLookup>(SystemDatabase.Opening);
         }
 
-        long generation;
+        if (!fresh)
+        {
+            var generation = system.CatalogGeneration;
+            if (_cache.TryGetValue(databaseId, out var cached) && cached.Generation == generation)
+            {
+                return ValueTask.FromResult<StoredRulesLookup>(cached.Rules is { } rules ? rules : MissingRules);
+            }
+
+            return CurrentSlowAsync(databaseId, fresh: false, generation, cancellationToken);
+        }
+
+        return CurrentSlowAsync(databaseId, fresh: true, 0, cancellationToken);
+    }
+
+    private async ValueTask<StoredRulesLookup> CurrentSlowAsync(Ulid databaseId, bool fresh, long generation, CancellationToken cancellationToken)
+    {
         if (fresh)
         {
             await SyncSystemAsync(cancellationToken);
-            generation = system.ChangeGeneration;
-        }
-        else
-        {
-            generation = system.ChangeGeneration;
-            if (_cache.TryGetValue(databaseId, out var cached) && cached.Generation == generation)
-            {
-                return cached.Rules is { } rules ? rules : MissingRules;
-            }
+            generation = system.CatalogGeneration;
         }
 
         var current = await system.QueryAsync(SqlBuild.Statement(
@@ -139,13 +146,21 @@ internal sealed class RulesStore(SystemDatabase system, AntiEntropyService antiE
 
     private StoredRulesLookup Cache(Ulid databaseId, StoredRules rules, long generation)
     {
-        Store(databaseId, (rules, generation));
+        if (generation > 0 && system.CatalogGeneration == generation)
+        {
+            Store(databaseId, (rules, generation));
+        }
+
         return rules;
     }
 
     private StoredRulesLookup CacheMissing(Ulid databaseId, long generation)
     {
-        Store(databaseId, (null, generation));
+        if (generation > 0 && system.CatalogGeneration == generation)
+        {
+            Store(databaseId, (null, generation));
+        }
+
         return MissingRules;
     }
 

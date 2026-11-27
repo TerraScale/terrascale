@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using TerraScale.Contracts.Continuity;
 
@@ -22,7 +23,13 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
 
     internal ChannelReader<QueuedCatchUp> CatchUpRequests => _catchUp.Reader;
 
-    public void Track(Ulid databaseId) => _ = _tracked.GetOrAdd(databaseId, static _ => new TrackedDatabase());
+    public void Track(Ulid databaseId)
+    {
+        if (!_tracked.ContainsKey(databaseId))
+        {
+            _ = _tracked.GetOrAdd(databaseId, static _ => new TrackedDatabase());
+        }
+    }
 
     public void Untrack(Ulid databaseId) => _ = _tracked.TryRemove(databaseId, out _);
 
@@ -95,21 +102,22 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         return false;
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<DatabaseResolveOutcome>))]
     public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         _tracked.TryGetValue(databaseId, out var tracked);
         var resolved = await resolver(databaseId, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => Observed(session),
+            ISqlDatabaseSession session => Observed(session, tracked),
             DatabaseNotFound notFound => Missing(notFound, tracked),
             ClusterUnavailable unavailable => unavailable,
         };
     }
 
-    private DatabaseResolveOutcome Observed(ISqlDatabaseSession session)
+    private static DatabaseResolveOutcome Observed(ISqlDatabaseSession session, TrackedDatabase? tracked)
     {
-        Observe(session.DatabaseId, session.CurrentBookmark);
+        tracked?.Observe(session.CurrentBookmark);
         return session;
     }
 

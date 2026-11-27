@@ -23,13 +23,28 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 {
     private const int Batch = 256;
 
+    private const string InsertSql =
+        "INSERT OR IGNORE INTO request_logs (database_id, id, at, method, path, status, duration_ms, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+
     private static readonly TimeSpan Retention = TimeSpan.FromDays(7);
+
+    private static readonly TimeSpan FlushWindow = TimeSpan.FromMilliseconds(200);
 
     private readonly Channel<RequestLogEntry> _queue = Channel.CreateBounded<RequestLogEntry>(new BoundedChannelOptions(8192)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
-        SingleReader = true,
+        SingleReader = false,
     });
+
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+
+    private readonly List<RequestLogEntry> _batchBuffer = new(Batch);
+
+    private TaskCompletionSource _wake = NewWake();
+
+    private int _queued;
+
+    private DateTimeOffset _pruneAt = DateTimeOffset.MinValue;
 
     public static void Mark(HttpContext context, Ulid databaseId) => context.Features.Set(new LoggedDatabase(databaseId));
 
@@ -37,7 +52,11 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     {
         var now = time.GetUtcNow();
         var logId = id is not null && RequestIdentity.IsValid(id) ? id : Ulid.NewUlid(now).ToString();
-        _queue.Writer.TryWrite(new RequestLogEntry(logId, databaseId, now, Method(method), path, status, Math.Max(0, durationMs), options.Region));
+        if (_queue.Writer.TryWrite(new RequestLogEntry(logId, databaseId, now, Method(method), path, status, Math.Max(0, durationMs), options.Region))
+            && Interlocked.Increment(ref _queued) >= Batch)
+        {
+            SignalWake();
+        }
     }
 
     public void Record(HttpContext context, long started)
@@ -55,9 +74,23 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     public bool HasGap(string? after) =>
         after is { Length: 26 } && Ulid.TryParse(after, out var cursor) && cursor.Time < time.GetUtcNow() - Retention;
 
+    public async ValueTask FlushAsync(CancellationToken cancellationToken)
+    {
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            await DrainLockedAsync(cancellationToken);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
     public async ValueTask<RequestLogsOutcome> ListAsync(
         Ulid databaseId, string? after, int limit, int? minStatus, int? maxStatus, CancellationToken cancellationToken)
     {
+        await FlushAsync(cancellationToken);
         var statement = after is null
             ? SqlBuild.Statement(
                 "SELECT id, database_id, at, method, path, status, duration_ms, region FROM request_logs "
@@ -77,38 +110,119 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         };
     }
 
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+        await FlushAsync(cancellationToken);
+    }
+
+    public override void Dispose()
+    {
+        _writeGate.Dispose();
+        base.Dispose();
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var pruneAt = time.GetUtcNow();
-        await foreach (var first in _queue.Reader.ReadAllAsync(stoppingToken))
+        _pruneAt = time.GetUtcNow();
+        using var timer = time.CreateTimer(
+            static state => (state as RequestLogRecorder)?.SignalWake(),
+            this,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
+        while (await _queue.Reader.WaitToReadAsync(stoppingToken))
         {
-            List<RequestLogEntry> batch = [first];
-            while (batch.Count < Batch && _queue.Reader.TryRead(out var next))
+            if (Volatile.Read(ref _queued) < Batch)
             {
-                batch.Add(next);
+                var wake = ResetWake();
+                if (Volatile.Read(ref _queued) < Batch)
+                {
+                    timer.Change(FlushWindow, Timeout.InfiniteTimeSpan);
+                    try
+                    {
+                        await wake.Task.WaitAsync(stoppingToken);
+                    }
+                    finally
+                    {
+                        timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                    }
+                }
             }
 
-            List<SqlStatement> statements = [.. batch.Select(static entry => SqlBuild.Statement(
-                "INSERT OR IGNORE INTO request_logs (database_id, id, at, method, path, status, duration_ms, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                SqlBuild.Id(entry.DatabaseId), SqlBuild.Text(entry.Id), SqlBuild.Time(entry.At), SqlBuild.Text(entry.Method), SqlBuild.Text(entry.Path),
-                SqlBuild.Integer(entry.Status), SqlBuild.Integer(entry.DurationMs), SqlBuild.Text(entry.Region)))];
-            if (time.GetUtcNow() >= pruneAt)
+            await FlushAsync(stoppingToken);
+        }
+    }
+
+    private async ValueTask DrainLockedAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            _batchBuffer.Clear();
+            while (_batchBuffer.Count < Batch && _queue.Reader.TryRead(out var entry))
             {
-                pruneAt = time.GetUtcNow().AddHours(1);
-                statements.Add(SqlBuild.Statement("DELETE FROM request_logs WHERE at < ?", SqlBuild.Time(time.GetUtcNow() - Retention)));
+                _batchBuffer.Add(entry);
             }
 
-            if (await system.WriteAsync(statements, ConsistencyMode.Fast, stoppingToken) switch
+            var count = _batchBuffer.Count;
+            if (count == 0)
+            {
+                Volatile.Write(ref _queued, 0);
+                return;
+            }
+
+            if (Interlocked.Add(ref _queued, -count) < 0)
+            {
+                Volatile.Write(ref _queued, 0);
+            }
+
+            var now = time.GetUtcNow();
+            var prune = now >= _pruneAt;
+            var statements = new SqlStatement[prune ? count + 1 : count];
+            for (var index = 0; index < count; index++)
+            {
+                var entry = _batchBuffer[index];
+                statements[index] = SqlBuild.Statement(
+                    InsertSql,
+                    SqlBuild.Id(entry.DatabaseId), SqlBuild.Text(entry.Id), SqlBuild.Time(entry.At), SqlBuild.Text(entry.Method), SqlBuild.Text(entry.Path),
+                    SqlBuild.Integer(entry.Status), SqlBuild.Integer(entry.DurationMs), SqlBuild.Text(entry.Region));
+            }
+
+            _batchBuffer.Clear();
+            if (prune)
+            {
+                _pruneAt = now.AddHours(1);
+                statements[count] = SqlBuild.Statement("DELETE FROM request_logs WHERE at < ?", SqlBuild.Time(now - Retention));
+            }
+
+            var outcome = await system.WriteTelemetryAsync(statements, ConsistencyMode.Fast, cancellationToken);
+            var failure = outcome switch
             {
                 SqlWriteResult => null,
                 StateConflict conflict => conflict.Message,
                 BackendUnavailable unavailable => unavailable.Message,
-            } is { } failure)
+            };
+            if (failure is not null)
             {
                 logger.ZLogWarning($"Request logs were dropped: {failure:@Reason}");
             }
+
+            if (count < Batch)
+            {
+                return;
+            }
         }
     }
+
+    private static TaskCompletionSource NewWake() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private TaskCompletionSource ResetWake()
+    {
+        var next = NewWake();
+        Volatile.Write(ref _wake, next);
+        return next;
+    }
+
+    private void SignalWake() => Volatile.Read(ref _wake).TrySetResult();
 
     private static string Method(string method) => method switch
     {

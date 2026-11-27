@@ -16,9 +16,7 @@ internal sealed class UsageCommits(SystemDatabase system, CommitFinalizer finali
 
     public async ValueTask<UsageCommitOutcome> CommitLocalAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
     {
-        var request = new SqlStatementRequest(SystemDatabase.Id, statements, SqlAccess.Write, ConsistencyMode.Fast, CausalBookmark.Empty);
-        var session = await system.UsableSessionAsync(cancellationToken);
-        var local = await session.ExecuteWriteAsync(request, cancellationToken);
+        var local = await system.WriteLocalTelemetryAsync(statements, cancellationToken);
         return local switch
         {
             SqlWriteResult written => written.Commit,

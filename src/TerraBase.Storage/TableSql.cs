@@ -10,8 +10,10 @@ internal sealed class TableSql
     private readonly string _where;
     private readonly string _insertAll;
     private readonly string _updateAll;
+    private readonly string _upsertAll;
     private readonly Dictionary<string, string> _updates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _inserts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _upserts = new(StringComparer.Ordinal);
 
     public TableSql(TableSchema schema)
     {
@@ -34,11 +36,14 @@ internal sealed class TableSql
         DeleteRow = string.Concat("DELETE FROM ", _table, " WHERE ", _where);
         _insertAll = BuildInsert(schema.DataColumns);
         _updateAll = schema.DataColumns.Count > 0 ? BuildUpdate(schema.DataColumns) : string.Empty;
+        _upsertAll = SupportsUpsert ? BuildUpsert(schema.DataColumns) : string.Empty;
     }
 
     public string SelectRow { get; }
 
     public string DeleteRow { get; }
+
+    public bool SupportsUpsert => !_schema.UsesImplicitRowId && !_schema.IsVirtual;
 
     public int KeyCount => _schema.PrimaryKeyColumnNames.Count;
 
@@ -78,6 +83,24 @@ internal sealed class TableSql
 
         sql = BuildInsert(columns);
         _inserts[key] = sql;
+        return sql;
+    }
+
+    public string Upsert(IReadOnlyList<TableColumn> columns)
+    {
+        if (MatchesAllDataColumns(columns))
+        {
+            return _upsertAll;
+        }
+
+        var key = columns.Count == 1 ? columns[0].Name : BuildKey(columns);
+        if (_upserts.TryGetValue(key, out var sql))
+        {
+            return sql;
+        }
+
+        sql = BuildUpsert(columns);
+        _upserts[key] = sql;
         return sql;
     }
 
@@ -151,6 +174,58 @@ internal sealed class TableSql
         return string.Concat("INSERT INTO ", _table, " (", names.ToString(), ") VALUES (", parameters.ToString(), ")");
     }
 
+    private string BuildUpsert(IReadOnlyList<TableColumn> columns)
+    {
+        var pkNames = new StringBuilder();
+        var names = new StringBuilder();
+        var parameters = new StringBuilder();
+        for (var index = 0; index < KeyCount; index++)
+        {
+            if (index > 0)
+            {
+                pkNames.Append(", ");
+                names.Append(", ");
+                parameters.Append(", ");
+            }
+
+            var pk = KeyName(index);
+            pkNames.Append(pk);
+            names.Append(pk);
+            parameters.Append('?').Append((index + 1).ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (columns.Count == 0)
+        {
+            return string.Concat("INSERT OR IGNORE INTO ", _table, " (", names.ToString(), ") VALUES (", parameters.ToString(), ")");
+        }
+
+        var updates = new StringBuilder();
+        for (var index = 0; index < columns.Count; index++)
+        {
+            var quoted = Quote(columns[index].Name);
+            names.Append(", ").Append(quoted);
+            parameters.Append(", ?").Append((KeyCount + index + 1).ToString(CultureInfo.InvariantCulture));
+            if (index > 0)
+            {
+                updates.Append(", ");
+            }
+
+            updates.Append(quoted).Append(" = excluded.").Append(quoted);
+        }
+
+        return string.Concat(
+            "INSERT INTO ",
+            _table,
+            " (",
+            names.ToString(),
+            ") VALUES (",
+            parameters.ToString(),
+            ") ON CONFLICT (",
+            pkNames.ToString(),
+            ") DO UPDATE SET ",
+            updates.ToString());
+    }
+
     private string KeyName(int index) => _schema.UsesImplicitRowId ? "rowid" : Quote(_schema.PrimaryKeyColumnNames[index]);
 }
 
@@ -211,6 +286,18 @@ internal sealed class WriteScope(SqliteConnection connection, MetaCache? metaCac
         {
             Fail(Connection.Run(sql, parameters));
         }
+    }
+
+    public long RunChanges(string sql, params ReadOnlySpan<SqlValue> parameters)
+    {
+        if (Failed)
+        {
+            return 0;
+        }
+
+        var status = Connection.Run(sql, parameters);
+        Fail(status);
+        return status.IsOk ? Connection.Changes64 : 0;
     }
 
     public SqlValue[]? First(string sql, params ReadOnlySpan<SqlValue> parameters)

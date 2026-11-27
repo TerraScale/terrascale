@@ -38,8 +38,15 @@ internal static class PressureExtensions
             var pressure = app.Services.GetRequiredService<PressureSignals>();
             app.Use(async (context, next) =>
             {
-                using var lease = pressure.Request();
-                await next(context);
+                pressure.EnterRequest();
+                try
+                {
+                    await next(context);
+                }
+                finally
+                {
+                    pressure.ExitRequest();
+                }
             });
             return app;
         }

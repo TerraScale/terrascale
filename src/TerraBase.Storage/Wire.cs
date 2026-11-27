@@ -87,10 +87,23 @@ internal ref struct PooledBufferWriter : IDisposable
 
     public void String(string value)
     {
-        if (value.Length == 0)
+        var length = value.Length;
+        if (length == 0)
         {
             Byte(0);
             return;
+        }
+
+        if (length < 0x80)
+        {
+            Ensure(1 + length);
+            var written = _written;
+            if (Ascii.FromUtf16(value, _buffer.AsSpan(written + 1, length), out _) == OperationStatus.Done)
+            {
+                _buffer[written] = (byte)length;
+                _written = written + 1 + length;
+                return;
+            }
         }
 
         var count = Encoding.UTF8.GetByteCount(value);
@@ -275,40 +288,41 @@ internal static class WireWriter
 
 internal ref struct WireReader(ReadOnlySpan<byte> source)
 {
-    private ReadOnlySpan<byte> _source = source;
+    private readonly ReadOnlySpan<byte> _source = source;
+    private int _offset;
 
     public bool Failed { get; private set; }
 
-    public readonly bool End => _source.IsEmpty;
+    public readonly bool End => !Failed && _offset == _source.Length;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte Byte()
     {
-        if (Failed || _source.IsEmpty)
+        var offset = _offset;
+        var source = _source;
+        if ((uint)offset >= (uint)source.Length)
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
-        var value = _source[0];
-        _source = _source[1..];
-        return value;
+        _offset = offset + 1;
+        return source[offset];
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ulong VarUInt()
     {
-        if (Failed || _source.IsEmpty)
+        var offset = _offset;
+        var source = _source;
+        if ((uint)offset < (uint)source.Length)
         {
-            Failed = true;
-            return 0;
-        }
-
-        var first = _source[0];
-        if (first < 0x80)
-        {
-            _source = _source[1..];
-            return first;
+            var first = source[offset];
+            if (first < 0x80)
+            {
+                _offset = offset + 1;
+                return first;
+            }
         }
 
         return VarUIntMultiByte();
@@ -316,15 +330,20 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
 
     private ulong VarUIntMultiByte()
     {
-        ulong result = 0;
-        for (var index = 0; index < 10; index++)
+        var offset = _offset;
+        var source = _source;
+        if ((uint)offset >= (uint)source.Length)
         {
-            if (index >= _source.Length)
-            {
-                break;
-            }
+            Fail();
+            return 0;
+        }
 
-            var current = _source[index];
+        var remaining = source.Length - offset;
+        var limit = remaining < 10 ? remaining : 10;
+        ulong result = 0;
+        for (var index = 0; index < limit; index++)
+        {
+            var current = source[offset + index];
             if (index == 9 && current > 1)
             {
                 break;
@@ -333,12 +352,12 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
             result |= (ulong)(current & 0x7F) << (7 * index);
             if (current < 0x80)
             {
-                _source = _source[(index + 1)..];
+                _offset = offset + index + 1;
                 return result;
             }
         }
 
-        Failed = true;
+        Fail();
         return 0;
     }
 
@@ -353,9 +372,10 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
     public int Count()
     {
         var raw = VarUInt();
-        if (raw > (ulong)_source.Length)
+        var offset = _offset;
+        if (offset < 0 || raw > (ulong)(_source.Length - offset))
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
@@ -365,28 +385,32 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ushort UInt16()
     {
-        if (Failed || _source.Length < 2)
+        var offset = _offset;
+        var source = _source;
+        if (offset < 0 || source.Length - offset < 2)
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
-        var value = BinaryPrimitives.ReadUInt16LittleEndian(_source);
-        _source = _source[2..];
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(source[offset..]);
+        _offset = offset + 2;
         return value;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double Double()
     {
-        if (Failed || _source.Length < 8)
+        var offset = _offset;
+        var source = _source;
+        if (offset < 0 || source.Length - offset < 8)
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
-        var value = BinaryPrimitives.ReadDoubleLittleEndian(_source);
-        _source = _source[8..];
+        var value = BinaryPrimitives.ReadDoubleLittleEndian(source[offset..]);
+        _offset = offset + 8;
         return value;
     }
 
@@ -400,21 +424,29 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<byte> Take(int length)
     {
-        if (Failed || length < 0 || length > _source.Length)
+        var offset = _offset;
+        var source = _source;
+        if (length < 0 || offset < 0 || length > source.Length - offset)
         {
-            Failed = true;
+            Fail();
             return [];
         }
 
-        var bytes = _source[..length];
-        _source = _source[length..];
+        var bytes = source.Slice(offset, length);
+        _offset = offset + length;
         return bytes;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public string String()
     {
         var bytes = Bytes();
-        return Failed || bytes.IsEmpty ? string.Empty : Encoding.UTF8.GetString(bytes);
+        if (Failed || bytes.IsEmpty)
+        {
+            return string.Empty;
+        }
+
+        return Ascii.IsValid(bytes) ? Encoding.ASCII.GetString(bytes) : Encoding.UTF8.GetString(bytes);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -424,6 +456,7 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
         return Failed ? HlcTimestamp.Zero : HlcCodec.Read(bytes);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public SqlValue Value()
     {
         var kind = Byte();
@@ -437,7 +470,7 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
                 var real = Double();
                 if (!double.IsFinite(real))
                 {
-                    Failed = true;
+                    Fail();
                     return SqlValue.Null;
                 }
 
@@ -448,9 +481,16 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
                 var bytes = Bytes();
                 return SqlValue.FromBlob(bytes.IsEmpty ? ReadOnlyMemory<byte>.Empty : bytes.ToArray());
             default:
-                Failed = true;
+                Fail();
                 return SqlValue.Null;
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Fail()
+    {
+        Failed = true;
+        _offset = -1;
     }
 }
 

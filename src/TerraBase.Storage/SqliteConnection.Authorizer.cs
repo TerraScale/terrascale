@@ -398,6 +398,11 @@ internal sealed unsafe partial class SqliteConnection
         try
         {
             var connection = GCHandle<SqliteConnection>.FromIntPtr(context).Target;
+            if (!connection._userMode)
+            {
+                return SqliteNative.AuthOk;
+            }
+
             return connection.Authorize(action, SqliteNative.ReadOptionalUtf8(first), SqliteNative.ReadOptionalUtf8(second), SqliteNative.ReadOptionalUtf8(database),
                 SqliteNative.ReadOptionalUtf8(trigger));
         }

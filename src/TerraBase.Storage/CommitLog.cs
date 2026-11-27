@@ -163,7 +163,7 @@ internal static class CommitFrame
     public const int MaxBodySize = 64 * 1024 * 1024;
     public const int MaxEncodedSize = PrefixSize + MaxBodySize + CrcSize;
 
-    private const int StackPlainLimit = 512;
+    private const int StackPlainLimit = 1024;
     private const int StackOriginLimit = 256;
 
     public static long EncodedSize(CommitMetadata commit) =>
@@ -205,21 +205,31 @@ internal static class CommitFrame
         ReadOnlySpan<byte> originUtf8,
         CommitLogCipher cipher)
     {
-        plainBuffer.ResetWrittenCount();
-        _ = commit.TxId.TryWriteBytes(plainBuffer.GetSpan(16));
-        plainBuffer.Advance(16);
-        WireWriter.UInt16(plainBuffer, (ushort)originUtf8.Length);
-        plainBuffer.Write(originUtf8);
-        WireWriter.Hlc(plainBuffer, commit.Hlc);
-        BinaryPrimitives.WriteUInt64LittleEndian(plainBuffer.GetSpan(8), commit.SchemaEpoch);
-        plainBuffer.Advance(8);
-        WireWriter.Byte(plainBuffer, commit.Mode == ConsistencyMode.Strong ? (byte)1 : (byte)0);
-        BinaryPrimitives.WriteUInt32LittleEndian(plainBuffer.GetSpan(4), (uint)commit.DeltaPayload.Length);
-        plainBuffer.Advance(4);
-        plainBuffer.Write(commit.DeltaPayload.Span);
+        var payloadSpan = commit.DeltaPayload.Span;
         var bookmarkSize = commit.Bookmark.GetBinarySize();
-        BinaryPrimitives.WriteUInt32LittleEndian(plainBuffer.GetSpan(4), (uint)bookmarkSize);
-        plainBuffer.Advance(4);
+        var fixedHeaderLength = 16 + sizeof(ushort) + originUtf8.Length + HlcTimestamp.EncodedSize + sizeof(ulong) + 1 + sizeof(uint);
+        var plainLength = fixedHeaderLength + payloadSpan.Length + sizeof(uint) + bookmarkSize;
+        plainBuffer.ResetWrittenCount();
+        var plain = plainBuffer.GetSpan(plainLength);
+        var offset = 0;
+        _ = commit.TxId.TryWriteBytes(plain[offset..]);
+        offset += 16;
+        BinaryPrimitives.WriteUInt16LittleEndian(plain[offset..], (ushort)originUtf8.Length);
+        offset += 2;
+        originUtf8.CopyTo(plain[offset..]);
+        offset += originUtf8.Length;
+        HlcCodec.Write(plain[offset..], commit.Hlc);
+        offset += HlcTimestamp.EncodedSize;
+        BinaryPrimitives.WriteUInt64LittleEndian(plain[offset..], commit.SchemaEpoch);
+        offset += 8;
+        plain[offset++] = commit.Mode == ConsistencyMode.Strong ? (byte)1 : (byte)0;
+        BinaryPrimitives.WriteUInt32LittleEndian(plain[offset..], (uint)payloadSpan.Length);
+        offset += 4;
+        payloadSpan.CopyTo(plain[offset..]);
+        offset += payloadSpan.Length;
+        BinaryPrimitives.WriteUInt32LittleEndian(plain[offset..], (uint)bookmarkSize);
+        offset += 4;
+        plainBuffer.Advance(offset);
         var beforeBookmark = plainBuffer.WrittenCount;
         commit.Bookmark.WriteTo(plainBuffer);
         if (plainBuffer.WrittenCount - beforeBookmark != bookmarkSize)
@@ -288,50 +298,53 @@ internal static class CommitFrame
                 return false;
             }
 
-            var reader = new WireReader(plain);
-            var txId = reader.Take(16);
-            var originBytes = reader.Take(reader.UInt16());
-            var hlc = reader.Hlc();
-            var epoch = reader.Take(8);
-            var mode = reader.Byte();
-            var payloadLengthBytes = reader.Take(4);
-            if (reader.Failed || !originBytes.SequenceEqual(expectedOriginUtf8))
+            var minHeader = 16 + sizeof(ushort) + expectedOriginUtf8.Length + HlcTimestamp.EncodedSize + sizeof(ulong) + 1 + sizeof(uint) + sizeof(uint);
+            if (plain.Length < minHeader)
             {
                 return false;
             }
 
-            var payloadLength = BinaryPrimitives.ReadUInt32LittleEndian(payloadLengthBytes);
-            if (payloadLength > int.MaxValue)
+            var originLen = BinaryPrimitives.ReadUInt16LittleEndian(plain[16..]);
+            if (originLen != expectedOriginUtf8.Length || !plain.Slice(18, originLen).SequenceEqual(expectedOriginUtf8))
             {
                 return false;
             }
 
-            var payloadSpan = reader.Take((int)payloadLength);
-            var bookmarkLengthBytes = reader.Take(4);
-            if (reader.Failed)
+            var offset = 18 + originLen;
+            var hlc = HlcCodec.Read(plain[offset..]);
+            offset += HlcTimestamp.EncodedSize;
+            var epoch = BinaryPrimitives.ReadUInt64LittleEndian(plain[offset..]);
+            offset += 8;
+            var mode = plain[offset++];
+            var payloadLength = BinaryPrimitives.ReadUInt32LittleEndian(plain[offset..]);
+            offset += 4;
+            if (payloadLength > (uint)(plain.Length - offset - sizeof(uint)))
             {
                 return false;
             }
 
-            var bookmarkLength = BinaryPrimitives.ReadUInt32LittleEndian(bookmarkLengthBytes);
-            if (bookmarkLength > int.MaxValue)
+            var payloadSpan = plain.Slice(offset, (int)payloadLength);
+            offset += (int)payloadLength;
+            var bookmarkLength = BinaryPrimitives.ReadUInt32LittleEndian(plain[offset..]);
+            offset += 4;
+            if (bookmarkLength != (uint)(plain.Length - offset))
             {
                 return false;
             }
 
-            var bookmarkBytes = reader.Take((int)bookmarkLength);
-            if (reader.Failed || !reader.End || !CausalBookmark.TryRead(ref bookmarkBytes, out var bookmark) || !bookmarkBytes.IsEmpty)
+            ReadOnlySpan<byte> bookmarkBytes = plain[offset..];
+            if (!CausalBookmark.TryRead(ref bookmarkBytes, out var bookmark) || !bookmarkBytes.IsEmpty)
             {
                 return false;
             }
 
             var payload = payloadSpan.IsEmpty ? ReadOnlyMemory<byte>.Empty : payloadSpan.ToArray();
             commit = new CommitMetadata(
-                new Ulid(txId),
+                new Ulid(plain[..16]),
                 expectedOrigin,
                 sequence,
                 hlc,
-                BinaryPrimitives.ReadUInt64LittleEndian(epoch),
+                epoch,
                 mode == 1 ? ConsistencyMode.Strong : ConsistencyMode.Fast,
                 bookmark,
                 payload);
@@ -429,6 +442,24 @@ internal static class CommitFrame
             && TryDecode(body, origin, cipher, out commit);
     }
 
+    public static bool TryDecodeChecked(
+        ReadOnlySpan<byte> bodyAndCrc,
+        string origin,
+        ReadOnlySpan<byte> originUtf8,
+        CommitLogCipher cipher,
+        out CommitMetadata commit)
+    {
+        commit = Empty;
+        if (bodyAndCrc.Length < CrcSize)
+        {
+            return false;
+        }
+
+        var body = bodyAndCrc[..^CrcSize];
+        return BinaryPrimitives.ReadUInt32LittleEndian(bodyAndCrc[^CrcSize..]) == Crc32.HashToUInt32(Crc32ParameterSet.Crc32C, body)
+            && TryDecode(body, origin, originUtf8, cipher, out commit);
+    }
+
     private static CommitMetadata Empty { get; } = new(Ulid.Empty, string.Empty, 0, HlcTimestamp.Zero, 0, ConsistencyMode.Fast, CausalBookmark.Empty, ReadOnlyMemory<byte>.Empty);
 }
 
@@ -512,10 +543,10 @@ internal sealed class OriginLog : IDisposable
 
     public static string FilePrefix(Ulid databaseId, string origin) => string.Concat(databaseId.ToString(), ".", origin);
 
-    public static IEnumerable<string> DiscoverOrigins(string directory, Ulid databaseId)
+    public static Dictionary<string, (List<string> Sealed, bool HasActive)> DiscoverFiles(string directory, Ulid databaseId)
     {
         var prefix = string.Concat(databaseId.ToString(), ".");
-        HashSet<string> origins = new(StringComparer.Ordinal);
+        Dictionary<string, (List<string> Sealed, bool HasActive)> discovered = new(StringComparer.Ordinal);
         foreach (var file in Directory.EnumerateFiles(directory))
         {
             var name = Path.GetFileName(file);
@@ -526,20 +557,54 @@ internal sealed class OriginLog : IDisposable
 
             var rest = name[prefix.Length..];
             var dot = rest.IndexOf('.', StringComparison.Ordinal);
-            if (dot > 0 && (rest.EndsWith(ActiveExtension, StringComparison.Ordinal) || rest.EndsWith(SealedExtension, StringComparison.Ordinal)))
+            if (dot <= 0)
             {
-                origins.Add(rest[..dot]);
+                continue;
             }
+
+            var isActive = rest.EndsWith(ActiveExtension, StringComparison.Ordinal) && rest.Length == dot + ActiveExtension.Length;
+            var isSealed = !isActive && rest.EndsWith(SealedExtension, StringComparison.Ordinal);
+            if (!isActive && !isSealed)
+            {
+                continue;
+            }
+
+            var origin = rest[..dot];
+            if (!discovered.TryGetValue(origin, out var entry))
+            {
+                entry = ([], false);
+            }
+
+            if (isActive)
+            {
+                entry.HasActive = true;
+            }
+            else
+            {
+                entry.Sealed.Add(file);
+            }
+
+            discovered[origin] = entry;
         }
 
-        return origins;
+        return discovered;
     }
 
-    public static OriginLogOpenResult Open(string directory, Ulid databaseId, string origin, long baseSequence, CommitLogCipher cipher, CommitLogOptions options, TimeProvider time)
+    public static OriginLogOpenResult Open(
+        string directory,
+        Ulid databaseId,
+        string origin,
+        long baseSequence,
+        CommitLogCipher cipher,
+        CommitLogOptions options,
+        TimeProvider time,
+        IReadOnlyList<string>? discoveredSealed = null,
+        bool activeKnownExisting = false)
     {
         var prefix = FilePrefix(databaseId, origin);
         List<(CommitLogSegment Segment, string Path)> sealedSegments = [];
-        foreach (var file in Directory.EnumerateFiles(directory, string.Concat(prefix, ".*", SealedExtension)))
+        var sealedPaths = discoveredSealed ?? Directory.EnumerateFiles(directory, string.Concat(prefix, ".*", SealedExtension));
+        foreach (var file in sealedPaths)
         {
             var range = Path.GetFileName(file)[(prefix.Length + 1)..^SealedExtension.Length].Split('-');
             if (range.Length != 2
@@ -563,7 +628,8 @@ internal sealed class OriginLog : IDisposable
         }
 
         var activePath = Path.Combine(directory, string.Concat(prefix, ActiveExtension));
-        if (FileIo.OpenHandle(activePath, FileMode.OpenOrCreate) is not { } active)
+        var activeMode = activeKnownExisting ? FileMode.Open : FileMode.OpenOrCreate;
+        if (FileIo.OpenHandle(activePath, activeMode) is not { } active)
         {
             return new StorageCorrupted(databaseId, string.Concat("commit log could not be opened: ", activePath));
         }

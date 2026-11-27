@@ -3,7 +3,14 @@ logs=$state/logs
 pids=$state/pids
 boot_seconds=90
 
-e2e_port() { jq -r --arg name "$1" '.[$name]' "$state/ports.json"; }
+e2e_port() {
+  local var="E2E_PORT_$1"
+  if [ -n "${!var:-}" ]; then
+    printf '%s\n' "${!var}"
+  else
+    jq -r --arg name "$1" '.[$name]' "$state/ports.json"
+  fi
+}
 
 start() {
   local name=$1
@@ -28,6 +35,6 @@ ready() {
       tail -n 40 "$logs/$name.log" >&2
       return 1
     fi
-    sleep 0.1
+    sleep 0.05
   done
 }

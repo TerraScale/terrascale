@@ -55,10 +55,16 @@ internal sealed record Tenant(Ulid OrganizationId, string Plan)
     {
         get
         {
-            var hash = 2166136261u;
-            foreach (var character in OrganizationId.ToString())
+            Span<char> chars = stackalloc char[26];
+            if (!OrganizationId.TryFormat(chars, out var written, default, null))
             {
-                hash = unchecked((hash ^ character) * 16777619u);
+                written = 0;
+            }
+
+            var hash = 2166136261u;
+            for (var index = 0; index < written; index++)
+            {
+                hash = unchecked((hash ^ chars[index]) * 16777619u);
             }
 
             return (int)(hash & 63);

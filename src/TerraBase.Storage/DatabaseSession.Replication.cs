@@ -11,9 +11,20 @@ internal readonly record struct PendingApply(CommitMetadata Commit, DeltaBatch B
 internal sealed partial class DatabaseSession
 {
     private static readonly DeltaBatch EmptyBatch = new([], []);
+    private static readonly byte[] MaxHlcCeiling = CreateMaxHlcCeiling();
+    private static readonly TimeSpan AppliedPruneCooldown = TimeSpan.FromMinutes(1);
 
     [ThreadStatic]
     private static StatementInfo? _readerStatementInfo;
+
+    private DateTimeOffset _lastEmptyAppliedPrune = DateTimeOffset.MinValue;
+
+    private static byte[] CreateMaxHlcCeiling()
+    {
+        var ceiling = new byte[HlcTimestamp.EncodedSize];
+        HlcCodec.Write(ceiling, new HlcTimestamp(HlcTimestamp.MaxWallMs, ushort.MaxValue, ushort.MaxValue));
+        return ceiling;
+    }
 
     public ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken) =>
         ExecuteReadAsync(request, limitResults: true, cancellationToken);
@@ -231,19 +242,28 @@ internal sealed partial class DatabaseSession
         return null;
     }
 
-    private static HlcTimestamp TableHlc(WriteScope scope, string table) =>
-        scope.First(MetaStore.SelectTableHlcSql, SqlValue.FromText(table)) is { } row && row[0].TryGetBlob(out var blob) && blob.Length == HlcTimestamp.EncodedSize
+    private static HlcTimestamp TableHlc(WriteScope scope, string table)
+    {
+        if (scope.MetaCache is { } cache && cache.TryGetTableHlc(table, out var cached))
+        {
+            return cached;
+        }
+
+        var hlc = scope.First(MetaStore.SelectTableHlcSql, SqlValue.FromText(table)) is { } row
+            && row[0].TryGetBlob(out var blob)
+            && blob.Length == HlcTimestamp.EncodedSize
             ? HlcCodec.Read(blob.Span)
             : HlcTimestamp.Zero;
+        if (!scope.Failed)
+        {
+            scope.MetaCache?.SetTableHlc(table, hlc);
+        }
+
+        return hlc;
+    }
 
     private RecoverOutcome Recover()
     {
-        var tuned = _writer.Exec("PRAGMA journal_size_limit = 1048576;");
-        if (!tuned.IsOk)
-        {
-            return tuned.IsBusy ? tuned.ToBusy() : new StorageCorrupted(DatabaseId, tuned.Message);
-        }
-
         List<SqlValue[]> rows = [];
         var status = _writer.Query(MetaStore.SelectVersionsSql, rows);
         if (!status.IsOk)
@@ -254,7 +274,8 @@ internal sealed partial class DatabaseSession
         var (watermarks, epoch) = ReadVersions(rows);
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
         _versions.Set(watermarks);
-        HashSet<string> origins = new(OriginLog.DiscoverOrigins(_context.Directory, DatabaseId), StringComparer.Ordinal) { Region };
+        var discovered = OriginLog.DiscoverFiles(_context.Directory, DatabaseId);
+        HashSet<string> origins = new(discovered.Keys, StringComparer.Ordinal);
         origins.UnionWith(watermarks.Keys);
         foreach (var origin in origins)
         {
@@ -263,7 +284,17 @@ internal sealed partial class DatabaseSession
                 continue;
             }
 
-            var opened = OriginLog.Open(_context.Directory, DatabaseId, origin, watermarks.GetValueOrDefault(origin), _cipher, _logOptions, _context.Time);
+            var found = discovered.TryGetValue(origin, out var files);
+            var opened = OriginLog.Open(
+                _context.Directory,
+                DatabaseId,
+                origin,
+                watermarks.GetValueOrDefault(origin),
+                _cipher,
+                _logOptions,
+                _context.Time,
+                found ? files.Sealed : [],
+                activeKnownExisting: found && files.HasActive);
             var failure = opened switch
             {
                 OriginLog log => Track(origin, log),
@@ -314,9 +345,7 @@ internal sealed partial class DatabaseSession
     private RecoverOutcome RecoverClockWatermark(RemoteApplyOutcome recovered)
     {
         _ = Interlocked.Add(ref _recoveredQuarantined, recovered.Quarantined);
-        var ceiling = new byte[HlcTimestamp.EncodedSize];
-        HlcCodec.Write(ceiling, new HlcTimestamp(HlcTimestamp.MaxWallMs, ushort.MaxValue, ushort.MaxValue));
-        var status = _writer.QueryFirst(MetaStore.SelectClockWatermarkSql, out var row, SqlValue.FromBlob(ceiling));
+        var status = _writer.QueryFirst(MetaStore.SelectClockWatermarkSql, out var row, SqlValue.FromBlob(MaxHlcCeiling));
         if (!status.IsOk)
         {
             return status.IsBusy ? status.ToBusy() : new StorageCorrupted(DatabaseId, status.Message);
@@ -374,11 +403,220 @@ internal sealed partial class DatabaseSession
         return null;
     }
 
+    private void ProcessRemoteGroup(List<RemoteApplyRequest> requests, bool allowGreedyDrain = false)
+    {
+        if (allowGreedyDrain)
+        {
+            var reader = _requests.Reader;
+            var added = false;
+            while (requests.Count < Options.MaxBatchSize
+                && reader.TryPeek(out var peeked)
+                && peeked is RemoteApplyRequest { IsReplay: false }
+                && reader.TryRead(out var extra)
+                && extra is RemoteApplyRequest remoteExtra)
+            {
+                requests.Add(remoteExtra);
+                added = true;
+            }
+
+            if (added)
+            {
+                Volatile.Write(ref _inFlight, [.. requests]);
+            }
+        }
+
+        if (requests.Count == 1)
+        {
+            var single = requests[0];
+            _ = single.Completion.TrySetResult(single.CancellationToken.IsCancellationRequested ? Closing() : ApplyRemote(single.Commits, single.IsReplay));
+            return;
+        }
+
+        List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued = new(requests.Count);
+        for (var index = 0; index < requests.Count; index++)
+        {
+            var request = requests[index];
+            if (request.CancellationToken.IsCancellationRequested)
+            {
+                _ = request.Completion.TrySetResult(Closing());
+                continue;
+            }
+
+            var validationError = ValidateRemoteBatch(request.Commits, request.IsReplay);
+            if (validationError is not null)
+            {
+                FlushRemoteGroup(queued);
+                _ = request.Completion.TrySetResult(validationError);
+                continue;
+            }
+
+            var pendingCount = PendingCommitCount();
+            if (queued.Count > 0 && pendingCount + request.Commits.Count > Options.MaxPendingRemoteCommits)
+            {
+                FlushRemoteGroup(queued);
+            }
+
+            var preDuplicates = 0;
+            var enqueued = new List<(string Origin, long Sequence)>(request.Commits.Count);
+            for (var commitIndex = 0; commitIndex < request.Commits.Count; commitIndex++)
+            {
+                var commit = request.Commits[commitIndex];
+                if (commit.Sequence <= _versions.Get(commit.OriginRegion))
+                {
+                    preDuplicates++;
+                    continue;
+                }
+
+                if (!_pending.TryGetValue(commit.OriginRegion, out var queue))
+                {
+                    queue = [];
+                    _pending[commit.OriginRegion] = queue;
+                }
+
+                if (!queue.TryAdd(commit.Sequence, commit))
+                {
+                    preDuplicates++;
+                }
+                else
+                {
+                    enqueued.Add((commit.OriginRegion, commit.Sequence));
+                }
+            }
+
+            if (PendingCommitCount() > Options.MaxPendingRemoteCommits)
+            {
+                for (var removeIndex = 0; removeIndex < enqueued.Count; removeIndex++)
+                {
+                    var (origin, sequence) = enqueued[removeIndex];
+                    _ = _pending[origin].Remove(sequence);
+                }
+
+                if (queued.Count > 0)
+                {
+                    FlushRemoteGroup(queued);
+                }
+
+                _pending.Clear();
+                _ = request.Completion.TrySetResult(new StorageBusy("remote apply buffer overflowed; resend from the bookmark", TimeSpan.FromMilliseconds(100)));
+                continue;
+            }
+
+            queued.Add((request, preDuplicates, enqueued));
+        }
+
+        FlushRemoteGroup(queued);
+    }
+
+    private void FlushRemoteGroup(List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued)
+    {
+        if (queued.Count == 0)
+        {
+            return;
+        }
+
+        HashSet<(string Origin, long Sequence)>? skippedKeys = null;
+        HashSet<(string Origin, long Sequence)>? quarantinedKeys = null;
+        var outcome = ApplyPending([], persist: true, trackOutcomeKeys: true, out skippedKeys, out quarantinedKeys);
+        _ = outcome switch
+        {
+            RemoteApplyOutcome => CompleteRemoteGroupSuccess(queued, skippedKeys, quarantinedKeys),
+            SchemaMismatch mismatch => FailRemoteGroup(queued, mismatch),
+            StorageCorrupted corrupted => FailRemoteGroup(queued, corrupted),
+            StorageBusy busy => FailRemoteGroup(queued, busy),
+        };
+        queued.Clear();
+    }
+
+    private bool CompleteRemoteGroupSuccess(
+        List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued,
+        HashSet<(string Origin, long Sequence)>? skippedKeys,
+        HashSet<(string Origin, long Sequence)>? quarantinedKeys)
+    {
+        var snapshot = _versions.Snapshot();
+        for (var index = 0; index < queued.Count; index++)
+        {
+            var (request, preDuplicates, enqueued) = queued[index];
+            var applied = 0;
+            var duplicates = preDuplicates;
+            var buffered = 0;
+            var quarantined = 0;
+            for (var commitIndex = 0; commitIndex < enqueued.Count; commitIndex++)
+            {
+                var key = enqueued[commitIndex];
+                if (_pending.TryGetValue(key.Origin, out var queue) && queue.ContainsKey(key.Sequence))
+                {
+                    buffered++;
+                }
+                else if (skippedKeys is not null && skippedKeys.Contains(key))
+                {
+                    duplicates++;
+                }
+                else if (quarantinedKeys is not null && quarantinedKeys.Contains(key))
+                {
+                    quarantined++;
+                }
+                else
+                {
+                    applied++;
+                }
+            }
+
+            _ = request.Completion.TrySetResult(new RemoteApplyOutcome(applied, duplicates, buffered, snapshot, quarantined));
+        }
+
+        return true;
+    }
+
+    private static bool FailRemoteGroup(
+        List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued,
+        ApplyRemoteBatchOutcome failure)
+    {
+        for (var index = 0; index < queued.Count; index++)
+        {
+            _ = queued[index].Request.Completion.TrySetResult(failure);
+        }
+
+        return false;
+    }
+
+    private StorageCorrupted? ValidateRemoteBatch(IReadOnlyList<CommitMetadata> commits, bool isReplay)
+    {
+        for (var index = 0; index < commits.Count; index++)
+        {
+            var commit = commits[index];
+            if (!StorageEngineOptions.IsValidRegion(commit.OriginRegion) || commit.Sequence <= 0)
+            {
+                return new StorageCorrupted(DatabaseId, "remote commit carries an invalid origin or sequence");
+            }
+
+            if (!isReplay
+                && commit.Sequence > _versions.Get(commit.OriginRegion)
+                && string.Equals(commit.OriginRegion, Region, StringComparison.Ordinal))
+            {
+                return new StorageCorrupted(DatabaseId, "remote batch carries a local-origin commit ahead of the local log");
+            }
+        }
+
+        return null;
+    }
+
+    private int PendingCommitCount()
+    {
+        var count = 0;
+        foreach (var queue in _pending.Values)
+        {
+            count += queue.Count;
+        }
+
+        return count;
+    }
+
     private ApplyRemoteBatchOutcome ApplyRemote(IReadOnlyList<CommitMetadata> commits, bool isReplay)
     {
         var duplicates = 0;
-        foreach (var commit in commits)
+        for (var index = 0; index < commits.Count; index++)
         {
+            var commit = commits[index];
             if (!StorageEngineOptions.IsValidRegion(commit.OriginRegion) || commit.Sequence <= 0)
             {
                 return new StorageCorrupted(DatabaseId, "remote commit carries an invalid origin or sequence");
@@ -407,7 +645,7 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        if (!isReplay && _pending.Values.Sum(static queue => queue.Count) > Options.MaxPendingRemoteCommits)
+        if (!isReplay && PendingCommitCount() > Options.MaxPendingRemoteCommits)
         {
             _pending.Clear();
             return new StorageBusy("remote apply buffer overflowed; resend from the bookmark", TimeSpan.FromMilliseconds(100));
@@ -423,13 +661,23 @@ internal sealed partial class DatabaseSession
         };
     }
 
-    private ApplyRemoteBatchOutcome ApplyPending(IReadOnlyList<CommitMetadata> requested, bool persist)
+    private ApplyRemoteBatchOutcome ApplyPending(IReadOnlyList<CommitMetadata> requested, bool persist) =>
+        ApplyPending(requested, persist, trackOutcomeKeys: false, out _, out _);
+
+    private ApplyRemoteBatchOutcome ApplyPending(
+        IReadOnlyList<CommitMetadata> requested,
+        bool persist,
+        bool trackOutcomeKeys,
+        out HashSet<(string Origin, long Sequence)>? skippedKeys,
+        out HashSet<(string Origin, long Sequence)>? quarantinedKeys)
     {
+        skippedKeys = null;
+        quarantinedKeys = null;
         var applied = 0;
         var duplicates = 0;
         var quarantined = 0;
         var isolate = false;
-        HashSet<(string Origin, long Sequence)> poisoned = [];
+        HashSet<(string Origin, long Sequence)>? poisoned = null;
         var batchFull = true;
         while (batchFull)
         {
@@ -501,7 +749,7 @@ internal sealed partial class DatabaseSession
                         bytes += size;
                     }
 
-                    var poison = malformed || regressed || poisoned.Contains((origin, next));
+                    var poison = malformed || regressed || (poisoned is not null && poisoned.Contains((origin, next)));
                     epoch = !malformed && !regressed && batch.Ddl.Count > 0 ? commit.SchemaEpoch : epoch;
                     order.Add(new PendingApply(commit, poison ? EmptyBatch : batch, poison, poison ? epoch : commit.SchemaEpoch));
                     tentative[origin] = next;
@@ -514,9 +762,10 @@ internal sealed partial class DatabaseSession
                 break;
             }
 
-            var status = ApplyInTransaction(order, persist, out var skipped, out var dataFault);
+            var status = ApplyInTransaction(order, persist, out var skipped, out var dataFault, trackOutcomeKeys ? skippedKeys ??= [] : null);
             if (dataFault && order is [{ Quarantined: false } single])
             {
+                poisoned ??= [];
                 _ = poisoned.Add((single.Commit.OriginRegion, single.Commit.Sequence));
                 batchFull = true;
                 continue;
@@ -529,9 +778,20 @@ internal sealed partial class DatabaseSession
                 continue;
             }
 
-            foreach (var pending in order)
+            var isolated = 0;
+            for (var index = 0; index < order.Count; index++)
             {
+                var pending = order[index];
                 _ = _pending[pending.Commit.OriginRegion].Remove(pending.Commit.Sequence);
+                if (pending.Quarantined)
+                {
+                    isolated++;
+                    if (trackOutcomeKeys)
+                    {
+                        quarantinedKeys ??= [];
+                        _ = quarantinedKeys.Add((pending.Commit.OriginRegion, pending.Commit.Sequence));
+                    }
+                }
             }
 
             if (!status.IsOk)
@@ -539,7 +799,6 @@ internal sealed partial class DatabaseSession
                 return status.IsBusy ? status.ToBusy() : new StorageCorrupted(DatabaseId, status.Message);
             }
 
-            var isolated = order.Count(static pending => pending.Quarantined);
             isolate &= isolated == 0;
             Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
             _versions.Set(tentative);
@@ -548,7 +807,16 @@ internal sealed partial class DatabaseSession
             quarantined += isolated;
         }
 
-        var buffered = requested.Count(commit => _pending.TryGetValue(commit.OriginRegion, out var queue) && queue.ContainsKey(commit.Sequence));
+        var buffered = 0;
+        for (var index = 0; index < requested.Count; index++)
+        {
+            var commit = requested[index];
+            if (_pending.TryGetValue(commit.OriginRegion, out var queue) && queue.ContainsKey(commit.Sequence))
+            {
+                buffered++;
+            }
+        }
+
         return new RemoteApplyOutcome(applied, duplicates, buffered, _versions.Snapshot(), quarantined);
     }
 
@@ -565,7 +833,13 @@ internal sealed partial class DatabaseSession
         return true;
     }
 
-    private SqliteStatus ApplyInTransaction(List<PendingApply> order, bool persist, out int skipped, out bool dataFault, long? leaseDeadline = null)
+    private SqliteStatus ApplyInTransaction(
+        List<PendingApply> order,
+        bool persist,
+        out int skipped,
+        out bool dataFault,
+        HashSet<(string Origin, long Sequence)>? skippedKeys = null,
+        long? leaseDeadline = null)
     {
         skipped = 0;
         dataFault = false;
@@ -582,9 +856,11 @@ internal sealed partial class DatabaseSession
         batchTables.Clear();
         var versions = _laneRemoteVersions;
         versions.Clear();
-        var nowMs = _context.Time.GetUtcNow().ToUnixTimeMilliseconds();
+        var now = _context.Time.GetUtcNow();
+        var nowMs = now.ToUnixTimeMilliseconds();
         var schemaChanged = false;
         var hasRemoteOrigin = false;
+        var appliedRows = 0;
         for (var index = 0; index < order.Count; index++)
         {
             var (commit, batch, quarantined, savedEpoch) = order[index];
@@ -598,9 +874,13 @@ internal sealed partial class DatabaseSession
                     MetaStore.MarkApplied(scope, commit.TxId, nowMs);
                 }
             }
-            else if (!local && MetaStore.IsApplied(scope, commit.TxId))
+            else if (!local && !MetaStore.TryMarkApplied(scope, commit.TxId, nowMs))
             {
-                skipped++;
+                if (!scope.Failed)
+                {
+                    skipped++;
+                    _ = skippedKeys?.Add((commit.OriginRegion, commit.Sequence));
+                }
             }
             else
             {
@@ -625,10 +905,7 @@ internal sealed partial class DatabaseSession
                     CrdtApplier.Apply(scope, batch.Mutations[mutationIndex], commit.Hlc, receipt, batchTables);
                 }
 
-                if (!local)
-                {
-                    MetaStore.MarkApplied(scope, commit.TxId, nowMs);
-                }
+                appliedRows += batch.Mutations.Count;
             }
 
             versions[commit.OriginRegion] = (commit.Sequence, savedEpoch);
@@ -655,9 +932,12 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        if (!scope.Failed && hasRemoteOrigin)
+        var prunedZero = false;
+        if (!scope.Failed
+            && hasRemoteOrigin
+            && (now - _lastEmptyAppliedPrune >= AppliedPruneCooldown || now < _lastEmptyAppliedPrune))
         {
-            MetaStore.PruneApplied(scope, _context.Time.GetUtcNow());
+            prunedZero = MetaStore.PruneApplied(scope, now) == 0 && !scope.Failed;
         }
 
         batchTables.Clear();
@@ -739,6 +1019,12 @@ internal sealed partial class DatabaseSession
                 : new SqliteStatus(SqliteNative.Corrupt, string.Concat("the writer could not leave apply mode after a failed apply: ", restored.Message));
         }
 
+        if (prunedZero)
+        {
+            _lastEmptyAppliedPrune = now;
+        }
+
+        _rowsSinceCheckpoint += appliedRows;
         _ = _writer.SetApplyMode(false);
         if (schemaChanged)
         {
@@ -825,7 +1111,7 @@ internal sealed partial class DatabaseSession
         var sequence = _versions.Get(Region) + 1;
         var epoch = batch.Ddl.Count > 0 ? SchemaEpoch + 1 : SchemaEpoch;
         var commit = new CommitMetadata(staged.TxId, Region, sequence, commitHlc, epoch, ConsistencyMode.Strong, BookmarkWith(Region, sequence), staged.DeltaPayload);
-        var status = ApplyInTransaction([new PendingApply(commit, batch, false, commit.SchemaEpoch)], persist: true, out _, out _, leaseDeadline);
+        var status = ApplyInTransaction([new PendingApply(commit, batch, false, commit.SchemaEpoch)], persist: true, out _, out _, skippedKeys: null, leaseDeadline: leaseDeadline);
         if (!status.IsOk)
         {
             return LeaseExpired(leaseDeadline)

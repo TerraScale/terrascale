@@ -177,6 +177,7 @@ internal static class CallerAuthenticationExtensions
     {
         public WebApplication UseTerraBaseCallers()
         {
+            var authentication = app.Services.GetRequiredService<CallerAuthentication>();
             app.Use(async (context, next) =>
             {
                 if (context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>() is { } served
@@ -186,7 +187,6 @@ internal static class CallerAuthenticationExtensions
                     return;
                 }
 
-                var authentication = context.RequestServices.GetRequiredService<CallerAuthentication>();
                 var outcome = await authentication.AuthenticateAsync(context, context.RequestAborted);
                 var refusal = outcome switch
                 {

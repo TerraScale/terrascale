@@ -91,7 +91,10 @@ internal sealed class TenantAdmission(TimeProvider time, IMeterFactory meters)
             lane.Active--;
         }
 
-        _duration.Record(Math.Max(0, time.GetElapsedTime(started).TotalSeconds), new("plan", tenant.Plan), new("tenant_bucket", tenant.Bucket));
+        if (_duration.Enabled)
+        {
+            _duration.Record(Math.Max(0, time.GetElapsedTime(started).TotalSeconds), new("plan", tenant.Plan), new("tenant_bucket", tenant.Bucket));
+        }
     }
 
     internal sealed class Lane
@@ -139,13 +142,15 @@ internal static class TenantAdmissionExtensions
     {
         public WebApplication UseTerraBaseTenantQos()
         {
+            var directory = app.Services.GetRequiredService<TenantDirectory>();
+            var admission = app.Services.GetRequiredService<TenantAdmission>();
             app.Use(async (context, next) =>
             {
-                var target = await TargetAsync(context, context.Caller, context.RequestServices.GetRequiredService<TenantDirectory>());
+                var target = await TargetAsync(context, context.Caller, directory);
                 await (target switch
                 {
-                    Tenant tenant => EnterAsync(context, next, tenant),
-                    ForeignProject => EnterAsync(context, next, Tenant.Unowned),
+                    Tenant tenant => EnterAsync(context, next, admission, tenant),
+                    ForeignProject => EnterAsync(context, next, admission, Tenant.Unowned),
                     NoTenant => next(context),
                     BackendUnavailable unavailable => ErrorResults.Json(StatusCodes.Status503ServiceUnavailable, unavailable.Code, unavailable.Message,
                         retryAfter: TimeSpan.FromSeconds(1)).ExecuteAsync(context),
@@ -155,44 +160,47 @@ internal static class TenantAdmissionExtensions
         }
     }
 
-    private static async ValueTask<CallerTenantResolution> TargetAsync(HttpContext context, Caller caller, TenantDirectory directory)
+    private static ValueTask<CallerTenantResolution> TargetAsync(HttpContext context, Caller caller, TenantDirectory directory)
     {
-        var projectRoute = context.Request.RouteValues["project"] is string;
-        var callerScoped = context.GetEndpoint()?.Metadata.GetMetadata<CallerTenantMetadata>() is not null;
-        if (caller is PeerCaller or ServiceCaller || !(projectRoute || callerScoped))
+        var routeProject = context.Request.RouteValues["project"] as string;
+        var callerScoped = routeProject is null && context.GetEndpoint()?.Metadata.GetMetadata<CallerTenantMetadata>() is not null;
+        if (caller is PeerCaller or ServiceCaller || (routeProject is null && !callerScoped))
         {
-            return NoTenant.Instance;
+            return ValueTask.FromResult<CallerTenantResolution>(NoTenant.Instance);
         }
 
         if (caller is AnonymousCaller)
         {
-            return Tenant.Anonymous;
+            return ValueTask.FromResult<CallerTenantResolution>(Tenant.Anonymous);
         }
 
-        if (context.Request.RouteValues["project"] is string reference)
+        if (routeProject is { } reference)
         {
             return reference.Length == 26 && Ulid.TryParse(reference, out var projectId)
-                ? await directory.ForCallerProjectAsync(caller, projectId, context.RequestAborted)
-                : Tenant.Unowned;
+                ? directory.ForCallerProjectAsync(caller, projectId, context.RequestAborted)
+                : ValueTask.FromResult<CallerTenantResolution>(Tenant.Unowned);
         }
 
         return caller switch
         {
-            ApiKeyCaller key => await directory.ForOrganizationAsync(key.Key.OrganizationId, context.RequestAborted) switch
-            {
-                Tenant tenant => tenant,
-                NoTenant none => none,
-                BackendUnavailable unavailable => unavailable,
-            },
-            ProjectCaller token => await directory.ForCallerProjectAsync(caller, token.ProjectId, context.RequestAborted),
-            EndUserCaller endUser => await directory.ForCallerProjectAsync(caller, endUser.ProjectId, context.RequestAborted),
-            AnonymousCaller or PeerCaller or ServiceCaller or UserCaller => NoTenant.Instance,
+            ApiKeyCaller key => TargetApiKeyAsync(directory, key.Key.OrganizationId, context.RequestAborted),
+            ProjectCaller token => directory.ForCallerProjectAsync(caller, token.ProjectId, context.RequestAborted),
+            EndUserCaller endUser => directory.ForCallerProjectAsync(caller, endUser.ProjectId, context.RequestAborted),
+            AnonymousCaller or PeerCaller or ServiceCaller or UserCaller => ValueTask.FromResult<CallerTenantResolution>(NoTenant.Instance),
         };
     }
 
-    private static Task EnterAsync(HttpContext context, RequestDelegate next, Tenant tenant)
+    private static async ValueTask<CallerTenantResolution> TargetApiKeyAsync(TenantDirectory directory, Ulid organizationId, CancellationToken cancellationToken) =>
+        await directory.ForOrganizationAsync(organizationId, cancellationToken) switch
+        {
+            Tenant tenant => tenant,
+            NoTenant none => none,
+            BackendUnavailable unavailable => unavailable,
+        };
+
+    private static Task EnterAsync(HttpContext context, RequestDelegate next, TenantAdmission admission, Tenant tenant)
     {
-        var admitted = context.RequestServices.GetRequiredService<TenantAdmission>().TryEnter(tenant);
+        var admitted = admission.TryEnter(tenant);
         return admitted switch
         {
             TenantAdmission.TenantLease lease => AdmitAsync(context, next, lease),

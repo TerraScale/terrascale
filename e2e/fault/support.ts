@@ -187,7 +187,7 @@ export class Ledger {
       }
       return seen.every(rows => this.acknowledged.every(row => rows.some(actual => JSON.stringify(actual) === JSON.stringify(row))))
         && seen.every(rows => JSON.stringify(rows) === JSON.stringify(seen[0]));
-    }, { message: 'every peer serves the client write ledger', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
+    }, { message: 'every peer serves the client write ledger', timeout: 60_000, intervals: [100, 250, 500] }).toBe(true);
     console.log(`ledger ${this.id}: ${this.acknowledged.length} acknowledged rows retained on ${peers.map(peer => peer.name).join(', ')}`);
   }
 
@@ -232,7 +232,7 @@ export class Ledger {
       return served.length === seen.length
         && served.every(rows => this.acknowledged.every(row => rows.some(actual => JSON.stringify(actual) === JSON.stringify(row))))
         && JSON.stringify(served[0]) === JSON.stringify(served[1]);
-    }, { message: 'both regions converge to the client write ledger', timeout: 45_000, intervals: [250, 500, 1000] }).toBe(true);
+    }, { message: 'both regions converge to the client write ledger', timeout: 45_000, intervals: [100, 250, 500] }).toBe(true);
     console.log(`ledger ${this.id}: ${this.acknowledged.length} acknowledged rows retained in both regions`);
   }
 }

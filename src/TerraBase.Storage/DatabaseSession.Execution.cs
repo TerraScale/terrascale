@@ -559,28 +559,57 @@ internal sealed partial class DatabaseSession
 
         var snapshot = _context.Clock.Tick();
         var stamp = snapshot;
-        var scope = new WriteScope(_writer);
-        List<ObservedRow> observed = [];
-        var mutations = LocalStamper.Stamp(scope, changes, ref stamp, persist: false, observed, new Dictionary<string, HlcTimestamp>(StringComparer.OrdinalIgnoreCase));
+        var scope = WriterScope();
+        scope.Reset();
+        var observed = new List<ObservedRow>(changes.Count);
+        var tables = _laneItemTables;
+        tables.Clear();
+        var mutations = LocalStamper.Stamp(scope, changes, ref stamp, persist: false, observed, tables);
+        tables.Clear();
         if (scope.Failed)
         {
             return scope.Failure;
         }
 
+        var readKeys = observed.Count == 0 ? [] : new ReadKey[observed.Count];
+        var writeKeys = observed.Count == 0 ? [] : new RowKey[observed.Count];
+        for (var index = 0; index < observed.Count; index++)
+        {
+            var row = observed[index];
+            readKeys[index] = new ReadKey(row.Key, row.RowHlc);
+            writeKeys[index] = row.Key;
+        }
+
+        string[] scannedTables;
+        if (context.ScannedTables.Count == 0)
+        {
+            scannedTables = [];
+        }
+        else
+        {
+            scannedTables = new string[context.ScannedTables.Count];
+            context.ScannedTables.CopyTo(scannedTables);
+            if (scannedTables.Length > 1)
+            {
+                Array.Sort(scannedTables, StringComparer.Ordinal);
+            }
+        }
+
+        var now = _context.Time.GetUtcNow();
         var payload = MutationBatchCodec.Encode(new DeltaBatch(context.Ddl, mutations));
         var staged = new StagedWrite(
-            new StagedWriteToken(Ulid.NewUlid(_context.Time.GetUtcNow())),
+            new StagedWriteToken(Ulid.NewUlid(now)),
             DatabaseId,
-            Ulid.NewUlid(_context.Time.GetUtcNow()),
+            Ulid.NewUlid(now),
             snapshot,
             SchemaEpoch,
-            [.. observed.Select(static row => new ReadKey(row.Key, row.RowHlc))],
-            [.. context.ScannedTables.Order(StringComparer.Ordinal)],
-            [.. observed.Select(static row => row.Key)],
+            readKeys,
+            scannedTables,
+            writeKeys,
             context.IsSchemaChange,
             [.. context.Results],
             payload);
-        descriptor = new StagedDescriptor(staged, observed, _context.Time.GetUtcNow());
+        descriptor = new StagedDescriptor(staged, observed, now);
         return SqliteStatus.Success;
     }
 

@@ -104,11 +104,11 @@ internal sealed class CatalogStore(SystemDatabase system)
         };
 
     public bool TryGetOrganization(Ulid id, [NotNullWhen(true)] out OrganizationRecord? organization) =>
-        _organizations.TryGet(system.ChangeGeneration, id, out organization);
+        _organizations.TryGet(system.CatalogGeneration, id, out organization);
 
     public ValueTask<OrganizationLookup> GetOrganizationAsync(Ulid id, CancellationToken cancellationToken)
     {
-        var generation = system.ChangeGeneration;
+        var generation = system.CatalogGeneration;
         if (_organizations.TryGet(generation, id, out var cached))
         {
             return ValueTask.FromResult<OrganizationLookup>(cached);
@@ -130,7 +130,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     private OrganizationLookup CacheOrganization(Ulid id, OrganizationRecord record, long generation)
     {
-        if (generation > 0 && system.ChangeGeneration == generation)
+        if (generation > 0 && system.CatalogGeneration == generation)
         {
             _organizations.Set(generation, id, record);
         }
@@ -264,11 +264,11 @@ internal sealed class CatalogStore(SystemDatabase system)
     }
 
     public bool TryGetProject(Ulid id, [NotNullWhen(true)] out ProjectRecord? project) =>
-        _projects.TryGet(system.ChangeGeneration, id, out project);
+        _projects.TryGet(system.CatalogGeneration, id, out project);
 
     public ValueTask<ProjectLookup> GetProjectAsync(Ulid id, CancellationToken cancellationToken)
     {
-        var generation = system.ChangeGeneration;
+        var generation = system.CatalogGeneration;
         if (_projects.TryGet(generation, id, out var cached))
         {
             return ValueTask.FromResult<ProjectLookup>(cached);
@@ -290,7 +290,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     private ProjectLookup CacheProject(Ulid id, ProjectRecord record, long generation)
     {
-        if (generation > 0 && system.ChangeGeneration == generation)
+        if (generation > 0 && system.CatalogGeneration == generation)
         {
             _projects.Set(generation, id, record);
         }
@@ -323,7 +323,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public bool TryFindDatabase(Ulid projectId, string reference, [NotNullWhen(true)] out DatabaseRecord? database)
     {
-        var generation = system.ChangeGeneration;
+        var generation = system.CatalogGeneration;
         if (reference.Length == 26 && Ulid.TryParse(reference, out var id))
         {
             if (_databasesById.TryGet(generation, id, out var cachedById) && cachedById.ProjectId == projectId)
@@ -341,7 +341,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public ValueTask<DatabaseLookup> FindDatabaseAsync(Ulid projectId, string reference, CancellationToken cancellationToken)
     {
-        var generation = system.ChangeGeneration;
+        var generation = system.CatalogGeneration;
         if (reference.Length == 26 && Ulid.TryParse(reference, out var id))
         {
             if (_databasesById.TryGet(generation, id, out var cachedById))
@@ -384,7 +384,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     public ValueTask<DatabaseLookup> GetDatabaseAsync(Ulid id, CancellationToken cancellationToken)
     {
-        var generation = system.ChangeGeneration;
+        var generation = system.CatalogGeneration;
         if (_databasesById.TryGet(generation, id, out var cached))
         {
             return ValueTask.FromResult<DatabaseLookup>(cached);
@@ -406,7 +406,7 @@ internal sealed class CatalogStore(SystemDatabase system)
 
     private DatabaseLookup CacheDatabase(DatabaseRecord record, long generation)
     {
-        if (generation > 0 && system.ChangeGeneration == generation)
+        if (generation > 0 && system.CatalogGeneration == generation)
         {
             _databasesById.Set(generation, record.Id, record);
             _databasesByName.Set(generation, new DatabaseNameKey(record.ProjectId, record.Name), record);
@@ -719,7 +719,7 @@ internal sealed class CatalogStore(SystemDatabase system)
             statements.Add(SqlBuild.Statement("DELETE FROM usage_counters WHERE scope = ?", SqlBuild.Text(UsageMeter.DatabaseScope(id))));
         }
 
-        var outcome = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
+        var outcome = await system.WriteTelemetryAsync(statements, ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {
             SqlWriteResult => new Completed(),

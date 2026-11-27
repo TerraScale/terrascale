@@ -41,7 +41,7 @@ internal sealed record PongMessage(string NodeId, string Region, long SentAtTick
     }
 }
 
-internal sealed record DeltaPushMessage(Ulid DatabaseId, string SenderNodeId, IReadOnlyList<CommitMetadata> Commits, bool AckRequested) : IBinaryMessage<DeltaPushMessage>
+internal readonly record struct DeltaPushMessage(Ulid DatabaseId, string SenderNodeId, IReadOnlyList<CommitMetadata> Commits, bool AckRequested) : IBinaryMessage<DeltaPushMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer) =>
         ClusterCodec.WriteDeltaPush(writer, DatabaseId, SenderNodeId, Commits, AckRequested);
@@ -55,7 +55,7 @@ internal sealed record DeltaPushMessage(Ulid DatabaseId, string SenderNodeId, IR
     }
 }
 
-internal sealed record DeltaAckMessage(Ulid DatabaseId, string NodeId, CausalBookmark Bookmark) : IBinaryMessage<DeltaAckMessage>
+internal readonly record struct DeltaAckMessage(Ulid DatabaseId, string NodeId, CausalBookmark Bookmark) : IBinaryMessage<DeltaAckMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {

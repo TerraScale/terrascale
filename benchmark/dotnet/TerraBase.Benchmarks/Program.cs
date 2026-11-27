@@ -19,6 +19,7 @@ internal static class Program
         "commitlog",
         "cluster",
         "quic",
+        "replication",
         "continuity",
         "postgres",
         "server",
@@ -142,6 +143,11 @@ internal static class Program
             await ClusterQuicBenchmarks.RunAsync(ctx, cancellationToken);
         }
 
+        if (ctx.ShouldRun("replication"))
+        {
+            await ReplicationBenchmarks.RunAsync(ctx, cancellationToken);
+        }
+
         if (ctx.ShouldRun("continuity"))
         {
             await ContinuityBenchmarks.RunAsync(ctx, cancellationToken);
@@ -200,7 +206,7 @@ internal static class Program
     private static int UsageError(string message)
     {
         Console.Error.WriteLine(string.Concat("TerraBase.Benchmarks: ", message));
-        Console.Error.WriteLine("Usage: TerraBase.Benchmarks [--suite all|storage|crdt|commitlog|cluster|quic|continuity|postgres|server|resources] [--rounds N] [--scale S] [--quick] [--out path.json] | --bdn [--filter ...]");
+        Console.Error.WriteLine("Usage: TerraBase.Benchmarks [--suite all|storage|crdt|commitlog|cluster|quic|replication|continuity|postgres|server|resources] [--rounds N] [--scale S] [--quick] [--out path.json] | --bdn [--filter ...]");
         return 2;
     }
 }

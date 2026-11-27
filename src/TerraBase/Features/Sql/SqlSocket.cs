@@ -1,7 +1,9 @@
 using System.Buffers;
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Qos;
@@ -150,7 +152,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private async ValueTask<bool> HandleAsync(SocketMessage message, SqlCausality causality, CancellationToken cancellationToken)
     {
-        SocketFrame? parsed;
+        ParsedSocketFrame? parsed;
         try
         {
             parsed = Parse(message.Buffer.AsSpan(0, message.Length));
@@ -205,7 +207,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         return true;
     }
 
-    private async Task<bool> AuthenticateAsync(SocketFrame frame, SqlCausality causality, CancellationToken cancellationToken)
+    private async Task<bool> AuthenticateAsync(ParsedSocketFrame frame, SqlCausality causality, CancellationToken cancellationToken)
     {
         if (frame is not { Type: "auth", Token: { Length: > 0 and <= 16 * 1024 } token })
         {
@@ -300,20 +302,26 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         await CloseAsync(WebSocketCloseStatus.PolicyViolation, refusal.Code == "tenant_busy" ? TenantSessions.LimitMessage : refusal.Code);
     }
 
-    private async ValueTask<SocketAnswerOutcome> ExecuteAsync(SocketFrame frame, ResolvedDatabase target, CancellationToken cancellationToken)
+    private async ValueTask<SocketAnswerOutcome> ExecuteAsync(ParsedSocketFrame frame, ResolvedDatabase target, CancellationToken cancellationToken)
     {
         var mode = Mode(frame.Consistency);
-        return SqlWire.Statements(frame.Statements) switch
+        if (frame.StatementsError is { } statementsError)
         {
-            IReadOnlyList<SqlStatement> statements => SqlPlan.Batch(statements, allowTransactionControl: true) switch
-            {
-                SqlBatch { Statements: [{ Kind: StatementKind.Begin } begin] } => await BeginAsync(begin.BeginMode ?? mode ?? _mode, cancellationToken),
-                SqlBatch { Statements: [{ Kind: StatementKind.Commit }] } => await EndTransactionAsync(commit: true, cancellationToken),
-                SqlBatch { Statements: [{ Kind: StatementKind.Rollback }] } => await EndTransactionAsync(commit: false, cancellationToken),
-                SqlBatch batch when InTransaction => await InTransactionAsync(target, batch, cancellationToken),
-                SqlBatch batch => await AutocommitAsync(target, batch, mode, cancellationToken),
-                SqlRefusal refusal => refusal,
-            },
+            return statementsError;
+        }
+
+        if (frame.Statements is not { Length: > 0 } statements)
+        {
+            return SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
+        }
+
+        return SqlPlan.Batch(statements, allowTransactionControl: true) switch
+        {
+            SqlBatch { Statements: [{ Kind: StatementKind.Begin } begin] } => await BeginAsync(begin.BeginMode ?? mode ?? _mode, cancellationToken),
+            SqlBatch { Statements: [{ Kind: StatementKind.Commit }] } => await EndTransactionAsync(commit: true, cancellationToken),
+            SqlBatch { Statements: [{ Kind: StatementKind.Rollback }] } => await EndTransactionAsync(commit: false, cancellationToken),
+            SqlBatch batch when InTransaction => await InTransactionAsync(target, batch, cancellationToken),
+            SqlBatch batch => await AutocommitAsync(target, batch, mode, cancellationToken),
             SqlRefusal refusal => refusal,
         };
     }
@@ -328,7 +336,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             }
         }
 
-        var outcome = await runner.RunAsync(target, batch.Sql, new SqlCausality(batch.Mode ?? mode ?? _mode, _bookmark), cancellationToken);
+        var outcome = await runner.RunPlannedAsync(target, batch, new SqlCausality(batch.Mode ?? mode ?? _mode, _bookmark), serviceRead: false, cancellationToken);
         return outcome switch
         {
             SqlRun run => Answer(run),
@@ -494,17 +502,608 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private static ConsistencyMode? Mode(string? value) => value is not null && ConsistencyHeaders.TryParse(value, out var mode) ? mode : null;
 
-    private static SocketFrame? Parse(ReadOnlySpan<byte> payload)
+    private static ParsedSocketFrame? Parse(ReadOnlySpan<byte> payload)
     {
         try
         {
-            return JsonSerializer.Deserialize(payload, SqlSocketJsonContext.Default.SocketFrame);
+            var reader = new Utf8JsonReader(payload);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return null;
+            }
+
+            long? id = null;
+            string? type = null;
+            SqlStatement[]? statements = null;
+            SqlRefusal? statementsError = null;
+            string? token = null;
+            string? consistency = null;
+            string? bookmark = null;
+
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName)
+                {
+                    return null;
+                }
+
+                if (PropertyEquals(ref reader, "id"u8))
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        id = null;
+                    }
+                    else if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt64(out var parsedId))
+                    {
+                        id = parsedId;
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                else if (PropertyEquals(ref reader, "type"u8))
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        type = null;
+                    }
+                    else if (reader.TokenType == JsonTokenType.String)
+                    {
+                        type = ReadFrameType(ref reader);
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                else if (PropertyEquals(ref reader, "statements"u8))
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        statements = null;
+                        statementsError = null;
+                    }
+                    else if (reader.TokenType == JsonTokenType.StartArray)
+                    {
+                        if (!TryReadStatements(ref reader, out statements, out statementsError))
+                        {
+                            return null;
+                        }
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                else if (PropertyEquals(ref reader, "token"u8))
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        token = null;
+                    }
+                    else if (reader.TokenType == JsonTokenType.String)
+                    {
+                        token = reader.GetString();
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                else if (PropertyEquals(ref reader, "consistency"u8))
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        consistency = null;
+                    }
+                    else if (reader.TokenType == JsonTokenType.String)
+                    {
+                        consistency = ReadConsistency(ref reader);
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                else if (PropertyEquals(ref reader, "bookmark"u8))
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        bookmark = null;
+                    }
+                    else if (reader.TokenType == JsonTokenType.String)
+                    {
+                        bookmark = reader.GetString();
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+                else
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    reader.Skip();
+                }
+            }
+
+            if (reader.Read())
+            {
+                return null;
+            }
+
+            return new ParsedSocketFrame(id, type, statements, statementsError, token, consistency, bookmark);
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    private static bool PropertyEquals(ref Utf8JsonReader reader, ReadOnlySpan<byte> lowerAsciiName)
+    {
+        if (reader.ValueTextEquals(lowerAsciiName))
+        {
+            return true;
+        }
+
+        if (!reader.HasValueSequence && reader.ValueSpan.Length == lowerAsciiName.Length)
+        {
+            var span = reader.ValueSpan;
+            for (var i = 0; i < span.Length; i++)
+            {
+                var b = span[i];
+                if (b is >= (byte)'A' and <= (byte)'Z')
+                {
+                    b = (byte)(b + 32);
+                }
+
+                if (b != lowerAsciiName[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return string.Equals(reader.GetString(), Encoding.ASCII.GetString(lowerAsciiName), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ReadFrameType(ref Utf8JsonReader reader) =>
+        reader.ValueTextEquals("execute"u8) ? "execute"
+        : reader.ValueTextEquals("batch"u8) ? "batch"
+        : reader.ValueTextEquals("begin"u8) ? "begin"
+        : reader.ValueTextEquals("commit"u8) ? "commit"
+        : reader.ValueTextEquals("rollback"u8) ? "rollback"
+        : reader.ValueTextEquals("auth"u8) ? "auth"
+        : reader.GetString();
+
+    private static string? ReadConsistency(ref Utf8JsonReader reader) =>
+        reader.ValueTextEquals("fast"u8) ? "fast"
+        : reader.ValueTextEquals("strong"u8) ? "strong"
+        : reader.GetString();
+
+    private static bool TryReadStatements(ref Utf8JsonReader reader, out SqlStatement[]? statements, out SqlRefusal? error)
+    {
+        statements = null;
+        error = null;
+        SqlStatement? first = null;
+        List<SqlStatement>? list = null;
+        var count = 0;
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            if (reader.TokenType == JsonTokenType.Null)
+            {
+                error ??= SqlRefusal.Invalid("arguments are null, finite numbers, booleans, strings or {\"base64\": …} blobs", count);
+                count++;
+                continue;
+            }
+
+            if (reader.TokenType != JsonTokenType.StartObject)
+            {
+                return false;
+            }
+
+            if (!TryReadStatement(ref reader, out var statement, out var validArgs))
+            {
+                return false;
+            }
+
+            if (count >= SqlPlan.MaxStatements)
+            {
+                error ??= SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
+                count++;
+                continue;
+            }
+
+            if (statement is null || !validArgs)
+            {
+                error ??= SqlRefusal.Invalid("arguments are null, finite numbers, booleans, strings or {\"base64\": …} blobs", count);
+            }
+            else if (error is null)
+            {
+                if (count == 0)
+                {
+                    first = statement;
+                }
+                else
+                {
+                    if (list is null)
+                    {
+                        list = new List<SqlStatement>(4);
+                        if (first is not null)
+                        {
+                            list.Add(first);
+                        }
+                    }
+
+                    list.Add(statement);
+                }
+            }
+
+            count++;
+        }
+
+        if (count is 0 or > SqlPlan.MaxStatements)
+        {
+            error = SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
+            return true;
+        }
+
+        if (error is not null)
+        {
+            return true;
+        }
+
+        statements = list is not null ? [.. list] : first is not null ? [first] : [];
+        return true;
+    }
+
+    private static bool TryReadStatement(ref Utf8JsonReader reader, out SqlStatement? statement, out bool validArgs)
+    {
+        statement = null;
+        validArgs = true;
+        string? sql = null;
+        IReadOnlyList<SqlValue> positional = [];
+        IReadOnlyDictionary<string, SqlValue> named = SqlBuild.NoNamed;
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                return false;
+            }
+
+            if (PropertyEquals(ref reader, "sql"u8))
+            {
+                if (!reader.Read())
+                {
+                    return false;
+                }
+
+                if (reader.TokenType == JsonTokenType.Null)
+                {
+                    sql = null;
+                }
+                else if (reader.TokenType == JsonTokenType.String)
+                {
+                    sql = reader.GetString();
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            else if (PropertyEquals(ref reader, "args"u8))
+            {
+                if (!reader.Read())
+                {
+                    return false;
+                }
+
+                if (reader.TokenType == JsonTokenType.Null)
+                {
+                    positional = [];
+                }
+                else if (reader.TokenType == JsonTokenType.StartArray)
+                {
+                    if (!TryReadPositionalArgs(ref reader, out positional, out var argsOk))
+                    {
+                        return false;
+                    }
+
+                    if (!argsOk)
+                    {
+                        validArgs = false;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            else if (PropertyEquals(ref reader, "named"u8))
+            {
+                if (!reader.Read())
+                {
+                    return false;
+                }
+
+                if (reader.TokenType == JsonTokenType.Null)
+                {
+                    named = SqlBuild.NoNamed;
+                }
+                else if (reader.TokenType == JsonTokenType.StartObject)
+                {
+                    if (!TryReadNamedArgs(ref reader, out named, out var namedOk))
+                    {
+                        return false;
+                    }
+
+                    if (!namedOk)
+                    {
+                        validArgs = false;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                if (!reader.Read())
+                {
+                    return false;
+                }
+
+                reader.Skip();
+            }
+        }
+
+        if (sql is not null && validArgs)
+        {
+            statement = new SqlStatement(sql, positional, named);
+        }
+
+        return true;
+    }
+
+    private static bool TryReadPositionalArgs(ref Utf8JsonReader reader, out IReadOnlyList<SqlValue> args, out bool valid)
+    {
+        args = [];
+        valid = true;
+        SqlValue first = default;
+        SqlValue second = default;
+        List<SqlValue>? list = null;
+        var count = 0;
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            var value = ReadSqlValue(ref reader, out var syntaxOk);
+            if (!syntaxOk)
+            {
+                return false;
+            }
+
+            if (value is not { } parsed)
+            {
+                valid = false;
+            }
+            else if (valid)
+            {
+                if (count == 0)
+                {
+                    first = parsed;
+                }
+                else if (count == 1)
+                {
+                    second = parsed;
+                }
+                else
+                {
+                    if (list is null)
+                    {
+                        list = new List<SqlValue>(4) { first, second };
+                    }
+
+                    list.Add(parsed);
+                }
+            }
+
+            count++;
+        }
+
+        if (valid)
+        {
+            args = count switch
+            {
+                0 => [],
+                1 => [first],
+                2 => [first, second],
+                _ => list is not null ? [.. list] : [],
+            };
+        }
+
+        return true;
+    }
+
+    private static bool TryReadNamedArgs(ref Utf8JsonReader reader, out IReadOnlyDictionary<string, SqlValue> named, out bool valid)
+    {
+        named = SqlBuild.NoNamed;
+        valid = true;
+        Dictionary<string, SqlValue>? map = null;
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                return false;
+            }
+
+            var key = reader.GetString();
+            if (!reader.Read())
+            {
+                return false;
+            }
+
+            var value = ReadSqlValue(ref reader, out var syntaxOk);
+            if (!syntaxOk)
+            {
+                return false;
+            }
+
+            if (key is null || value is not { } parsed)
+            {
+                valid = false;
+            }
+            else if (valid)
+            {
+                map ??= new Dictionary<string, SqlValue>(StringComparer.Ordinal);
+                map[key] = parsed;
+            }
+        }
+
+        if (valid && map is { Count: > 0 })
+        {
+            named = map;
+        }
+
+        return true;
+    }
+
+    private static SqlValue? ReadSqlValue(ref Utf8JsonReader reader, out bool syntaxOk)
+    {
+        syntaxOk = true;
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Null:
+                return SqlValue.Null;
+            case JsonTokenType.True:
+                return SqlValue.FromIntegral(1);
+            case JsonTokenType.False:
+                return SqlValue.FromIntegral(0);
+            case JsonTokenType.String:
+                return reader.GetString() is { } text ? SqlValue.FromText(text) : null;
+            case JsonTokenType.Number:
+                if (reader.TryGetInt64(out var integer))
+                {
+                    return SqlValue.FromIntegral(integer);
+                }
+
+                return reader.TryGetDouble(out var real) && double.IsFinite(real) ? SqlValue.FromReal(real) : null;
+            case JsonTokenType.StartObject:
+                return ReadBlobObject(ref reader, out syntaxOk);
+            case JsonTokenType.StartArray:
+                reader.Skip();
+                return null;
+            default:
+                syntaxOk = false;
+                return null;
+        }
+    }
+
+    private static SqlValue? ReadBlobObject(ref Utf8JsonReader reader, out bool syntaxOk)
+    {
+        syntaxOk = true;
+        SqlValue? blob = null;
+        var propertyCount = 0;
+        var valid = true;
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                syntaxOk = false;
+                return null;
+            }
+
+            var isBase64 = reader.ValueTextEquals("base64"u8);
+            propertyCount++;
+            if (!reader.Read())
+            {
+                syntaxOk = false;
+                return null;
+            }
+
+            if (propertyCount == 1 && isBase64 && reader.TokenType == JsonTokenType.String)
+            {
+                if (reader.TryGetBytesFromBase64(out var decoded))
+                {
+                    blob = SqlValue.FromBlob(decoded);
+                }
+                else if (reader.GetString() is { } text)
+                {
+                    var buffer = new byte[(text.Length * 3 / 4) + 3];
+                    if (Convert.TryFromBase64String(text, buffer, out var written))
+                    {
+                        blob = SqlValue.FromBlob(buffer.AsMemory(0, written));
+                    }
+                    else
+                    {
+                        valid = false;
+                    }
+                }
+                else
+                {
+                    valid = false;
+                }
+            }
+            else
+            {
+                valid = false;
+                reader.Skip();
+            }
+        }
+
+        return valid && propertyCount == 1 ? blob : null;
+    }
+
+    private readonly record struct ParsedSocketFrame(
+        long? Id,
+        string? Type,
+        SqlStatement[]? Statements,
+        SqlRefusal? StatementsError,
+        string? Token,
+        string? Consistency,
+        string? Bookmark);
 
     private string EncodedBookmark()
     {

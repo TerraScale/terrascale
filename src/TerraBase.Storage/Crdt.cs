@@ -232,7 +232,7 @@ internal static class MetaStore
 
             if (cache.IsCompleteTable(table))
             {
-                return new RowMeta();
+                return RowMeta.Empty;
             }
 
             if (!cache.HasCheckedTable(table))
@@ -240,13 +240,13 @@ internal static class MetaStore
                 var probe = scope.First(SelectAnyRowMetaSql, SqlValue.FromText(table));
                 if (scope.Failed)
                 {
-                    return new RowMeta();
+                    return RowMeta.Empty;
                 }
 
                 cache.MarkTableChecked(table, isEmpty: probe is null);
                 if (probe is null)
                 {
-                    return new RowMeta();
+                    return RowMeta.Empty;
                 }
             }
         }
@@ -254,7 +254,7 @@ internal static class MetaStore
         var row = scope.First(SelectMetaSql, SqlValue.FromText(table), SqlValue.FromBlob(key));
         if (row is null || !row[0].TryGetBlob(out var blob))
         {
-            return new RowMeta();
+            return RowMeta.Empty;
         }
 
         if (RowMeta.Decode(blob.Span) is { } meta)
@@ -264,7 +264,7 @@ internal static class MetaStore
         }
 
         scope.Fail(new SqliteStatus(SqliteNative.Corrupt, string.Concat("corrupt _tb_meta row for table ", table)));
-        return new RowMeta();
+        return RowMeta.Empty;
     }
 
     public static void Save(WriteScope scope, string table, byte[] key, RowMeta meta)
@@ -320,14 +320,23 @@ internal static class MetaStore
         scope.Run(InsertAppliedSql, SqlValue.FromBlob(bytes), SqlValue.FromIntegral(appliedAtMs));
     }
 
-    public static void PruneApplied(WriteScope scope, DateTimeOffset now)
+    public static bool TryMarkApplied(WriteScope scope, Ulid txId, long appliedAtMs)
+    {
+        var bytes = scope.UlidScratch;
+        _ = txId.TryWriteBytes(bytes);
+        return scope.RunChanges(InsertAppliedSql, SqlValue.FromBlob(bytes), SqlValue.FromIntegral(appliedAtMs)) > 0;
+    }
+
+    public static long PruneApplied(WriteScope scope, DateTimeOffset now)
     {
         if (now - DateTimeOffset.UnixEpoch > AppliedRetention)
         {
             var bytes = scope.UlidScratch;
             _ = Ulid.NewUlid(now - AppliedRetention, FloorRandomness).TryWriteBytes(bytes);
-            scope.Run(PruneAppliedSql, SqlValue.FromBlob(bytes));
+            return scope.RunChanges(PruneAppliedSql, SqlValue.FromBlob(bytes));
         }
+
+        return 0;
     }
 
     public static bool IsApplied(WriteScope scope, Ulid txId)
@@ -360,10 +369,9 @@ internal static class LocalStamper
             var change = changes[index];
             var meta = MetaStore.Load(scope, change.Schema.Table, change.EncodedKey);
             metas[index] = meta;
-            maxExisting = HlcCodec.Max(maxExisting, meta.RowHlc);
-            foreach (var column in meta.Columns.Values)
+            if (!ReferenceEquals(meta, RowMeta.Empty))
             {
-                maxExisting = HlcCodec.Max(maxExisting, column.Hlc);
+                maxExisting = HlcCodec.Max(maxExisting, meta.MaxHlc());
             }
         }
 
@@ -373,6 +381,7 @@ internal static class LocalStamper
         }
 
         var mutations = new List<RowMutation>(changes.Count);
+        string? lastRaisedTable = null;
         for (var changeIndex = 0; changeIndex < changes.Count; changeIndex++)
         {
             var change = changes[changeIndex];
@@ -394,21 +403,18 @@ internal static class LocalStamper
                     {
                         var column = schema.DataColumns[index];
                         insertedColumns[index] = new ColumnChange(column.Name, ChangeKind.Assign, 0, Value(change.Final, index), 0);
-                        next.Columns[column.Index] = new ColumnMeta(hlc, 0, 0);
+                        next.SetColumn(column.Index, new ColumnMeta(hlc, 0, 0));
                     }
 
                     columnChanges = insertedColumns;
                     break;
                 case MutationOp.Update:
-                    next = new RowMeta(meta.Columns.Count)
+                    next = new RowMeta(Math.Max(meta.ColumnCount, change.ChangedColumns.Count))
                     {
                         CausalLength = meta.Alive ? meta.CausalLength : meta.CausalLength + 1,
                         RowHlc = hlc,
                     };
-                    foreach (var (ordinal, column) in meta.Columns)
-                    {
-                        next.Columns[ordinal] = column;
-                    }
+                    next.CloneColumnsFrom(meta);
 
                     var updatedColumns = new ColumnChange[change.ChangedColumns.Count];
                     for (var changedIndex = 0; changedIndex < change.ChangedColumns.Count; changedIndex++)
@@ -420,7 +426,7 @@ internal static class LocalStamper
                         if (!column.IsDeltaCounter)
                         {
                             updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.Assign, current.Epoch, final, 0);
-                            next.Columns[column.Index] = current with { Hlc = hlc };
+                            next.SetColumn(column.Index, current with { Hlc = hlc });
                             continue;
                         }
 
@@ -430,12 +436,12 @@ internal static class LocalStamper
                             && DeltaMath.TryDifference(after, before, out var delta))
                         {
                             updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.DeltaOp, current.Epoch, SqlValue.Null, delta);
-                            next.Columns[column.Index] = current with { DeltaSum = DeltaMath.Sum(current.DeltaSum, delta) };
+                            next.SetColumn(column.Index, current with { DeltaSum = DeltaMath.Sum(current.DeltaSum, delta) });
                         }
                         else
                         {
                             updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.AbsoluteReset, current.Epoch + 1, final, 0);
-                            next.Columns[column.Index] = new ColumnMeta(hlc, current.Epoch + 1, 0);
+                            next.SetColumn(column.Index, new ColumnMeta(hlc, current.Epoch + 1, 0));
                         }
                     }
 
@@ -458,7 +464,12 @@ internal static class LocalStamper
                 MetaStore.Save(scope, schema.Table, change.EncodedKey, next);
             }
 
-            MetaStore.Raise(tables, schema.Table, hlc);
+            if (!ReferenceEquals(schema.Table, lastRaisedTable))
+            {
+                MetaStore.Raise(tables, schema.Table, hlc);
+                lastRaisedTable = schema.Table;
+            }
+
             mutations.Add(new RowMutation(schema.Table, change.Op, next.CausalLength, change.PrimaryKey, columnChanges));
         }
 
@@ -522,12 +533,6 @@ internal static class CrdtApplier
         }
 
         var sql = schema.Sql;
-        var current = scope.First(sql.SelectRow, keyValues);
-        if (scope.Failed)
-        {
-            return;
-        }
-
         var deleteOp = mutation.Op == MutationOp.Delete;
         var odd = (mutation.CausalLength & 1) == 1;
         if (deleteOp == odd)
@@ -542,16 +547,12 @@ internal static class CrdtApplier
         {
             if (mutation.CausalLength > meta.CausalLength)
             {
-                if (current is not null)
-                {
-                    scope.Run(sql.DeleteRow, keyValues);
-                }
-
+                scope.Run(sql.DeleteRow, keyValues);
                 next = new RowMeta { CausalLength = mutation.CausalLength, RowHlc = hlc };
             }
             else
             {
-                next = meta;
+                next = ReferenceEquals(meta, RowMeta.Empty) ? new RowMeta() : meta;
                 next.RowHlc = HlcCodec.Max(meta.RowHlc, hlc);
             }
         }
@@ -573,24 +574,57 @@ internal static class CrdtApplier
                 {
                     case ChangeKind.Assign or ChangeKind.AbsoluteReset:
                         values.Add(change.Value);
-                        next.Columns[column.Index] = new ColumnMeta(hlc, change.Epoch, 0);
+                        next.SetColumn(column.Index, new ColumnMeta(hlc, change.Epoch, 0));
                         break;
                     case ChangeKind.DeltaOp:
                         values.Add(SqlValue.FromIntegral(change.Delta));
-                        next.Columns[column.Index] = new ColumnMeta(HlcTimestamp.Zero, change.Epoch, change.Delta);
+                        next.SetColumn(column.Index, new ColumnMeta(HlcTimestamp.Zero, change.Epoch, change.Delta));
                         break;
                     default:
                         throw new UnreachableException();
                 }
             }
 
-            Write(scope, sql, keyValues, current is not null, columns, values);
+            if (sql.SupportsUpsert && columns.Count == schema.DataColumns.Count)
+            {
+                WriteUpsert(scope, sql, keyValues, columns, values);
+            }
+            else
+            {
+                var current = scope.First(sql.SelectRow, keyValues);
+                if (!scope.Failed)
+                {
+                    Write(scope, sql, keyValues, current is not null, columns, values);
+                }
+            }
+
             columns.Clear();
             values.Clear();
         }
         else
         {
-            next = meta;
+            var hasDeltaOp = false;
+            for (var index = 0; index < mutation.Changes.Count; index++)
+            {
+                if (mutation.Changes[index].Kind == ChangeKind.DeltaOp)
+                {
+                    hasDeltaOp = true;
+                    break;
+                }
+            }
+
+            SqlValue[]? current = null;
+            var needSelect = hasDeltaOp || !meta.Alive || !sql.SupportsUpsert;
+            if (needSelect)
+            {
+                current = scope.First(sql.SelectRow, keyValues);
+                if (scope.Failed)
+                {
+                    return;
+                }
+            }
+
+            next = ReferenceEquals(meta, RowMeta.Empty) ? new RowMeta() : meta;
             next.RowHlc = HlcCodec.Max(meta.RowHlc, hlc);
             columns.Clear();
             values.Clear();
@@ -608,28 +642,30 @@ internal static class CrdtApplier
                     continue;
                 }
 
-                var existing = Existing(schema, current, column);
                 switch (change.Kind)
                 {
                     case ChangeKind.Assign or ChangeKind.AbsoluteReset:
                         if (change.Epoch > state.Epoch)
                         {
-                            next.Columns[column.Index] = new ColumnMeta(hlc, change.Epoch, 0);
+                            next.SetColumn(column.Index, new ColumnMeta(hlc, change.Epoch, 0));
                             columns.Add(column);
                             values.Add(change.Value);
                         }
                         else if (hlc > state.Hlc)
                         {
-                            next.Columns[column.Index] = state with { Hlc = hlc };
+                            next.SetColumn(column.Index, state with { Hlc = hlc });
                             columns.Add(column);
                             values.Add(Add(change.Value, state.DeltaSum));
                         }
 
                         break;
                     case ChangeKind.DeltaOp:
-                        next.Columns[column.Index] = change.Epoch > state.Epoch
-                            ? new ColumnMeta(HlcTimestamp.Zero, change.Epoch, change.Delta)
-                            : state with { DeltaSum = DeltaMath.Sum(state.DeltaSum, change.Delta) };
+                        var existing = Existing(schema, current, column);
+                        next.SetColumn(
+                            column.Index,
+                            change.Epoch > state.Epoch
+                                ? new ColumnMeta(HlcTimestamp.Zero, change.Epoch, change.Delta)
+                                : state with { DeltaSum = DeltaMath.Sum(state.DeltaSum, change.Delta) });
                         columns.Add(column);
                         values.Add(Add(existing, change.Delta));
                         break;
@@ -638,13 +674,54 @@ internal static class CrdtApplier
                 }
             }
 
-            Write(scope, sql, keyValues, current is not null, columns, values);
+            if (needSelect)
+            {
+                Write(scope, sql, keyValues, current is not null, columns, values);
+            }
+            else if (columns.Count > 0)
+            {
+                WriteUpdateOrInsert(scope, sql, keyValues, columns, values);
+            }
+
             columns.Clear();
             values.Clear();
         }
 
         MetaStore.Save(scope, schema.Table, key, next);
         MetaStore.Raise(tables, schema.Table, tableHlc);
+    }
+
+    private static void WriteUpsert(WriteScope scope, TableSql sql, SqlValue[] key, List<TableColumn> columns, List<SqlValue> values)
+    {
+        var total = key.Length + values.Count;
+        var parameters = scope.GetParameterScratch(total);
+        key.AsSpan().CopyTo(parameters);
+        for (var index = 0; index < values.Count; index++)
+        {
+            parameters[key.Length + index] = values[index];
+        }
+
+        scope.Run(sql.Upsert(columns), parameters.AsSpan(0, total));
+        parameters.AsSpan(0, total).Clear();
+    }
+
+    private static void WriteUpdateOrInsert(WriteScope scope, TableSql sql, SqlValue[] key, List<TableColumn> columns, List<SqlValue> values)
+    {
+        var total = key.Length + values.Count;
+        var parameters = scope.GetParameterScratch(total);
+        key.AsSpan().CopyTo(parameters);
+        for (var index = 0; index < values.Count; index++)
+        {
+            parameters[key.Length + index] = values[index];
+        }
+
+        var span = parameters.AsSpan(0, total);
+        if (scope.RunChanges(sql.Update(columns), span) == 0 && !scope.Failed)
+        {
+            scope.Run(sql.Insert(columns), span);
+        }
+
+        span.Clear();
     }
 
     private static void Write(WriteScope scope, TableSql sql, SqlValue[] key, bool exists, List<TableColumn> columns, List<SqlValue> values)

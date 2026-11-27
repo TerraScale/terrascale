@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading.Channels;
 using TerraScale.Contracts.Continuity;
 
@@ -28,6 +29,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private const int ApplicationIdBase = 0x54420000;
     private const int HistoryPageSize = 512;
     private static readonly TimeSpan ReaderDrainTimeout = TimeSpan.FromSeconds(5);
+    private static readonly BookmarkReached Reached = new();
 
     private readonly SessionContext _context;
     private readonly SqliteConnection _writer;
@@ -115,6 +117,8 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         var options = new SqliteOpenOptions(context.DatabasePath, false, context.RawKey, context.Options.CacheSizeKib, context.DatabaseId, context.Options.DeltaColumns)
         {
             StatementTimeout = context.Options.StatementTimeout,
+            Creating = create,
+            SkipSchemaProbe = true,
         };
         var opened = SqliteConnection.Open(options);
         return opened switch
@@ -154,6 +158,17 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             {
                 _ = writer.Exec("ROLLBACK;");
             }
+
+            if (setup.IsOk)
+            {
+                setup = writer.Exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA journal_size_limit = 1048576;");
+            }
+
+            if (setup.IsOk && FileIo.SyncFile(context.DatabasePath) is { } syncError)
+            {
+                writer.Dispose();
+                return new StorageBusy(syncError, TimeSpan.FromMilliseconds(50));
+            }
         }
         else
         {
@@ -179,10 +194,22 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         var capture = writer.AttachCapture();
         var cipher = new CommitLogCipher(context.RawKey, context.DatabaseId);
         var session = new DatabaseSession(context, writer, capture, cipher, (applicationId & 1) == 1, release);
+        var readerOptions = options with
+        {
+            ReadOnly = true,
+            Creating = false,
+            SkipSchemaProbe = true,
+            CacheSizeKib = context.Options.ReaderCacheSizeKib,
+        };
+        if (create)
+        {
+            return session.OpenReaders(readerOptions);
+        }
+
         var recovered = session.Recover();
         return recovered switch
         {
-            SessionRecovered => session.OpenReaders(options with { ReadOnly = true, CacheSizeKib = context.Options.ReaderCacheSizeKib }),
+            SessionRecovered => session.OpenReaders(readerOptions),
             StorageCorrupted corrupted => session.Abandon(corrupted),
             StorageBusy busy => session.Abandon(busy),
         };
@@ -270,9 +297,16 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         DisposeResources();
     }
 
-    public async ValueTask<WaitForBookmarkOutcome> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
+    public ValueTask<WaitForBookmarkOutcome> WaitForBookmarkAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bookmark);
+        return bookmark.IsEmpty || _versions.Satisfies(bookmark)
+            ? ValueTask.FromResult<WaitForBookmarkOutcome>(Reached)
+            : WaitForBookmarkSlowAsync(bookmark, timeout, cancellationToken);
+    }
+
+    private async ValueTask<WaitForBookmarkOutcome> WaitForBookmarkSlowAsync(CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
+    {
         var started = _context.Time.GetTimestamp();
         while (!_versions.Satisfies(bookmark))
         {
@@ -295,7 +329,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        return new BookmarkReached();
+        return Reached;
     }
 
     public async IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -387,11 +421,38 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         var read = log.Read(Math.Max(fromSequence, 1), maxEntries);
         ReadCommitLogOutcome result = read switch
         {
-            IReadOnlyList<CommitMetadata> page => Page(originRegion, fromSequence, [.. page.Where(entry => entry.Sequence <= visible)]),
+            IReadOnlyList<CommitMetadata> page => FilterVisiblePage(originRegion, fromSequence, page, visible),
             CommitLogGap gap => gap,
             StorageCorrupted corrupted => corrupted,
         };
         return ValueTask.FromResult(result);
+    }
+
+    private CommitLogPage FilterVisiblePage(string origin, long fromSequence, IReadOnlyList<CommitMetadata> page, long visible)
+    {
+        if (page.Count == 0 || page[^1].Sequence <= visible)
+        {
+            return Page(origin, fromSequence, page);
+        }
+
+        var count = 0;
+        while (count < page.Count && page[count].Sequence <= visible)
+        {
+            count++;
+        }
+
+        if (count == 0)
+        {
+            return Page(origin, fromSequence, []);
+        }
+
+        var filtered = new CommitMetadata[count];
+        for (var index = 0; index < count; index++)
+        {
+            filtered[index] = page[index];
+        }
+
+        return Page(origin, fromSequence, filtered);
     }
 
     public ValueTask<ListSegmentsOutcome> ListSealedSegmentsAsync(string originRegion, long afterSequence, CancellationToken cancellationToken)
@@ -433,42 +494,107 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
 
         var remaining = segment.SizeBytes;
+        var remainingToRead = segment.SizeBytes;
         var through = segment.FirstSequence - 1;
         var batchBytes = 0L;
         var maxEntries = Math.Min(Options.MaxPendingRemoteCommits, HistoryPageSize);
-        List<List<CommitMetadata>> batches = [];
-        List<CommitMetadata> batch = [];
+        var estimatedFrames = (int)Math.Min(segment.LastSequence - segment.FirstSequence + 1, maxEntries);
+        List<List<CommitMetadata>>? extraBatches = null;
+        var firstBatch = new List<CommitMetadata>(Math.Max(estimatedFrames, 1));
+        var batch = firstBatch;
+        var originUtf8 = Encoding.UTF8.GetBytes(segment.OriginRegion);
         var initialBufferSize = Math.Clamp((int)Math.Min(segment.SizeBytes, 64 * 1024), CommitFrame.PrefixSize, 64 * 1024);
         var rented = ArrayPool<byte>.Shared.Rent(initialBufferSize);
+        var buffered = 0;
+        var offset = 0;
         try
         {
             while (remaining > 0)
             {
-                var prefix = rented.AsMemory(0, CommitFrame.PrefixSize);
-                if (remaining < CommitFrame.PrefixSize
-                    || await content.ReadAtLeastAsync(prefix, CommitFrame.PrefixSize, throwOnEndOfStream: false, cancellationToken) != CommitFrame.PrefixSize)
+                if (remaining < CommitFrame.PrefixSize)
                 {
                     return new InvalidSegment("segment ended inside a commit log frame");
                 }
 
-                var bodySize = BinaryPrimitives.ReadUInt32LittleEndian(prefix.Span);
+                if (buffered - offset < CommitFrame.PrefixSize)
+                {
+                    var carry = buffered - offset;
+                    if (carry > 0 && offset > 0)
+                    {
+                        rented.AsSpan(offset, carry).CopyTo(rented);
+                    }
+
+                    buffered = carry;
+                    offset = 0;
+                    while (buffered < CommitFrame.PrefixSize)
+                    {
+                        var toRead = (int)Math.Min(rented.Length - buffered, remainingToRead);
+                        if (toRead <= 0)
+                        {
+                            return new InvalidSegment("segment ended inside a commit log frame");
+                        }
+
+                        var read = await content.ReadAsync(rented.AsMemory(buffered, toRead), cancellationToken);
+                        if (read == 0)
+                        {
+                            return new InvalidSegment("segment ended inside a commit log frame");
+                        }
+
+                        buffered += read;
+                        remainingToRead -= read;
+                    }
+                }
+
+                var bodySize = BinaryPrimitives.ReadUInt32LittleEndian(rented.AsSpan(offset, CommitFrame.PrefixSize));
                 var frameSize = CommitFrame.PrefixSize + (long)bodySize + CommitFrame.CrcSize;
                 if (bodySize > CommitFrame.MaxBodySize || frameSize > remaining)
                 {
                     return new InvalidSegment("segment contains a frame outside its declared size");
                 }
 
-                var length = (int)bodySize + CommitFrame.CrcSize;
-                if (rented.Length < length)
+                var frameBytes = (int)frameSize;
+                if (buffered - offset < frameBytes)
                 {
-                    var grown = ArrayPool<byte>.Shared.Rent(length);
-                    ArrayPool<byte>.Shared.Return(rented);
-                    rented = grown;
+                    var carry = buffered - offset;
+                    if (rented.Length < frameBytes)
+                    {
+                        var grown = ArrayPool<byte>.Shared.Rent(frameBytes);
+                        if (carry > 0)
+                        {
+                            rented.AsSpan(offset, carry).CopyTo(grown);
+                        }
+
+                        ArrayPool<byte>.Shared.Return(rented);
+                        rented = grown;
+                    }
+                    else if (carry > 0 && offset > 0)
+                    {
+                        rented.AsSpan(offset, carry).CopyTo(rented);
+                    }
+
+                    buffered = carry;
+                    offset = 0;
+                    while (buffered < frameBytes)
+                    {
+                        var toRead = (int)Math.Min(rented.Length - buffered, remainingToRead);
+                        if (toRead <= 0)
+                        {
+                            return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
+                        }
+
+                        var read = await content.ReadAsync(rented.AsMemory(buffered, toRead), cancellationToken);
+                        if (read == 0)
+                        {
+                            return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
+                        }
+
+                        buffered += read;
+                        remainingToRead -= read;
+                    }
                 }
 
-                var frame = rented.AsMemory(0, length);
-                if (await content.ReadAtLeastAsync(frame, length, throwOnEndOfStream: false, cancellationToken) != length
-                    || !CommitFrame.TryDecodeChecked(frame.Span, segment.OriginRegion, _cipher, out var commit))
+                var bodyAndCrc = rented.AsSpan(offset + CommitFrame.PrefixSize, (int)bodySize + CommitFrame.CrcSize);
+                if (!CommitFrame.TryDecodeChecked(bodyAndCrc, segment.OriginRegion, originUtf8, _cipher, out var commit))
                 {
                     return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
                 }
@@ -478,12 +604,14 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                     return new InvalidSegment("segment sequences are not contiguous");
                 }
 
+                offset += frameBytes;
                 remaining -= frameSize;
                 through = commit.Sequence;
                 if (batch.Count > 0 && (batch.Count >= maxEntries || batchBytes + frameSize > Options.SegmentMaxBytes))
                 {
-                    batches.Add(batch);
-                    batch = [];
+                    extraBatches ??= [firstBatch];
+                    batch = new List<CommitMetadata>(Math.Min(maxEntries, 64));
+                    extraBatches.Add(batch);
                     batchBytes = 0;
                 }
 
@@ -501,14 +629,19 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return new InvalidSegment("segment range does not match its content");
         }
 
-        if (batch.Count > 0)
+        if (extraBatches is null)
         {
-            batches.Add(batch);
+            if (firstBatch.Count > 0 && !await replay(firstBatch, cancellationToken))
+            {
+                return new ArchivedSegmentReplayStopped();
+            }
+
+            return new ArchivedSegmentRead();
         }
 
-        foreach (var validated in batches)
+        foreach (var validated in extraBatches)
         {
-            if (!await replay(validated, cancellationToken))
+            if (validated.Count > 0 && !await replay(validated, cancellationToken))
             {
                 return new ArchivedSegmentReplayStopped();
             }
@@ -669,12 +802,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
     }
 
-    private CausalBookmark BookmarkWith(string origin, long sequence)
-    {
-        var watermarks = _versions.Copy();
-        watermarks[origin] = sequence;
-        return CausalBookmark.Create(watermarks);
-    }
+    private CausalBookmark BookmarkWith(string origin, long sequence) => _versions.Snapshot().With(origin, sequence);
 
     private void DisposeResources()
     {
@@ -834,13 +962,31 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
     }
 
-    private async ValueTask<bool> EnqueueAsync(LaneRequest request, CancellationToken cancellationToken)
+    private bool HasActiveReaders()
+    {
+        lock (_readersGate)
+        {
+            return _rentedReaders.Count > 0;
+        }
+    }
+
+    private ValueTask<bool> EnqueueAsync(LaneRequest request, CancellationToken cancellationToken)
     {
         if (IsClosed || IsFaulted)
         {
-            return false;
+            return ValueTask.FromResult(false);
         }
 
+        if (_requests.Writer.TryWrite(request))
+        {
+            return ValueTask.FromResult(true);
+        }
+
+        return EnqueueSlowAsync(request, cancellationToken);
+    }
+
+    private async ValueTask<bool> EnqueueSlowAsync(LaneRequest request, CancellationToken cancellationToken)
+    {
         while (await _requests.Writer.WaitToWriteAsync(cancellationToken))
         {
             if (_requests.Writer.TryWrite(request))

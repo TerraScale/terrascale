@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using TerraScale.QuicRpc;
 
@@ -275,6 +276,17 @@ internal static class ClusterCodec
             return total;
         }
 
+        if (commits is List<CommitMetadata> list)
+        {
+            var span = CollectionsMarshal.AsSpan(list);
+            for (var index = 0; index < span.Length; index++)
+            {
+                total += EstimateCommitSize(span[index]);
+            }
+
+            return total;
+        }
+
         for (var index = 0; index < commits.Count; index++)
         {
             total += EstimateCommitSize(commits[index]);
@@ -292,6 +304,17 @@ internal static class ClusterCodec
             for (var index = 0; index < array.Length; index++)
             {
                 offset += WriteCommitToSpan(destination[offset..], array[index]);
+            }
+
+            return offset;
+        }
+
+        if (commits is List<CommitMetadata> list)
+        {
+            var span = CollectionsMarshal.AsSpan(list);
+            for (var index = 0; index < span.Length; index++)
+            {
+                offset += WriteCommitToSpan(destination[offset..], span[index]);
             }
 
             return offset;

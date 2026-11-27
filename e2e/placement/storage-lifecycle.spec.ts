@@ -22,7 +22,7 @@ async function same(cells: Cells, id: string, statement: string): Promise<unknow
     const [atGru, atFra] = await Promise.all([gru, fra].map(async origin => (await answer(cells, origin, id, [statement])).results[0].rows));
     rows = atGru;
     return JSON.stringify(atGru) === JSON.stringify(atFra) ? 'same' : JSON.stringify({ gru: atGru, fra: atFra });
-  }, { message: `gru and fra converge on ${statement}`, timeout: 45_000, intervals: [250, 500, 1000] }).toBe('same');
+  }, { message: `gru and fra converge on ${statement}`, timeout: 45_000, intervals: [100, 250, 500] }).toBe('same');
   return rows;
 }
 

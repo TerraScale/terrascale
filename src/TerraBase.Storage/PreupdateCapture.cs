@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using Utf8Text = System.Text.Unicode.Utf8;
 
 namespace TerraBase.Storage;
 
@@ -33,6 +34,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
     private readonly Dictionary<RowLookupKey, TouchedRow> _byKey = new(RowLookupKeyComparer.Instance);
     private readonly List<TouchedRow> _touched = [];
     private readonly Dictionary<byte[], TableNameEntry> _tableNames = new(Utf8BytesComparer.Instance);
+    private string?[] _lastTextByColumn = [];
     private byte[]? _lastTableUtf8;
     private string? _lastTableName;
     private GCHandle<PreupdateCapture> _self;
@@ -60,6 +62,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
     {
         _touched.Clear();
         _byKey.Clear();
+        Array.Clear(_lastTextByColumn);
         Fault = SqliteStatus.Success;
         _writtenRows = 0;
         _remainingBytes = SqlLimits.MaxWriteBytes;
@@ -99,6 +102,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
     {
         _touched.Clear();
         _byKey.Clear();
+        Array.Clear(_lastTextByColumn);
         Annotation = null;
         _sawSavepointRollback = false;
         _active = false;
@@ -362,6 +366,15 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             return;
         }
 
+        if (op == SqliteNative.OpInsert
+            && !schema.IsShadow
+            && CanCaptureFinal(schema)
+            && (schema.UsesImplicitRowId || schema.IntegerPrimaryKey is not null || schema.PrimaryKeyIndices.Count == 1))
+        {
+            HandleInsertFast(db, schema, newKey);
+            return;
+        }
+
         if (_connection.HasUserLimits && !ChargeWrite(db, op, schema.Columns))
         {
             SqliteNative.InterruptQuery(db);
@@ -594,7 +607,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
     private SqlValue[]? ReadKey(nint db, TableSchema schema, long rowId, bool useNew)
     {
-        if (schema.UsesImplicitRowId)
+        if (schema.UsesImplicitRowId || schema.IntegerPrimaryKey is not null)
         {
             return [SqlValue.FromIntegral(rowId)];
         }
@@ -608,6 +621,187 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         return Fault.IsOk ? key : null;
     }
 
+    private void HandleInsertFast(nint db, TableSchema schema, long newKey)
+    {
+        var checkLimits = _connection.HasUserLimits;
+        if (checkLimits && !CountWrite())
+        {
+            SqliteNative.InterruptQuery(db);
+            return;
+        }
+
+        var dataCount = schema.DataColumns.Count;
+        var final = dataCount == 0 ? [] : new SqlValue[dataCount];
+        var hasRowIdKey = schema.UsesImplicitRowId || schema.IntegerPrimaryKey is not null;
+        var key = hasRowIdKey ? [SqlValue.FromIntegral(newKey)] : new SqlValue[1];
+        var integerPkIndex = schema.IntegerPrimaryKey is { } ipk ? ipk.Index : -1;
+        var columns = schema.Columns;
+        var bytes = 0;
+        for (var index = 0; index < columns.Count; index++)
+        {
+            var column = columns[index];
+            if (column.Index == integerPkIndex)
+            {
+                if (checkLimits)
+                {
+                    if (!FitsWrite(sizeof(long), _remainingBytes - bytes))
+                    {
+                        SqliteNative.InterruptQuery(db);
+                        return;
+                    }
+
+                    bytes += sizeof(long);
+                }
+
+                continue;
+            }
+
+            nint value;
+            var rc = SqliteNative.PreupdateNew(db, column.Index, &value);
+            if (rc == SqliteNative.Range && column.Generated)
+            {
+                continue;
+            }
+
+            if (rc != SqliteNative.Ok)
+            {
+                Fault = new SqliteStatus(rc, "preupdate value read failed");
+                SqliteNative.InterruptQuery(db);
+                return;
+            }
+
+            var dataOrdinal = schema.DataOrdinal(column);
+            var isKey = !hasRowIdKey && column.IsPrimaryKey;
+            var valueType = SqliteNative.ValueType(value);
+            if (checkLimits)
+            {
+                var length = valueType switch
+                {
+                    SqliteNative.TypeText or SqliteNative.TypeBlob => SqliteNative.ValueBytes(value),
+                    SqliteNative.TypeNull => 0,
+                    _ => sizeof(long),
+                };
+                if (!FitsWrite(length, _remainingBytes - bytes))
+                {
+                    SqliteNative.InterruptQuery(db);
+                    return;
+                }
+
+                bytes += length;
+            }
+
+            if (dataOrdinal < 0 && !isKey)
+            {
+                continue;
+            }
+
+            var read = ReadPreupdateValue(value, valueType, column.Index, out var resolved);
+            if (!read.IsOk)
+            {
+                Fault = read;
+                SqliteNative.InterruptQuery(db);
+                return;
+            }
+
+            if (dataOrdinal >= 0)
+            {
+                final[dataOrdinal] = resolved;
+            }
+            else
+            {
+                key[0] = resolved;
+            }
+        }
+
+        if (checkLimits)
+        {
+            _remainingBytes -= bytes;
+        }
+
+        var row = Touch(db, schema, schema.DataColumnIndices, key, existed: false);
+        row.Replaced = true;
+        row.Final = final;
+        row.HasCapturedFinal = true;
+    }
+
+    private SqliteStatus ReadPreupdateValue(nint value, int valueType, int columnIndex, out SqlValue result)
+    {
+        switch (valueType)
+        {
+            case SqliteNative.TypeInteger:
+                result = SqlValue.FromIntegral(SqliteNative.ValueInt64(value));
+                return SqliteStatus.Success;
+            case SqliteNative.TypeFloat:
+                var real = SqliteNative.ValueDouble(value);
+                if (!double.IsFinite(real))
+                {
+                    result = SqlValue.Null;
+                    return SqliteStatus.NonFiniteReal;
+                }
+
+                result = SqlValue.FromReal(real);
+                return SqliteStatus.Success;
+            case SqliteNative.TypeText:
+                var textPointer = SqliteNative.ValueText(value);
+                var textLength = SqliteNative.ValueBytes(value);
+                if (textPointer is null || textLength == 0)
+                {
+                    result = SqlValue.FromText(string.Empty);
+                    return SqliteStatus.Success;
+                }
+
+                var textBytes = new ReadOnlySpan<byte>(textPointer, textLength);
+                if ((uint)columnIndex < (uint)_lastTextByColumn.Length
+                    && _lastTextByColumn[columnIndex] is { } previous
+                    && previous.Length == textLength
+                    && Ascii.Equals(textBytes, previous))
+                {
+                    result = SqlValue.FromText(previous);
+                    return SqliteStatus.Success;
+                }
+
+                if (Ascii.IsValid(textBytes))
+                {
+                    var text = Encoding.ASCII.GetString(textBytes);
+                    CacheLastText(columnIndex, text);
+                    result = SqlValue.FromText(text);
+                    return SqliteStatus.Success;
+                }
+
+                if (!Utf8Text.IsValid(textBytes))
+                {
+                    result = SqlValue.Null;
+                    return SqliteStatus.InvalidUtf8;
+                }
+
+                result = SqlValue.FromText(Encoding.UTF8.GetString(textBytes));
+                return SqliteStatus.Success;
+            case SqliteNative.TypeBlob:
+                var blobPointer = SqliteNative.ValueBlob(value);
+                var blobLength = SqliteNative.ValueBytes(value);
+                result = SqlValue.FromBlob(blobPointer is null || blobLength == 0 ? [] : new ReadOnlySpan<byte>(blobPointer, blobLength).ToArray());
+                return SqliteStatus.Success;
+            default:
+                result = SqlValue.Null;
+                return SqliteStatus.Success;
+        }
+    }
+
+    private void CacheLastText(int columnIndex, string text)
+    {
+        if (columnIndex >= _lastTextByColumn.Length)
+        {
+            if (columnIndex >= 64)
+            {
+                return;
+            }
+
+            Array.Resize(ref _lastTextByColumn, Math.Max(columnIndex + 1, 8));
+        }
+
+        _lastTextByColumn[columnIndex] = text;
+    }
+
     private SqlValue Read(nint db, int column, bool useNew)
     {
         nint value;
@@ -618,7 +812,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             return SqlValue.Null;
         }
 
-        var read = SqliteNative.ReadValue(value, out var result);
+        var read = ReadPreupdateValue(value, SqliteNative.ValueType(value), column, out var result);
         if (!read.IsOk)
         {
             Fault = read;

@@ -53,6 +53,10 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         ? state.Offset + state.Session.ChangeGeneration
         : 0;
 
+    public long CatalogGeneration => Volatile.Read(ref _state) is { Session.IsUsable: true } state
+        ? state.CatalogGeneration
+        : 0;
+
     public string KeyId => FileText.Read(Path.Combine(options.DataDirectory, KeyIdFile))?.Trim() ?? keyring.ActiveKeyId;
 
     public static void RegisterDeltaColumns(DeltaColumnRegistry registry)
@@ -133,40 +137,94 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         }
 
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, mode, CausalBookmark.Empty);
-        var session = await UsableSessionAsync(cancellationToken);
-        var outcome = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
-        return outcome switch
-        {
-            SqlWriteResult written => written,
-            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
-            SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
-            SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
-            SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
-            ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
-            ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
-            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
-        };
+        var state = await UsableStateAsync(cancellationToken);
+        var outcome = await coordinator.ExecuteWriteAsync(state.Session, request, cancellationToken);
+        return MapWriteOutcome(outcome, state, notifyNonTelemetry: true);
     }
 
     public ValueTask<SystemWriteOutcome> WriteAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
         WriteAsync([statement], mode, cancellationToken);
+
+    public async ValueTask<SystemWriteOutcome> WriteTelemetryAsync(
+        IReadOnlyList<SqlStatement> statements, ConsistencyMode mode, CancellationToken cancellationToken)
+    {
+        if (!IsOpen)
+        {
+            return Opening;
+        }
+
+        var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, mode, CausalBookmark.Empty);
+        var state = await UsableStateAsync(cancellationToken);
+        state.BeginTelemetryWrite();
+        var bumped = false;
+        try
+        {
+            var outcome = await coordinator.ExecuteWriteAsync(state.Session, request, cancellationToken);
+            bumped = outcome switch
+            {
+                SqlWriteResult { Commit.Sequence: > 0 } => true,
+                SqlWriteResult or SqlError or SerializationConflict or SchemaMismatch or ClusterUnavailable or ClusterTimeout or StorageBusy => false,
+            };
+            return MapWriteOutcome(outcome, state, notifyNonTelemetry: false);
+        }
+        finally
+        {
+            state.EndTelemetryWrite(bumped);
+        }
+    }
+
+    public ValueTask<SystemWriteOutcome> WriteTelemetryAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
+        WriteTelemetryAsync([statement], mode, cancellationToken);
+
+    public async ValueTask<SqlWriteOutcome> WriteLocalTelemetryAsync(
+        IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
+    {
+        var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, ConsistencyMode.Fast, CausalBookmark.Empty);
+        var state = await UsableStateAsync(cancellationToken);
+        state.BeginTelemetryWrite();
+        var bumped = false;
+        try
+        {
+            var outcome = await state.Session.ExecuteWriteAsync(request, cancellationToken);
+            bumped = outcome switch
+            {
+                SqlWriteResult { Commit.Sequence: > 0 } => true,
+                SqlWriteResult or SqlError or StrongRequired or SchemaMismatch or StorageBusy or StorageTimeout => false,
+            };
+            return outcome;
+        }
+        finally
+        {
+            state.EndTelemetryWrite(bumped);
+        }
+    }
 
     public ValueTask<ISqlDatabaseSession> UsableSessionAsync(CancellationToken cancellationToken) =>
         Volatile.Read(ref _state) is { Session: { IsUsable: true } current }
             ? ValueTask.FromResult(current)
             : ReopenSessionAsync(cancellationToken);
 
-    private async ValueTask<ISqlDatabaseSession> ReopenSessionAsync(CancellationToken cancellationToken)
+    private ValueTask<SessionState> UsableStateAsync(CancellationToken cancellationToken) =>
+        Volatile.Read(ref _state) is { Session.IsUsable: true } current
+            ? ValueTask.FromResult(current)
+            : ReopenStateAsync(cancellationToken);
+
+    private async ValueTask<ISqlDatabaseSession> ReopenSessionAsync(CancellationToken cancellationToken) =>
+        (await ReopenStateAsync(cancellationToken)).Session;
+
+    private async ValueTask<SessionState> ReopenStateAsync(CancellationToken cancellationToken)
     {
         var reopened = await databases.OpenAsync(Id, KeyId, cancellationToken);
         return reopened switch
         {
-            ISqlDatabaseSession session => Adopt(session),
-            ResourceNotFound or BackendUnavailable => Session,
+            ISqlDatabaseSession session => AdoptState(session),
+            ResourceNotFound or BackendUnavailable => Volatile.Read(ref _state) ?? throw new InvalidOperationException("the system database is not open"),
         };
     }
 
-    private ISqlDatabaseSession Adopt(ISqlDatabaseSession session)
+    private ISqlDatabaseSession Adopt(ISqlDatabaseSession session) => AdoptState(session).Session;
+
+    private SessionState AdoptState(ISqlDatabaseSession session)
     {
         lock (_stateGate)
         {
@@ -174,10 +232,10 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             {
                 if (ReferenceEquals(current.Session, session))
                 {
-                    return session;
+                    return current;
                 }
 
-                var previousMax = current.Offset + current.Session.ChangeGeneration;
+                var previousMax = Math.Max(current.Offset + current.Session.ChangeGeneration, current.CatalogGeneration);
                 if (previousMax >= _nextEpoch)
                 {
                     _nextEpoch = previousMax + 1;
@@ -185,12 +243,136 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             }
 
             var offset = _nextEpoch;
-            Volatile.Write(ref _state, new SessionState(session, offset));
-            return session;
+            var next = new SessionState(session, offset);
+            Volatile.Write(ref _state, next);
+            return next;
         }
     }
 
-    private sealed record SessionState(ISqlDatabaseSession Session, long Offset);
+    private static SystemWriteOutcome MapWriteOutcome(ClusterWriteOutcome outcome, SessionState state, bool notifyNonTelemetry) => outcome switch
+    {
+        SqlWriteResult written => NotifyAndReturn(written, state, notifyNonTelemetry),
+        SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
+        SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
+        SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
+        SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
+        ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
+        ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
+        StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
+    };
+
+    private static SqlWriteResult NotifyAndReturn(SqlWriteResult written, SessionState state, bool notifyNonTelemetry)
+    {
+        if (notifyNonTelemetry)
+        {
+            state.OnNonTelemetryWrite();
+        }
+
+        return written;
+    }
+
+    private sealed class SessionState(ISqlDatabaseSession session, long offset)
+    {
+        private readonly Lock _gate = new();
+        private long _observedSessionGeneration = session.ChangeGeneration;
+        private long _catalogGeneration = offset + session.ChangeGeneration;
+        private int _inFlightTelemetry;
+        private int _availableTelemetryCredits;
+
+        public ISqlDatabaseSession Session { get; } = session;
+
+        public long Offset { get; } = offset;
+
+        public long CatalogGeneration
+        {
+            get
+            {
+                var current = Session.ChangeGeneration;
+                if (current == Volatile.Read(ref _observedSessionGeneration))
+                {
+                    return Volatile.Read(ref _catalogGeneration);
+                }
+
+                lock (_gate)
+                {
+                    ReconcileLocked();
+                    return _catalogGeneration;
+                }
+            }
+        }
+
+        public void OnNonTelemetryWrite()
+        {
+            lock (_gate)
+            {
+                ReconcileLocked();
+                _catalogGeneration++;
+            }
+        }
+
+        public void BeginTelemetryWrite()
+        {
+            lock (_gate)
+            {
+                ReconcileLocked();
+                _inFlightTelemetry++;
+                _availableTelemetryCredits++;
+            }
+        }
+
+        public void EndTelemetryWrite(bool bumpedSessionGeneration)
+        {
+            lock (_gate)
+            {
+                ReconcileLocked();
+                if (_inFlightTelemetry > 0)
+                {
+                    _inFlightTelemetry--;
+                }
+
+                if (!bumpedSessionGeneration)
+                {
+                    if (_availableTelemetryCredits > 0)
+                    {
+                        _availableTelemetryCredits--;
+                    }
+                    else
+                    {
+                        _catalogGeneration++;
+                    }
+                }
+
+                if (_availableTelemetryCredits > _inFlightTelemetry)
+                {
+                    _availableTelemetryCredits = _inFlightTelemetry;
+                }
+            }
+        }
+
+        private void ReconcileLocked()
+        {
+            var latest = Session.ChangeGeneration;
+            if (latest <= _observedSessionGeneration)
+            {
+                return;
+            }
+
+            var delta = latest - _observedSessionGeneration;
+            if (_availableTelemetryCredits > 0)
+            {
+                var absorbed = (int)Math.Min(delta, _availableTelemetryCredits);
+                _availableTelemetryCredits -= absorbed;
+                delta -= absorbed;
+            }
+
+            if (delta > 0)
+            {
+                _catalogGeneration += delta;
+            }
+
+            _observedSessionGeneration = latest;
+        }
+    }
 
     private static SystemQueryOutcome Rows(IReadOnlyList<SqlResultSet> sets) =>
         sets.Count == 0 ? new([]) : new(sets[^1].Rows);
@@ -290,17 +472,8 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, ConsistencyMode.Strong, CausalBookmark.Empty);
-        var outcome = await coordinator.ExecuteLocalBootstrapWriteAsync(await UsableSessionAsync(cancellationToken), request, cancellationToken);
-        return outcome switch
-        {
-            SqlWriteResult written => written,
-            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
-            SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
-            SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
-            SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
-            ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
-            ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
-            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
-        };
+        var state = await UsableStateAsync(cancellationToken);
+        var outcome = await coordinator.ExecuteLocalBootstrapWriteAsync(state.Session, request, cancellationToken);
+        return MapWriteOutcome(outcome, state, notifyNonTelemetry: true);
     }
 }
