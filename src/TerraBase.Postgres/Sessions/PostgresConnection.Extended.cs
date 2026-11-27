@@ -114,7 +114,7 @@ internal sealed partial class PostgresConnection
                             return inferenceError;
                         }
 
-                        if (message.ParameterOids.Length == 0 || Array.TrueForAll(message.ParameterOids, static oid => oid == 0))
+                        if (session.Transaction is null && (message.ParameterOids.Length == 0 || Array.TrueForAll(message.ParameterOids, static oid => oid == 0)))
                         {
                             session.CacheInferredOids(message.Sql, [.. oids]);
                         }

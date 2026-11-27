@@ -37,9 +37,40 @@ internal readonly struct CallScope : IDisposable
         : _caller.CanBeCanceled ? _caller
         : _shutdown;
 
+    public bool IsDeadlineExpired =>
+        _state is not null && _state.IsDeadlineTriggered && !_shutdown.IsCancellationRequested && !_caller.IsCancellationRequested;
+
     public void DisarmDeadline() => _state?.DisarmDeadline();
 
     public void ArmDeadline(TimeSpan timeout, TimeProvider timeProvider) => _state?.ArmDeadline(timeout, timeProvider);
+
+    public static void ReArm(ref CallScope scope, TimeSpan timeout, TimeProvider timeProvider)
+    {
+        if (scope.IsDeadlineExpired)
+        {
+            var shutdown = scope._shutdown;
+            var caller = scope._caller;
+            scope.Dispose();
+            scope = Create(timeout, timeProvider, shutdown, caller);
+            return;
+        }
+
+        scope.ArmDeadline(timeout, timeProvider);
+    }
+
+    public static void Disarm(ref CallScope scope, TimeProvider timeProvider)
+    {
+        if (scope.IsDeadlineExpired)
+        {
+            var shutdown = scope._shutdown;
+            var caller = scope._caller;
+            scope.Dispose();
+            scope = CreateArmable(timeProvider, shutdown, caller);
+            return;
+        }
+
+        scope.DisarmDeadline();
+    }
 
     public QuicFault Interrupted() =>
         _shutdown.IsCancellationRequested ? new TransportShutdown("The QUIC transport is shutting down.")

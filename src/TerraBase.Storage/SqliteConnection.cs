@@ -35,8 +35,6 @@ internal sealed record CachedUserStatement(
 {
     public SqlColumn[] Columns { get; set; } = Columns;
 
-    public long SchemaCookie { get; set; }
-
     public int LastRowCount { get; set; }
 }
 
@@ -601,10 +599,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             hasWriterAnalysis,
             analyzedSql,
             isInsertOrReplace,
-            annotation)
-        {
-            SchemaCookie = _userCacheCookie,
-        };
+            annotation);
 
         if (_userStatements.TryGetValue(sql, out var existing))
         {
@@ -682,11 +677,6 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 _ = SqliteNative.Reset(cached.Handle);
                 _ = SqliteNative.ClearBindings(cached.Handle);
             }
-        }
-
-        if (reprepared && !evicted && ReadSchemaCookie(out var cookie).IsOk)
-        {
-            cached.SchemaCookie = cookie;
         }
 
         return status;

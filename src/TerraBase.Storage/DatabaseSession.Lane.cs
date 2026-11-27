@@ -1363,10 +1363,10 @@ internal sealed partial class DatabaseSession
         }
 
         log.MarkCommitted();
+        RecordFilteredChange(touchedTables, schemaTouched);
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
         _laneVersionUpdate[0] = new KeyValuePair<string, long>(Region, commits[^1].Sequence);
         _versions.Set(_laneVersionUpdate);
-        RecordFilteredChange(touchedTables, schemaTouched);
         log.SealIfDue();
         return SqliteStatus.Success;
     }

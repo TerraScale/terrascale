@@ -42,9 +42,15 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 
     private readonly CancellationTokenSource _shutdownDrain = new();
 
+    private readonly Lock _drainGate = new();
+
     private readonly List<RequestLogEntry> _batchBuffer = new(Batch);
 
     private TaskCompletionSource _wake = NewWake();
+
+    private Task? _activeDrain;
+
+    private bool _disposed;
 
     private int _queued;
 
@@ -84,13 +90,24 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     private async ValueTask FlushCoreAsync(CancellationToken drainToken, CancellationToken cancellationToken)
     {
         await _writeGate.WaitAsync(cancellationToken);
-        if (!_queue.Reader.TryPeek(out _))
+        Task? drain = null;
+        lock (_drainGate)
         {
-            _writeGate.Release();
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (!_queue.Reader.TryPeek(out _))
+            {
+                _writeGate.Release();
+                return;
+            }
+
+            drain = DrainAndReleaseAsync(drainToken);
+            _activeDrain = drain;
         }
 
-        var drain = DrainAndReleaseAsync(drainToken);
         await drain.WaitAsync(cancellationToken);
     }
 
@@ -100,9 +117,28 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         {
             await DrainLockedAsync(cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception error)
+        {
+            logger.ZLogWarning(error, $"Request log drain failed");
+        }
         finally
         {
-            _writeGate.Release();
+            lock (_drainGate)
+            {
+                _activeDrain = null;
+                if (_disposed)
+                {
+                    _writeGate.Dispose();
+                    _shutdownDrain.Dispose();
+                }
+                else
+                {
+                    _writeGate.Release();
+                }
+            }
         }
     }
 
@@ -136,18 +172,46 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         using var cancelInFlight = linked.Token.Register(static state =>
         {
-            if (state is CancellationTokenSource cts)
+            if (state is RequestLogRecorder recorder)
             {
-                cts.Cancel();
+                recorder.CancelShutdownDrain();
             }
-        }, _shutdownDrain);
-        await FlushCoreAsync(linked.Token, linked.Token);
+        }, this);
+        try
+        {
+            await FlushCoreAsync(linked.Token, linked.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void CancelShutdownDrain()
+    {
+        lock (_drainGate)
+        {
+            if (!_disposed && !_shutdownDrain.IsCancellationRequested)
+            {
+                _shutdownDrain.Cancel();
+            }
+        }
     }
 
     public override void Dispose()
     {
-        _shutdownDrain.Dispose();
-        _writeGate.Dispose();
+        lock (_drainGate)
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                if (_activeDrain is null)
+                {
+                    _shutdownDrain.Dispose();
+                    _writeGate.Dispose();
+                }
+            }
+        }
+
         base.Dispose();
     }
 

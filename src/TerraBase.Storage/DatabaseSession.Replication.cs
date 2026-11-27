@@ -1018,9 +1018,9 @@ internal sealed partial class DatabaseSession
             }
 
             isolate &= isolated == 0;
+            RecordFilteredChange(order);
             Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
             _versions.Set(tentative);
-            RecordFilteredChange(order);
             if (progress is not null)
             {
                 if (iterationSkipped is not null)
@@ -1363,10 +1363,10 @@ internal sealed partial class DatabaseSession
                 : status.ToBusy();
         }
 
+        RecordFilteredChange(batch);
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
         _laneVersionUpdate[0] = new KeyValuePair<string, long>(Region, sequence);
         _versions.Set(_laneVersionUpdate);
-        RecordFilteredChange(batch);
         return commit;
     }
 }

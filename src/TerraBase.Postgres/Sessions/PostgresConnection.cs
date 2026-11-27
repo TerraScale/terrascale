@@ -280,6 +280,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         }
 
         block.Failed = true;
+        session.InvalidateSchemaCache();
         if (block.Savepoints || block.Active is not { } active)
         {
             return;

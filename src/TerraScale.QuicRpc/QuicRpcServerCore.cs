@@ -519,145 +519,145 @@ internal sealed class QuicRpcServerCore(
     private async Task HandleBidirectionalAsync(QuicStream stream, QuicPeerIdentity identity, bool supportsPersistentUnary, CancellationToken cancellationToken)
     {
         using var reader = new QuicFrameReader(QuicFrameReader.UnaryBufferCapacity);
-        using var writeScope = CallScope.Create(QuicMeshLimits.CallTimeout, timeProvider, cancellationToken, CancellationToken.None);
-        var isSystemClock = ReferenceEquals(timeProvider, TimeProvider.System);
-        var writeArmed = true;
-        var writeArmedTicks = timeProvider.GetTimestamp();
-
-        var firstRead = await reader.ReadNextAsync(stream, writeScope);
-        var (firstReady, firstEnded, firstFault) = UnpackRead(firstRead);
-        if (!firstReady)
+        var writeScope = CallScope.Create(QuicMeshLimits.CallTimeout, timeProvider, cancellationToken, CancellationToken.None);
+        var idleReadScope = default(CallScope);
+        try
         {
-            Refuse(stream, firstEnded
-                ? new ProtocolFault("The peer closed a bidirectional stream before its request frame.")
-                : firstFault ?? new ProtocolFault("The peer failed to send a request frame."));
-            return;
-        }
+            var isSystemClock = ReferenceEquals(timeProvider, TimeProvider.System);
+            var writeArmed = true;
+            var writeArmedTicks = timeProvider.GetTimestamp();
 
-        var keepAlive = supportsPersistentUnary && !reader.CurrentHeader.IsEndOfStream;
-        using var idleReadScope = keepAlive
-            ? CallScope.CreateArmable(timeProvider, _idleUnary.Token, cancellationToken)
-            : default;
-
-        while (true)
-        {
-            metrics.Received(QuicSide.Server, reader.CurrentTotalLength);
-            var header = reader.CurrentHeader;
-            var payload = reader.CurrentPayload;
-            var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);
-            var closingAfterReply = !keepAlive || header.IsEndOfStream || Volatile.Read(ref _draining) != 0;
-
-            if (header.IsError || !routes.Bidi.TryGetValue(header.MessageType, out var route))
+            var firstRead = await reader.ReadNextAsync(stream, writeScope);
+            var (firstReady, firstEnded, firstFault) = UnpackRead(firstRead);
+            if (!firstReady)
             {
-                metrics.Error(QuicSide.Server, QuicErrorKind.Unmapped);
-                var unmapped = new QuicRemoteError(QuicRemoteError.UnmappedMessageType, $"No unary or server-stream handler is mapped for message type {header.MessageType}.");
-                var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
-                EnsureWriteDeadline(writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
-                var written = await WriteErrorWithScopeAsync(stream, context, unmapped, closingAfterReply, writeScope);
-                Complete(context, QuicPattern.Unary, started, written, QuicOutcome.RemoteError);
-                if (closingAfterReply || Fault(written) is not null)
-                {
-                    return;
-                }
+                Refuse(stream, firstEnded
+                    ? new ProtocolFault("The peer closed a bidirectional stream before its request frame.")
+                    : firstFault ?? new ProtocolFault("The peer failed to send a request frame."));
+                return;
             }
-            else
+
+            var keepAlive = supportsPersistentUnary && !reader.CurrentHeader.IsEndOfStream;
+            if (keepAlive)
             {
-                var (unaryRoute, streamRoute) = UnpackRoute(route);
-                if (streamRoute is not null)
-                {
-                    if (writeArmed)
-                    {
-                        writeScope.DisarmDeadline();
-                        writeArmed = false;
-                    }
+                idleReadScope = CallScope.CreateArmable(timeProvider, _idleUnary.Token, cancellationToken);
+            }
 
-                    await RespondStreamAsync(stream, context, streamRoute, payload, cancellationToken);
-                    return;
-                }
+            while (true)
+            {
+                metrics.Received(QuicSide.Server, reader.CurrentTotalLength);
+                var header = reader.CurrentHeader;
+                var payload = reader.CurrentPayload;
+                var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);
+                var closingAfterReply = !keepAlive || header.IsEndOfStream || Volatile.Read(ref _draining) != 0;
 
-                if (unaryRoute is not null)
+                if (header.IsError || !routes.Bidi.TryGetValue(header.MessageType, out var route))
                 {
+                    metrics.Error(QuicSide.Server, QuicErrorKind.Unmapped);
+                    var unmapped = new QuicRemoteError(QuicRemoteError.UnmappedMessageType, $"No unary or server-stream handler is mapped for message type {header.MessageType}.");
                     var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
-                    var replyTask = unaryRoute(context, payload, cancellationToken);
-                    UnaryDispatchOutcome reply;
-                    if (replyTask.IsCompletedSuccessfully)
-                    {
-                        reply = await replyTask;
-                    }
-                    else
-                    {
-                        if (writeArmed)
-                        {
-                            writeScope.DisarmDeadline();
-                            writeArmed = false;
-                        }
-
-                        reply = await replyTask;
-                    }
-
-                    EnsureWriteDeadline(writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
-                    var (replyBuilder, replyError) = UnpackUnaryReply(reply);
-                    QuicIoWriteOutcome written;
-                    QuicOutcome outcome;
-                    if (replyBuilder is not null)
-                    {
-                        using (replyBuilder)
-                        {
-                            var encoded = replyBuilder.Seal(context.MessageTypeId, QuicProtocol.ControlEndOfStream, context.RequestId);
-                            written = await QuicIo.WriteAsync(stream, encoded, closingAfterReply, writeScope);
-                            if (Fault(written) is null)
-                            {
-                                metrics.Sent(QuicSide.Server, encoded.Length);
-                            }
-                        }
-
-                        outcome = QuicOutcome.Ok;
-                    }
-                    else
-                    {
-                        written = await WriteErrorWithScopeAsync(stream, context, replyError ?? new QuicRemoteError(QuicRemoteError.ProtocolViolation, "Handler produced no response."), closingAfterReply, writeScope);
-                        outcome = QuicOutcome.RemoteError;
-                    }
-
-                    Complete(context, QuicPattern.Unary, started, written, outcome);
+                    EnsureWriteDeadline(ref writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
+                    var written = await WriteErrorWithScopeAsync(stream, context, unmapped, closingAfterReply, writeScope);
+                    Complete(context, QuicPattern.Unary, started, written, QuicOutcome.RemoteError);
                     if (closingAfterReply || Fault(written) is not null)
                     {
                         return;
                     }
                 }
-            }
+                else
+                {
+                    var (unaryRoute, streamRoute) = UnpackRoute(route);
+                    if (streamRoute is not null)
+                    {
+                        if (writeArmed)
+                        {
+                            CallScope.Disarm(ref writeScope, timeProvider);
+                            writeArmed = false;
+                        }
 
-            if (Volatile.Read(ref _draining) != 0)
-            {
+                        await RespondStreamAsync(stream, context, streamRoute, payload, cancellationToken);
+                        return;
+                    }
+
+                    if (unaryRoute is not null)
+                    {
+                        if (writeArmed)
+                        {
+                            CallScope.Disarm(ref writeScope, timeProvider);
+                            writeArmed = false;
+                        }
+
+                        var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
+                        var reply = await unaryRoute(context, payload, cancellationToken);
+                        EnsureWriteDeadline(ref writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
+                        var (replyBuilder, replyError) = UnpackUnaryReply(reply);
+                        QuicIoWriteOutcome written;
+                        QuicOutcome outcome;
+                        if (replyBuilder is not null)
+                        {
+                            using (replyBuilder)
+                            {
+                                var encoded = replyBuilder.Seal(context.MessageTypeId, QuicProtocol.ControlEndOfStream, context.RequestId);
+                                written = await QuicIo.WriteAsync(stream, encoded, closingAfterReply, writeScope);
+                                if (Fault(written) is null)
+                                {
+                                    metrics.Sent(QuicSide.Server, encoded.Length);
+                                }
+                            }
+
+                            outcome = QuicOutcome.Ok;
+                        }
+                        else
+                        {
+                            written = await WriteErrorWithScopeAsync(stream, context, replyError ?? new QuicRemoteError(QuicRemoteError.ProtocolViolation, "Handler produced no response."), closingAfterReply, writeScope);
+                            outcome = QuicOutcome.RemoteError;
+                        }
+
+                        Complete(context, QuicPattern.Unary, started, written, outcome);
+                        if (closingAfterReply || Fault(written) is not null)
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                if (Volatile.Read(ref _draining) != 0)
+                {
+                    return;
+                }
+
+                if (writeArmed)
+                {
+                    CallScope.Disarm(ref writeScope, timeProvider);
+                    writeArmed = false;
+                }
+
+                CallScope.ReArm(ref idleReadScope, QuicMeshLimits.PushReadTimeout, timeProvider);
+                var nextRead = await reader.ReadNextAsync(stream, idleReadScope);
+                var (nextReady, nextEnded, nextFault) = UnpackRead(nextRead);
+                if (nextReady)
+                {
+                    CallScope.Disarm(ref idleReadScope, timeProvider);
+                    continue;
+                }
+
+                if (nextEnded || Volatile.Read(ref _draining) != 0 || nextFault is DeadlineExceeded or TransportShutdown)
+                {
+                    return;
+                }
+
+                if (nextFault is not null)
+                {
+                    Refuse(stream, nextFault);
+                }
+
                 return;
             }
-
-            if (writeArmed)
-            {
-                writeScope.DisarmDeadline();
-                writeArmed = false;
-            }
-
-            idleReadScope.ArmDeadline(QuicMeshLimits.PushReadTimeout, timeProvider);
-            var nextRead = await reader.ReadNextAsync(stream, idleReadScope);
-            var (nextReady, nextEnded, nextFault) = UnpackRead(nextRead);
-            if (nextReady)
-            {
-                idleReadScope.DisarmDeadline();
-                continue;
-            }
-
-            if (nextEnded || Volatile.Read(ref _draining) != 0 || nextFault is DeadlineExceeded or TransportShutdown)
-            {
-                return;
-            }
-
-            if (nextFault is not null)
-            {
-                Refuse(stream, nextFault);
-            }
-
-            return;
+        }
+        finally
+        {
+            idleReadScope.Dispose();
+            writeScope.Dispose();
         }
     }
 
@@ -686,11 +686,11 @@ internal sealed class QuicRpcServerCore(
         QuicRemoteError error => error,
     };
 
-    private void EnsureWriteDeadline(CallScope writeScope, bool isSystemClock, ref bool writeArmed, ref long writeArmedTicks)
+    private void EnsureWriteDeadline(ref CallScope writeScope, bool isSystemClock, ref bool writeArmed, ref long writeArmedTicks)
     {
-        if (!writeArmed || !isSystemClock || timeProvider.GetElapsedTime(writeArmedTicks) >= DeadlineRefreshInterval)
+        if (!writeArmed || !isSystemClock || writeScope.IsDeadlineExpired || timeProvider.GetElapsedTime(writeArmedTicks) >= DeadlineRefreshInterval)
         {
-            writeScope.ArmDeadline(QuicMeshLimits.CallTimeout, timeProvider);
+            CallScope.ReArm(ref writeScope, QuicMeshLimits.CallTimeout, timeProvider);
             writeArmed = true;
             writeArmedTicks = timeProvider.GetTimestamp();
         }
@@ -787,43 +787,50 @@ internal sealed class QuicRpcServerCore(
         try
         {
             using var reader = new QuicFrameReader();
-            using var scope = CallScope.CreateArmable(timeProvider, cancellationToken, CancellationToken.None);
-            while (true)
+            var scope = CallScope.CreateArmable(timeProvider, cancellationToken, CancellationToken.None);
+            try
             {
-                scope.ArmDeadline(QuicMeshLimits.PushReadTimeout, timeProvider);
-                var read = await reader.ReadNextAsync(stream, scope);
-                var (ready, ended, readFault) = UnpackRead(read);
-                if (!ready)
+                while (true)
                 {
-                    if (!ended && readFault is not null)
+                    CallScope.ReArm(ref scope, QuicMeshLimits.PushReadTimeout, timeProvider);
+                    var read = await reader.ReadNextAsync(stream, scope);
+                    var (ready, ended, readFault) = UnpackRead(read);
+                    if (!ready)
                     {
-                        _ = PushStreamFaulted(stream, readFault);
+                        if (!ended && readFault is not null)
+                        {
+                            _ = PushStreamFaulted(stream, readFault);
+                        }
+
+                        return;
                     }
 
-                    return;
-                }
+                    CallScope.Disarm(ref scope, timeProvider);
+                    metrics.Received(QuicSide.Server, reader.CurrentTotalLength);
+                    var header = reader.CurrentHeader;
+                    var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);
+                    var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
+                    if (header.IsError || !routes.Push.TryGetValue(header.MessageType, out var dispatch))
+                    {
+                        metrics.Error(QuicSide.Server, QuicErrorKind.Unmapped);
+                        _ = RejectPush(stream, context, started, $"no push handler is mapped for message type {header.MessageType}");
+                        return;
+                    }
 
-                scope.DisarmDeadline();
-                metrics.Received(QuicSide.Server, reader.CurrentTotalLength);
-                var header = reader.CurrentHeader;
-                var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);
-                var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
-                if (header.IsError || !routes.Push.TryGetValue(header.MessageType, out var dispatch))
-                {
-                    metrics.Error(QuicSide.Server, QuicErrorKind.Unmapped);
-                    _ = RejectPush(stream, context, started, $"no push handler is mapped for message type {header.MessageType}");
-                    return;
+                    var outcome = await dispatch(context, reader.CurrentPayload, cancellationToken);
+                    var pushError = UnpackPushOutcome(outcome);
+                    var keepReading = pushError is null
+                        ? AcceptedPush(context, started)
+                        : RejectPush(stream, context, started, pushError.Message);
+                    if (!keepReading)
+                    {
+                        return;
+                    }
                 }
-
-                var outcome = await dispatch(context, reader.CurrentPayload, cancellationToken);
-                var pushError = UnpackPushOutcome(outcome);
-                var keepReading = pushError is null
-                    ? AcceptedPush(context, started)
-                    : RejectPush(stream, context, started, pushError.Message);
-                if (!keepReading)
-                {
-                    return;
-                }
+            }
+            finally
+            {
+                scope.Dispose();
             }
         }
         finally

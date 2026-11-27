@@ -148,6 +148,11 @@ internal sealed partial class PostgresConnection
             session.Report(change);
         }
 
+        if (rollback)
+        {
+            session.InvalidateSchemaCache();
+        }
+
         if (block.Active is not { } active)
         {
             return;
@@ -195,9 +200,15 @@ internal sealed partial class PostgresConnection
         var outcome = await ExecuteStatementAsync(new SqlStatement($"ROLLBACK TO SAVEPOINT {command.Name}", [], NoNamed), block.Access, cancellationToken);
         return outcome switch
         {
-            SqlResultSet => PgResult.Command("ROLLBACK"),
+            SqlResultSet => RolledBackToSavepoint(),
             PgError error => Restore(block, failed, error),
         };
+    }
+
+    private PgOutcome RolledBackToSavepoint()
+    {
+        session.InvalidateSchemaCache();
+        return PgResult.Command("ROLLBACK");
     }
 
     private static PgError Restore(PostgresTransactionBlock block, bool failed, PgError error)
