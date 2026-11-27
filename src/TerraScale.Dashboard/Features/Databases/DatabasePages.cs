@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Html;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Home;
 
 namespace TerraScale.Dashboard.Features.Databases;
@@ -147,6 +148,7 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     public DatabaseTables? Tables { get; init; }
     public string Table { get; init; } = "";
     public DatabaseSqlResult? Preview { get; init; }
+    public IReadOnlyList<SavedQuery>? SavedQueries { get; init; }
     public long? StorageBytes { get; init; }
     public CreateTableDraft? TableDraft { get; init; }
     public bool OpenCreateTable => Tab == "tables" && Context.CanWriteProjectData && (TableDraft is not null || ShowCreateTable);

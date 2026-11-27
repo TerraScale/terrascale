@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.Data
             var database = DatabaseService.Database(context, databaseId);
             var tables = await backend.SqlTablesAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, cancellationToken);
             return new(SqlCatalog.Empty.Keywords, [.. tables.Tables.Select(table => new SqlCatalogTable(table.Name,
-                [.. table.Columns.Select(column => new SqlCatalogField(column.Name, string.IsNullOrEmpty(column.Decltype) ? "No declared type" : column.Decltype))]))], tables.Truncated);
+                [.. table.Schema.Select(column => new SqlCatalogField(column.Name, string.IsNullOrEmpty(column.Decltype) ? "No declared type" : column.Decltype, column.NotNull, column.PrimaryKey))]))], tables.Truncated);
         }
     }
 
@@ -40,5 +40,5 @@ namespace TerraScale.Dashboard.Features.Data
         public static SqlCatalog Empty { get; } = new(["SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL", "ORDER BY", "ASC", "DESC", "LIMIT", "TRUE", "FALSE"], []);
     }
     public sealed record SqlCatalogTable(string Name, IReadOnlyList<SqlCatalogField> Fields);
-    public sealed record SqlCatalogField(string Path, string Type);
+    public sealed record SqlCatalogField(string Path, string Type, bool NotNull = false, int PrimaryKey = 0);
 }

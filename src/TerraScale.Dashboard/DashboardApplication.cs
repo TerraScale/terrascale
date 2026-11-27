@@ -204,6 +204,7 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<CheckSqlEndpoint>(),
                 EndpointRegistration.Create<GetSqlSchemaEndpoint>(),
                 EndpointRegistration.Create<CreateTableEndpoint>(),
+                EndpointRegistration.Create<MutateTableRowEndpoint>(),
                 EndpointRegistration.Create<SaveQueryEndpoint>(),
                 EndpointRegistration.Create<DeleteSavedQueryEndpoint>(),
                 EndpointRegistration.Create<ListBackupsEndpoint>(),

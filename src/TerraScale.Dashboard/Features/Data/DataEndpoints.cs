@@ -226,6 +226,11 @@ namespace TerraScale.Dashboard.Features.Data
                 catch (Exception error) when (!http.RequestAborted.IsCancellationRequested &&
                     (DatabaseResults.KnownFailure(error) || error is HttpRequestException or OperationCanceledException or JsonException))
                 { catalogError = "SQL table suggestions are unavailable. You can still run queries. Retry to reload the catalog."; }
+                if (submitted is null && catalog is not null && http.Request.Query["result"].ToString().Length == 0 && http.Request.Query["savedQueryId"].ToString().Length == 0
+                    && TableQuery(catalog, http.Request.Query["queryTable"].ToString(), http.Request.Query["column"].ToString()) is { } handoff)
+                {
+                    sql = handoff;
+                }
             }
             catch (Exception error) when (error is HttpRequestException || DatabaseResults.KnownFailure(error))
             {
@@ -269,6 +274,24 @@ namespace TerraScale.Dashboard.Features.Data
             var result = DataView.Create(page);
             result.StatusCode = status;
             return result;
+        }
+
+        internal static string? TableQuery(SqlCatalog catalog, string table, string column)
+        {
+            if (catalog.Tables.FirstOrDefault(candidate => candidate.Name == table) is not { } chosen)
+            {
+                return null;
+            }
+
+            var from = "\nFROM " + DatabaseTables.Identifier(chosen.Name) + "\nLIMIT 100;";
+            if (chosen.Fields.FirstOrDefault(field => field.Path == column) is not { } picked)
+            {
+                return "SELECT *" + from;
+            }
+
+            return chosen.Fields.Where(field => field.PrimaryKey > 0).OrderBy(field => field.PrimaryKey).FirstOrDefault() is { } key && key.Path != picked.Path
+                ? "SELECT " + DatabaseTables.Identifier(key.Path) + ", " + DatabaseTables.Identifier(picked.Path) + from
+                : "SELECT " + DatabaseTables.Identifier(picked.Path) + from;
         }
 
         private static string RunNotice(SqlRunReceipt run) => run.Result is { } kept && kept.Rows.Count < run.ReturnedRows
