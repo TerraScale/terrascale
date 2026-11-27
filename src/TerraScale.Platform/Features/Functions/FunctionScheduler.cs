@@ -49,8 +49,6 @@ public sealed class FunctionScheduler(
 
     private async Task<SchedulePass> TickAsync(CancellationToken cancellationToken)
     {
-        var now = timeProvider.GetUtcNow();
-        var nowMs = now.UnixMs();
         var upcomingOutcome = await store.ReadAsync(
             SqlValues.Statement(
                 "SELECT f.database_id, f.name, f.organization_id, f.project_id, f.database_name, f.cron, f.cron_next FROM platform_functions f "
@@ -63,6 +61,8 @@ public sealed class FunctionScheduler(
             PlatformConflict conflict => Skip(conflict.Message),
             PlatformUnavailable unavailable => Skip(unavailable.Message),
         };
+        var now = timeProvider.GetUtcNow();
+        var nowMs = now.UnixMs();
         DueSchedule[] due = [.. upcoming.Where(schedule => schedule.Due <= nowMs)];
         await Parallel.ForEachAsync(
             due,
