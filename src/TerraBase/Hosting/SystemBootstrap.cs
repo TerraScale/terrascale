@@ -27,6 +27,7 @@ internal sealed class SystemBootstrap(
     ILogger<SystemBootstrap> logger)
     : IHostedService
 {
+    private const int WarmStartupTenants = 8;
     private static readonly TimeSpan StartupSyncBudget = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AuthWarmupBudget = TimeSpan.FromSeconds(3);
 
@@ -99,27 +100,68 @@ internal sealed class SystemBootstrap(
         {
             _ = await antiEntropy.SyncAsync(SystemDatabase.Id, budget.Token);
             var active = await catalog.ListActiveDatabasesAsync(budget.Token);
-            List<Ulid> local = [];
+            List<(Ulid Id, long LastWriteTicks)> warm = new(WarmStartupTenants + 1);
+            List<Ulid> cold = [];
             foreach (var id in active)
             {
+                budget.Token.ThrowIfCancellationRequested();
                 if (id == SystemDatabase.Id)
                 {
                     continue;
                 }
 
-                if (File.Exists(Path.Combine(storage.RootDirectory, id.ToString(), string.Concat(id.ToString(), ".db"))))
+                var dbPath = Path.Combine(storage.RootDirectory, id.ToString(), string.Concat(id.ToString(), ".db"));
+                if (!File.Exists(dbPath))
                 {
-                    local.Add(id);
+                    continue;
+                }
+
+                var lastWrite = Math.Max(File.GetLastWriteTimeUtc(dbPath).Ticks, File.GetLastWriteTimeUtc(string.Concat(dbPath, "-wal")).Ticks);
+                var candidate = (Id: id, LastWriteTicks: lastWrite);
+                if (warm.Count < WarmStartupTenants || CompareStartupOrder(candidate, warm[^1]) < 0)
+                {
+                    InsertWarm(warm, candidate, cold);
+                }
+                else
+                {
+                    cold.Add(id);
                 }
             }
 
             await Parallel.ForEachAsync(
-                local,
+                warm,
                 new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = budget.Token },
-                async (id, ct) => _ = await antiEntropy.SyncTransientAsync(id, ct));
+                async (entry, token) => _ = await antiEntropy.SyncAsync(entry.Id, token));
+
+            await Parallel.ForEachAsync(
+                cold,
+                new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = budget.Token },
+                async (id, token) => _ = await antiEntropy.SyncTransientAsync(id, token));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
         }
+    }
+
+    private static void InsertWarm(List<(Ulid Id, long LastWriteTicks)> warm, (Ulid Id, long LastWriteTicks) candidate, List<Ulid> cold)
+    {
+        var index = warm.Count;
+        while (index > 0 && CompareStartupOrder(candidate, warm[index - 1]) < 0)
+        {
+            index--;
+        }
+
+        warm.Insert(index, candidate);
+        if (warm.Count > WarmStartupTenants)
+        {
+            cold.Add(warm[^1].Id);
+            warm.RemoveAt(warm.Count - 1);
+        }
+    }
+
+    private static int CompareStartupOrder((Ulid Id, long LastWriteTicks) left, (Ulid Id, long LastWriteTicks) right)
+    {
+        var byTime = right.LastWriteTicks.CompareTo(left.LastWriteTicks);
+        return byTime != 0 ? byTime : left.Id.CompareTo(right.Id);
     }
 }
