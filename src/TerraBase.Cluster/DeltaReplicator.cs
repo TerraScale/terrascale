@@ -415,6 +415,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             }
         }
 
+        changefeed.ObserveBookmark(databaseId, outcome.Bookmark);
         if (requestCatchUpOnBuffered && outcome.Buffered > 0)
         {
             _ = databases.RequestCatchUp(databaseId, FrontierOf(commits));

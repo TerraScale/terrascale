@@ -51,7 +51,7 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
 
     private static readonly TimeSpan BatchRetention = TimeSpan.FromMinutes(1);
 
-    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(5);
 
     private const int OrganizationProjectLimit = 1000;
 

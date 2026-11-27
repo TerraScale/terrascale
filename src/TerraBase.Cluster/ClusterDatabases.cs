@@ -413,4 +413,18 @@ public sealed class ChangefeedPublisher(IEnumerable<IChangefeedHub> hubs, TimePr
             await hub.PublishAsync(entry, cancellationToken);
         }
     }
+
+    public void ObserveBookmark(Ulid databaseId, CausalBookmark bookmark)
+    {
+        ArgumentNullException.ThrowIfNull(bookmark);
+        if (_hubs.Length == 0 || bookmark.IsEmpty)
+        {
+            return;
+        }
+
+        foreach (var hub in _hubs)
+        {
+            hub.ObserveBookmark(databaseId, bookmark);
+        }
+    }
 }

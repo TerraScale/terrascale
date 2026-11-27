@@ -62,6 +62,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private long _schemaGeneration;
     private long _filteredChangeGeneration = 1;
     private long _lastActivityTimestamp;
+    private long _lastShrunkActivityTimestamp;
     private int _references = 1;
     private int _closed;
     private int _laneFaulted;
@@ -70,6 +71,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private int _openedReaders;
     private int _openingReaders;
     private int _shrinkWriterQueued;
+    private int _changeSubscribers;
     private bool _writeGroupBroken;
 
     private DatabaseSession(SessionContext context, SqliteConnection writer, PreupdateCapture capture, CommitLogCipher cipher, bool strict, Func<DatabaseSession, Task> release)
@@ -387,76 +389,84 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     public async IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(after);
-        Dictionary<string, long> cursor = new(StringComparer.Ordinal);
-        foreach (var (origin, sequence) in after.Entries)
+        Interlocked.Increment(ref _changeSubscribers);
+        try
         {
-            cursor[origin] = sequence;
-        }
-
-        while (!IsClosed)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var signal = _versions.WhenChanged();
-            var watermarks = _versions.Copy();
-            var progressed = false;
-            foreach (var log in Logs())
+            Dictionary<string, long> cursor = new(StringComparer.Ordinal);
+            foreach (var (origin, sequence) in after.Entries)
             {
-                var from = cursor.GetValueOrDefault(log.Origin) + 1;
-                var visible = watermarks.GetValueOrDefault(log.Origin);
-                if (visible < from)
-                {
-                    continue;
-                }
+                cursor[origin] = sequence;
+            }
 
-                var read = log.Read(from, 256);
-                IReadOnlyList<CommitMetadata> entries = read switch
+            while (!IsClosed)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var signal = _versions.WhenChanged();
+                var watermarks = _versions.Copy();
+                var progressed = false;
+                foreach (var log in Logs())
                 {
-                    IReadOnlyList<CommitMetadata> page => page,
-                    CommitLogGap or StorageCorrupted => [],
-                };
-                var resume = read switch
-                {
-                    IReadOnlyList<CommitMetadata> => -1L,
-                    CommitLogGap gap => gap.OldestAvailable - 1,
-                    StorageCorrupted => long.MaxValue,
-                };
-                if (resume == long.MaxValue)
-                {
-                    yield break;
-                }
-
-                if (resume >= 0)
-                {
-                    cursor[log.Origin] = resume;
-                    progressed = true;
-                    continue;
-                }
-
-                foreach (var entry in entries)
-                {
-                    if (entry.Sequence > visible)
+                    var from = cursor.GetValueOrDefault(log.Origin) + 1;
+                    var visible = watermarks.GetValueOrDefault(log.Origin);
+                    if (visible < from)
                     {
-                        break;
+                        continue;
                     }
 
-                    cursor[log.Origin] = entry.Sequence;
-                    progressed = true;
-                    yield return new ChangefeedEntry(
-                        DatabaseId,
-                        entry.TxId,
-                        entry.OriginRegion,
-                        entry.Sequence,
-                        entry.SchemaEpoch,
-                        entry.Mode,
-                        entry.DeltaPayload,
-                        entry.Hlc.WallTime);
+                    var read = log.Read(from, 256);
+                    IReadOnlyList<CommitMetadata> entries = read switch
+                    {
+                        IReadOnlyList<CommitMetadata> page => page,
+                        CommitLogGap or StorageCorrupted => [],
+                    };
+                    var resume = read switch
+                    {
+                        IReadOnlyList<CommitMetadata> => -1L,
+                        CommitLogGap gap => gap.OldestAvailable - 1,
+                        StorageCorrupted => long.MaxValue,
+                    };
+                    if (resume == long.MaxValue)
+                    {
+                        yield break;
+                    }
+
+                    if (resume >= 0)
+                    {
+                        cursor[log.Origin] = resume;
+                        progressed = true;
+                        continue;
+                    }
+
+                    foreach (var entry in entries)
+                    {
+                        if (entry.Sequence > visible)
+                        {
+                            break;
+                        }
+
+                        cursor[log.Origin] = entry.Sequence;
+                        progressed = true;
+                        yield return new ChangefeedEntry(
+                            DatabaseId,
+                            entry.TxId,
+                            entry.OriginRegion,
+                            entry.Sequence,
+                            entry.SchemaEpoch,
+                            entry.Mode,
+                            entry.DeltaPayload,
+                            entry.Hlc.WallTime);
+                    }
+                }
+
+                if (!progressed)
+                {
+                    await signal.WaitAsync(cancellationToken);
                 }
             }
-
-            if (!progressed)
-            {
-                await signal.WaitAsync(cancellationToken);
-            }
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _changeSubscribers);
         }
     }
 
@@ -712,30 +722,33 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     internal int TrimIdleResources(TimeSpan readerIdleAfter, bool shrinkWriter)
     {
-        if (!IsUsable || IdleElapsed() < readerIdleAfter)
+        if (!IsUsable)
         {
             return 0;
         }
 
         List<SqliteConnection> trimmed = [];
-        lock (_readersGate)
+        if (IdleElapsed() >= readerIdleAfter)
         {
-            if (!IsClosed)
+            lock (_readersGate)
             {
-                while (_idleReaderCount > 0)
+                if (!IsClosed && IdleElapsed() >= readerIdleAfter)
                 {
-                    var reader = _idleReaders[--_idleReaderCount];
-                    _idleReaders[_idleReaderCount] = null;
-                    if (reader is not null)
+                    while (_idleReaderCount > 0)
                     {
-                        _openedReaders--;
-                        trimmed.Add(reader);
+                        var reader = _idleReaders[--_idleReaderCount];
+                        _idleReaders[_idleReaderCount] = null;
+                        if (reader is not null)
+                        {
+                            _openedReaders--;
+                            trimmed.Add(reader);
+                        }
                     }
-                }
 
-                if (trimmed.Count > 0)
-                {
-                    WakeOneReaderWaiterLocked();
+                    if (trimmed.Count > 0)
+                    {
+                        WakeOneReaderWaiterLocked();
+                    }
                 }
             }
         }
@@ -755,7 +768,8 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     internal bool IsIdleFor(TimeSpan idleFor)
     {
-        if (!IsUsable || IdleElapsed() < idleFor || Volatile.Read(ref _activeTransaction) is not null || _requests.Reader.Count > 0)
+        if (!IsUsable || IdleElapsed() < idleFor || Volatile.Read(ref _activeTransaction) is not null || _requests.Reader.Count > 0
+            || Volatile.Read(ref _references) > 1 || Volatile.Read(ref _changeSubscribers) > 0)
         {
             return false;
         }
@@ -770,6 +784,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
         lock (_stagedGate)
         {
+            DropExpiredStaged();
             return _staged.Count == 0;
         }
     }
@@ -780,6 +795,12 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private void QueueShrinkWriter()
     {
+        var activity = Volatile.Read(ref _lastActivityTimestamp);
+        if (Volatile.Read(ref _lastShrunkActivityTimestamp) == activity)
+        {
+            return;
+        }
+
         if (Interlocked.CompareExchange(ref _shrinkWriterQueued, 1, 0) != 0)
         {
             return;

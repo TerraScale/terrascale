@@ -103,12 +103,17 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
         if (databaseId != SystemDatabase.Id)
         {
             var found = await Catalog.GetDatabaseAsync(databaseId, cancellationToken);
-            if (found is DatabaseRecord record)
+            var placed = found switch
             {
-                eligible = [.. healthy.Where(candidate => record.PlacedIn(candidate.Region))];
+                DatabaseRecord database => database,
+                ResourceNotFound or BackendUnavailable => null,
+            };
+            if (placed is not null)
+            {
+                eligible = [.. healthy.Where(candidate => placed.PlacedIn(candidate.Region))];
                 if (eligible.Length == 0)
                 {
-                    return true;
+                    eligible = healthy;
                 }
             }
         }
@@ -199,6 +204,8 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     public async ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken)
     {
         await Databases.EvictAsync(databaseId);
+        services.GetRequiredService<ArchiveManifests>().Invalidate(databaseId);
+        services.GetRequiredService<ChangefeedHub>().Activity.Invalidate(databaseId);
         if (rewoundTo is not { } bookmark || Cluster.Peers.Count == 0)
         {
             return;
@@ -250,6 +257,21 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     }
 
     private async ValueTask<DatabaseResolveOutcome> OpenPlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
+    {
+        if (Databases.TryGetTracked(databaseId, placement.KeyId, out _))
+        {
+            return await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
+        }
+
+        var leased = await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
+        return leased switch
+        {
+            ISqlDatabaseSession or ClusterUnavailable => leased,
+            DatabaseNotFound => await CreatePlacedAsync(databaseId, placement, cancellationToken),
+        };
+    }
+
+    private async ValueTask<DatabaseResolveOutcome> CreatePlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
     {
         var ready = await Databases.OpenOrCreateForReplicationAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken);
         return ready switch

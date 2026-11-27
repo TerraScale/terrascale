@@ -219,23 +219,25 @@ internal sealed class CountingS3Server : IAsyncDisposable
         }
 
         var key = Uri.UnescapeDataString(remainder);
-        switch (method)
+        if (string.Equals(method, "PUT", StringComparison.Ordinal))
         {
-            case "PUT":
-                await HandlePutAsync(request, response, key);
-                return;
-            case "GET":
-                await HandleGetAsync(request, response, key, headOnly: false);
-                return;
-            case "HEAD":
-                await HandleGetAsync(request, response, key, headOnly: true);
-                return;
-            case "DELETE":
-                HandleDelete(response, key);
-                return;
-            default:
-                await WriteErrorAsync(response, 405, "MethodNotAllowed", "object operation is not supported");
-                return;
+            await HandlePutAsync(request, response, key);
+        }
+        else if (string.Equals(method, "GET", StringComparison.Ordinal))
+        {
+            await HandleGetAsync(request, response, key, headOnly: false);
+        }
+        else if (string.Equals(method, "HEAD", StringComparison.Ordinal))
+        {
+            await HandleGetAsync(request, response, key, headOnly: true);
+        }
+        else if (string.Equals(method, "DELETE", StringComparison.Ordinal))
+        {
+            HandleDelete(response, key);
+        }
+        else
+        {
+            await WriteErrorAsync(response, 405, "MethodNotAllowed", "object operation is not supported");
         }
     }
 

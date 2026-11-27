@@ -111,40 +111,6 @@ public sealed class S3ArchiveStore : IDisposable
         return Narrow(uploaded);
     }
 
-    public async ValueTask<ArchiveWriteOutcome> UploadStreamIfAbsentAsync(string key, Stream content, string contentType, CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(key);
-        ArgumentNullException.ThrowIfNull(content);
-        ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
-        var uploaded = await InvokeAsync(
-            async (client, bucket, token) =>
-            {
-                var request = Put(bucket, key, content, contentType);
-                request.IfNoneMatch = "*";
-                try
-                {
-                    _ = await client.PutObjectAsync(request, token);
-                }
-                catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.PreconditionFailed)
-                {
-                    return;
-                }
-            },
-            cancellationToken);
-        if (uploaded is not { } failure)
-        {
-            return new ArchiveObjectWritten();
-        }
-
-        return failure switch
-        {
-            ArchiveObjectMissing missing => new ArchiveUnavailable(missing.Message, "archive_bucket_missing"),
-            ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, "archive_upload_conflict"),
-            ArchiveUnavailable unavailable => unavailable,
-            ArchiveTimedOut timeout => timeout,
-        };
-    }
-
     public async ValueTask<ArchiveWriteOutcome> PutBytesAsync(string key, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken)
     {
         using var stream = CreateReadOnlyStream(content);

@@ -396,6 +396,7 @@ internal sealed partial class DatabaseSession
             return false;
         }
 
+        Volatile.Write(ref _lastShrunkActivityTimestamp, Volatile.Read(ref _lastActivityTimestamp));
         return _writer.Exec("PRAGMA shrink_memory;").IsOk;
     }
 

@@ -7,17 +7,74 @@ namespace TerraBase.Continuity;
 
 internal sealed record ArchiveCheckState(CausalBookmark ArchivedThrough, DateTimeOffset NextVisitUtc);
 
-internal sealed class ArchiveActivity
+public sealed class ArchiveActivity
 {
     private readonly ConcurrentDictionary<Ulid, CommitWatermark> _observed = new();
+    private readonly ConcurrentDictionary<Ulid, byte> _invalidated = new();
+    private int _enabled;
 
-    public void Observe(Ulid databaseId, string origin, long sequence) =>
+    internal void Enable() => Volatile.Write(ref _enabled, 1);
+
+    public void Observe(Ulid databaseId, string origin, long sequence)
+    {
+        if (Volatile.Read(ref _enabled) == 0)
+        {
+            return;
+        }
+
         _observed.GetOrAdd(databaseId, static _ => new CommitWatermark()).Advance(origin, sequence);
+    }
 
-    public bool IsCovered(Ulid databaseId, CausalBookmark archived) =>
+    public void ObserveBookmark(Ulid databaseId, CausalBookmark bookmark)
+    {
+        ArgumentNullException.ThrowIfNull(bookmark);
+        if (Volatile.Read(ref _enabled) == 0 || bookmark.Entries.Count == 0)
+        {
+            return;
+        }
+
+        var watermark = _observed.GetOrAdd(databaseId, static _ => new CommitWatermark());
+        foreach (var (origin, sequence) in bookmark.Entries)
+        {
+            watermark.Advance(origin, sequence);
+        }
+    }
+
+    public void Invalidate(Ulid databaseId)
+    {
+        if (Volatile.Read(ref _enabled) == 0)
+        {
+            return;
+        }
+
+        _ = _observed.TryRemove(databaseId, out _);
+        _invalidated[databaseId] = 0;
+    }
+
+    internal bool IsCovered(Ulid databaseId, CausalBookmark archived) =>
         !_observed.TryGetValue(databaseId, out var watermark) || watermark.IsCoveredBy(archived);
 
-    public void Forget(Ulid databaseId) => _observed.TryRemove(databaseId, out _);
+    internal bool TakeInvalidated(Ulid databaseId) => _invalidated.TryRemove(databaseId, out _);
+
+    internal void PruneInactive(HashSet<Ulid> active)
+    {
+        ArgumentNullException.ThrowIfNull(active);
+        foreach (var databaseId in _observed.Keys)
+        {
+            if (!active.Contains(databaseId))
+            {
+                _ = _observed.TryRemove(databaseId, out _);
+            }
+        }
+
+        foreach (var databaseId in _invalidated.Keys)
+        {
+            if (!active.Contains(databaseId))
+            {
+                _ = _invalidated.TryRemove(databaseId, out _);
+            }
+        }
+    }
 
     private sealed class CommitWatermark
     {
@@ -75,6 +132,7 @@ public sealed class CommitLogArchiverService(
             return;
         }
 
+        changefeed.Activity.Enable();
         using var timer = new PeriodicTimer(options.ArchiveInterval, timeProvider);
         do
         {
@@ -96,7 +154,7 @@ public sealed class CommitLogArchiverService(
             return;
         }
 
-        ForgetInactive(databases);
+        Prune(databases);
         var now = timeProvider.GetUtcNow();
         List<Ulid> due = [];
         for (var index = 0; index < databases.Count; index++)
@@ -113,25 +171,28 @@ public sealed class CommitLogArchiverService(
             ArchiveAsync);
     }
 
-    private bool IsDue(Ulid databaseId, DateTimeOffset now) =>
-        !_checks.TryGetValue(databaseId, out var check)
-        || now >= check.NextVisitUtc
-        || !changefeed.Activity.IsCovered(databaseId, check.ArchivedThrough);
-
-    private void ForgetInactive(IReadOnlyList<Ulid> databases)
+    private bool IsDue(Ulid databaseId, DateTimeOffset now)
     {
-        if (_checks.IsEmpty)
+        if (changefeed.Activity.TakeInvalidated(databaseId))
         {
-            return;
+            _ = _checks.TryRemove(databaseId, out _);
+            return true;
         }
 
+        return !_checks.TryGetValue(databaseId, out var check)
+            || now >= check.NextVisitUtc
+            || !changefeed.Activity.IsCovered(databaseId, check.ArchivedThrough);
+    }
+
+    private void Prune(IReadOnlyList<Ulid> databases)
+    {
         HashSet<Ulid> active = [.. databases];
+        changefeed.Activity.PruneInactive(active);
         foreach (var databaseId in _checks.Keys)
         {
             if (!active.Contains(databaseId))
             {
                 _ = _checks.TryRemove(databaseId, out _);
-                changefeed.Activity.Forget(databaseId);
             }
         }
     }
@@ -164,11 +225,6 @@ public sealed class CommitLogArchiverService(
 
     private async ValueTask<string?> CheckedAsync(Ulid databaseId, BackupStatus status, CancellationToken cancellationToken)
     {
-        if (_checks.TryGetValue(databaseId, out var previous) && !status.ArchivedThrough.Dominates(previous.ArchivedThrough))
-        {
-            changefeed.Activity.Forget(databaseId);
-        }
-
         var now = timeProvider.GetUtcNow();
         var sweep = now + RetentionSweepInterval;
         var interval = await catalog.IsPreferredArchiverAsync(databaseId, cancellationToken)

@@ -360,6 +360,44 @@ internal static partial class FileIo
         }
     }
 
+    public static string? ListFiles(string directory, string searchPattern, out string[] files)
+    {
+        try
+        {
+            files = Directory.GetFiles(directory, searchPattern, SearchOption.TopDirectoryOnly);
+            return null;
+        }
+        catch (IOException exception)
+        {
+            files = [];
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            files = [];
+            return exception.Message;
+        }
+    }
+
+    public static string? ListDirectories(string directory, out string[] directories)
+    {
+        try
+        {
+            directories = Directory.GetDirectories(directory, "*", SearchOption.TopDirectoryOnly);
+            return null;
+        }
+        catch (IOException exception)
+        {
+            directories = [];
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            directories = [];
+            return exception.Message;
+        }
+    }
+
     public static string? CreateDirectory(string path)
     {
         try

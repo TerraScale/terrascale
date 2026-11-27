@@ -55,6 +55,7 @@ public sealed class DatabaseRestorer(
         {
             if (!notifyPeers)
             {
+                manifests.Invalidate(databaseId);
                 await sessions.Catalog.DatabaseReplacedAsync(databaseId, null, cancellationToken);
                 return target switch
                 {
@@ -446,6 +447,7 @@ public sealed class DatabaseRestorer(
         }
 
         Cleanup(staging);
+        manifests.Invalidate(databaseId);
         await sessions.Catalog.DatabaseReplacedAsync(databaseId, notifyPeers ? bookmark : null, cancellationToken);
         return bookmark;
     }

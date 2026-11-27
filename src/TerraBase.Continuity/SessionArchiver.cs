@@ -25,8 +25,8 @@ internal sealed class SessionArchiver(
     TimeProvider timeProvider)
 {
     private const string LocalSnapshotPattern = "*.db";
-
-    private HashSet<string>? _archivedSegmentKeys;
+    private const string StaleCompactPattern = "*.compact";
+    private const string StaleCompactJournalPattern = "*.compact-journal";
 
     public async ValueTask<ArchiveManifestOutcome> RunAsync(
         ArchiveManifest manifest,
@@ -39,7 +39,7 @@ internal sealed class SessionArchiver(
         ContinuityUnavailable? failure = null;
         foreach (var (origin, _) in session.CurrentBookmark.Entries)
         {
-            failure = await ArchiveSegmentsAsync(manifest, origin, manifest.ArchivedThrough(origin, snapshotFloor), segments, cancellationToken);
+            failure = await ArchiveSegmentsAsync(origin, manifest.ArchivedThrough(origin, snapshotFloor), segments, cancellationToken);
             if (failure is not null)
             {
                 break;
@@ -164,7 +164,6 @@ internal sealed class SessionArchiver(
     }
 
     private async ValueTask<ContinuityUnavailable?> ArchiveSegmentsAsync(
-        ArchiveManifest manifest,
         string origin,
         long archivedThrough,
         List<ArchivedSegment> staged,
@@ -173,54 +172,19 @@ internal sealed class SessionArchiver(
         var listed = await session.ListSealedSegmentsAsync(origin, archivedThrough, cancellationToken);
         return listed switch
         {
-            IReadOnlyList<CommitLogSegment> segments => await UploadSegmentsAsync(manifest, segments, staged, cancellationToken),
+            IReadOnlyList<CommitLogSegment> segments => await UploadSegmentsAsync(segments, staged, cancellationToken),
             StorageBusy busy => Busy(busy),
         };
     }
 
-    private bool IsArchived(ArchiveManifest manifest, CommitLogSegment segment, bool useIndex)
-    {
-        var existing = manifest.Segments;
-        if (existing.Count == 0)
-        {
-            return false;
-        }
-
-        if (!useIndex)
-        {
-            for (var index = existing.Count - 1; index >= 0; index--)
-            {
-                var candidate = existing[index];
-                if (candidate.FirstSequence == segment.FirstSequence
-                    && candidate.LastSequence == segment.LastSequence
-                    && string.Equals(candidate.Origin, segment.OriginRegion, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        _archivedSegmentKeys ??= existing.Select(static item => item.Key).ToHashSet(StringComparer.Ordinal);
-        return _archivedSegmentKeys.Contains(ArchiveKeys.Segment(session.DatabaseId, segment));
-    }
-
     private async ValueTask<ContinuityUnavailable?> UploadSegmentsAsync(
-        ArchiveManifest manifest,
         IReadOnlyList<CommitLogSegment> segments,
         List<ArchivedSegment> staged,
         CancellationToken cancellationToken)
     {
         var ordered = OrderSegments(segments);
-        var useIndex = ordered.Count > 4;
         for (var index = 0; index < ordered.Count; index++)
         {
-            if (IsArchived(manifest, ordered[index], useIndex))
-            {
-                continue;
-            }
-
             var uploaded = await UploadSegmentAsync(ordered[index], cancellationToken);
             var failure = uploaded switch
             {
@@ -283,7 +247,7 @@ internal sealed class SessionArchiver(
         var key = ArchiveKeys.Segment(session.DatabaseId, segment);
         await using (content)
         {
-            var uploaded = await manifests.Store.UploadStreamIfAbsentAsync(key, content, ManifestCodec.BinaryContentType, cancellationToken);
+            var uploaded = await manifests.Store.UploadStreamAsync(key, content, ManifestCodec.BinaryContentType, cancellationToken);
             var failure = uploaded switch
             {
                 ArchiveObjectWritten => (ContinuityUnavailable?)null,
@@ -400,30 +364,41 @@ internal sealed class SessionArchiver(
         }
 
         var listed = ContinuityFiles.ListFiles(directory, LocalSnapshotPattern);
+        var failure = listed switch
+        {
+            IReadOnlyList<string> files => DeleteFiles(files.OrderByDescending(static file => Path.GetFileName(file), StringComparer.Ordinal).Skip(options.LocalSnapshotsRetained)),
+            ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
+        };
+        return failure ?? PruneStale(directory, StaleCompactPattern) ?? PruneStale(directory, StaleCompactJournalPattern);
+    }
+
+    private static ContinuityUnavailable? PruneStale(string directory, string pattern)
+    {
+        var listed = ContinuityFiles.ListFiles(directory, pattern);
         return listed switch
         {
-            IReadOnlyList<string> files => DeleteOldest(files, options.LocalSnapshotsRetained),
-            ContinuityIoFailure failure => new ContinuityUnavailable(failure.Message, failure.Code),
+            IReadOnlyList<string> files => DeleteFiles(files),
+            ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
         };
+    }
 
-        static ContinuityUnavailable? DeleteOldest(IReadOnlyList<string> files, int retained)
+    private static ContinuityUnavailable? DeleteFiles(IEnumerable<string> files)
+    {
+        foreach (var file in files)
         {
-            foreach (var file in files.OrderByDescending(static file => Path.GetFileName(file), StringComparer.Ordinal).Skip(retained))
+            var deleted = ContinuityFiles.DeleteFile(file);
+            var failure = deleted switch
             {
-                var deleted = ContinuityFiles.DeleteFile(file);
-                var failure = deleted switch
-                {
-                    ContinuityFilesChanged => (ContinuityUnavailable?)null,
-                    ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
-                };
-                if (failure is not null)
-                {
-                    return failure;
-                }
+                ContinuityFilesChanged => (ContinuityUnavailable?)null,
+                ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
+            };
+            if (failure is not null)
+            {
+                return failure;
             }
-
-            return null;
         }
+
+        return null;
     }
 
     private static ContinuityUnavailable Busy(StorageBusy busy) => new(busy.Message, "storage_busy");

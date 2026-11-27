@@ -28,11 +28,14 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
 
     public bool TryGetOpen(Ulid databaseId, [NotNullWhen(true)] out ISqlDatabaseSession? session)
     {
-        if (_sessions.TryGetValue(databaseId, out var tracked) && tracked.Session.IsUsable)
+        lock (_gate)
         {
-            tracked.Touch(time.GetTimestamp());
-            session = tracked.Session;
-            return true;
+            if (_sessions.TryGetValue(databaseId, out var tracked) && tracked.Session.IsUsable)
+            {
+                tracked.Touch(time.GetTimestamp());
+                session = tracked.Session;
+                return true;
+            }
         }
 
         session = null;
@@ -41,18 +44,36 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
 
     public bool TryGetOpen(Ulid databaseId, string keyId, [NotNullWhen(true)] out ISqlDatabaseSession? session)
     {
-        if (TryGetTracked(databaseId, keyId, out var tracked))
+        lock (_gate)
         {
-            tracked.Touch(time.GetTimestamp());
-            session = tracked.Session;
-            return true;
+            if (TryFindTracked(databaseId, keyId, out var tracked))
+            {
+                tracked.Touch(time.GetTimestamp());
+                session = tracked.Session;
+                return true;
+            }
         }
 
         session = null;
         return false;
     }
 
-    private bool TryGetTracked(Ulid databaseId, string keyId, [NotNullWhen(true)] out TrackedSession? tracked)
+    internal bool TryGetTracked(Ulid databaseId, string keyId, [NotNullWhen(true)] out ISqlDatabaseSession? session)
+    {
+        lock (_gate)
+        {
+            if (TryFindTracked(databaseId, keyId, out var tracked))
+            {
+                session = tracked.Session;
+                return true;
+            }
+        }
+
+        session = null;
+        return false;
+    }
+
+    private bool TryFindTracked(Ulid databaseId, string keyId, [NotNullWhen(true)] out TrackedSession? tracked)
     {
         if (_sessions.TryGetValue(databaseId, out var found)
             && found.Session.IsUsable
@@ -104,7 +125,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
     {
         if (TryGetTracked(databaseId, keyId, out var cached))
         {
-            return ValueTask.FromResult(Ready(cached.Session));
+            return ValueTask.FromResult(Ready(cached));
         }
 
         return OpenOrCreateSlowAsync(databaseId, keyId, strict, cancellationToken);
@@ -234,9 +255,9 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
             return false;
         }
 
-        ISqlDatabaseSession? evicted = null;
         try
         {
+            ISqlDatabaseSession? evicted = null;
             lock (_gate)
             {
                 if (_sessions.TryGetValue(databaseId, out var tracked)
@@ -247,19 +268,19 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
                     evicted = removed.Session;
                 }
             }
+
+            if (evicted is null)
+            {
+                return false;
+            }
+
+            await evicted.DisposeAsync();
+            return true;
         }
         finally
         {
             gate.Release();
         }
-
-        if (evicted is null)
-        {
-            return false;
-        }
-
-        await evicted.DisposeAsync();
-        return true;
     }
 
     public IReadOnlyList<ISqlDatabaseSession> OpenSessions()
