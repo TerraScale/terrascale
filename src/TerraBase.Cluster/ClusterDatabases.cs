@@ -5,9 +5,15 @@ using TerraScale.Contracts.Continuity;
 
 namespace TerraBase.Cluster;
 
+public enum DatabaseResolveMode
+{
+    Warm,
+    Transient,
+}
+
 public readonly union DatabaseResolveOutcome(ISqlDatabaseSession, DatabaseNotFound, ClusterUnavailable);
 
-public delegate ValueTask<DatabaseResolveOutcome> DatabaseSessionResolver(Ulid databaseId, CancellationToken cancellationToken);
+public delegate ValueTask<DatabaseResolveOutcome> DatabaseSessionResolver(Ulid databaseId, DatabaseResolveMode mode, CancellationToken cancellationToken);
 
 public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvider timeProvider)
 {
@@ -83,7 +89,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         }
     }
 
-    private bool IsCurrent(Ulid databaseId, TrackedDatabase tracked) =>
+    internal bool IsCurrent(Ulid databaseId, TrackedDatabase tracked) =>
         _tracked.TryGetValue(databaseId, out var current) && ReferenceEquals(current, tracked);
 
     private bool Enqueue(Ulid databaseId, TrackedDatabase tracked, CausalBookmark? peerFrontier)
@@ -102,28 +108,35 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         return false;
     }
 
+    public ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        ResolveAsync(databaseId, DatabaseResolveMode.Warm, cancellationToken);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<DatabaseResolveOutcome>))]
-    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, DatabaseResolveMode mode, CancellationToken cancellationToken)
     {
         _tracked.TryGetValue(databaseId, out var tracked);
-        var resolved = await resolver(databaseId, cancellationToken);
+        var resolved = await resolver(databaseId, mode, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => Observed(session, tracked),
-            DatabaseNotFound notFound => Missing(notFound, tracked),
+            ISqlDatabaseSession session => Observed(session),
+            DatabaseNotFound notFound => Missing(notFound, tracked, mode),
             ClusterUnavailable unavailable => unavailable,
         };
     }
 
-    private static DatabaseResolveOutcome Observed(ISqlDatabaseSession session, TrackedDatabase? tracked)
+    private DatabaseResolveOutcome Observed(ISqlDatabaseSession session)
     {
-        tracked?.Observe(session.CurrentBookmark);
+        if (_tracked.TryGetValue(session.DatabaseId, out var current))
+        {
+            current.Observe(session.CurrentBookmark);
+        }
+
         return session;
     }
 
-    private DatabaseResolveOutcome Missing(DatabaseNotFound missing, TrackedDatabase? tracked)
+    private DatabaseResolveOutcome Missing(DatabaseNotFound missing, TrackedDatabase? tracked, DatabaseResolveMode mode)
     {
-        if (tracked is not null)
+        if (mode == DatabaseResolveMode.Warm && tracked is not null)
         {
             _ = _tracked.TryRemove(KeyValuePair.Create(missing.DatabaseId, tracked));
         }

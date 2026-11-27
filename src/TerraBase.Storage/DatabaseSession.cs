@@ -806,7 +806,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return;
         }
 
-        if (!IsUsable || !_requests.Writer.TryWrite(ShrinkWriterRequest.Instance))
+        if (!IsUsable || !_requests.Writer.TryWrite(new ShrinkWriterRequest(activity)))
         {
             Volatile.Write(ref _shrinkWriterQueued, 0);
         }

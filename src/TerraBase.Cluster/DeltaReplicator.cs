@@ -752,6 +752,11 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                 {
                     CompleteInboundBatch(mailbox, batchEnd);
                     ClusterLog.RemoteApplyDeferred(logger, databaseId, singleSender, resolveFailure);
+                    if (resolved switch { ISqlDatabaseSession => false, DatabaseNotFound => false, ClusterUnavailable => true })
+                    {
+                        databases.Track(databaseId);
+                    }
+
                     _ = databases.RequestCatchUp(databaseId, FrontierOf(batch));
                     ClearReusableLists(mailbox);
                     continue;

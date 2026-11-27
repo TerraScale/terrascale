@@ -43,7 +43,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             {
                 foreach (var databaseId in databases.Due())
                 {
-                    await SyncTrackedAsync(databaseId, databases.BeginSync(databaseId), cancellationToken);
+                    await SyncTrackedAsync(databaseId, databases.BeginSync(databaseId), DatabaseResolveMode.Transient, cancellationToken);
                 }
             }
         }
@@ -59,7 +59,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         {
             await foreach (var request in databases.CatchUpRequests.ReadAllAsync(cancellationToken))
             {
-                await SyncTrackedAsync(request.DatabaseId, databases.BeginSync(request), cancellationToken);
+                await SyncTrackedAsync(request.DatabaseId, databases.BeginSync(request), DatabaseResolveMode.Warm, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -68,17 +68,23 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         }
     }
 
-    private async Task SyncTrackedAsync(Ulid databaseId, ClusterDatabases.TrackedDatabase? tracked, CancellationToken cancellationToken)
+    private async Task SyncTrackedAsync(Ulid databaseId, ClusterDatabases.TrackedDatabase? tracked, DatabaseResolveMode mode, CancellationToken cancellationToken)
     {
         if (tracked is null)
         {
             return;
         }
 
+        if (!databases.IsCurrent(databaseId, tracked))
+        {
+            databases.EndSync(databaseId, tracked, progressed: false, requeue: false);
+            return;
+        }
+
         var progressed = false;
         try
         {
-            var report = await SyncAsync(databaseId, cancellationToken);
+            var report = await SyncFromAsync(databaseId, options.Peers, options.CatchUpTimeout, mode, cancellationToken);
             progressed = report.Applied > 0;
             ReportFailures(report);
         }
@@ -110,24 +116,27 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         SyncAsync(databaseId, options.CatchUpTimeout, cancellationToken);
 
     public ValueTask<CatchUpReport> SyncAsync(Ulid databaseId, TimeSpan perPeerTimeout, CancellationToken cancellationToken) =>
-        SyncFromAsync(databaseId, options.Peers, perPeerTimeout, cancellationToken);
+        SyncFromAsync(databaseId, options.Peers, perPeerTimeout, DatabaseResolveMode.Warm, cancellationToken);
+
+    public ValueTask<CatchUpReport> SyncTransientAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        SyncFromAsync(databaseId, options.Peers, options.CatchUpTimeout, DatabaseResolveMode.Transient, cancellationToken);
 
     public ValueTask<CatchUpReport> SyncInRegionAsync(Ulid databaseId, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
     {
         var peers = options.RegionPeers;
         return peers.Count == 0 || !peers.Any(peer => health.IsReachable(peer.NodeId))
             ? ValueTask.FromResult(CatchUpReport.Empty(databaseId))
-            : SyncFromAsync(databaseId, peers, perPeerTimeout, cancellationToken);
+            : SyncFromAsync(databaseId, peers, perPeerTimeout, DatabaseResolveMode.Warm, cancellationToken);
     }
 
-    private async ValueTask<CatchUpReport> SyncFromAsync(Ulid databaseId, IReadOnlyList<PeerNodeInfo> peers, TimeSpan perPeerTimeout, CancellationToken cancellationToken)
+    private async ValueTask<CatchUpReport> SyncFromAsync(Ulid databaseId, IReadOnlyList<PeerNodeInfo> peers, TimeSpan perPeerTimeout, DatabaseResolveMode mode, CancellationToken cancellationToken)
     {
         if (peers.Count == 0)
         {
             return CatchUpReport.Empty(databaseId);
         }
 
-        var resolved = await databases.ResolveAsync(databaseId, cancellationToken);
+        var resolved = await databases.ResolveAsync(databaseId, mode, cancellationToken);
         return resolved switch
         {
             ISqlDatabaseSession session => await SyncLeasedAsync(session, peers, perPeerTimeout, cancellationToken),
@@ -397,13 +406,24 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         }
 
         health.ObserveReachable(context.RemoteNodeId);
-        var resolved = await databases.ResolveAsync(message.DatabaseId, cancellationToken);
+        var resolved = await databases.ResolveAsync(message.DatabaseId, DatabaseResolveMode.Transient, cancellationToken);
         return resolved switch
         {
             ISqlDatabaseSession session => await ServeLeasedAsync(session, message, context.RemoteNodeId, cancellationToken),
-            DatabaseNotFound => new CatchUpResponseMessage(message.DatabaseId, false, CausalBookmark.Empty, [], false),
+            DatabaseNotFound => MissingCatchUp(message),
             ClusterUnavailable unavailable => new QuicRemoteError(unavailable.Code, unavailable.Message),
         };
+    }
+
+    private CatchUpResponseMessage MissingCatchUp(CatchUpRequestMessage message)
+    {
+        if (!message.Have.IsEmpty)
+        {
+            databases.Track(message.DatabaseId);
+            _ = databases.RequestCatchUp(message.DatabaseId, message.Have);
+        }
+
+        return new CatchUpResponseMessage(message.DatabaseId, false, CausalBookmark.Empty, [], false);
     }
 
     private async ValueTask<QuicHandlerOutcome<CatchUpResponseMessage>> ServeLeasedAsync(ISqlDatabaseSession session, CatchUpRequestMessage message, string requester, CancellationToken cancellationToken)
@@ -413,6 +433,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             var bookmark = session.CurrentBookmark;
             if (!bookmark.Dominates(message.Have))
             {
+                databases.Track(session.DatabaseId);
                 _ = databases.RequestCatchUp(session.DatabaseId, message.Have);
             }
 

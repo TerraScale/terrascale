@@ -946,7 +946,7 @@ public static class ReplicationBenchmarks
                 };
                 var engine = new SqliteStorageEngine(storageOptions, TimeProvider.System);
                 var sessions = new Dictionary<Ulid, ISqlDatabaseSession>(databaseIds.Length);
-                var databases = new ClusterDatabases((id, token) => ResolveDatabaseAsync(engine, id, rawKey, token), TimeProvider.System);
+                var databases = new ClusterDatabases((id, _, token) => ResolveDatabaseAsync(engine, id, rawKey, token), TimeProvider.System);
                 for (var dbIndex = 0; dbIndex < databaseIds.Length; dbIndex++)
                 {
                     var dbId = databaseIds[dbIndex];

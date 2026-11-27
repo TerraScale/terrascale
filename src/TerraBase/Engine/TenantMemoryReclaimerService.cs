@@ -30,8 +30,7 @@ internal sealed class TenantMemoryReclaimerService(TenantDatabases tenants, Terr
     private long PressureThreshold()
     {
         var available = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
-        var highWater = available > 0 ? available * 3 / 4 : options.MemoryBudget;
-        return Math.Max(options.MemoryBudget, highWater);
+        return available > 0 ? available - (available / 4) : options.MemoryBudget;
     }
 
     private async ValueTask<Reclaimed> ReclaimIdleAsync()
