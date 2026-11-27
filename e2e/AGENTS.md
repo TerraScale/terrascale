@@ -4,10 +4,11 @@ Read the root [AGENTS.md](../AGENTS.md).
 
 Playwright Test (TypeScript) drives TerraBase, ts-platform, ts-auth and Dashboard builds from the commit under
 test. The harness provides a per-run CA, Caddy for HTTPS, a PostgreSQL TLS edge, Mailpit for SMTP, a Cloudflare
-send-API sink, and stand-ins for Stripe and S3-compatible object storage. CI never runs the journey: PR CI only
-compiles and `main` pushes only build and deploy (root `AGENTS.md`, "CI"). Before opening a PR, run the lanes your
-change affects on your machine (below) on the PR's tree and cite the result for the pre-PR council review. The
-production journey runs asynchronously after a successful release and on its daily schedule; it never blocks a deploy.
+send-API sink, and stand-ins for Stripe and S3-compatible object storage. CI never runs the journey: PR CI compiles,
+runs the fast `checks` job and, when `e2e/` changes, type-checks the suite (`e2e` leg, `npm run typecheck`); `main`
+pushes only build and deploy (root `AGENTS.md`, "CI"). The user runs the journey manually when needed: on a machine
+against a throwaway environment (below) or against production by dispatching `production-journey.yml`. It never
+blocks a PR or a deploy.
 
 ## Quarantine
 
@@ -220,8 +221,8 @@ elapsed time of each case.
 
 `bash e2e/env/production.sh` runs the same specs and config against production from the machine's own network: no
 namespace, no stack, no argument and no URL to set. `.github/workflows/production-journey.yml` runs it on `main` only,
-never for a pull request: once after the last release of each commit (the rule is in the root `AGENTS.md`), daily at
-13:23 UTC and on dispatch, one run at a time. It is not a gate. `production.sh`:
+on manual dispatch only (`gh workflow run production-journey.yml --ref main`), one run at a time. No release, schedule
+or pull request triggers it. It is not a gate. `production.sh`:
 
 - refuses to run when an `E2E_*`, `TERRASCALE_*`, `PW_*`, `PLAYWRIGHT_*`, `NODE_EXTRA_CA_CERTS`, `NODE_OPTIONS`,
   `NODE_TLS_REJECT_UNAUTHORIZED`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE` or proxy variable is set, or when a
@@ -319,9 +320,8 @@ git diff --quiet "$signed_source" "$dispatch_sha" -- . \
 ```
 
 After all images pass, dispatch with `gh workflow run production-journey.yml --ref main -f suite_sha="$dispatch_sha"`.
-The workflow refuses if main moved after verification. It runs the exact dispatch tree. Release-triggered runs
-still use their verified receipt or TerraBase release source, and the issue records that evidence separately
-from the chosen suite commit.
+The workflow refuses if main moved after verification. It runs the exact dispatch tree. Without `suite_sha` it runs
+the head of `main` at dispatch time.
 The workflow retains the established minimum step and job reservations for release checkouts that validate those
 environment values at startup. The current shell records its actual phase budgets in `list.txt`.
 
@@ -333,7 +333,7 @@ before or during the suite, or the suite's own error such as its global timeout)
 65,536 characters. While the issue is open, a failed run replaces its body and comments only when the failed tests
 or the cause changed, naming the tests newly failing and fixed. The next green run closes it. A run during which a
 `/readyz` version changed, because a newer release rolled out under it, neither opens, updates nor closes the issue:
-its job summary says so, and the newer release's own run follows. Both versions name the commit the service was built
+its job summary says so; dispatch a new run once the rollout completes. Both versions name the commit the service was built
 from, so a rollout of either during a run is seen. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
 then `bash e2e/env/production.sh`; each run makes three production accounts.
 

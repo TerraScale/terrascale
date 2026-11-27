@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 const [thing, ...args] = process.argv.slice(2);
@@ -260,7 +260,6 @@ if (thing === 'auth' && args[0] === '--probe') {
 } else if (args[0] === '--prove') {
   sha(process.env.REVISION);
   assert.equal(await serviceLive(thing, AbortSignal.timeout(30000)), process.env.REVISION, `${thing}: deployed revision mismatch`);
-  writeFileSync(`${process.env.RUNNER_TEMP}/deploy-revision`, `${process.env.REVISION}\n`);
   report(`${thing}: deployed ${process.env.REVISION}`);
 } else if (args[0] === '--reset') {
   const name = process.env.RESET_THING;
