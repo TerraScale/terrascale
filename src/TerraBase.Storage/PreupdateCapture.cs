@@ -83,6 +83,47 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
     public void InvalidateSchemaCache() => _lastSchema = null;
 
+    public SqliteStatus MaterializeAllUnchanged()
+    {
+        for (var index = 0; index < _touched.Count; index++)
+        {
+            var row = _touched[index];
+            var mask = row.UnchangedMask;
+            if (mask == 0)
+            {
+                continue;
+            }
+
+            if (row.Original is not { } original)
+            {
+                row.UnchangedMask = 0;
+                continue;
+            }
+
+            var status = _connection.QueryFirst(row.Schema.Sql.SelectRow, out var current, row.PrimaryKey);
+            if (!status.IsOk)
+            {
+                return status;
+            }
+
+            if (current is not null)
+            {
+                var limit = Math.Min(original.Length, Math.Min(current.Length, 64));
+                for (var column = 0; column < limit; column++)
+                {
+                    if ((mask & (1UL << column)) != 0)
+                    {
+                        original[column] = current[column];
+                    }
+                }
+            }
+
+            row.UnchangedMask = 0;
+        }
+
+        return SqliteStatus.Success;
+    }
+
     public TableSchema? Resolve(string table)
     {
         var lookup = _connection.Schema(table);
@@ -823,13 +864,6 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             key = [resolvedPk];
         }
 
-        var checkLimits = _connection.HasUserLimits;
-        if (checkLimits && !CountWrite())
-        {
-            SqliteNative.InterruptQuery(db);
-            return true;
-        }
-
         Span<byte> stackEncoded = stackalloc byte[128];
         byte[]? heapEncoded = null;
         var encodedSpan = PrimaryKeyCodec.TryEncode(key, stackEncoded, out var written)
@@ -838,6 +872,18 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
         var lookup = _byKey.GetAlternateLookup<RowLookupKeyRef>();
         var alreadyTouched = lookup.TryGetValue(new RowLookupKeyRef(schema.Table, encodedSpan), out var existingRow);
+        if (alreadyTouched && existingRow is not null && !ReferenceEquals(schema, existingRow.Schema))
+        {
+            return false;
+        }
+
+        var checkLimits = _connection.HasUserLimits;
+        if (checkLimits && !CountWrite())
+        {
+            SqliteNative.InterruptQuery(db);
+            return true;
+        }
+
         var dataCount = schema.DataColumns.Count;
         var final = dataCount == 0 ? [] : new SqlValue[dataCount];
         var original = alreadyTouched ? existingRow?.Original : dataCount == 0 ? [] : new SqlValue[dataCount];

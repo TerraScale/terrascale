@@ -40,9 +40,10 @@ internal readonly struct CallScope : IDisposable
     public bool IsDeadlineExpired =>
         _state is not null && _state.IsDeadlineTriggered;
 
-    public void DisarmDeadline() => _state?.DisarmDeadline();
+    private bool DisarmDeadline() => _state is null || _state.DisarmDeadline();
 
-    public void ArmDeadline(TimeSpan timeout, TimeProvider timeProvider) => _state?.ArmDeadline(timeout, timeProvider);
+    private bool ArmDeadline(TimeSpan timeout, TimeProvider timeProvider) =>
+        _state is not null ? _state.ArmDeadline(timeout, timeProvider) : timeout == Timeout.InfiniteTimeSpan;
 
     public void AttachCaller(CancellationToken caller) => _state?.AttachCaller(caller);
 
@@ -50,13 +51,9 @@ internal readonly struct CallScope : IDisposable
 
     public static void ReArm(ref CallScope scope, TimeSpan timeout, TimeProvider timeProvider)
     {
-        if (!scope.IsDeadlineExpired)
+        if (!scope.IsDeadlineExpired && scope.ArmDeadline(timeout, timeProvider) && !scope.IsDeadlineExpired)
         {
-            scope.ArmDeadline(timeout, timeProvider);
-            if (!scope.IsDeadlineExpired)
-            {
-                return;
-            }
+            return;
         }
 
         var shutdown = scope._shutdown;
@@ -67,8 +64,7 @@ internal readonly struct CallScope : IDisposable
 
     public static void Disarm(ref CallScope scope, TimeProvider timeProvider)
     {
-        scope.DisarmDeadline();
-        if (scope.IsDeadlineExpired)
+        if (!scope.DisarmDeadline() || scope.IsDeadlineExpired)
         {
             var shutdown = scope._shutdown;
             var caller = scope.Caller;
@@ -241,56 +237,74 @@ internal sealed class CallScopeState : IDisposable
         return state;
     }
 
-    public void DisarmDeadline()
+    public bool DisarmDeadline()
     {
-        if (Volatile.Read(ref _returned) != 0 || _cts.IsCancellationRequested)
+        if (Volatile.Read(ref _returned) != 0)
         {
-            return;
+            return false;
         }
 
         if (_customDeadline is { } custom)
         {
-            if (!custom.IsCancellationRequested)
+            if (!_cts.IsCancellationRequested && !custom.IsCancellationRequested)
             {
                 custom.CancelAfter(Timeout.InfiniteTimeSpan);
             }
+
+            return !_cts.IsCancellationRequested;
         }
-        else
-        {
-            _cts.CancelAfter(Timeout.InfiniteTimeSpan);
-        }
+
+        return _shutdown.IsCancellationRequested || _cts.TryReset();
     }
 
-    public void ArmDeadline(TimeSpan timeout, TimeProvider timeProvider)
+    public bool ArmDeadline(TimeSpan timeout, TimeProvider timeProvider)
     {
-        if (Volatile.Read(ref _returned) != 0 || _cts.IsCancellationRequested)
+        if (Volatile.Read(ref _returned) != 0)
         {
-            return;
+            return false;
         }
 
         if (timeout == Timeout.InfiniteTimeSpan)
         {
-            DisarmDeadline();
-            return;
+            return DisarmDeadline();
+        }
+
+        if (_customDeadline is null && ReferenceEquals(timeProvider, TimeProvider.System))
+        {
+            if (_shutdown.IsCancellationRequested)
+            {
+                return true;
+            }
+
+            if (!_cts.TryReset())
+            {
+                return false;
+            }
+
+            _cts.CancelAfter(timeout);
+            return true;
+        }
+
+        if (_cts.IsCancellationRequested)
+        {
+            return false;
         }
 
         if (_customDeadline is { } custom)
         {
-            if (!custom.IsCancellationRequested)
+            if (custom.IsCancellationRequested)
             {
-                custom.CancelAfter(timeout);
+                return false;
             }
+
+            custom.CancelAfter(timeout);
+            return !_cts.IsCancellationRequested;
         }
-        else if (ReferenceEquals(timeProvider, TimeProvider.System))
-        {
-            _cts.CancelAfter(timeout);
-        }
-        else
-        {
-            var created = new CancellationTokenSource(timeout, timeProvider);
-            _customDeadline = created;
-            _customDeadlineReg = created.Token.UnsafeRegister(CancelCallback, _cts);
-        }
+
+        var created = new CancellationTokenSource(timeout, timeProvider);
+        _customDeadline = created;
+        _customDeadlineReg = created.Token.UnsafeRegister(CancelCallback, _cts);
+        return !_cts.IsCancellationRequested;
     }
 
     public void AttachCaller(CancellationToken caller)

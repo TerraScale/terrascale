@@ -44,10 +44,7 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         List<string>? moreRemotes = null;
         for (var index = 0; index < ordered.Count; index++)
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
 
             var candidate = ordered[index];
             if (!candidate.IsLocal)
@@ -300,12 +297,6 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         }
 
         return false;
-    }
-
-    private static bool SetSingleRejection(ref IReadOnlyList<StrongPrepareOutcome> rejections, StrongPrepareOutcome outcome)
-    {
-        rejections = [outcome];
-        return true;
     }
 
     private async Task<RegionVote> VoteRegionAsync(

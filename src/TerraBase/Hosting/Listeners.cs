@@ -29,7 +29,17 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
 
     public static ListenerMetadata Metrics { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Metrics);
 
-    internal byte ListenerMask { get; } = ComputeMask(Listeners);
+    public IReadOnlyList<TerraBaseListener> Listeners
+    {
+        get;
+        init
+        {
+            field = value;
+            ListenerMask = ComputeMask(value);
+        }
+    } = Listeners;
+
+    internal byte ListenerMask { get; private set; } = ComputeMask(Listeners);
 
     internal bool Serves(TerraBaseListener listener) => (ListenerMask & (1 << (int)listener)) != 0;
 

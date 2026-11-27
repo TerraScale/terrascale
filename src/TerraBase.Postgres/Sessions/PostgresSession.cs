@@ -259,11 +259,14 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
         return Statements.TryGetValue(name, out statement);
     }
 
+    private bool IsUnnamedStatementReferenced() =>
+        _unnamedStatementShared || (_hasUnnamedPortal && ReferenceEquals(_unnamedPortal?.Statement, _unnamedStatement));
+
     public void SetStatement(string name, PgCommand command, int[] parameterOids, CachedParseEntry? cacheEntry)
     {
         if (name.Length == 0)
         {
-            if (_unnamedStatement is { } existing && !_unnamedStatementShared)
+            if (_unnamedStatement is { } existing && !IsUnnamedStatementReferenced())
             {
                 existing.Reset(command, parameterOids, cacheEntry);
             }
@@ -290,7 +293,7 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
             }
 
             _hasUnnamedStatement = false;
-            if (_unnamedStatementShared)
+            if (IsUnnamedStatementReferenced())
             {
                 _unnamedStatement = null;
                 _unnamedStatementShared = false;

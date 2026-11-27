@@ -977,6 +977,12 @@ internal sealed class OriginLog : IDisposable
         long committed;
         lock (_gate)
         {
+            if (_disposed)
+            {
+                IReadOnlyList<CommitMetadata> empty = [];
+                return empty;
+            }
+
             var firstAvailable = _firstAvailable;
             committed = _committedSequence;
             if (fromSequence < firstAvailable && fromSequence <= committed)
@@ -1017,6 +1023,12 @@ internal sealed class OriginLog : IDisposable
 
             lock (_gate)
             {
+                if (_disposed)
+                {
+                    IReadOnlyList<CommitMetadata> empty = [];
+                    return empty;
+                }
+
                 if (_sealed.Count > sealedSnapshotCount)
                 {
                     late = SnapshotSealedFromLocked(nextSequence, sealedSnapshotCount);
@@ -1119,6 +1131,11 @@ internal sealed class OriginLog : IDisposable
     {
         lock (_gate)
         {
+            if (_disposed)
+            {
+                return [];
+            }
+
             SealIfDue(force: false);
             if (afterSequence == long.MaxValue)
             {
@@ -1277,6 +1294,11 @@ internal sealed class OriginLog : IDisposable
 
     private SafeFileHandle? EnsureActiveHandle()
     {
+        if (_disposed)
+        {
+            return null;
+        }
+
         if (_active is not null)
         {
             return _active;

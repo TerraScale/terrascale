@@ -63,7 +63,10 @@ internal sealed record TableMetadata(
     FrozenDictionary<string, int> ColumnIndex,
     ulong NonDeterministicDefaultMask,
     bool HasRowIdColumn,
-    bool IsBatchAliasConflict);
+    bool IsBatchAliasConflict,
+    bool CanCoalesceCreate,
+    bool CanCoalesceDelete,
+    bool CoalesceMetadataChecked);
 
 internal sealed record CreateMaskTemplate(
     int[] Columns,
@@ -127,6 +130,10 @@ internal sealed class RowTablePlan(
     private int _batchDeleteTemplateCount;
 
     public TableMetadata Meta => meta;
+
+    public bool CanCoalesceCreate => meta.CanCoalesceCreate;
+
+    public bool CanCoalesceDelete => meta.CanCoalesceDelete;
 
     public RulesTable? Rule => rule;
 
@@ -822,7 +829,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         CancellationToken cancellationToken)
     {
         var meta = plan.Meta;
-        if (meta.Columns.Length > 64 || meta.IsBatchAliasConflict)
+        if (!plan.CanCoalesceCreate || meta.Columns.Length > 64 || meta.IsBatchAliasConflict)
         {
             return null;
         }
@@ -1135,7 +1142,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         long renderTime,
         CancellationToken cancellationToken)
     {
-        if (plan.Meta.HasRowIdColumn)
+        if (!plan.CanCoalesceDelete || plan.Meta.HasRowIdColumn)
         {
             return null;
         }
@@ -1393,7 +1400,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
 
         var rule = isEndUser ? set?.Table(table) : null;
         var plan = BuildTablePlan(meta, rule, isEndUser);
-        if (cacheable && session.SchemaEpoch == epoch && session.SessionIncarnation == incarnation)
+        if (cacheable && meta.CoalesceMetadataChecked && session.SchemaEpoch == epoch && session.SessionIncarnation == incarnation)
         {
             StoreTablePlan(planKey, plan);
         }
@@ -1644,6 +1651,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             }
         }
 
+        var (metadataChecked, hasTriggers, hasOnDeleteForeignKeys) = await LoadCoalesceSafetyAsync(session, table, cancellationToken);
         var frozenIndex = columnIndex.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
         var metadata = new TableMetadata(
             columns,
@@ -1653,13 +1661,42 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             frozenIndex,
             nonDeterministicMask,
             frozenIndex.ContainsKey("rowid"),
-            AsciiIgnoreCaseComparer.Instance.Equals(table, "_b"));
-        if (session.SchemaEpoch == epoch && session.SessionIncarnation == key.SessionIncarnation)
+            AsciiIgnoreCaseComparer.Instance.Equals(table, "_b"),
+            CanCoalesceCreate: !hasTriggers,
+            CanCoalesceDelete: !hasTriggers && !hasOnDeleteForeignKeys,
+            CoalesceMetadataChecked: metadataChecked);
+        if (metadataChecked && session.SchemaEpoch == epoch && session.SessionIncarnation == key.SessionIncarnation)
         {
             StoreTableMetadata(key, metadata);
         }
 
         return metadata;
+    }
+
+    private static async ValueTask<(bool Checked, bool HasTriggers, bool HasOnDeleteForeignKeys)> LoadCoalesceSafetyAsync(
+        ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
+    {
+        var request = new SqlStatementRequest(
+            session.DatabaseId,
+            [
+                new SqlStatement(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND lower(tbl_name) = lower(?) LIMIT 1",
+                    [SqlValue.FromText(table)],
+                    SqlBuild.NoNamed),
+                new SqlStatement(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND instr(lower(sql), 'on delete') > 0 LIMIT 1",
+                    [],
+                    SqlBuild.NoNamed),
+            ],
+            SqlAccess.Read,
+            ConsistencyMode.Fast,
+            CausalBookmark.Empty);
+        var outcome = await session.ExecuteReadAsync(request, cancellationToken);
+        return outcome switch
+        {
+            SqlReadResult { ResultSets: [var triggers, var foreignKeys] } => (true, triggers.Rows.Count > 0, foreignKeys.Rows.Count > 0),
+            SqlReadResult or SqlError or StorageBusy or StorageTimeout => (false, true, true),
+        };
     }
 
     private static bool IsDeterministicDefault(string? defaultSql)

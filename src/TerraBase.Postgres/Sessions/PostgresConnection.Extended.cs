@@ -286,7 +286,7 @@ internal sealed partial class PostgresConnection
         var bytes = PgValueCodec.Footprint(message.ResultFormats);
         SqlValue[] values = message.ParameterCount == 0
             ? []
-            : message.Portal.Length == 0
+            : message.Portal.Length == 0 && session.Transaction is null && !session.TryGetPortal(string.Empty, out _)
                 ? session.RentUnnamedParameters(message.ParameterCount)
                 : new SqlValue[message.ParameterCount];
         for (var index = 0; index < values.Length; index++)

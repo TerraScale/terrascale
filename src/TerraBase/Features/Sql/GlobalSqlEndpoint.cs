@@ -1,6 +1,7 @@
 using TerraBase.Features.Callers;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
+using TerraScale.Contracts.Http;
 using TerraScale.Endpoints;
 using BoundGlobalSqlRequest = TerraScale.Endpoints.Binding.Bound<TerraBase.Features.Sql.SqlRequestInput>;
 
@@ -17,7 +18,8 @@ internal sealed class GlobalSqlEndpoint(SqlFlow flow)
         Description("For API keys and project tokens narrowed to one database: the database is taken from the credential instead of the path.");
         Tags("Queries");
         AllowAnonymous();
-        Metadata(ListenerMetadata.Client, CallerTenantMetadata.Instance);
+        Metadata(ListenerMetadata.Client, CallerTenantMetadata.Instance, SqlFlow.RequestSizeLimit);
+        Produces<ApiErrorEnvelope>(StatusCodes.Status413PayloadTooLarge);
     }
 
     protected override ValueTask<BoundGlobalSqlRequest> BindAsync(CancellationToken cancellationToken) =>

@@ -293,6 +293,13 @@ internal sealed partial class DatabaseSession
             var cookieBefore = 0L;
             if (isDdl)
             {
+                status = _capture.MaterializeAllUnchanged();
+                if (!status.IsOk)
+                {
+                    SqliteConnection.FinalizeStatement(handle);
+                    return status.ToSqlError(index);
+                }
+
                 _writer.MarkSchemaDirty();
                 status = _writer.ReadSchemaCookie(out cookieBefore);
                 if (!status.IsOk)

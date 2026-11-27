@@ -82,14 +82,26 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
 
     private async ValueTask<StrongVote?> GrantedAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CausalBookmark? seen, CancellationToken cancellationToken)
     {
-        var revalidated = await ValidateAsync(session, payload, seen, cancellationToken);
-        if (revalidated is not null)
+        var prepared = false;
+        try
         {
-            _ = locks.Release(payload.DatabaseId, payload.TxId);
-            return revalidated;
-        }
+            var revalidated = await ValidateAsync(session, payload, seen, cancellationToken);
+            if (revalidated is not null)
+            {
+                return revalidated;
+            }
 
-        return new Prepared(payload.TxId, options.Region, clock.Observe(payload.Priority));
+            var vote = new Prepared(payload.TxId, options.Region, clock.Observe(payload.Priority));
+            prepared = true;
+            return vote;
+        }
+        finally
+        {
+            if (!prepared)
+            {
+                _ = locks.Release(payload.DatabaseId, payload.TxId);
+            }
+        }
     }
 
     private static StrongVote Denied(StrongPreparePayload payload, StrongLockHolder winner) =>

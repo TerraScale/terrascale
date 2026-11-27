@@ -797,7 +797,8 @@ public static class StorageBenchmarks
                 managedHeapMiB: managedHeapMiB,
                 nativeRssMiB: nativeRssMiB,
                 openFdCount: after.OpenFdCount,
-                openFdDelta: fdDelta);
+                openFdDelta: fdDelta,
+                unitLabel: "kib/db");
         }
         finally
         {
@@ -913,7 +914,7 @@ public static class StorageBenchmarks
                 openFdCount: after.OpenFdCount,
                 openFdDelta: fdDelta,
                 unitsPerOp: DatabaseCount,
-                unitLabel: "dbs");
+                unitLabel: "kib/db");
         }
         finally
         {
@@ -971,7 +972,8 @@ public static class StorageBenchmarks
             diskBytes: totalBytes,
             note: string.Create(
                 CultureInfo.InvariantCulture,
-                $"rows={RowCount} db_b={dbBytes} wal_b={walBytes} log_b={logBytes} b_per_row={totalBytes / (double)RowCount:F1}"));
+                $"rows={RowCount} db_b={dbBytes} wal_b={walBytes} log_b={logBytes} b_per_row={totalBytes / (double)RowCount:F1}"),
+            unitLabel: "bytes");
     }
 
     internal static byte[] CreateRawKey()

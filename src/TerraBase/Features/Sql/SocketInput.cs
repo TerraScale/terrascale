@@ -382,6 +382,7 @@ internal sealed class SocketInput(TimeProvider time)
                 var write = inner.WriteAsync(buffer, cancellationToken);
                 if (write.IsCompletedSuccessfully)
                 {
+                    write.GetAwaiter().GetResult();
                     return ValueTask.CompletedTask;
                 }
 

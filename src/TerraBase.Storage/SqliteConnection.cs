@@ -556,9 +556,11 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 {
                     _userCacheCheckedInTx = true;
                 }
+                else
+                {
+                    _userCacheSchemaGeneration = schemaGeneration;
+                }
             }
-
-            _userCacheSchemaGeneration = schemaGeneration;
         }
 
         if (!_userStatements.TryGetValue(sql, out var node))
@@ -595,15 +597,19 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
             _userCacheCookie = cookie;
             _userCacheDeltaVersion = _options.DeltaColumns.Version;
-            _userCacheSchemaGeneration = schemaGeneration;
             if (InTransaction)
             {
+                _userCacheSchemaGeneration = -1;
                 _userCacheCheckedInTx = true;
+            }
+            else
+            {
+                _userCacheSchemaGeneration = schemaGeneration;
             }
         }
         else if (_userCacheSchemaGeneration < 0)
         {
-            _userCacheSchemaGeneration = schemaGeneration;
+            _userCacheSchemaGeneration = InTransaction ? -1 : schemaGeneration;
         }
 
         var entry = new CachedUserStatement(

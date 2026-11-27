@@ -1379,11 +1379,6 @@ internal sealed partial class DatabaseSession
             return appended;
         }
 
-        if (schemaTouched)
-        {
-            BumpSchemaGeneration();
-        }
-
         var committed = _writer.Exec("COMMIT;");
         if (!committed.IsOk)
         {
@@ -1396,6 +1391,11 @@ internal sealed partial class DatabaseSession
             _metaCache.Clear();
             _writer.InvalidateSchemaCache();
             return truncated ? committed : UntruncatableLog(committed);
+        }
+
+        if (schemaTouched)
+        {
+            BumpSchemaGeneration();
         }
 
         log.MarkCommitted();

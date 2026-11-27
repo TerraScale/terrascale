@@ -243,11 +243,6 @@ internal static class SqlWire
             }
 
             var hasStatements = false;
-            var hasSingle = false;
-            string? singleSql = null;
-            IReadOnlyList<SqlValue> singleArgs = [];
-            IReadOnlyDictionary<string, SqlValue> singleNamed = SqlBuild.NoNamed;
-            var singleValidArgs = true;
 
             while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
             {
@@ -305,84 +300,6 @@ internal static class SqlWire
                         return false;
                     }
                 }
-                else if (PropertyEquals(ref reader, "sql"u8))
-                {
-                    if (!reader.Read())
-                    {
-                        return false;
-                    }
-
-                    if (reader.TokenType == JsonTokenType.Null)
-                    {
-                        singleSql = null;
-                        hasSingle = true;
-                    }
-                    else if (reader.TokenType == JsonTokenType.String)
-                    {
-                        singleSql = reader.GetString();
-                        hasSingle = true;
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-                else if (PropertyEquals(ref reader, "args"u8))
-                {
-                    if (!reader.Read())
-                    {
-                        return false;
-                    }
-
-                    if (reader.TokenType == JsonTokenType.Null)
-                    {
-                        singleArgs = [];
-                    }
-                    else if (reader.TokenType == JsonTokenType.StartArray)
-                    {
-                        if (!TryReadPositionalArgs(ref reader, out singleArgs, out var argsOk))
-                        {
-                            return false;
-                        }
-
-                        if (!argsOk)
-                        {
-                            singleValidArgs = false;
-                        }
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-                else if (PropertyEquals(ref reader, "named"u8))
-                {
-                    if (!reader.Read())
-                    {
-                        return false;
-                    }
-
-                    if (reader.TokenType == JsonTokenType.Null)
-                    {
-                        singleNamed = SqlBuild.NoNamed;
-                    }
-                    else if (reader.TokenType == JsonTokenType.StartObject)
-                    {
-                        if (!TryReadNamedArgs(ref reader, out singleNamed, out var namedOk))
-                        {
-                            return false;
-                        }
-
-                        if (!namedOk)
-                        {
-                            singleValidArgs = false;
-                        }
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
                 else
                 {
                     if (!reader.Read())
@@ -401,24 +318,8 @@ internal static class SqlWire
 
             if (!hasStatements)
             {
-                if (hasSingle)
-                {
-                    if (singleSql is not null && singleValidArgs)
-                    {
-                        statements = [new SqlStatement(singleSql, singleArgs, singleNamed)];
-                        error = null;
-                    }
-                    else
-                    {
-                        statements = null;
-                        error = SqlRefusal.Invalid("arguments are null, finite numbers, booleans, strings or {\"base64\": …} blobs", 0);
-                    }
-                }
-                else
-                {
-                    statements = null;
-                    error = SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
-                }
+                statements = null;
+                error = SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
             }
 
             return true;

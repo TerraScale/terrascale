@@ -100,28 +100,16 @@ internal sealed class SqlFlow(DatabaseAccess access, SqlRunner runner)
             return OversizedRequestInput;
         }
 
+        var isUtf8 = IsUtf8Json(request, out var isJson);
+        if (!isJson)
+        {
+            return new UnsupportedMediaType("Expected a JSON request body.");
+        }
+
         var hasBody = HasBody(request);
         if (!hasBody)
         {
             return EmptyRequestInput();
-        }
-
-        var isUtf8 = IsUtf8Json(request, out var isJson);
-        if (!isJson)
-        {
-            if (string.IsNullOrEmpty(request.ContentType) && request.ContentLength is null)
-            {
-                var probe = await ProbeEmptyBodyAsync(request.BodyReader, cancellationToken);
-                return probe switch
-                {
-                    BodyProbe.Empty => EmptyRequestInput(),
-                    BodyProbe.HasData => new UnsupportedMediaType("Expected a JSON request body."),
-                    BodyProbe.Oversized => OversizedRequestInput,
-                    _ => throw new UnreachableException(),
-                };
-            }
-
-            return new UnsupportedMediaType("Expected a JSON request body.");
         }
 
         if (!isUtf8)

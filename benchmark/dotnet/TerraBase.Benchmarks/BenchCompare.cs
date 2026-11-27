@@ -540,6 +540,11 @@ internal static class BenchCompare
     private static double? ComputeMetricDeltaPct(double? baseline, double? candidate) =>
         baseline is > 0 && candidate is >= 0 ? ((candidate.Value - baseline.Value) / baseline.Value) * 100.0 : null;
 
+    private static bool IsRssPerDbResource(BenchMetrics metrics) =>
+        string.Equals(metrics.UnitLabel, "kib/db", StringComparison.OrdinalIgnoreCase)
+        || metrics.Name.Contains("rss", StringComparison.Ordinal)
+        || metrics.Name.Contains("density", StringComparison.Ordinal);
+
     private static double PrimaryValue(BenchMetrics? metrics, bool lowerIsBetter)
     {
         if (metrics is null)
@@ -552,11 +557,11 @@ internal static class BenchCompare
             return metrics.OpsPerSec;
         }
 
-        return metrics.MeanUs > 0 ? metrics.MeanUs : metrics.DiskBytes;
+        return IsRssPerDbResource(metrics) ? metrics.MeanUs : metrics.DiskBytes;
     }
 
     private static string ResourceUnitLabel(BenchMetrics? metrics) =>
-        metrics is { MeanUs: > 0 } ? "KiB/DB" : "B";
+        metrics is not null && IsRssPerDbResource(metrics) ? "KiB/DB" : "B";
 
     private static string FormatResourcePrimary(BenchMetrics? metrics)
     {
@@ -565,7 +570,7 @@ internal static class BenchCompare
             return "n/a";
         }
 
-        return metrics.MeanUs > 0
+        return IsRssPerDbResource(metrics)
             ? metrics.MeanUs.ToString("F1", CultureInfo.InvariantCulture)
             : metrics.DiskBytes.ToString(CultureInfo.InvariantCulture);
     }

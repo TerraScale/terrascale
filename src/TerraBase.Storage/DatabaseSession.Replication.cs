@@ -1288,14 +1288,13 @@ internal sealed partial class DatabaseSession
         versions.Clear();
         if (!scope.Failed)
         {
-            if (schemaChanged)
-            {
-                BumpSchemaGeneration();
-            }
-
             scope.Fail(LeaseExpired(leaseDeadline)
                 ? new SqliteStatus(SqliteNative.Interrupt, "the staged commit's participant lease expired")
                 : _writer.Exec("COMMIT;"));
+            if (!scope.Failed && schemaChanged)
+            {
+                BumpSchemaGeneration();
+            }
         }
 
         _capture.Suppressed = false;
