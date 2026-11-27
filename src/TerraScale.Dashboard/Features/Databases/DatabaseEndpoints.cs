@@ -36,10 +36,10 @@ public static class DatabaseEndpoints
     internal static async Task<IResult> ListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases,
         BackupService backups)
     {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-        if (context is null)
+        var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
         {
-            return AccountRequest.LoginRedirect(http);
+            return rejection;
         }
 
         context = await backups.SettleRestoresAsync(context, http.RequestAborted);
@@ -48,10 +48,10 @@ public static class DatabaseEndpoints
 
     internal static async Task<IResult> ApiListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases)
     {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-        if (context is null)
+        var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
         {
-            return TypedResults.Unauthorized();
+            return rejection;
         }
 
         try
@@ -70,10 +70,10 @@ public static class DatabaseEndpoints
     internal static async Task<IResult> TabAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases, string section)
     {
         var databaseId = http.Request.RouteValues["databaseId"]?.ToString() ?? "";
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-        if (context is null)
+        var required = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
         {
-            return AccountEndpoints.LoginRedirect(http);
+            return rejection;
         }
         if (section == "overview" && http.Request.Query["delete"] == "1")
         {
@@ -89,10 +89,10 @@ public static class DatabaseEndpoints
 
     internal static async Task<IResult> CreateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend)
     {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-        if (context is null)
+        var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
         {
-            return TypedResults.Unauthorized();
+            return rejection;
         }
 
         var form = await FormRequests.ReadAsync(http, http.RequestAborted);
@@ -139,10 +139,10 @@ public static class DatabaseEndpoints
 
     internal static async Task<IResult> OperateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend, string action)
     {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-        if (context is null)
+        var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
         {
-            return TypedResults.Unauthorized();
+            return rejection;
         }
 
         var form = await FormRequests.ReadAsync(http, http.RequestAborted);

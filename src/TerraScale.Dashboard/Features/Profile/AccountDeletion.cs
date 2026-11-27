@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Profile
              WHERE completed_until <= @Now OR (completed_until IS NULL AND created_at <= @Expired) LIMIT 500)
             """;
         private const int WipeBatch = 500;
-        private static readonly TimeSpan GrantLifetime = TimeSpan.FromDays(15);
+        internal static readonly TimeSpan GrantLifetime = TimeSpan.FromDays(15);
         private const string RemoveKey = "DELETE FROM account_deletions WHERE key_hash = @KeyHash";
         private const string Complete = """
             UPDATE account_deletions SET user_id = NULL, nonce = NULL, ciphertext = NULL, tag = NULL, completed_until = @CompletedUntil, version = @Version
@@ -51,10 +51,10 @@ namespace TerraScale.Dashboard.Features.Profile
                 return await AdvanceAsync(http, sessions, platform, storage, tokens, billing, pending);
             }
 
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var cancellationToken = http.RequestAborted;

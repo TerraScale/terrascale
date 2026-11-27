@@ -26,6 +26,16 @@ namespace TerraScale.Dashboard.Features.Profile
             DELETE FROM stripe_customers WHERE organization_id = @OrganizationId
             """;
 
+        private const string CleanupDue = """
+            SELECT EXISTS (SELECT 1 FROM deletion_cleanup
+                    WHERE targets_complete = 1
+                        AND (acknowledged_at IS NULL OR (scope = 'organization' AND billing_settled_at IS NULL AND acknowledged_at <= @CheckoutExpired)
+                            OR (acknowledged_at < @Retained AND (scope <> 'organization' OR billing_settled_at < @Retained))))
+                OR EXISTS (SELECT 1 FROM account_deletions WHERE completed_until <= @Now OR (completed_until IS NULL AND created_at <= @Expired))
+            """;
+
+        private const string AuditExpired = "SELECT EXISTS (SELECT 1 FROM audit_events WHERE occurred_at < @AuditCutoff)";
+
         private static readonly TimeSpan AuditPruneInterval = TimeSpan.FromHours(1);
         private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
         private readonly HashSet<string> reported = new(StringComparer.Ordinal);
@@ -53,6 +63,7 @@ namespace TerraScale.Dashboard.Features.Profile
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
             if (!await gate.AllowsAsync(cancellationToken)) { return; }
+            IReadOnlyList<TsAuthDeletionItem> peeked = [];
             await jobs.RunAsync("deletion-cleanup", TimeSpan.Zero, async (claim, token) =>
             {
                 var failed = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -62,7 +73,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     await journal.PruneAsync(token);
                     await AccountDeletion.WipeExpiredAsync(storage, clock, token);
-                    if (auditPrunedAt == 0 || clock.GetElapsedTime(auditPrunedAt) >= AuditPruneInterval)
+                    if (AuditPruneDue())
                     {
                         auditPrunedAt = clock.GetTimestamp();
                         await organizations.PruneAuditAsync(token);
@@ -91,17 +102,18 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
                 catch (Exception error) when (Retryable(error, token)) { Retry(error); }
                 IReadOnlyList<TsAuthDeletionItem> items;
-                try { items = await deletions.ListAsync(token); }
+                try { items = await deletions.ListAsync(peek: false, token); }
                 catch (Exception error) when (Retryable(error, token)) { Retry(error); items = []; }
-                var proofs = new List<TsAuthDeletionProof>(items.Count);
-                foreach (var item in items)
+                var proofs = new List<TsAuthDeletionProof>(peeked.Count + items.Count);
+                var proofIds = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var item in peeked.Concat(items))
                 {
                     var accepted = item switch
                     {
                         TsAuthDeletionProof proof => proof,
                         TsAuthRejectedDeletion rejected => Reject(seen, rejected),
                     };
-                    if (accepted is not null)
+                    if (accepted is not null && proofIds.Add(accepted.Id))
                     {
                         proofs.Add(accepted);
                     }
@@ -111,7 +123,18 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     try
                     {
-                        var entry = await journal.RememberAsync(proof, token);
+                        var remembered = await journal.RememberAsync(proof, token);
+                        var entry = remembered switch
+                        {
+                            DeletionCleanupJournal.Entry saved => saved,
+                            StorageConflicted => FailStorage(failed, proof, "StorageConflicted", "conflict"),
+                            StorageFailed failure => FailStorage(failed, proof, "StorageFailed", failure.Failure),
+                        };
+                        if (entry is null)
+                        {
+                            continue;
+                        }
+
                         await CleanAsync(entry, token);
                         await deletions.AcknowledgeAsync(proof, token);
                         await journal.AcknowledgedAsync(proof.Id, token);
@@ -133,8 +156,50 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 telemetry.ReportDeletionCleanupFailures(failing.Count);
-            }, cancellationToken);
+            }, cancellationToken, due: async token =>
+            {
+                var (isDue, items) = await CheckDueAsync(token);
+                peeked = items;
+                return isDue;
+            });
         }
+
+        private async Task<(bool Due, IReadOnlyList<TsAuthDeletionItem> Peeked)> CheckDueAsync(CancellationToken cancellationToken)
+        {
+            var now = clock.GetUtcNow();
+            var auditDue = AuditPruneDue();
+            long local;
+            long expired = 0;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
+            {
+                local = await connection.ExecuteScalarAsync<long>(CleanupDue, new
+                {
+                    Retained = (now - DeletionCleanupJournal.Retention).UtcDateTime,
+                    CheckoutExpired = (now - StripeBilling.CheckoutLifetime).UtcDateTime,
+                    Now = now.UtcDateTime,
+                    Expired = (now - AccountDeletion.GrantLifetime).UtcDateTime,
+                });
+                if (auditDue)
+                {
+                    expired = await connection.ExecuteScalarAsync<long>(AuditExpired, new { AuditCutoff = (now - OrganizationStore.AuditRetentionCap).UtcDateTime });
+                }
+            }
+
+            if (auditDue && expired == 0)
+            {
+                auditPrunedAt = clock.GetTimestamp();
+            }
+
+            if (local > 0 || expired > 0)
+            {
+                return (true, []);
+            }
+
+            var peeked = await deletions.ListAsync(peek: true, cancellationToken);
+            return (peeked.Count > 0, peeked);
+        }
+
+        private bool AuditPruneDue() => auditPrunedAt == 0 || clock.GetElapsedTime(auditPrunedAt) >= AuditPruneInterval;
 
         internal static (string Type, string Code) Failure(Exception error)
         {
@@ -169,11 +234,11 @@ namespace TerraScale.Dashboard.Features.Profile
         {
             switch (entry)
             {
-                case { Proof.Scope: DeletionCleanupRow.Organization, AcknowledgedAt: null }:
+                case { TargetsComplete: true, AcknowledgedAt: null }:
                     await deletions.AcknowledgeAsync(entry.Proof, cancellationToken);
                     await journal.AcknowledgedAsync(entry.Proof.Id, cancellationToken);
                     break;
-                case { Proof.Scope: DeletionCleanupRow.Organization, BillingSettledAt: null, AcknowledgedAt: { } acknowledged } when started >= acknowledged + StripeBilling.CheckoutLifetime:
+                case { TargetsComplete: true, Proof.Scope: DeletionCleanupRow.Organization, BillingSettledAt: null, AcknowledgedAt: { } acknowledged } when started >= acknowledged + StripeBilling.CheckoutLifetime:
                     await journal.BillingSettledAsync(entry.Proof.Id, cancellationToken);
                     break;
             }
@@ -197,6 +262,17 @@ namespace TerraScale.Dashboard.Features.Profile
         private void Fail(Dictionary<string, string> failed, TsAuthDeletionProof proof, Exception error)
         {
             var (type, code) = Failure(error);
+            RecordFailure(failed, proof, type, code);
+        }
+
+        private DeletionCleanupJournal.Entry? FailStorage(Dictionary<string, string> failed, TsAuthDeletionProof proof, string type, string code)
+        {
+            RecordFailure(failed, proof, type, code);
+            return null;
+        }
+
+        private void RecordFailure(Dictionary<string, string> failed, TsAuthDeletionProof proof, string type, string code)
+        {
             if (failed.TryAdd(proof.Id, type + " " + code) && failing.GetValueOrDefault(proof.Id) != failed[proof.Id])
             {
                 logger.DashboardDeletionCleanupFailed(proof.Id, proof.Scope, proof.SubjectId, type, code);
@@ -279,14 +355,14 @@ namespace TerraScale.Dashboard.Features.Profile
 
         private async Task CleanProjectAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
-            await DropProjectAsync(proof, cancellationToken);
-            await projectRecords.CleanAsync(proof.OrganizationId!, proof.SubjectId, cancellationToken);
-            await related.CleanProjectAsync(proof.OrganizationId!, proof.SubjectId, cancellationToken);
+            var organizationId = proof.OrganizationId ?? throw new IOException("Deletion organization identity is missing.");
+            await DropProjectAsync(proof, organizationId, cancellationToken);
+            await projectRecords.CleanAsync(organizationId, proof.SubjectId, cancellationToken);
+            await related.CleanProjectAsync(organizationId, proof.SubjectId, cancellationToken);
         }
 
-        private async Task DropProjectAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
+        private async Task DropProjectAsync(TsAuthDeletionProof proof, string organizationId, CancellationToken cancellationToken)
         {
-            var organizationId = proof.OrganizationId ?? throw new IOException("Deletion organization identity is missing.");
             for (var attempt = 0; ; attempt++)
             {
                 var stored = await organizations.FindAsync(organizationId, cancellationToken);

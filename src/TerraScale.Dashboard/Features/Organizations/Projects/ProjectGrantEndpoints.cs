@@ -19,10 +19,10 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
     {
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ProjectGrantService grants)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
@@ -51,10 +51,10 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ProjectGrantService grants)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);

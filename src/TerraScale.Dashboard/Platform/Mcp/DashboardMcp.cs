@@ -178,8 +178,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
                     try
                     {
-                        var result = http?.Items[McpApiKeyTools.ContextKey] is McpApiKeyTools.Credential key
-                            ? await http.RequestServices.GetRequiredService<McpApiKeyTools>().InvokeAsync(key, request.Params!.Name, request.Params.Arguments, cancellationToken)
+                        var result = http?.Items[McpApiKeyTools.ContextKey] is McpApiKeyTools.Credential key && request.Params is { } callParams
+                            ? await http.RequestServices.GetRequiredService<McpApiKeyTools>().InvokeAsync(key, callParams.Name, callParams.Arguments, cancellationToken)
                             : await next(request, cancellationToken);
                         if (result.IsError == true)
                         {
@@ -245,8 +245,13 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var arguments = call.Arguments;
             if (schema.TryGetProperty("required", out var required))
             {
-                foreach (var name in required.EnumerateArray().Select(item => item.GetString()!))
+                foreach (var item in required.EnumerateArray())
                 {
+                    if (item.GetString() is not { } name)
+                    {
+                        continue;
+                    }
+
                     if (arguments is null || !arguments.ContainsKey(name))
                     {
                         return $"Missing required argument '{name}'.";
@@ -303,7 +308,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         private static string LoggedTool(string? name)
         {
-            return Catalog.Value.Tools.Any(tool => tool.ProtocolTool.Name == name) ? name! : "[unknown]";
+            return name is not null && Catalog.Value.Tools.Any(tool => tool.ProtocolTool.Name == name) ? name : "[unknown]";
         }
 
         public static void MapDashboardMcp(this WebApplication app)
@@ -396,13 +401,13 @@ namespace TerraScale.Dashboard.Platform.Mcp
         {
             if (bearer.StartsWith("tspat_", StringComparison.Ordinal))
             {
-                if (await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(bearer, context.RequestAborted) is not { } principal)
+                var resolved = await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(bearer, context.RequestAborted);
+                return resolved switch
                 {
-                    return new McpBearerRejected();
-                }
-
-                context.Items[ContextKey] = principal;
-                return new McpBearerAccepted();
+                    AccountContext principal => Accept(context, principal),
+                    AccessTokenRejected => new McpBearerRejected(),
+                    AccessTokenUnavailable => new McpBearerUnverified(),
+                };
             }
 
             if (McpAgents.IsAgentToken(bearer))

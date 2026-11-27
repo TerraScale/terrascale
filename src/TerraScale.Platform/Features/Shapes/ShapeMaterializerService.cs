@@ -22,7 +22,7 @@ public sealed class ShapeMaterializerService(
     private const string RefusedFilter = "its persisted filter is no longer accepted";
     private const string IdleShape = "it was not read for a day";
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan Lease = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan Lease = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan Reconnect = TimeSpan.FromSeconds(1);
     private readonly Channel<Ulid> _dirty = Channel.CreateBounded<Ulid>(new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.Wait });
     private readonly ConcurrentDictionary<Ulid, string> _pending = new();

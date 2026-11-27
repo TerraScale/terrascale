@@ -39,8 +39,8 @@ public sealed class FunctionScheduler(
         var now = timeProvider.GetUtcNow();
         var dueOutcome = await store.ReadAsync(
             SqlValues.Statement(
-                "SELECT database_id, name, organization_id, project_id, database_name, cron, cron_next FROM platform_functions "
-                + "WHERE cron IS NOT NULL AND cron_next IS NOT NULL AND cron_next <= ? ORDER BY cron_next LIMIT ?",
+                "SELECT f.database_id, f.name, f.organization_id, f.project_id, f.database_name, f.cron, f.cron_next FROM platform_functions f "
+                + $"WHERE f.cron IS NOT NULL AND f.cron_next IS NOT NULL AND f.cron_next <= ? AND {FunctionService.Open} ORDER BY f.cron_next LIMIT ?",
                 SqlValues.Number(now.UnixMs()),
                 SqlValues.Number(BatchSize)),
             cancellationToken);
@@ -59,16 +59,23 @@ public sealed class FunctionScheduler(
     private async ValueTask FireAsync(DueSchedule schedule, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var next = FunctionService.NextRun(schedule.Cron, now);
+        var project = SqlValues.Text(schedule.Target.Project.ToString());
+        var organization = SqlValues.Text(schedule.Target.Organization.ToString());
+        var database = SqlValues.Text(schedule.Target.Database.ToString());
+        var function = SqlValues.Text(schedule.Name);
+        var due = SqlValues.Number(schedule.Due);
+        var fence = FunctionService.FenceCronClaim(project, organization, database, function, due, now);
         var claim = SqlValues.Statement(
-            "UPDATE platform_functions SET cron_next = ? WHERE database_id = ? AND name = ? AND cron_next = ?",
+            "UPDATE platform_functions SET cron_next = ? WHERE database_id = ? AND name = ? AND cron_next = ? "
+            + "AND NOT EXISTS (SELECT 1 FROM platform_closed_file_projects c WHERE c.project_id = platform_functions.project_id)",
             SqlValues.OptionalNumber(next),
-            SqlValues.Text(schedule.Target.Database.ToString()),
-            SqlValues.Text(schedule.Name),
-            SqlValues.Number(schedule.Due));
-        var claimedOutcome = await store.ExecuteAsync([claim], SqlContext.Strong, cancellationToken);
+            database,
+            function,
+            due);
+        var claimedOutcome = await store.ExecuteAsync([fence, claim], SqlContext.Strong, cancellationToken);
         var claimed = claimedOutcome switch
         {
-            SqlExecuteResponse { Results: var results } => results[0].RowsAffected == 1,
+            SqlExecuteResponse { Results: var results } => results[1].RowsAffected == 1,
             PlatformConflict => false,
             PlatformUnavailable => false,
         };

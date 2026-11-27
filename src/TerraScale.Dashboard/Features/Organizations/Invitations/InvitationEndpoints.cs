@@ -20,7 +20,17 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, InvitationService invitations, string token, string error = "", int status = 200)
         {
             Protect(http);
-            var session = await sessions.ReadAsync(http);
+            var resolved = await sessions.ReadAsync(http);
+            return resolved switch
+            {
+                SessionRecord session => await RenderAsync(http, invitations, session, token, error, status),
+                SessionAbsent => await RenderAsync(http, invitations, null, token, error, status),
+                SessionUnavailable => AccountRequest.ServiceUnavailable(http),
+            };
+        }
+
+        private static async Task<IResult> RenderAsync(HttpContext http, InvitationService invitations, SessionRecord? session, string token, string error, int status)
+        {
             var pending = await invitations.FindAsync(session, token, http.RequestAborted);
             var slice = InvitationView.Create(new(new(pending?.Project is null ? "Invitation" : "Project invitation", DocumentModel.NonceFor(http)), Csrf.Token(http), token,
                 pending, session, error));

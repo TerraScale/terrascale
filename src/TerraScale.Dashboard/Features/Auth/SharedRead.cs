@@ -1,6 +1,6 @@
 namespace TerraScale.Dashboard.Features.Auth;
 
-internal sealed class SharedRead<T>
+internal sealed class SharedRead<T>(Func<T, bool> isGood)
 {
     private static readonly TimeSpan RetryFloor = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ColdRetryFloor = TimeSpan.FromSeconds(5);
@@ -25,9 +25,8 @@ internal sealed class SharedRead<T>
             return (await (settled ?? throw new InvalidOperationException("A shared read has neither a value nor an attempt.")), false);
         }
 
-        var refreshing = chosen.Value;
-        await ((Task)refreshing).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        return refreshing.IsCompletedSuccessfully || fallback is null ? (await refreshing, true) : (await fallback, false);
+        var value = await chosen.Value;
+        return isGood(value) || fallback is null ? (value, true) : (await fallback, false);
     }
 
     private (Lazy<Task<T>>? Chosen, Task<T>? Settled, Task<T>? Fallback) Acquire(TimeProvider time, TimeSpan reuse, bool refresh, Func<Task<T>> read)
@@ -36,12 +35,6 @@ internal sealed class SharedRead<T>
         lock (gate)
         {
             var now = time.GetUtcNow();
-            if (attempt is { IsValueCreated: true, Value: { IsCompletedSuccessfully: true } succeeded })
-            {
-                good = succeeded;
-                goodAt = attemptAt;
-            }
-
             if (!refresh && good is { } fresh && now - goodAt < reuse)
             {
                 return (null, fresh, null);
@@ -57,16 +50,31 @@ internal sealed class SharedRead<T>
                 return (null, good ?? last.Value, null);
             }
 
-            var started = new Lazy<Task<T>>(read, LazyThreadSafetyMode.ExecutionAndPublication);
+            var started = new Lazy<Task<T>>(() => RunAsync(read, now), LazyThreadSafetyMode.ExecutionAndPublication);
             attempt = started;
             attemptAt = now;
             return (started, null, good);
         }
     }
 
-    private static async Task<T> OrLastGoodAsync(Task<T> refreshing, Task<T> lastGood)
+    private async Task<T> RunAsync(Func<Task<T>> read, DateTimeOffset startedAt)
     {
-        await ((Task)refreshing).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        return await (refreshing.IsCompletedSuccessfully ? refreshing : lastGood);
+        var value = await read();
+        if (isGood(value))
+        {
+            lock (gate)
+            {
+                good = Task.FromResult(value);
+                goodAt = startedAt;
+            }
+        }
+
+        return value;
+    }
+
+    private async Task<T> OrLastGoodAsync(Task<T> refreshing, Task<T> lastGood)
+    {
+        var value = await refreshing;
+        return isGood(value) ? value : await lastGood;
     }
 }

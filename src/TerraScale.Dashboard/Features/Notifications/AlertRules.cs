@@ -249,7 +249,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             {
                 if (await claim.Connection.ExecuteScalarAsync<long>(RuleCount, new { ProjectId = projectId, OrganizationId = organizationId }) == 0)
                 {
-                    await claim.ForgetAsync(null, token);
+                    await claim.ForgetAsync(token);
                     return;
                 }
 

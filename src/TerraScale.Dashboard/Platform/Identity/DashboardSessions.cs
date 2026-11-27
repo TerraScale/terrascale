@@ -1,11 +1,11 @@
-using Dapper;
 using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization;
+using Dapper;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -22,7 +22,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
     private const string RemoveOwned = "DELETE FROM sessions WHERE id = @Id AND user_id = @UserId";
     private const string RemoveUser = "DELETE FROM sessions WHERE user_id = @UserId";
     private const string Browsers = DashboardSql.Sessions.Select + " WHERE user_id = @UserId AND kind = @Browser AND expires_at > @Now";
-    private const string Expired = DashboardSql.Sessions.Select + " WHERE kind = @Browser AND expires_at <= @Now AND (@After IS NULL OR id > @After) ORDER BY id LIMIT @Limit";
+    private const string Expired = DashboardSql.Sessions.Select + " WHERE kind = @Browser AND expires_at <= @Now AND id > @After ORDER BY id LIMIT @Limit";
     private const string RemoveToken = "DELETE FROM sessions WHERE token_hash = @TokenHash AND expires_at > @Now";
     private const string RevokeOther = "DELETE FROM sessions WHERE id = @Id AND user_id = @UserId AND kind = @Browser AND token_hash <> @Current";
     private const string RevokeBrowsers = "DELETE FROM sessions WHERE user_id = @UserId AND kind = @Browser";
@@ -40,7 +40,9 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             await EndAsync(context);
         }
 
-        record = record with { SessionExpiresAt = record.Actor is null ? time.GetUtcNow().AddHours(12) : record.ExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = DeviceLabel.Parse(context.Request.Headers.UserAgent) };
+        var sessionExpiresAt = record.Actor is null ? time.GetUtcNow().AddHours(12) : record.ExpiresAt;
+        var device = DeviceLabel.Parse(context.Request.Headers.UserAgent);
+        record = record with { SessionExpiresAt = sessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = device };
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         var credentials = await identity.ReadAsync(context.RequestAborted);
         var now = time.GetUtcNow().UtcDateTime;
@@ -51,7 +53,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 throw new IOException("Too many active dashboard sessions.");
             }
 
-            await connection.ExecuteAsync(DashboardSql.Sessions.Insert, NewRow(SessionRow.Browser, Key(token), record, credentials.SessionEncryptionKey));
+            await connection.ExecuteAsync(DashboardSql.Sessions.Insert, NewRow(SessionRow.Browser, Key(token), record, device, sessionExpiresAt, credentials.SessionEncryptionKey));
         }
 
         await AccountEnrollment.ThrowIfErasedAsync(storage, record.UserId, context.RequestAborted);
@@ -59,26 +61,39 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
         context.Response.Cookies.Append(Cookie, token, DashboardCookies.Private(context, SameSiteMode.Lax, record.SessionExpiresAt));
     }
 
-    public async Task<SessionRecord?> ReadAsync(HttpContext context)
+    public async Task<SessionResolutionOutcome> ReadAsync(HttpContext context)
     {
-        return (await ReadWithAsync<object?>(context, _ => Task.FromResult<object?>(null)))?.Session;
+        var outcome = await ReadWithAsync<object?>(context, static _ => Task.FromResult<object?>(null));
+        return Resolution(outcome);
     }
 
-    public async Task<(SessionRecord Session, T Value)?> ReadWithAsync<T>(HttpContext context, Func<SessionRecord, Task<T>> alongside)
+    private static SessionResolutionOutcome Resolution(SessionReadOutcome<object?> outcome) => outcome switch
+    {
+        SessionRead<object?> read => read.Session,
+        SessionAbsent absent => absent,
+        SessionUnavailable unavailable => unavailable,
+    };
+
+    public async Task<SessionReadOutcome<T>> ReadWithAsync<T>(HttpContext context, Func<SessionRecord, Task<T>> alongside)
     {
         if (BrowserToken(context) is not { } token)
         {
-            return null;
+            return new SessionAbsent();
         }
 
-        Task<T>? work = null;
-        var record = await ResolveAsync(Lookup.Browser(Key(token)), context.RequestAborted, alongside: session => work = alongside(session));
-        if (record is null)
+        var resolved = await ResolveAsync(Lookup.Browser(Key(token)), alongside, context.RequestAborted);
+        return resolved switch
         {
-            Clear(context);
-            return null;
-        }
-        return (record, await work!);
+            SessionRead<T> read => read,
+            SessionAbsent absent => ClearAbsent(context, absent),
+            SessionUnavailable unavailable => unavailable,
+        };
+    }
+
+    private static SessionAbsent ClearAbsent(HttpContext context, SessionAbsent absent)
+    {
+        Clear(context);
+        return absent;
     }
 
     public async Task<string> CreateCredentialAsync(SessionRecord record, DateTimeOffset expiresAt, CancellationToken cancellationToken)
@@ -95,7 +110,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
         var credentials = await identity.ReadAsync(cancellationToken);
         record = record with { SessionExpiresAt = expiresAt, RefreshLease = "", RefreshLeaseUntil = null };
-        var row = NewRow(SessionRow.Credential, null, record, credentials.SessionEncryptionKey);
+        var row = NewRow(SessionRow.Credential, null, record, "", expiresAt, credentials.SessionEncryptionKey);
         await using (var connection = await storage.OpenAsync(cancellationToken))
         {
             await connection.ExecuteAsync(DashboardSql.Sessions.Insert, row);
@@ -105,9 +120,32 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
         return row.Id;
     }
 
-    public Task<SessionRecord?> ReadCredentialAsync(string id, CancellationToken cancellationToken)
+    public async Task<SessionResolutionOutcome> ReadCredentialAsync(string id, CancellationToken cancellationToken)
     {
-        return TerraScaleIds.IsValid(id) ? ResolveAsync(Lookup.Credential(id), cancellationToken) : Task.FromResult<SessionRecord?>(null);
+        if (!TerraScaleIds.IsValid(id))
+        {
+            return new SessionAbsent();
+        }
+
+        var outcome = await ResolveAsync<object?>(Lookup.Credential(id), static _ => Task.FromResult<object?>(null), cancellationToken);
+        return Resolution(outcome);
+    }
+
+    public async Task<SessionRecord?> PeekCredentialAsync(string id, CancellationToken cancellationToken)
+    {
+        if (!TerraScaleIds.IsValid(id))
+        {
+            return null;
+        }
+
+        var row = await FindAsync(Lookup.Credential(id), cancellationToken);
+        if (row is null)
+        {
+            return null;
+        }
+
+        var credentials = await identity.ReadAsync(cancellationToken);
+        return TryOpen(row, credentials.SessionEncryptionKey);
     }
 
     public async Task DeleteCredentialAsync(string id, CancellationToken cancellationToken)
@@ -160,7 +198,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             .OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal)];
     }
 
-    private async Task<SessionRecord?> ResolveAsync(Lookup lookup, CancellationToken cancellationToken, Func<SessionRecord, Task>? alongside = null)
+    private async Task<SessionReadOutcome<T>> ResolveAsync<T>(Lookup lookup, Func<SessionRecord, Task<T>> alongside, CancellationToken cancellationToken)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
         var waitDeadline = Stopwatch.StartNew();
@@ -170,7 +208,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             var row = await FindAsync(lookup, cancellationToken);
             if (row is null)
             {
-                return null;
+                return new SessionAbsent();
             }
 
             var record = Open(row, credentials.SessionEncryptionKey);
@@ -182,14 +220,14 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                     await RemoveAsync(row, "expired", cancellationToken);
                 }
 
-                return null;
+                return new SessionAbsent();
             }
 
             var refreshable = !string.IsNullOrWhiteSpace(record.RefreshToken);
             if (!refreshable && record.ExpiresAt <= now)
             {
                 await RemoveAsync(row, "no refresh token", cancellationToken);
-                return null;
+                return new SessionAbsent();
             }
 
             if (refreshable && record.ExpiresAt <= now + renewBefore)
@@ -197,10 +235,15 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                 var leaseEnded = record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now;
                 if (record.RefreshLease.Length != 0 && !(leaseEnded && lookup.Kind == SessionRow.Credential))
                 {
-                    if (leaseEnded) { await RemoveAsync(row, "abandoned refresh lease", cancellationToken); return null; }
+                    if (leaseEnded)
+                    {
+                        await RemoveAsync(row, "abandoned refresh lease", cancellationToken);
+                        return new SessionAbsent();
+                    }
+
                     if (waitDeadline.Elapsed > TimeSpan.FromSeconds(20))
                     {
-                        throw new TimeoutException("Session refresh is still in progress.");
+                        return new SessionUnavailable(nameof(TimeoutException), "Session refresh is still in progress.");
                     }
 
                     await Task.Delay(100, cancellationToken);
@@ -209,62 +252,68 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
                 using var rotation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 var rotating = rotation.Token;
-                var lease = record with { RefreshLease = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)), RefreshLeaseUntil = now.AddMinutes(1) };
+                var lease = record with { RefreshLease = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)), RefreshLeaseUntil = now + TimeSpan.FromMinutes(2) };
                 if (await ReplaceAsync(row, lease, credentials.SessionEncryptionKey, rotating) is null)
                 {
                     continue;
                 }
 
-                SessionRecord refreshed;
-                try { refreshed = await refresh.RefreshAsync(lease, rotating); }
-                catch (SignInRejectedException)
+                var refreshOutcome = await refresh.TryRefreshAsync(lease, TimeSpan.FromSeconds(30), CancellationToken.None);
+                using var persistence = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var persisting = persistence.Token;
+                var refreshStep = refreshOutcome switch
                 {
-                    if (await FindAsync(lookup, rotating) is { } refused)
-                    {
-                        await RemoveAsync(refused, "refresh rejected by ts-auth", rotating);
-                    }
-
-                    return null;
-                }
-                catch (Exception error) when (error is RefreshNotStartedException || lookup.Kind == SessionRow.Credential)
+                    SessionRecord updated => RefreshStep.Succeeded(updated),
+                    SessionRefreshRejected => RefreshStep.Rejected(),
+                    SessionRefreshNotStarted notStarted => RefreshStep.Retryable(notStarted.ErrorType, notStarted.StatusCode, notStarted.ErrorCode, notStarted.Message, LogLevel.Debug),
+                    SessionRefreshFailed failed => lookup.Kind == SessionRow.Credential
+                        ? RefreshStep.Retryable(failed.ErrorType, failed.StatusCode, failed.ErrorCode, failed.Message, LogLevel.Warning)
+                        : RefreshStep.Fatal(failed.ErrorType, failed.StatusCode, failed.ErrorCode, failed.Message),
+                };
+                if (refreshStep.Record is not { } refreshed)
                 {
-                    var level = error is RefreshNotStartedException ? LogLevel.Debug : LogLevel.Warning;
-                    if (logger.IsEnabled(level))
+                    if (refreshStep.Error is not { } error)
                     {
-                        var cause = error is RefreshNotStartedException { InnerException: { } inner } ? inner : error;
-                        logger.RefreshOfAStoredTsAuth(level, lookup.Kind, cause.GetType().Name, (cause as HttpRequestException)?.StatusCode, (cause as TsAuthException)?.ErrorCode ?? "none");
+                        if (await FindAsync(lookup, persisting) is { } refused)
+                        {
+                            await RemoveAsync(refused, "refresh rejected by ts-auth", persisting);
+                        }
+
+                        return new SessionAbsent();
                     }
 
-                    if (await FindAsync(lookup, cancellationToken) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
+                    if (logger.IsEnabled(error.Level))
                     {
-                        await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, cancellationToken);
+                        logger.RefreshOfAStoredTsAuth(error.Level, lookup.Kind, error.ErrorType, error.StatusCode, error.ErrorCode);
                     }
 
-                    if (record.ExpiresAt <= time.GetUtcNow())
+                    if (error.ShouldRetry)
                     {
-                        throw;
+                        if (await FindAsync(lookup, persisting) is { } unchanged && Open(unchanged, credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
+                        {
+                            await ReplaceAsync(unchanged, record, credentials.SessionEncryptionKey, persisting);
+                        }
+
+                        if (record.ExpiresAt > time.GetUtcNow())
+                        {
+                            renewBefore = TimeSpan.Zero;
+                            continue;
+                        }
                     }
 
-                    renewBefore = TimeSpan.Zero;
-                    continue;
-                }
-                catch (Exception error)
-                {
-                    logger.RefreshOfAStoredTsAuth(LogLevel.Warning, lookup.Kind, error.GetType().Name, (error as HttpRequestException)?.StatusCode,
-                        (error as TsAuthException)?.ErrorCode ?? "none");
-                    throw;
+                    return new SessionUnavailable(error.ErrorType, error.Message);
                 }
 
                 if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now)
                 {
-                    throw new IOException("Refreshed session identity is invalid.");
+                    return new SessionUnavailable(nameof(IOException), "Refreshed session identity is invalid.");
                 }
 
                 refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = record.Device };
                 for (var attempt = 0; ; attempt++)
                 {
                     SessionRow? latest = null;
-                    var unreadable = await storage.TryReadAsync(async connection => latest = await FindAsync(connection, lookup), rotating);
+                    var unreadable = await storage.TryReadAsync(async connection => latest = await FindAsync(connection, lookup, persisting), persisting);
                     var conflicted = false;
                     string unsaved;
                     if (unreadable is { } failure)
@@ -275,7 +324,7 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
                     {
                         if (latest is null)
                         {
-                            return null;
+                            return new SessionAbsent();
                         }
 
                         var current = Open(latest, credentials.SessionEncryptionKey);
@@ -286,10 +335,10 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
                         if (current.RefreshLease != lease.RefreshLease)
                         {
-                            throw new IOException("Session refresh ownership changed.");
+                            return new SessionUnavailable(nameof(IOException), "Session refresh ownership changed.");
                         }
 
-                        var saved = await TryReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, rotating);
+                        var saved = await TryReplaceAsync(latest, refreshed, credentials.SessionEncryptionKey, persisting);
                         (bool Saved, bool Conflicted, string Reason) outcome = saved switch
                         {
                             StorageWritten => (true, false, ""),
@@ -308,55 +357,78 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
                     if (attempt >= 5)
                     {
-                        throw conflicted
-                            ? new DBConcurrencyException("The refreshed session could not be saved: " + unsaved + ".")
-                            : new IOException("The refreshed session could not be saved: " + unsaved + ".");
+                        return new SessionUnavailable(
+                            conflicted ? nameof(DBConcurrencyException) : nameof(IOException),
+                            "The refreshed session could not be saved: " + unsaved + ".");
                     }
 
                     logger.SavingARefreshedTsAuthGrant(lookup.Kind, unsaved);
                     await (conflicted
-                        ? DashboardDb.ConflictBackoffAsync(attempt, time, rotating)
-                        : Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), time, rotating));
+                        ? DashboardDb.ConflictBackoffAsync(attempt, time, persisting)
+                        : Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), time, persisting));
                 }
                 record = refreshed;
             }
             var active = auth.IsActiveAsync(record, cancellationToken);
-            var work = alongside?.Invoke(record);
-            if (!await active)
+            var work = alongside(record);
+            var activity = await active;
+            var step = activity switch
             {
-                if (work is not null)
-                {
-                    _ = work.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default);
-                }
-
-                if (await FindAsync(lookup, cancellationToken) is { } rejected)
-                {
-                    var latestRecord = Open(rejected, credentials.SessionEncryptionKey);
-                    if (latestRecord.AccessToken != record.AccessToken)
-                    {
-                        continue;
-                    }
-
-                    if (record.ExpiresAt <= time.GetUtcNow())
-                    {
-                        continue;
-                    }
-
-                    await RemoveAsync(rejected, "inactive at ts-auth", cancellationToken);
-                }
-                return null;
+                SessionStillActive => ActivityStep.Active(),
+                SessionEnded => ActivityStep.Ended(),
+                SessionActivityUnavailable unavailable => ActivityStep.Unavailable(unavailable.ErrorType, unavailable.Message),
+            };
+            if (step.IsActive)
+            {
+                return new SessionRead<T>(record, await work);
             }
-            return record;
+
+            _ = work.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default);
+
+            if (step.UnavailableOutcome is { } sessionUnavailable)
+            {
+                return sessionUnavailable;
+            }
+
+            if (await FindAsync(lookup, cancellationToken) is { } rejected)
+            {
+                var latestRecord = Open(rejected, credentials.SessionEncryptionKey);
+                if (latestRecord.AccessToken != record.AccessToken)
+                {
+                    continue;
+                }
+
+                if (record.ExpiresAt <= time.GetUtcNow())
+                {
+                    continue;
+                }
+
+                await RemoveAsync(rejected, "inactive at ts-auth", cancellationToken);
+            }
+
+            return new SessionAbsent();
         }
     }
 
-    public async Task ExpireBrowserSessionsAsync(int batchSize, CancellationToken cancellationToken)
+    public async Task<ExpireBrowserSessionsOutcome> ExpireBrowserSessionsAsync(
+        int batchSize,
+        long started,
+        TimeSpan budget,
+        string afterId,
+        CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        ArgumentNullException.ThrowIfNull(afterId);
+        if (budget <= TimeSpan.Zero || time.GetElapsedTime(started) >= budget)
+        {
+            return new BrowserSessionsBudgetExhausted(afterId, false);
+        }
+
         var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
         var now = time.GetUtcNow().UtcDateTime;
-        string? after = null;
-        while (true)
+        var after = afterId;
+        var retryableFailures = false;
+        while (time.GetElapsedTime(started) < budget)
         {
             List<SessionRow> expired;
             await using (var connection = await storage.OpenAsync(cancellationToken))
@@ -366,50 +438,83 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
 
             foreach (var row in expired)
             {
-                SessionRecord record;
-                try { record = Open(row, key); }
-                catch (IOException)
+                if (time.GetElapsedTime(started) >= budget)
+                {
+                    return new BrowserSessionsBudgetExhausted(after, retryableFailures);
+                }
+
+                if (TryOpen(row, key) is not { } record)
                 {
                     await RemoveAsync(row, "unreadable", cancellationToken);
+                    after = row.Id;
                     continue;
                 }
 
-                try { await auth.RevokeAsync(record, cancellationToken); }
-                catch (Exception error) when (error is TsAuthException { StatusCode: HttpStatusCode.NotFound } or TsAuthException { ErrorCode: "invalid_grant" or "invalid_token" })
+                var revoked = await auth.TryRevokeAsync(record, cancellationToken);
+                var step = revoked switch
                 {
-                    await RemoveAsync(row, "already-revoked", cancellationToken);
-                    continue;
-                }
-                catch (Exception error) when (error is HttpRequestException or TimeoutException)
+                    TokenRevoked => RevokeStep.Remove("expired"),
+                    TokenAlreadyRevoked => RevokeStep.Remove("already-revoked"),
+                    TokenRevocationRateLimited limited => LogRateLimited(row.Id, limited),
+                    TokenRevocationClientRejected rejected => LogClientRejected(row.Id, rejected),
+                    TokenRevocationUnavailable unavailable => LogUnavailable(row.Id, unavailable),
+                };
+                if (step.Stop)
                 {
-                    logger.RevokingAnExpiredSessionFailed(row.Id, error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TsAuthException)?.ErrorCode ?? "none");
-                    if (ConcernsTheClient(error))
-                    {
-                        throw;
-                    }
-
-                    continue;
+                    return step.ClientRejected
+                        ? new BrowserSessionsClientRejected(after, retryableFailures)
+                        : new BrowserSessionsRateLimited(after, retryableFailures, step.RetryAfter);
                 }
 
-                await RemoveAsync(row, "expired", cancellationToken);
+                if (step.RemoveReason is { } reason)
+                {
+                    await RemoveAsync(row, reason, cancellationToken);
+                }
+                else
+                {
+                    retryableFailures = true;
+                }
+
+                after = row.Id;
             }
 
             if (expired.Count < batchSize)
             {
-                return;
+                return retryableFailures ? new BrowserSessionsRetryableFailures() : new BrowserSessionsDrained();
             }
-
-            after = expired[^1].Id;
         }
+
+        return new BrowserSessionsBudgetExhausted(after, retryableFailures);
     }
 
-    private static bool ConcernsTheClient(Exception error) => error switch
+    private RevokeStep LogRateLimited(string sessionId, TokenRevocationRateLimited limited)
     {
-        TsAuthException { ErrorCode: "invalid_client" } => true,
-        TsAuthException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests or HttpStatusCode.BadGateway or HttpStatusCode.GatewayTimeout } => true,
-        TsAuthException => false,
-        _ => true,
-    };
+        logger.RevokingAnExpiredSessionFailed(sessionId, "TsAuthRateLimited", HttpStatusCode.TooManyRequests, limited.ErrorCode);
+        return RevokeStep.RateLimited(limited.RetryAfter);
+    }
+
+    private RevokeStep LogClientRejected(string sessionId, TokenRevocationClientRejected rejected)
+    {
+        logger.RevokingAnExpiredSessionFailed(sessionId, "TsAuthClientRejected", rejected.StatusCode, rejected.ErrorCode);
+        return RevokeStep.Rejected();
+    }
+
+    private RevokeStep LogUnavailable(string sessionId, TokenRevocationUnavailable unavailable)
+    {
+        logger.RevokingAnExpiredSessionFailed(sessionId, unavailable.ErrorType, unavailable.StatusCode, unavailable.ErrorCode);
+        return RevokeStep.RetryLater();
+    }
+
+    private readonly record struct RevokeStep(string? RemoveReason, bool Stop, bool ClientRejected, TimeSpan? RetryAfter)
+    {
+        public static RevokeStep Remove(string reason) => new(reason, false, false, null);
+
+        public static RevokeStep RateLimited(TimeSpan? retryAfter) => new(null, true, false, retryAfter);
+
+        public static RevokeStep Rejected() => new(null, true, true, null);
+
+        public static RevokeStep RetryLater() => new(null, false, false, null);
+    }
 
     public async Task EndAsync(HttpContext context)
     {
@@ -459,21 +564,30 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
     private async Task<SessionRow?> FindAsync(Lookup lookup, CancellationToken cancellationToken)
     {
         await using var connection = await storage.OpenAsync(cancellationToken);
-        return await FindAsync(connection, lookup);
+        return await FindAsync(connection, lookup, cancellationToken);
     }
 
-    private static async Task<SessionRow?> FindAsync(TerraBaseDbConnection connection, Lookup lookup)
+    private static async Task<SessionRow?> FindAsync(TerraBaseDbConnection connection, Lookup lookup, CancellationToken cancellationToken)
     {
-        return lookup.Kind == SessionRow.Browser
-            ? await connection.QuerySingleOrDefaultAsync<SessionRow>(ByToken, new { TokenHash = lookup.Key, SessionRow.Browser })
-            : await connection.QuerySingleOrDefaultAsync<SessionRow>(ById, new { Id = lookup.Key, SessionRow.Credential });
+        var (sql, parameters) = lookup.Kind == SessionRow.Browser
+            ? (ByToken, new Dictionary<string, object?> { ["TokenHash"] = lookup.Key, ["Browser"] = SessionRow.Browser })
+            : (ById, new Dictionary<string, object?> { ["Id"] = lookup.Key, ["Credential"] = SessionRow.Credential });
+        var rows = await DashboardDb.RowsAsync(connection, sql, parameters, ReadSessionRow, null, cancellationToken);
+        return rows.Count switch
+        {
+            0 => null,
+            1 => rows[0],
+            _ => throw new InvalidOperationException("Sequence contains more than one element."),
+        };
     }
 
     private Task<StorageWrite> TryReplaceAsync(SessionRow row, SessionRecord record, string key, CancellationToken cancellationToken)
     {
         var (nonce, ciphertext, tag) = Seal(record, key);
         var next = Copy(row) with { OriginalVersion = row.Version, Version = AccountService.NewId(), Nonce = nonce, Ciphertext = ciphertext, Tag = tag };
-        return storage.TryWriteAsync(async (connection, transaction) => await connection.ExecuteAsync(DashboardSql.Sessions.Update, next, transaction) == 1, cancellationToken);
+        return storage.TryWriteAsync(
+            async (connection, transaction) => await DashboardDb.RunAsync(connection, DashboardSql.Sessions.Update, SessionUpdateParameters(next), transaction, cancellationToken) == 1,
+            cancellationToken);
     }
 
     private async Task<SessionRow?> ReplaceAsync(SessionRow row, SessionRecord record, string key, CancellationToken cancellationToken)
@@ -481,17 +595,51 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
         var (nonce, ciphertext, tag) = Seal(record, key);
         var next = Copy(row) with { OriginalVersion = row.Version, Version = AccountService.NewId(), Nonce = nonce, Ciphertext = ciphertext, Tag = tag };
         await using var connection = await storage.OpenAsync(cancellationToken);
-        return await connection.ExecuteAsync(DashboardSql.Sessions.Update, next) == 1 ? next : null;
+        return await DashboardDb.RunAsync(connection, DashboardSql.Sessions.Update, SessionUpdateParameters(next), null, cancellationToken) == 1 ? next : null;
     }
 
     private async Task RemoveAsync(SessionRow row, string reason, CancellationToken cancellationToken)
     {
         logger.DroppedStoredGrant(reason == "expired" ? LogLevel.Information : LogLevel.Warning, row.Kind, reason);
         await using var connection = await storage.OpenAsync(cancellationToken);
-        await connection.ExecuteAsync(DashboardSql.Sessions.Delete, Copy(row) with { OriginalVersion = row.Version });
+        await DashboardDb.RunAsync(
+            connection,
+            DashboardSql.Sessions.Delete,
+            new Dictionary<string, object?> { ["Id"] = row.Id, ["OriginalVersion"] = row.Version },
+            null,
+            cancellationToken);
     }
 
-    private static SessionRow NewRow(string kind, string? tokenHash, SessionRecord record, string key)
+    private static SessionRow ReadSessionRow(DbDataReader reader) => new()
+    {
+        Id = reader.GetString(0),
+        Ciphertext = reader.GetFieldValue<byte[]>(1),
+        Device = reader.GetString(2),
+        ExpiresAt = reader.GetDateTime(3),
+        Kind = reader.GetString(4),
+        Nonce = reader.GetFieldValue<byte[]>(5),
+        Tag = reader.GetFieldValue<byte[]>(6),
+        TokenHash = reader.IsDBNull(7) ? null : reader.GetString(7),
+        UserId = reader.GetString(8),
+        Version = reader.GetString(9),
+    };
+
+    private static Dictionary<string, object?> SessionUpdateParameters(SessionRow row) => new()
+    {
+        ["Id"] = row.Id,
+        ["Kind"] = row.Kind,
+        ["TokenHash"] = row.TokenHash,
+        ["UserId"] = row.UserId,
+        ["Device"] = row.Device,
+        ["ExpiresAt"] = row.ExpiresAt,
+        ["Version"] = row.Version,
+        ["OriginalVersion"] = row.OriginalVersion,
+        ["NonceHex"] = row.NonceHex,
+        ["CiphertextHex"] = row.CiphertextHex,
+        ["TagHex"] = row.TagHex,
+    };
+
+    private static SessionRow NewRow(string kind, string? tokenHash, SessionRecord record, string device, DateTimeOffset expiresAt, string key)
     {
         var (nonce, ciphertext, tag) = Seal(record, key);
         return new()
@@ -500,8 +648,8 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
             Kind = kind,
             TokenHash = tokenHash,
             UserId = record.UserId,
-            Device = record.Device ?? "",
-            ExpiresAt = record.SessionExpiresAt!.Value.UtcDateTime,
+            Device = device,
+            ExpiresAt = expiresAt.UtcDateTime,
             Version = AccountService.NewId(),
             Nonce = nonce,
             Ciphertext = ciphertext,
@@ -531,43 +679,37 @@ public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity id
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
     }
 
-    private static (byte[] Nonce, byte[] Ciphertext, byte[] Tag) Seal(SessionRecord record, string key)
+    private static (byte[] Nonce, byte[] Ciphertext, byte[] Tag) Seal(SessionRecord record, string key) =>
+        SessionProtector.Seal(record, key);
+
+    private static SessionRecord Open(SessionRow row, string key) =>
+        SessionProtector.TryOpen(row, key) ?? throw new IOException("Dashboard session is invalid.");
+
+    private static SessionRecord? TryOpen(SessionRow row, string key) =>
+        SessionProtector.TryOpen(row, key);
+
+    private readonly record struct RefreshStep(SessionRecord? Record, RefreshError? Error)
     {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(record);
-        var nonce = RandomNumberGenerator.GetBytes(12);
-        var cipher = new byte[bytes.Length];
-        var tag = new byte[16];
-        using var aes = new AesGcm(Convert.FromBase64String(key), 16);
-        try
-        {
-            aes.Encrypt(nonce, bytes, cipher, tag, "TerraScale.Dashboard/session/v1"u8);
-            return (nonce, cipher, tag);
-        }
-        finally { CryptographicOperations.ZeroMemory(bytes); }
+        public static RefreshStep Succeeded(SessionRecord record) => new(record, null);
+
+        public static RefreshStep Rejected() => new(null, null);
+
+        public static RefreshStep Retryable(string errorType, HttpStatusCode? statusCode, string errorCode, string message, LogLevel level) =>
+            new(null, new RefreshError(errorType, statusCode, errorCode, message, level, true));
+
+        public static RefreshStep Fatal(string errorType, HttpStatusCode? statusCode, string errorCode, string message) =>
+            new(null, new RefreshError(errorType, statusCode, errorCode, message, LogLevel.Warning, false));
     }
 
-    private static SessionRecord Open(SessionRow row, string key)
-    {
-        try
-        {
-            var plain = new byte[row.Ciphertext.Length];
-            using var aes = new AesGcm(Convert.FromBase64String(key), 16);
-            try
-            {
-                aes.Decrypt(row.Nonce, row.Ciphertext, row.Tag, plain, "TerraScale.Dashboard/session/v1"u8);
-                var record = JsonSerializer.Deserialize<SessionRecord>(plain) ?? throw new IOException("Dashboard session is invalid.");
-                if (string.IsNullOrWhiteSpace(record.UserId) || string.IsNullOrWhiteSpace(record.Email) ||
-                    string.IsNullOrWhiteSpace(record.AccessToken) || record.RefreshLease is null || record.UserId != row.UserId)
-                {
-                    throw new IOException("Dashboard session is invalid.");
-                }
+    private sealed record RefreshError(string ErrorType, HttpStatusCode? StatusCode, string ErrorCode, string Message, LogLevel Level, bool ShouldRetry);
 
-                return record;
-            }
-            finally { CryptographicOperations.ZeroMemory(plain); }
-        }
-        catch (Exception error) when (error is FormatException or CryptographicException or ArgumentException or JsonException)
-        { throw new IOException("Dashboard session is invalid.", error); }
+    private readonly record struct ActivityStep(bool IsActive, SessionUnavailable? UnavailableOutcome)
+    {
+        public static ActivityStep Active() => new(true, null);
+
+        public static ActivityStep Ended() => new(false, null);
+
+        public static ActivityStep Unavailable(string errorType, string message) => new(false, new SessionUnavailable(errorType, message));
     }
 
     private sealed record Lookup(string Kind, string Key)
@@ -591,4 +733,37 @@ public sealed record SessionRecord(string UserId, string Name, string Email, str
     }
 }
 
+public sealed record SessionAbsent;
+
+public sealed record SessionUnavailable(string ErrorType, string Message);
+
+public sealed record SessionRead<T>(SessionRecord Session, T Value);
+
+public readonly union SessionResolutionOutcome(
+    SessionRecord,
+    SessionAbsent,
+    SessionUnavailable);
+
+public readonly union SessionReadOutcome<T>(
+    SessionRead<T>,
+    SessionAbsent,
+    SessionUnavailable);
+
 public sealed record DashboardSessionInfo(string Id, bool Current, string Device, DateTimeOffset ExpiresAt);
+
+public sealed record BrowserSessionsDrained;
+
+public sealed record BrowserSessionsBudgetExhausted(string AfterId, bool RetryableFailures);
+
+public sealed record BrowserSessionsRateLimited(string AfterId, bool RetryableFailures, TimeSpan? RetryAfter);
+
+public sealed record BrowserSessionsClientRejected(string AfterId, bool RetryableFailures);
+
+public sealed record BrowserSessionsRetryableFailures;
+
+public readonly union ExpireBrowserSessionsOutcome(
+    BrowserSessionsDrained,
+    BrowserSessionsBudgetExhausted,
+    BrowserSessionsRateLimited,
+    BrowserSessionsClientRejected,
+    BrowserSessionsRetryableFailures);

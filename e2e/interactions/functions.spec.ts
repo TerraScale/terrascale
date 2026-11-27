@@ -2,19 +2,36 @@ import type { APIResponse, Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { signInToken, stepUp } from '../support/auth-management';
 import { createDedicatedProjectOwner } from '../support/project-owner';
-import { deployFunction, functionAccess, functionSource, functionTool, functionUrl } from '../support/functions';
+import { cleanUpAll } from '../support/cleanup';
+import { deployFunction, functionAccess, functionSource, functionTool, functionUrl, recordJourneyFunction, removeAllBudgetMs, removeFunction, removeFunctions } from '../support/functions';
 import { deletionHandoff, mcpTool } from '../support/mcp';
 import { confirmWithPassword } from '../support/hosted';
 import { journey, saveSecret } from '../support/state';
 import { auth, dash, production } from '../support/stack';
 
 const unique = (prefix: string) => `${prefix}-${journey().runId}${Date.now().toString(36)}`.toLowerCase();
+const deployed = new Set<string>();
+const functionName = (prefix: string) => {
+  const name = unique(prefix);
+  deployed.add(name);
+  recordJourneyFunction(name);
+  return name;
+};
+
+test.afterEach(async ({ request }) => {
+  if (deployed.size === 0) return;
+  const names = [...deployed];
+  deployed.clear();
+  const deadline = Date.now() + removeAllBudgetMs;
+  const headers = await functionAccess(request, deadline);
+  await removeFunctions(request, headers, names, deadline);
+});
 
 test('functions list, detail, invocation logs and deletion work through the page and MCP', async ({ page, audit }) => {
   const current = journey();
   const headers = await functionAccess(page.request);
-  const name = unique('page');
-  const mcpName = unique('mcp');
+  const name = functionName('page');
+  const mcpName = functionName('mcp');
   await deployFunction(page.request, headers, name);
   await deployFunction(page.request, headers, mcpName);
   const invoked = await page.request.post(`${functionUrl(name)}/invoke`, { headers, data: {} });
@@ -73,11 +90,13 @@ test('functions list, detail, invocation logs and deletion work through the page
     expect(reference.reference).toContain('SQLite dialect');
     expect(reference.reference).toContain('ALWAYS a response wrapper');
     const args = { ...scope, name: `${mcpName}-${index}`, source: 'async function handler(event) { console.log("MCP debug", event.body); return { status: 201, body: { echo: event.body, query: event.query } }; }' };
-    const deployed = await functionTool(page.request, credential, 'deploy_function', args);
-    expect(deployed.name).toBe(args.name);
-    expect(deployed.cron).toBeNull();
-    expect(Date.parse(deployed.updated_at)).toBeGreaterThan(0);
-    expect(new URL(deployed.invoke_url).protocol).toBe('https:');
+    deployed.add(args.name);
+    recordJourneyFunction(args.name);
+    const created = await functionTool(page.request, credential, 'deploy_function', args);
+    expect(created.name).toBe(args.name);
+    expect(created.cron).toBeNull();
+    expect(Date.parse(created.updated_at)).toBeGreaterThan(0);
+    expect(new URL(created.invoke_url).protocol).toBe('https:');
     const query = { name: 'Terra Scale', encoded: 'a&b=c+%', empty: '', city: 'São Paulo', tag: 'first,second' };
     const invoked = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name, body: { hello: 'agent' }, query });
     expect(invoked.status).toBe(201);
@@ -175,7 +194,7 @@ test('functions list, detail, invocation logs and deletion work through the page
 test('failed function deletion preserves the selection and confirmation dialog with an alert', async ({ page, audit }) => {
   const current = journey();
   const headers = await functionAccess(page.request);
-  const name = unique('failure');
+  const name = functionName('failure');
   await deployFunction(page.request, headers, name);
   await page.goto(`/databases/${current.databaseId}/functions?function=${name}`);
   await page.getByRole('button', { name: 'Delete function', exact: true }).click();
@@ -282,7 +301,7 @@ async function schemaCompletion(page: Page, id: string, table: string): Promise<
 test('create, deploy, test run, edit and redeploy a function from the editor', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const current = journey();
-  const name = unique('editor');
+  const name = functionName('editor');
   const table = unique('schema').replaceAll('-', '_');
   const headers = await functionAccess(page.request);
   const sqlUrl = functionUrl(name).split('/functions/')[0] + '/sql/execute';
@@ -354,7 +373,7 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
 
 test('a handler status is the test-run result', async ({ page }) => {
   const current = journey();
-  const name = unique('status');
+  const name = functionName('status');
   const source = 'async function handler() { return { status: 404, body: { missing: true } }; }';
   await page.goto(`/databases/${current.databaseId}/functions?edit=new`);
   await page.locator('#function-name').fill(name);
@@ -371,7 +390,7 @@ test('a handler status is the test-run result', async ({ page }) => {
 });
 
 test('function query parameters match HTTPS in the dashboard test run', async ({ page, request, audit }) => {
-  const name = unique('query');
+  const name = functionName('query');
   const headers = await functionAccess(request);
   const source = 'async function handler(event) { return event.query; }';
   expect((await request.put(functionUrl(name), { headers, data: { source } })).status()).toBe(200);
@@ -397,7 +416,7 @@ test('function query parameters match HTTPS in the dashboard test run', async ({
 
 test('function metrics include SQL calls and zero-filled latency buckets', async ({ request, page, audit }) => {
   const headers = await functionAccess(request);
-  const name = unique('metrics');
+  const name = functionName('metrics');
   const url = functionUrl(name);
   const table = name.replaceAll('-', '_');
   const source = `async function handler() {
@@ -494,7 +513,7 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
 test('function secrets are write-only, reach the next invocation and go away with delete', async ({ request, page, audit }) => {
   const current = journey();
   const headers = await functionAccess(request);
-  const name = unique('secrets');
+  const name = functionName('secrets');
   const url = functionUrl(name);
   const value = `secret-${current.runId}-${Date.now().toString(36)}`;
   const panelValue = `panel-${current.runId}-${Date.now().toString(36)}`;
@@ -586,6 +605,8 @@ test('guest and end-user tokens get 403 on every function route while developer 
   const project = current.projectId;
   const developer = { Authorization: '' };
   let databaseId = '';
+  const name = unique('access');
+  let url = '';
   try {
     const exchanged = await request.post(auth + '/terrascale/oauth/token', {
       form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project,
@@ -597,7 +618,7 @@ test('guest and end-user tokens get 403 on every function route while developer 
     developer.Authorization = 'Bearer ' + developerToken;
     databaseId = account.database.id;
     const functions = `https://api.terrascale.tech/v1/projects/${project}/databases/${databaseId}/functions`;
-    const url = `${functions}/${unique('access')}`;
+    url = `${functions}/${name}`;
     const padding = '\u00e9'.repeat(200_000);
     const paddedSource = `const padding = "${padding}"; async function handler(event) { return { ok: padding.length === ${padding.length} }; }`;
     const deployed = await request.put(url, { headers: developer, data: { source: paddedSource } });
@@ -666,13 +687,13 @@ test('guest and end-user tokens get 403 on every function route while developer 
       expect(answered.status(), `developer ${method} ${path}: ${await answered.text()}`).toBe(status);
     }
   } finally {
-    try {
-      if (databaseId) {
+    await cleanUpAll([
+      url && developer.Authorization ? () => removeFunction(request, developer, name, url) : false,
+      databaseId ? async () => {
         const removed = await request.delete(`https://api.terrascale.tech/v1/projects/${project}/databases/${databaseId}`, { headers: developer });
         expect(removed.status(), await removed.text()).toBe(204);
-      }
-    } finally {
-      await account.remove();
-    }
+      } : false,
+      () => account.remove(),
+    ]);
   }
 });

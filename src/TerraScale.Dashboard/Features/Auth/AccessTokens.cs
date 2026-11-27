@@ -107,7 +107,7 @@ public sealed class AccessTokens(DashboardDb storage, DashboardSessions sessions
 
     public async Task ForgetGrantAsync(string credentialId, CancellationToken cancellationToken)
     {
-        if (await sessions.ReadCredentialAsync(credentialId, cancellationToken) is { } grant)
+        if (await sessions.PeekCredentialAsync(credentialId, cancellationToken) is { } grant)
         {
             await auth.RevokeAsync(grant, cancellationToken);
         }
@@ -164,7 +164,7 @@ public sealed class AccessTokens(DashboardDb storage, DashboardSessions sessions
             }
         }
 
-        if (await sessions.ReadCredentialAsync(credential, cancellationToken) is { } grant)
+        if (await sessions.PeekCredentialAsync(credential, cancellationToken) is { } grant)
         {
             await auth.RevokeAsync(grant, cancellationToken);
         }
@@ -178,11 +178,11 @@ public sealed class AccessTokens(DashboardDb storage, DashboardSessions sessions
         await connection.ExecuteAsync(Forget, new { UserId = userId, SessionRow.Credential });
     }
 
-    public async Task<AccountContext?> ResolveAsync(string secret, CancellationToken cancellationToken)
+    public async Task<AccessTokenResolution> ResolveAsync(string secret, CancellationToken cancellationToken)
     {
         if (secret.Length != 49 || !secret.StartsWith("tspat_", StringComparison.Ordinal))
         {
-            return null;
+            return new AccessTokenRejected();
         }
 
         var hash = Hash(secret);
@@ -195,20 +195,30 @@ public sealed class AccessTokens(DashboardDb storage, DashboardSessions sessions
 
         if (token is null)
         {
-            return null;
+            return new AccessTokenRejected();
         }
 
-        var grant = await sessions.ReadCredentialAsync(token.CredentialId, cancellationToken);
-        if (grant is null || grant.UserId != token.UserId)
+        var resolved = await sessions.ReadCredentialAsync(token.CredentialId, cancellationToken);
+        return resolved switch
         {
-            return null;
+            SessionRecord grant => await ResolveGrantedAsync(token, grant, cancellationToken),
+            SessionAbsent => new AccessTokenRejected(),
+            SessionUnavailable unavailable => new AccessTokenUnavailable(unavailable.ErrorType, unavailable.Message),
+        };
+    }
+
+    private async Task<AccessTokenResolution> ResolveGrantedAsync(AccessTokenRow token, SessionRecord grant, CancellationToken cancellationToken)
+    {
+        if (grant.UserId != token.UserId)
+        {
+            return new AccessTokenRejected();
         }
 
         var context = await accounts.GetContextAsync(grant, cancellationToken);
         if (token.McpClientId is { } clientId && await McpRegistrations.TouchAsync(storage, time, clientId, cancellationToken) is null)
         {
             await RevokeClientAsync(token.UserId, clientId, cancellationToken);
-            return null;
+            return new AccessTokenRejected();
         }
 
         return context;
@@ -260,3 +270,12 @@ public sealed class AccessTokens(DashboardDb storage, DashboardSessions sessions
         return new(row.Id, row.Name, row.LastFour, new DateTimeOffset(row.CreatedAt), new DateTimeOffset(row.ExpiresAt));
     }
 }
+
+public sealed record AccessTokenRejected;
+
+public sealed record AccessTokenUnavailable(string ErrorType, string Message);
+
+public readonly union AccessTokenResolution(
+    AccountContext,
+    AccessTokenRejected,
+    AccessTokenUnavailable);

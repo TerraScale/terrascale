@@ -42,10 +42,10 @@ namespace TerraScale.Dashboard.Features.Rules
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, RulesBackend rules)
         {
             http.Response.Headers.CacheControl = "no-store";
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             DatabaseRecord database;
@@ -59,9 +59,9 @@ namespace TerraScale.Dashboard.Features.Rules
         internal static async Task<IResult> DeployAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, RulesBackend rules)
         {
             var (context, database, form, refusal) = await ReadAsync(http, sessions, accounts);
-            if (refusal is not null)
+            if (refusal is not null || context is null || database is null)
             {
-                return refusal;
+                return refusal ?? TypedResults.Unauthorized();
             }
 
             var source = form["source"].ToString();
@@ -69,28 +69,28 @@ namespace TerraScale.Dashboard.Features.Rules
             var playground = Playground(form);
             try
             {
-                var outcome = await rules.DeployAsync(context!, database!, loaded.Length == 0 ? null : loaded, source, http.RequestAborted);
+                var outcome = await rules.DeployAsync(context, database, loaded.Length == 0 ? null : loaded, source, http.RequestAborted);
                 return outcome switch
                 {
-                    TerraBaseRulesDeploy { Rules: { } saved } => await RenderAsync(http, rules, context!, database!, (source, saved.Version), playground,
+                    TerraBaseRulesDeploy { Rules: { } saved } => await RenderAsync(http, rules, context, database, (source, saved.Version), playground,
                         state: page => page with { Notice = "Rules deployed.", Warnings = saved.Warnings ?? [] }),
-                    TerraBaseRulesDeploy notDeployed => await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
+                    TerraBaseRulesDeploy notDeployed => await RenderAsync(http, rules, context, database, (source, loaded), playground,
                         state: page => page with { Error = "The rules were not deployed.", Problems = notDeployed.Problems }),
-                    DashboardValidation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => Refused(page, invalid.Message)),
+                    DashboardValidation invalid => await RenderAsync(http, rules, context, database, (source, loaded), playground, state: page => Refused(page, invalid.Message)),
                 };
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
-                return await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => Refused(page, error));
+                return await RenderAsync(http, rules, context, database, (source, loaded), playground, state: page => Refused(page, error));
             }
         }
 
         internal static async Task<IResult> TestAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, RulesBackend rules)
         {
             var (context, database, form, refusal) = await ReadAsync(http, sessions, accounts);
-            if (refusal is not null)
+            if (refusal is not null || context is null || database is null)
             {
-                return refusal;
+                return refusal ?? TypedResults.Unauthorized();
             }
 
             var source = form["source"].ToString();
@@ -98,17 +98,17 @@ namespace TerraScale.Dashboard.Features.Rules
             var playground = Playground(form);
             try
             {
-                var outcome = await rules.TestAsync(context!, database!, source, playground, http.RequestAborted);
+                var outcome = await rules.TestAsync(context, database, source, playground, http.RequestAborted);
                 return outcome switch
                 {
-                    TerraBaseRulesTestResult result => await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => page with { Result = result }),
-                    DashboardValidation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
+                    TerraBaseRulesTestResult result => await RenderAsync(http, rules, context, database, (source, loaded), playground, state: page => page with { Result = result }),
+                    DashboardValidation invalid => await RenderAsync(http, rules, context, database, (source, loaded), playground,
                         state: page => page with { PlaygroundError = invalid.Message }),
                 };
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
-                return await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
+                return await RenderAsync(http, rules, context, database, (source, loaded), playground,
                     state: page => page with { PlaygroundError = FailureText(error) });
             }
         }
@@ -116,24 +116,24 @@ namespace TerraScale.Dashboard.Features.Rules
         internal static async Task<IResult> RestoreAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, RulesBackend rules)
         {
             var (context, database, form, refusal) = await ReadAsync(http, sessions, accounts);
-            if (refusal is not null)
+            if (refusal is not null || context is null || database is null)
             {
-                return refusal;
+                return refusal ?? TypedResults.Unauthorized();
             }
 
             var version = form["restore"].ToString();
             var current = form["version"].ToString();
             try
             {
-                var restored = await rules.RestoreAsync(context!, database!, version, current, http.RequestAborted);
+                var restored = await rules.RestoreAsync(context, database, version, current, http.RequestAborted);
                 return restored.Rules is not null
-                    ? HttpRedirects.SeeOther(DatabaseService.Path(database!.Id, "rules") + "?restored=1")
-                    : await RenderAsync(http, rules, context!, database!, null, DefaultPlayground,
+                    ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id, "rules") + "?restored=1")
+                    : await RenderAsync(http, rules, context, database, null, DefaultPlayground,
                         state: page => page with { Error = "The version was not restored.", Problems = restored.Problems });
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
-                return await RenderAsync(http, rules, context!, database!, null, DefaultPlayground, state: page => Refused(page, error));
+                return await RenderAsync(http, rules, context, database, null, DefaultPlayground, state: page => Refused(page, error));
             }
         }
 
@@ -148,10 +148,10 @@ namespace TerraScale.Dashboard.Features.Rules
         private static async Task<(AccountContext? Context, DatabaseRecord? Database, IFormCollection Form, IResult? Refusal)> ReadAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
             http.Response.Headers.CacheControl = "no-store";
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return (null, null, FormCollection.Empty, TypedResults.Unauthorized());
+                return (null, null, FormCollection.Empty, rejection);
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

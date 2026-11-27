@@ -13,10 +13,10 @@ namespace TerraScale.Dashboard.Features.Usage
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
@@ -47,7 +47,11 @@ namespace TerraScale.Dashboard.Features.Usage
                 return HttpRedirects.SeeOther("/usage?tab=settings&saved=" + saved);
             }
 
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts) ?? throw new AccountAccessException("Sign in again.");
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
+            {
+                return rejection;
+            }
             var tab = http.Request.Query["tab"].ToString() == "overview" ? "overview" : "settings";
             return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
             {

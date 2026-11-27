@@ -34,6 +34,6 @@ public sealed class BillingRecoveryWorker(StripeBilling billing, BillingSchemaGa
             await billing.StampDraftOwnersAsync(token);
             await billing.ReconcileStaleChangesAsync(token);
             await billing.ReconcileAbandonedDraftsAsync(token);
-        }, cancellationToken);
+        }, cancellationToken, due: billing.RecoveryDueAsync);
     }
 }

@@ -9,9 +9,10 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         public const int DeletionPageLimit = 20;
 
         public async Task<IReadOnlyList<TsAuthDeletionItem>> ListDeletionsAsync(
-            string clientId, string clientSecret, CancellationToken ct = default)
+            string clientId, string clientSecret, bool peek = false, CancellationToken ct = default)
         {
-            var page = await client.SendAuthenticatedJsonAsync(HttpMethod.Get, TsAuthClient.ManagementRoute("/deletions"),
+            var route = TsAuthClient.ManagementRoute(peek ? "/deletions?peek=1" : "/deletions");
+            var page = await client.SendAuthenticatedJsonAsync(HttpMethod.Get, route,
                 null, TsAuthIntegrationJsonContext.Default.TsAuthAcknowledgeDeletion,
                 TsAuthIntegrationJsonContext.Default.TsAuthDeletionPage,
                 TsAuthCredentials.Basic(clientId, clientSecret), HttpStatusCode.OK, 16 * 1024, ct);

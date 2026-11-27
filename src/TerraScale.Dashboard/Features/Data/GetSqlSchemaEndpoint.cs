@@ -19,10 +19,10 @@ public sealed class GetSqlSchemaEndpoint(DashboardSessions sessions, AccountServ
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
-        var context = await AccountRequest.RequireAsync(HttpContext, sessions, accounts);
-        if (context is null)
+        var required = await AccountRequest.RequireAsync(HttpContext, sessions, accounts);
+        if (!AccountRequest.TryResolveApi(HttpContext, required, out var context, out var rejection))
         {
-            return TypedResults.Unauthorized();
+            return rejection;
         }
 
         try

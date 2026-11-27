@@ -27,7 +27,16 @@ namespace TerraScale.Dashboard.Features.NotFound
 
         private static async Task<AccountContext?> ContextAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
-            try { return await AccountEndpoints.RequireAsync(http, sessions, accounts); }
+            try
+            {
+                var required = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+                return required switch
+                {
+                    AccountContext active => active,
+                    AccountUnauthenticated => null,
+                    SessionUnavailable => null,
+                };
+            }
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or TimeoutException ||
                                           error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             { return null; }

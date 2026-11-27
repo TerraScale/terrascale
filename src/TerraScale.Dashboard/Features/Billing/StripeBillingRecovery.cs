@@ -23,6 +23,10 @@ public sealed partial class StripeBilling
         + " WHERE completed_at IS NULL AND processing_until <= @Now ORDER BY processing_until LIMIT @Limit";
     private const string ReceiptById = DashboardSql.StripeEventReceipts.Select + " WHERE id = @Id";
     private const string CleanReceipts = "DELETE FROM stripe_event_receipts WHERE received_at < @Cutoff AND processing_until < @Now";
+    private const string RefreshDue = """
+        SELECT EXISTS (SELECT 1 FROM billing WHERE erasure_id IS NULL AND kind = 'stripe' AND state <> 'deleting' AND (subscription_id <> '' OR checkout_id <> ''))
+            OR EXISTS (SELECT 1 FROM stripe_event_receipts WHERE received_at < @Cutoff AND processing_until < @Now)
+        """;
 
     public async Task<OrganizationRecord> ResolveExpiredGraceAsync(string organizationId, CancellationToken cancellationToken)
     {
@@ -179,5 +183,12 @@ public sealed partial class StripeBilling
         var now = time.GetUtcNow();
         await using var connection = await storage.OpenAsync(cancellationToken);
         await connection.ExecuteAsync(CleanReceipts, new { Cutoff = cutoff, Now = now });
+    }
+
+    public async Task<bool> RefreshDueAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.ExecuteScalarAsync<long>(RefreshDue, new { Cutoff = now.AddDays(-30), Now = now }) > 0;
     }
 }

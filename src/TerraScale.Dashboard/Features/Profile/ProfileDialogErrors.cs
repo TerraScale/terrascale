@@ -13,10 +13,10 @@ public static class ProfileDialogErrors
             return TypedResults.Problem(message, statusCode: status);
         }
 
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-        if (context is null)
+        var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+        if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
         {
-            return TypedResults.Unauthorized();
+            return rejection;
         }
 
         var tokens = tab == "access-tokens" ? await http.RequestServices.GetRequiredService<IProfileTokens>().ListAsync(context, http.RequestAborted) : null;

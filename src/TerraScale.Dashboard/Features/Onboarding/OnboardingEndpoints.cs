@@ -21,11 +21,16 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 returnTo = context.Request.Query["return"].ToString();
             }
 
-            var session = await sessions.ReadAsync(context);
-            if (session is null)
+            var resolvedSession = await sessions.ReadAsync(context);
+            if (!AccountRequest.TryResolveSession(
+                resolvedSession,
+                () => HttpRedirects.SeeOther("/login?signup=1&returnTo=" + Uri.EscapeDataString(
+                    ReturnPath(returnTo) is { Length: > 0 } path ? path : "/onboarding" + (OfferedPlan(plans, requested) is { Length: > 0 } plan ? "?plan=" + Uri.EscapeDataString(plan) : ""))),
+                () => AccountRequest.ServiceUnavailable(context),
+                out var session,
+                out var rejection))
             {
-                var target = ReturnPath(returnTo) is { Length: > 0 } path ? path : "/onboarding" + (OfferedPlan(plans, requested) is { Length: > 0 } plan ? "?plan=" + Uri.EscapeDataString(plan) : "");
-                return HttpRedirects.SeeOther("/login?signup=1&returnTo=" + Uri.EscapeDataString(target));
+                return rejection;
             }
             var page = Page(context) with { Plans = plans, Plan = OfferedPlan(plans, requested) };
             var account = await accounts.EnsureAsync(session, context.RequestAborted);
@@ -82,10 +87,15 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 return RequestError.FormExpired(context, "/onboarding", TypedResults.StatusCode(403));
             }
 
-            var session = await sessions.ReadAsync(context);
-            if (session is null)
+            var resolvedSession = await sessions.ReadAsync(context);
+            if (!AccountRequest.TryResolveSession(
+                resolvedSession,
+                () => HttpRedirects.SeeOther("/login"),
+                () => AccountRequest.ServiceUnavailable(context),
+                out var session,
+                out var rejection))
             {
-                return HttpRedirects.SeeOther("/login");
+                return rejection;
             }
 
             try
@@ -138,7 +148,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
         private static string OfferedPlan(IReadOnlyList<BillingPlan> plans, string? raw)
         {
-            return plans.Any(plan => plan.Key == raw) ? raw! : "";
+            return raw is not null && plans.Any(plan => plan.Key == raw) ? raw : "";
         }
 
         private static string ReturnPath(string? value)

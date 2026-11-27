@@ -12,10 +12,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         internal static async Task<IResult> ExportUsersAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects)
         {
             http.Response.Headers.CacheControl = "no-store";
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

@@ -59,7 +59,7 @@ public sealed record FunctionSecretList(IReadOnlyList<FunctionSecretBody> Items)
 
 public sealed record FunctionTarget(Ulid Organization, Ulid Project, Ulid Database, string DatabaseName);
 
-public sealed record FunctionCode(string Source, IReadOnlyList<SealedSecret> Secrets);
+public sealed record FunctionCode(string Source, long CreatedAt, string? InstanceId, IReadOnlyList<SealedSecret> Secrets);
 
 public sealed record SealedSecret(string Name, string Sealed);
 

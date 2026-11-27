@@ -7,10 +7,10 @@ namespace TerraScale.Dashboard.Features.Auth
     {
         public static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountEndpoints.LoginRedirect(http);
+                return rejection;
             }
 
             var returnTo = Csrf.LocalRedirect(http.Request.Query["returnTo"].ToString());

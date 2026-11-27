@@ -33,10 +33,10 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         {
             var http = HttpContext;
             var keyId = http.Request.RouteValues["keyId"]?.ToString() ?? "";
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

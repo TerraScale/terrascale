@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Billing
     {
         private const string StripeOrganizations = """
         SELECT organization_id FROM billing
-        WHERE erasure_id IS NULL AND kind = 'stripe' AND (subscription_id <> '' OR checkout_id <> '') AND (@After IS NULL OR organization_id > @After)
+        WHERE erasure_id IS NULL AND kind = 'stripe' AND state <> 'deleting' AND (subscription_id <> '' OR checkout_id <> '') AND (@After IS NULL OR organization_id > @After)
         ORDER BY organization_id LIMIT 200
         """;
 
@@ -57,7 +57,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     after = organizationIds[^1];
                 }
                 await billing.CleanEventReceiptsAsync(token);
-            }, cancellationToken);
+            }, cancellationToken, due: billing.RefreshDueAsync);
         }
     }
 }

@@ -82,6 +82,7 @@ try
         .AddHostedService<PlatformSchema>()
         .AddHostedService<FileSweeper>()
         .AddHostedService<ProjectFileSweepWorker>()
+        .AddHostedService<FunctionSweepWorker>()
         .AddHostedService<FunctionScheduler>()
         .AddHostedService<ShapeMaterializerService>()
         .AddHostedService(static provider => provider.GetRequiredService<ShapeCdn>());

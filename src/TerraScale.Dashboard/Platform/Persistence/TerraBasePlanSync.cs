@@ -96,7 +96,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 {
                     if (await claim.Connection.ExecuteScalarAsync<long>(LiveOrganization, new { organization.Id }) == 0)
                     {
-                        await claim.ForgetAsync(null, token);
+                        await claim.ForgetAsync(token);
                         return;
                     }
 

@@ -8,10 +8,10 @@ namespace TerraScale.Dashboard.Features.Databases
     {
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, string databaseId)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             await databases.SyncAsync(context, http.RequestAborted);
@@ -20,10 +20,10 @@ namespace TerraScale.Dashboard.Features.Databases
 
         internal static async Task<IResult> RenameAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

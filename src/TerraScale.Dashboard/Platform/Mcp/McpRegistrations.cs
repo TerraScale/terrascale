@@ -49,14 +49,45 @@ public static class McpRegistrations
         return ReadAsync(storage, time, clientId, Activity.Authenticated, cancellationToken);
     }
 
-    private const string Reclaim = "DELETE FROM mcp_clients WHERE first_sign_in_completed_at IS NULL AND closed_at IS NULL AND created_at <= @Cutoff";
+    private const string UnfinishedRows = "FROM mcp_clients m WHERE m.first_sign_in_completed_at IS NULL AND m.closed_at IS NULL AND m.created_at <= @Cutoff";
+    private const string Unfinished = "SELECT m.id " + UnfinishedRows;
+    private const string ClientBytes = "octet_length(m.id) + coalesce(octet_length(m.closed_at), 0) + octet_length(m.created_at) "
+        + "+ coalesce(octet_length(m.first_sign_in_completed_at), 0) + octet_length(m.last_activity_at) + octet_length(m.name) "
+        + "+ octet_length(m.redirect_uris) + octet_length(m.version)";
+
+    internal const int ReclaimStepCount = 3;
+
+    private static readonly string[] Reclaim =
+    [
+        "DELETE FROM access_tokens WHERE id IN (" + StorageSweeper.Budgeted(
+            $"SELECT id, {StorageSweeper.AccessTokenBytes} AS size FROM access_tokens WHERE mcp_client_id IN ({Unfinished})") + ")",
+        "DELETE FROM mcp_codes WHERE id IN (" + StorageSweeper.Budgeted(
+            $"SELECT id, {StorageSweeper.McpCodeBytes} AS size FROM mcp_codes WHERE client_id IN ({Unfinished})") + ")",
+        "DELETE FROM mcp_clients WHERE id IN (" + StorageSweeper.Budgeted(
+            $"SELECT m.id, {ClientBytes} AS size {UnfinishedRows} "
+            + "AND NOT EXISTS (SELECT 1 FROM access_tokens a WHERE a.mcp_client_id = m.id) "
+            + "AND NOT EXISTS (SELECT 1 FROM mcp_codes c WHERE c.client_id = m.id)") + ")",
+    ];
+
     private const string ById = DashboardSql.McpClients.Select + " WHERE id = @Id";
 
-    public static async Task ReclaimUnfinishedAsync(DashboardDb storage, DateTime now, CancellationToken cancellationToken)
+    internal static async Task<bool> ReclaimUnfinishedStepAsync(
+        DashboardDb storage,
+        TimeProvider time,
+        long started,
+        TimeSpan budget,
+        int step,
+        DateTime now,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(storage);
+        ArgumentOutOfRangeException.ThrowIfNegative(step);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(step, Reclaim.Length);
         await using var connection = await storage.OpenAsync(cancellationToken);
-        await connection.ExecuteAsync(Reclaim, new { Cutoff = now - UnfinishedLifetime });
+        var sql = Reclaim[step];
+        var cutoff = now - UnfinishedLifetime;
+        return await StorageSweeper.DrainAsync(time, started, budget,
+            () => connection.ExecuteAsync(sql, new { Cutoff = cutoff }), cancellationToken);
     }
 
     private enum Activity { None, SignIn, Authenticated }

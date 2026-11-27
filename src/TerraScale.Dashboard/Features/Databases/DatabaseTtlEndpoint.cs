@@ -19,8 +19,11 @@ namespace TerraScale.Dashboard.Features.Databases
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null) { return TypedResults.Unauthorized(); }
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
+            {
+                return rejection;
+            }
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form)) { return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "settings"), TypedResults.BadRequest("Invalid form token.")); }
             var id = form["databaseId"].ToString();

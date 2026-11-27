@@ -51,14 +51,14 @@ public sealed class FunctionInvoker(
             var secrets = OpenSecrets(target, name, code.Secrets);
             return secrets switch
             {
-                string opened => await ExecuteOpenedAsync(code.Source, opened),
+                string opened => await ExecuteOpenedAsync(code, opened),
                 PlatformUnavailable unavailable => unavailable,
             };
         }
 
-        async ValueTask<FunctionInvokeOutcome> ExecuteOpenedAsync(string source, string secrets)
+        async ValueTask<FunctionInvokeOutcome> ExecuteOpenedAsync(FunctionCode code, string secrets)
         {
-            var outcome = await ExecuteAsync(target, name, trigger, eventJson, secrets, bookmark, requestId, source, cancellationToken);
+            var outcome = await ExecuteAsync(target, name, trigger, eventJson, secrets, bookmark, requestId, code, cancellationToken);
             return outcome switch
             {
                 FunctionAnswer answer => answer,
@@ -79,13 +79,13 @@ public sealed class FunctionInvoker(
         string secrets,
         string bookmark,
         string? requestId,
-        string source,
+        FunctionCode code,
         CancellationToken cancellationToken)
     {
         var started = timeProvider.GetUtcNow();
         var clock = timeProvider.GetTimestamp();
         await using var sql = new FunctionSql(terraBase, target.Database, bookmark, timeProvider, logger);
-        var run = await FunctionRunner.RunAsync(source, eventJson, secrets, sql, cancellationToken);
+        var run = await FunctionRunner.RunAsync(code.Source, eventJson, secrets, sql, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         var elapsed = timeProvider.GetElapsedTime(clock);
         var (answer, lines, error) = run switch
@@ -108,7 +108,7 @@ public sealed class FunctionInvoker(
             answer.Body.LongLength,
             trigger == "http" && error is null ? answer.Status : null);
         metrics.Invocation(trigger, error is null, elapsed.TotalMilliseconds);
-        var outcome = await functions.RecordAsync(target, name, log, CancellationToken.None);
+        var outcome = await functions.RecordAsync(target, name, code.CreatedAt, code.InstanceId, log, CancellationToken.None);
         return outcome switch
         {
             FunctionRunRecorded => answer,

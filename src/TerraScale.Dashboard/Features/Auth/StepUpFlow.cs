@@ -72,12 +72,11 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public static StepUpIntent? Intent(HttpContext http, AccountContext context, string purpose)
         {
-            if (!http.Items.TryGetValue(IntentKey, out var value))
+            if (!http.Items.TryGetValue(IntentKey, out var value) || value is not StepUpIntent intent)
             {
                 return null;
             }
 
-            var intent = (StepUpIntent)value!;
             Validate(http, context, intent, purpose);
             return intent;
         }
@@ -131,14 +130,34 @@ namespace TerraScale.Dashboard.Features.Auth
                 }
 
                 var intent = await flows.TakeStepUpAsync(http) ?? throw Required();
-                var session = await sessions.ReadAsync(http);
-                if (session?.UserId != intent.UserId || Browser(http) != intent.Browser)
+                var resolvedSession = await sessions.ReadAsync(http);
+                if (!AccountRequest.TryResolveSession(
+                    resolvedSession,
+                    () => Refused(http, 403, Required().Message, Required().Code),
+                    () => Refused(http, 503, "Confirmation could not finish. Start the action again; no new action will be authorized automatically."),
+                    out var session,
+                    out var sessionRejection))
+                {
+                    return sessionRejection;
+                }
+
+                if (session.UserId != intent.UserId || Browser(http) != intent.Browser)
                 {
                     throw Required();
                 }
 
                 http.Request.QueryString = new(intent.Query);
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: intent.Purpose != "change_email") ?? throw Required();
+                var requiredAccount = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: intent.Purpose != "change_email");
+                if (!AccountRequest.TryResolve(
+                    requiredAccount,
+                    () => Refused(http, 403, Required().Message, Required().Code),
+                    () => Refused(http, 503, "Confirmation could not finish. Start the action again; no new action will be authorized automatically."),
+                    out var context,
+                    out var accountRejection))
+                {
+                    return accountRejection;
+                }
+
                 http.Items[IntentKey] = intent;
                 _ = Intent(http, context, intent.Purpose);
                 http.Request.Method = "POST";
@@ -162,7 +181,7 @@ namespace TerraScale.Dashboard.Features.Auth
                         services.GetRequiredService<IOrganizationAccess>(), services.GetRequiredService<IWorkspacePlacement>(), "ownership"),
                     "change_plan" => await Billing.BillingMutations.MutateAsync(http, sessions, accounts,
                         services.GetRequiredService<Billing.StripeBilling>(),
-                        http.Request.Path.Value!.EndsWith("/undo", StringComparison.Ordinal) ? "undo" : "change"),
+                        http.Request.Path.Value?.EndsWith("/undo", StringComparison.Ordinal) == true ? "undo" : "change"),
                     _ => throw Required()
                 };
             }

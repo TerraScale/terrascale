@@ -10,8 +10,18 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountRequest.LoginRedirect(http) : await ApiKeyPages.DetailsAsync(http, context, keys, databases, http.Request.RouteValues["keyId"]?.ToString() ?? "");
+            if (http.Request.RouteValues["keyId"] is not string keyId)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return required switch
+            {
+                AccountContext context => await ApiKeyPages.DetailsAsync(http, context, keys, databases, keyId),
+                AccountUnauthenticated => AccountRequest.LoginRedirect(http),
+                SessionUnavailable => AccountRequest.ServiceUnavailable(http),
+            };
         }
     }
 }

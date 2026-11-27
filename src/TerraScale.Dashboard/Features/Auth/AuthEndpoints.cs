@@ -32,11 +32,17 @@ namespace TerraScale.Dashboard.Features.Auth
         internal static async Task<IResult> StartAsync(HttpContext context, DashboardSessions sessions)
         {
             var returnTo = Csrf.LocalRedirect(context.Request.Query["returnTo"].ToString());
-            if (await sessions.ReadAsync(context) is not null)
+            var existing = await sessions.ReadAsync(context);
+            return existing switch
             {
-                return HttpRedirects.SeeOther(returnTo);
-            }
+                SessionRecord => HttpRedirects.SeeOther(returnTo),
+                SessionAbsent => await StartUnauthenticatedAsync(context, returnTo),
+                SessionUnavailable unavailable => Failure(context, returnTo, "Sign-in is unavailable right now. Try again in a moment.", 503, unavailable.ErrorType),
+            };
+        }
 
+        private static async Task<IResult> StartUnauthenticatedAsync(HttpContext context, string returnTo)
+        {
             if (context.Request.Query["emailChanged"] == "1")
             {
                 context.Response.Headers["Refresh"] = "0;url=/login?returnTo=%2Fprofile";
@@ -72,14 +78,15 @@ namespace TerraScale.Dashboard.Features.Auth
             if (taken is not OidcTake.Taken { Flow: var flow })
             {
                 var returnTo = taken is OidcTake.Expired expired ? expired.ReturnTo : "/";
-                if (await sessions.ReadAsync(context) is not null)
+                var existing = await sessions.ReadAsync(context);
+                return existing switch
                 {
-                    return HttpRedirects.SeeOther(returnTo);
-                }
-
-                return taken is OidcTake.Expired
-                    ? Failure(context, returnTo, "This sign-in took longer than an hour to finish. Select Try again; you usually won't need a new code.", 400, "FlowExpired")
-                    : Failure(context, returnTo, "This sign-in was already used, or was started in another browser. Select Try again; you usually won't need a new code.", 400, "FlowUnknown");
+                    SessionRecord => HttpRedirects.SeeOther(returnTo),
+                    SessionUnavailable unavailable => Failure(context, returnTo, "Sign-in could not finish right now. Try again in a moment.", 503, unavailable.ErrorType),
+                    SessionAbsent => taken is OidcTake.Expired
+                        ? Failure(context, returnTo, "This sign-in took longer than an hour to finish. Select Try again; you usually won't need a new code.", 400, "FlowExpired")
+                        : Failure(context, returnTo, "This sign-in was already used, or was started in another browser. Select Try again; you usually won't need a new code.", 400, "FlowUnknown"),
+                };
             }
 
             if (context.Request.Query["error"].Count != 0)
@@ -98,7 +105,10 @@ namespace TerraScale.Dashboard.Features.Auth
                     return exchanged switch
                     {
                         SessionRecord fresh => await AccessTokenEndpoints.IssueAsync(context, flow, fresh, tokenExpiresAt),
-                        DashboardValidation error => ExchangeRefused(context, flow, error)
+                        DashboardValidation error => ExchangeRefused(context, flow, error),
+                        ExchangeRejected => Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401, nameof(SignInRejectedException)),
+                        ExchangeRateLimited limited => RateLimited(context, flow, limited.RetryAfter),
+                        ExchangeUnavailable unavailable => Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, unavailable.ErrorType),
                     };
                 }
 
@@ -109,7 +119,10 @@ namespace TerraScale.Dashboard.Features.Auth
                     return exchanged switch
                     {
                         SessionRecord fresh => await McpOAuth.GrantAsync(context, flow.Mcp, fresh, flow.StepUp, tokenExpiresAt),
-                        DashboardValidation error => ExchangeRefused(context, flow, error)
+                        DashboardValidation error => ExchangeRefused(context, flow, error),
+                        ExchangeRejected => Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401, nameof(SignInRejectedException)),
+                        ExchangeRateLimited limited => RateLimited(context, flow, limited.RetryAfter),
+                        ExchangeUnavailable unavailable => Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, unavailable.ErrorType),
                     };
                 }
 
@@ -117,7 +130,10 @@ namespace TerraScale.Dashboard.Features.Auth
                 return signedIn switch
                 {
                     SessionRecord fresh => await CompleteSignInAsync(context, sessions, flow, fresh),
-                    DashboardValidation error => ExchangeRefused(context, flow, error)
+                    DashboardValidation error => ExchangeRefused(context, flow, error),
+                    ExchangeRejected => Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401, nameof(SignInRejectedException)),
+                    ExchangeRateLimited limited => RateLimited(context, flow, limited.RetryAfter),
+                    ExchangeUnavailable unavailable => Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, unavailable.ErrorType),
                 };
             }
             catch (AccountAccessException error) when (flow.StepUp is not null || flow.Mcp is not null)
@@ -128,13 +144,18 @@ namespace TerraScale.Dashboard.Features.Auth
             { return Failure(context, flow.ReturnTo, "Another sign-in to this account finished at the same moment. Select Try again.", 409, nameof(DBConcurrencyException)); }
             catch (TerraScale.Dashboard.Platform.TsAuth.TsAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
             {
-                var seconds = Math.Clamp((int)Math.Ceiling(error.RetryAfter?.TotalSeconds ?? 60), 1, 3600);
-                context.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                var wait = seconds > 120 ? $"{(long)Math.Ceiling(seconds / 60.0)} minutes" : $"{seconds} seconds";
-                return Failure(context, flow.ReturnTo, $"Too many sign-in attempts. Try again in {wait}.", 429, "RateLimited");
+                return RateLimited(context, flow, error.RetryAfter);
             }
             catch (Exception error) when (DependencyFailure(error, context))
             { return Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, error.GetType().Name); }
+        }
+
+        private static RazorSlices.RazorSlice<AuthFailurePage> RateLimited(HttpContext context, OidcFlow flow, TimeSpan? retryAfter)
+        {
+            var seconds = Math.Clamp((int)Math.Ceiling(retryAfter?.TotalSeconds ?? 60), 1, 3600);
+            context.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var wait = seconds > 120 ? $"{(long)Math.Ceiling(seconds / 60.0)} minutes" : $"{seconds} seconds";
+            return Failure(context, flow.ReturnTo, $"Too many sign-in attempts. Try again in {wait}.", 429, "RateLimited");
         }
 
         internal static async Task<IResult> LogoutAsync(HttpContext context)
@@ -153,7 +174,22 @@ namespace TerraScale.Dashboard.Features.Auth
             var sessions = context.RequestServices.GetRequiredService<DashboardSessions>();
             var auth = context.RequestServices.GetRequiredService<IAuthGateway>();
             var logout = context.RequestServices.GetRequiredService<IAuthLogoutGateway>();
-            var session = await sessions.ReadAsync(context);
+            var resolved = await sessions.ReadAsync(context);
+            return resolved switch
+            {
+                SessionRecord session => await FinishSignOutAsync(context, sessions, auth, logout, session),
+                SessionAbsent => await FinishSignOutAsync(context, sessions, auth, logout, null),
+                SessionUnavailable => AccountRequest.ServiceUnavailable(context),
+            };
+        }
+
+        private static async Task<IResult> FinishSignOutAsync(
+            HttpContext context,
+            DashboardSessions sessions,
+            IAuthGateway auth,
+            IAuthLogoutGateway logout,
+            SessionRecord? session)
+        {
             if (session is not null)
             {
                 await auth.RevokeAsync(session, context.RequestAborted);

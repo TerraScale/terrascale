@@ -2,11 +2,13 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import type { APIRequestContext } from '@playwright/test';
 import { deleteAccount } from '../support/account';
+import { cleanUpAll } from '../support/cleanup';
 import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
 import { runOperations, runSessionFault, sdks } from '../support/sdk';
 import { prepareAuthManagement, closeAuthManagement } from '../support/auth-management';
 import { deleteProjectOwner } from '../support/project-owner';
+import { findJourneyDatabase, functionAccess, removeAllBudgetMs, removeAllFunctions } from '../support/functions';
 import { checkPasswordFairness } from '../support/password-fairness';
 import { shell } from '../support/shell';
 import { auth, onLocalStack, production } from '../support/stack';
@@ -27,6 +29,16 @@ async function placementHeaders(request: APIRequestContext): Promise<{ Authoriza
 }
 
 const sweepPass = 15_000;
+
+async function removeLeftFunctions(request: APIRequestContext): Promise<number> {
+  const deadline = Date.now() + removeAllBudgetMs;
+  const headers = await functionAccess(request, deadline);
+  const database = await findJourneyDatabase(request, headers, deadline);
+  if (!database) {
+    return 0;
+  }
+  return (await removeAllFunctions(request, headers, deadline, undefined, database.id)).length;
+}
 
 test.describe.configure({ mode: 'default' });
 
@@ -220,22 +232,31 @@ test.describe('database deletion', () => {
 
   test('delete the journey database on its danger page by typing its name', async ({ page, audit }) => {
     const current = journey();
-    await page.goto(`/databases/${current.databaseId}/danger`);
-    await shell(page, current);
-    await audit.check('database danger zone');
+    const deadline = Date.now() + removeAllBudgetMs;
+    await cleanUpAll([
+      async () => {
+        const removed = await removeAllFunctions(page.request, await functionAccess(page.request, deadline), deadline);
+        console.log(`Journey database functions removed before its deletion: ${removed.length}`);
+      },
+      async () => {
+        await page.goto(`/databases/${current.databaseId}/danger`);
+        await shell(page, current);
+        await audit.check('database danger zone');
 
-    await page.locator('main').getByRole('button', { name: 'Delete database', exact: true }).click();
-    const dialog = page.locator('dialog[open]');
-    await expect(dialog).toBeVisible();
-    const confirm = dialog.locator('input[name="confirmName"]');
-    const submit = dialog.getByRole('button', { name: 'Delete database', exact: true });
-    await confirm.fill(current.databaseName);
-    await audit.check('delete database dialog');
-    await submit.click();
+        await page.locator('main').getByRole('button', { name: 'Delete database', exact: true }).click();
+        const dialog = page.locator('dialog[open]');
+        await expect(dialog).toBeVisible();
+        const confirm = dialog.locator('input[name="confirmName"]');
+        const submit = dialog.getByRole('button', { name: 'Delete database', exact: true });
+        await confirm.fill(current.databaseName);
+        await audit.check('delete database dialog');
+        await submit.click();
 
-    await page.waitForURL((url) => url.pathname === '/databases');
-    await expect(page.locator('main tr').filter({ hasText: current.databaseName })).toHaveCount(0);
-    await audit.check('databases after deletion');
+        await page.waitForURL((url) => url.pathname === '/databases');
+        await expect(page.locator('main tr').filter({ hasText: current.databaseName })).toHaveCount(0);
+        await audit.check('databases after deletion');
+      },
+    ]);
   });
   test('the dashboard creates, renames and deletes a database outside its own region', async ({ remoteDatabase }) => {
     await remoteDatabase();
@@ -325,30 +346,35 @@ test.describe('teardown', production ? { tag: '@production-cleanup' } : {}, () =
   });
 
   test('the account is deleted through the profile danger tab, a new sign-in is refused and its files leave the object store', async ({ page, audit, browser }, info) => {
-    const content = Buffer.from(`held ${journey().runId}`);
-    const files: { live: string; held: Reservation; late: Reservation }[] = [];
-    await onLocalStack(async () => {
-      const left = leftFiles();
-      await page.goto(`/storage?bucket=${left.bucket}`);
-      const held = await reserveUpload(page, left.bucket, `held-${journey().runId}.txt`, 'text/plain', content);
-      expect(await putReserved(held, content), 'the file to delete is uploaded').toBe(200);
-      expect(await completeUpload(page, left.bucket, held.id), 'the file to delete is completed').toBe(204);
-      expect(await deleteFile(page, left.bucket, held.id), 'the file is deleted just before the account').toBe(303);
-      const late = await reserveUpload(page, left.bucket, `late-${journey().runId}.txt`, 'text/plain', content);
-      expect([await stored(left.live), await stored(held.path), await stored(late.path)], 'the bucket holds a live file and a just-deleted file, and nothing for the reserved upload').toEqual([true, true, false]);
-      files.push({ live: left.live, held, late });
-    });
-    const closing = Date.now();
-    await deleteAccount(page, audit, browser, info);
-    for (const { live, held, late } of files) {
-      expect([await stored(live), await stored(held.path)], 'the deleted account left no file in the object store').toEqual([false, false]);
-      expect(await putReserved(late, content), 'an upload link issued before the deletion still takes its file').toBe(200);
-      await expect.poll(() => stored(late.path), { message: 'a file uploaded after the deletion is erased again' }).toBe(false);
-      const unnamed = unnamedPath(late.path);
-      expect(await putUnnamed(unnamed, content), 'an object that no record names arrives under the deleted project').toBe(200);
-      const nextSweep = Date.now() - closing + sweepPass;
-      info.setTimeout(info.timeout + nextSweep);
-      await expect.poll(() => stored(unnamed), { message: 'the sweep of the project prefix erases an object that no record names', timeout: nextSweep }).toBe(false);
-    }
+    await cleanUpAll([
+      async () => console.log(`Journey database functions removed before account deletion: ${await removeLeftFunctions(page.request)}`),
+      async () => {
+        const content = Buffer.from(`held ${journey().runId}`);
+        const files: { live: string; held: Reservation; late: Reservation }[] = [];
+        await onLocalStack(async () => {
+          const left = leftFiles();
+          await page.goto(`/storage?bucket=${left.bucket}`);
+          const held = await reserveUpload(page, left.bucket, `held-${journey().runId}.txt`, 'text/plain', content);
+          expect(await putReserved(held, content), 'the file to delete is uploaded').toBe(200);
+          expect(await completeUpload(page, left.bucket, held.id), 'the file to delete is completed').toBe(204);
+          expect(await deleteFile(page, left.bucket, held.id), 'the file is deleted just before the account').toBe(303);
+          const late = await reserveUpload(page, left.bucket, `late-${journey().runId}.txt`, 'text/plain', content);
+          expect([await stored(left.live), await stored(held.path), await stored(late.path)], 'the bucket holds a live file and a just-deleted file, and nothing for the reserved upload').toEqual([true, true, false]);
+          files.push({ live: left.live, held, late });
+        });
+        const closing = Date.now();
+        await deleteAccount(page, audit, browser, info);
+        for (const { live, held, late } of files) {
+          expect([await stored(live), await stored(held.path)], 'the deleted account left no file in the object store').toEqual([false, false]);
+          expect(await putReserved(late, content), 'an upload link issued before the deletion still takes its file').toBe(200);
+          await expect.poll(() => stored(late.path), { message: 'a file uploaded after the deletion is erased again' }).toBe(false);
+          const unnamed = unnamedPath(late.path);
+          expect(await putUnnamed(unnamed, content), 'an object that no record names arrives under the deleted project').toBe(200);
+          const nextSweep = Date.now() - closing + sweepPass;
+          info.setTimeout(info.timeout + nextSweep);
+          await expect.poll(() => stored(unnamed), { message: 'the sweep of the project prefix erases an object that no record names', timeout: nextSweep }).toBe(false);
+        }
+      },
+    ]);
   });
 });

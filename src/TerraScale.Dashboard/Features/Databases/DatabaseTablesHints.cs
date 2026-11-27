@@ -47,7 +47,7 @@ public static partial class DatabaseTablesHints
                 if (hint is not null && next == hint)
                 {
                     var changed = await hint;
-                    hint = changed ? ReadAsync(socket!, logger, stop.Token) : null;
+                    hint = changed && socket is not null ? ReadAsync(socket, logger, stop.Token) : null;
                     if (!changed)
                     {
                         socket?.Dispose();
@@ -101,8 +101,14 @@ public static partial class DatabaseTablesHints
         ClientWebSocket? socket = null;
         try
         {
-            var context = await AccountRequest.RequireAsync(http,
+            var required = await AccountRequest.RequireAsync(http,
                 http.RequestServices.GetRequiredService<DashboardSessions>(), http.RequestServices.GetRequiredService<AccountService>());
+            AccountContext? context = required switch
+            {
+                AccountContext active => active,
+                AccountUnauthenticated => null,
+                SessionUnavailable => null,
+            };
             if (context is null)
             {
                 return null;
@@ -117,13 +123,13 @@ public static partial class DatabaseTablesHints
             var selected = http.Request.Query["table"].ToString();
             var table = catalog.Tables.FirstOrDefault(table => table.Name == selected)
                 ?? (selected.Length == 0 && catalog.Tables.Count > 0 ? catalog.Tables[0] : null);
-            if (table is null)
+            if (table is null || current.Organization is not { } organization)
             {
                 return null;
             }
 
             var token = await http.RequestServices.GetRequiredService<IProjectAccessTokens>()
-                .GetAsync(current.Session, current.Organization!.Id, database.ProjectId, ["sql:read"], cancellationToken);
+                .GetAsync(current.Session, organization.Id, database.ProjectId, ["sql:read"], cancellationToken);
             var path = $"/v1/projects/{Uri.EscapeDataString(database.ProjectId)}/databases/{Uri.EscapeDataString(database.Id)}/tables/{Uri.EscapeDataString(table.Name)}/shape";
             using var client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, UseCookies = false });
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(home.Api, path + "?offset=-1"));

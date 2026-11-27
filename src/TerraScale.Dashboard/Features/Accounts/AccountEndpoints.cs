@@ -13,12 +13,18 @@ namespace TerraScale.Dashboard.Features.Accounts
         internal static async Task<IResult> SwitchAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, string field,
             Func<SessionRecord, string, CancellationToken, Task<AccountContext>> select)
         {
-            var session = await sessions.ReadAsync(http);
-            if (session is null)
+            var resolved = await sessions.ReadAsync(http);
+            return resolved switch
             {
-                return TypedResults.Unauthorized();
-            }
+                SessionRecord session => await SwitchAuthenticatedAsync(http, session, field, select),
+                SessionAbsent => TypedResults.Unauthorized(),
+                SessionUnavailable => AccountRequest.ServiceUnavailable(http),
+            };
+        }
 
+        private static async Task<IResult> SwitchAuthenticatedAsync(HttpContext http, SessionRecord session, string field,
+            Func<SessionRecord, string, CancellationToken, Task<AccountContext>> select)
+        {
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
@@ -45,9 +51,9 @@ namespace TerraScale.Dashboard.Features.Accounts
             return WorkspaceUrl.For(selected, target, replace: true);
         }
 
-        public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
+        public static Task<AccountRequestOutcome> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
-            return await AccountRequest.RequireAsync(http, sessions, accounts);
+            return AccountRequest.RequireAsync(http, sessions, accounts);
         }
 
         public static IResult LoginRedirect(HttpContext http)

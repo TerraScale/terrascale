@@ -8,10 +8,9 @@ using TerraScale.Dashboard.Platform.Datastar;
 namespace TerraScale.Dashboard.Features.Notifications
 {
 
-    public sealed record AlertsPage(ShellModel Shell, IReadOnlyList<AlertRule> Rules, string Error = "", AlertRule? Created = null, string? Secret = null)
+    public sealed record AlertsPage(ShellModel Shell, ProjectRecord Project, IReadOnlyList<AlertRule> Rules, string Error = "", AlertRule? Created = null, string? Secret = null)
     {
         public bool CanManage => Shell.Context.Role == "owner";
-        public ProjectRecord Project => Shell.Context.Project!;
         public string Database(AlertRule rule)
         {
             return rule.DatabaseId is null ? "Every database" : Project.Databases.GetValueOrDefault(rule.DatabaseId)?.Name ?? "Deleted database";
@@ -33,10 +32,10 @@ namespace TerraScale.Dashboard.Features.Notifications
     {
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules, AuthFlows flows)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             if (context.Project is null)
@@ -51,10 +50,10 @@ namespace TerraScale.Dashboard.Features.Notifications
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules, AuthFlows flows, string action)
         {
             http.Response.Headers.CacheControl = "no-store";
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
@@ -144,7 +143,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     (error, status) = ("Alert rules are unavailable. Reload to retry.", 503);
                 }
             }
-            var model = new AlertsPage(ShellModel.For(http, context, "Alerts"), items, error, created, secret);
+            var model = new AlertsPage(ShellModel.For(http, context, "Alerts"), context.Project, items, error, created, secret);
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, AlertsContent.Create(model));

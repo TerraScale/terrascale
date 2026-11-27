@@ -4,6 +4,7 @@ import { createProjectOwner } from '../support/project-owner';
 import { signInToken } from '../support/auth-management';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { budgetWindow, waitForBudgetWindow } from '../support/budget-window';
+import { cleanUpAll, deleted } from '../support/cleanup';
 import { hostedReady, onboard, onHosted, openSignUp, signInWithPassword, signUp, submitSignUp, verify } from '../support/hosted';
 import { regionsSettled } from '../support/overview';
 import { newAddress } from '../support/inbox';
@@ -78,12 +79,13 @@ test('password reservations are returned after sign-in and retained for wrong pa
         expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
       }
     } finally {
-      if (key) {
-        for (const id of ids) expect((await sdk.deleteUser(key, current.projectId, id)).ok).toBe(true);
-      }
-      await saveCookies(context);
-      await context.close();
-      await account.close();
+      const cleanupKey = key;
+      await cleanUpAll([
+        ...ids.map((id) => cleanupKey !== undefined && (() => deleted(`user ${id}`, sdk.deleteUser(cleanupKey, current.projectId, id)))),
+        () => saveCookies(context),
+        () => context.close(),
+        () => account.close(),
+      ]);
     }
   });
 });

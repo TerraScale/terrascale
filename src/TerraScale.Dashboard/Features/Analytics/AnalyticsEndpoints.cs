@@ -16,10 +16,10 @@ namespace TerraScale.Dashboard.Features.Analytics
 
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AnalyticsService analytics)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             return AnalyticsSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(),

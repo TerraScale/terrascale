@@ -14,17 +14,32 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 var sessions = http.RequestServices.GetRequiredService<DashboardSessions>();
                 var tokens = http.RequestServices.GetRequiredService<IProfileTokens>();
-                var browser = await sessions.ReadAsync(http);
-                if (flow.StepUp is not { } intent || browser?.UserId != intent.UserId || StepUpFlow.Browser(http) != intent.Browser)
+                var resolvedBrowser = await sessions.ReadAsync(http);
+                if (!AccountRequest.TryResolveSession(
+                    resolvedBrowser,
+                    () => TypedResults.Problem(StepUpFlow.Required().Message, statusCode: 403),
+                    () => AccountRequest.ServiceUnavailable(http),
+                    out var browser,
+                    out var browserRejection))
+                {
+                    return browserRejection;
+                }
+
+                if (flow.StepUp is not { } intent || browser.UserId != intent.UserId || StepUpFlow.Browser(http) != intent.Browser)
                 {
                     return TypedResults.Problem(StepUpFlow.Required().Message, statusCode: 403);
                 }
 
                 http.Request.QueryString = new(intent.Query);
-                var context = await AccountRequest.RequireAsync(http, sessions, http.RequestServices.GetRequiredService<AccountService>());
-                if (context is null)
+                var requiredAccount = await AccountRequest.RequireAsync(http, sessions, http.RequestServices.GetRequiredService<AccountService>());
+                if (!AccountRequest.TryResolve(
+                    requiredAccount,
+                    () => HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString(ReturnTo)),
+                    () => AccountRequest.ServiceUnavailable(http),
+                    out var context,
+                    out var accountRejection))
                 {
-                    return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString(ReturnTo));
+                    return accountRejection;
                 }
 
                 try

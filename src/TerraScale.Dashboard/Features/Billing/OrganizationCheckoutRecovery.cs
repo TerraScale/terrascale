@@ -26,6 +26,13 @@ public sealed partial class StripeBilling
         """;
     private const string AbandonedDrafts = DashboardSql.PendingOrganizationCheckouts.Select
         + " WHERE created_at < @Before AND state <> @Creating AND (@After IS NULL OR draft_id > @After) ORDER BY draft_id LIMIT @Limit";
+    private const string RecoveryDue = """
+        SELECT EXISTS (SELECT 1 FROM billing b
+                WHERE b.kind = 'stripe' AND b.erasure_id IS NULL AND b.state = 'active' AND length(b.request_id) = 26 AND b.subscription_id <> ''
+                    AND NOT EXISTS (SELECT 1 FROM stripe_owner_stamps s WHERE s.organization_id = b.organization_id AND s.subscription_id = b.subscription_id))
+            OR EXISTS (SELECT 1 FROM billing_changes WHERE status IN ('reserved', 'applying') AND (status_changed_at IS NULL OR status_changed_at < @StaleBefore))
+            OR EXISTS (SELECT 1 FROM pending_organization_checkouts WHERE created_at < @DraftBefore AND state <> @Creating)
+        """;
     private string? stampCursor;
     private string? draftCursor;
 
@@ -61,6 +68,14 @@ public sealed partial class StripeBilling
         Invoice invoice => invoice is { Status: "paid", AmountPaid: > 0 },
         _ => false,
     };
+
+    public async Task<bool> RecoveryDueAsync(CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.ExecuteScalarAsync<long>(RecoveryDue,
+            new { StaleBefore = now - StaleChangeAge, DraftBefore = (now - DraftCompletionWindow).UtcDateTime, Creating = OrganizationCheckoutStates.Creating }) > 0;
+    }
 
     public async Task StampDraftOwnersAsync(CancellationToken cancellationToken)
     {
