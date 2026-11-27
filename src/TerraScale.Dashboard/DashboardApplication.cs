@@ -337,6 +337,7 @@ namespace TerraScale.Dashboard
             app.Use((context, next) => RequestIdentity.MiddlewareAsync(context, next, timingLogger));
             app.Use((context, next) => ServerTiming.MiddlewareAsync(context, next, timingLogger));
             var authOrigin = TsAuthOrigin.Text;
+            var revision = app.Services.GetRequiredService<DependencyReadiness>().Revision;
             app.Use(async (context, next) =>
             {
                 var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
@@ -369,6 +370,7 @@ namespace TerraScale.Dashboard
                         headers.Location = WorkspaceUrl.PreserveRequest(context, location);
                     }
 
+                    headers["X-TerraScale-Revision"] = revision;
                     headers.XContentTypeOptions = "nosniff";
                     headers.XFrameOptions = "DENY";
                     headers.TryAdd("Referrer-Policy", "same-origin");

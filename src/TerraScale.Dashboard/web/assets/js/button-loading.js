@@ -1,4 +1,5 @@
 import './workspace.js';
+import './live-reconnect.js';
 import './dialog-patches.js';
 import { installSdkTabs } from './sdk-tabs.js';
 

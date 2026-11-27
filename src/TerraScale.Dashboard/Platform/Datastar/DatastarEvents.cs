@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using RazorSlices;
 
@@ -31,6 +32,18 @@ namespace TerraScale.Dashboard.Platform.Datastar
             context.Response.ContentType = "text/html; charset=utf-8";
             context.Response.Headers.CacheControl = "no-store";
             await context.Response.WriteAsync(html, cancellationToken);
+        }
+
+        public static Task LiveAuthAsync(HttpContext context, int status, CancellationToken cancellationToken) =>
+            WriteLiveEventAsync(context, "ts-live-auth", status.ToString(CultureInfo.InvariantCulture), cancellationToken);
+
+        public static Task LiveCompleteAsync(HttpContext context, CancellationToken cancellationToken) =>
+            WriteLiveEventAsync(context, "ts-live-complete", "complete", cancellationToken);
+
+        private static async Task WriteLiveEventAsync(HttpContext context, string name, string value, CancellationToken cancellationToken)
+        {
+            await context.Response.WriteAsync($"event: {name}\ndata: {value}\n\n", cancellationToken);
+            await context.Response.Body.FlushAsync(cancellationToken);
         }
 
         public static async Task KeepAliveAsync(HttpContext context, CancellationToken cancellationToken)

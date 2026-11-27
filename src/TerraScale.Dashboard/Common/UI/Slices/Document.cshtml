@@ -1,8 +1,9 @@
 @inherits RazorLayoutSlice<DocumentModel>
 @inject AssetUrls Assets
+@inject TerraScale.Dashboard.Platform.Persistence.DependencyReadiness Readiness
 @inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
 <!DOCTYPE html>
-<html lang="en" data-theme="@Model.Theme" data-nonce="@Model.Nonce">
+<html lang="en" data-app-revision="@Readiness.Revision" data-theme="@Model.Theme" data-nonce="@Model.Nonce">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -27,7 +28,7 @@
     {
         <div id="ts-dev-updates" hidden data-signals="{_devBoot: '', _devFirstBoot: '', _devRevision: -1, _devFirstRevision: -1, _devCss: '', _devFirstCss: '', _devJs: '', _devFirstJs: ''}"
              data-attr:data-dev-ready="$_devBoot ? 'true' : 'false'"
-             data-init="@@get('/__dev/events', {openWhenHidden: true, retryMaxCount: 1000})"
+             data-init="@@get('/__dev/events', {openWhenHidden: true, retry: 'always', retryMaxCount: 1000000})"
              data-effect="$_devBoot &amp;&amp; ($_devFirstBoot = $_devFirstBoot || $_devBoot) !== $_devBoot &amp;&amp; location.reload(); $_devRevision >= 0 &amp;&amp; ($_devFirstRevision = $_devFirstRevision === -1 ? $_devRevision : $_devFirstRevision) !== $_devRevision &amp;&amp; location.reload(); $_devCss &amp;&amp; ($_devFirstCss = $_devFirstCss || $_devCss) !== $_devCss &amp;&amp; (document.getElementById('ts-css').href = '/css/terrascale.css?v=' + $_devCss, $_devFirstCss = $_devCss); $_devJs &amp;&amp; ($_devFirstJs = $_devFirstJs || $_devJs) !== $_devJs &amp;&amp; location.reload()"></div>
     }
 </body>
