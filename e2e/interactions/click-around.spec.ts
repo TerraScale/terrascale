@@ -164,6 +164,137 @@ test('the new table form creates a table and opens the statement in the editor',
   await expect(duplicate.locator('[role="alert"]')).toBeVisible();
   await expect(duplicate.locator('[role="alert"]')).toContainText(/\w/);
 });
+
+test('the table studio edits, adds and deletes rows, then hands the table to SQL worksheets', async ({ page, audit }) => {
+  const current = journey();
+  const table = unique('studio').replaceAll('-', '_');
+  await page.goto(`/databases/${current.databaseId}/sql`);
+  await shell(page, current);
+  await runSql(page, `CREATE TABLE ${table} (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)`);
+
+  await page.goto(`/databases/${current.databaseId}/tables?table=${table}`);
+  const rows = page.locator('#table-rows');
+  const body = rows.locator('tbody tr');
+  await expect(page.locator('#table-columns-title')).toHaveText(table);
+  await expect(rows).toContainText('No rows yet.');
+
+  const adding = page.locator('#insert-row');
+  await page.locator('.ts-studio-bar').getByRole('button', { name: 'Add row', exact: true }).click();
+  await expect(adding).toBeVisible();
+  await adding.locator('[data-insert-column="name"]').fill('Ada');
+  await adding.locator('[data-insert-column="score"]').fill('7');
+  await adding.getByRole('button', { name: 'Add row', exact: true }).click();
+  await expect(adding).toBeHidden();
+  await expect(body).toHaveCount(1);
+  await expect(rows.locator('[data-delete-row]')).toHaveCount(1);
+
+  await page.locator('.ts-studio-bar').getByRole('button', { name: 'Add row', exact: true }).click();
+  await expect(adding).toBeVisible();
+  await adding.locator('[data-insert-column="name"]').fill('Grace');
+  await adding.locator('[data-insert-column="score"]').fill('9');
+  await adding.getByRole('button', { name: 'Add row', exact: true }).click();
+  await expect(adding).toBeHidden();
+  await expect(body).toHaveCount(2);
+  await expect(rows.locator('[data-delete-row]')).toHaveCount(2);
+
+  await expect(rows.locator('thead th[data-column="name"]')).toHaveText('nameTEXT');
+  await expect(rows.locator('thead th[data-column="id"]')).toHaveClass(/ts-num/);
+  await page.getByRole('button', { name: 'Schema', exact: true }).click();
+  await expect(page.locator('#table-columns')).toBeVisible();
+  await expect(rows).toBeHidden();
+  await expect(page.locator('#table-columns tbody tr')).toHaveCount(3);
+  await audit.check('table studio schema');
+  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await expect(rows).toBeVisible();
+
+  const name = body.first().locator('td').nth(1);
+  await body.first().locator('td[tabindex="0"]').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(name).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(name.locator('input')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(name).toBeFocused();
+  await expect(name).toHaveText('Ada');
+
+  const graceRow = body.filter({ hasText: 'Grace' });
+  const graceId = (await graceRow.locator('td').first().innerText()).trim();
+  const score = graceRow.locator('td').nth(2);
+  await score.click();
+  await score.locator('input').fill('11');
+  await score.locator('input').press('Enter');
+  await expect(score).toHaveAttribute('data-dirty', '');
+  const footer = page.locator('#table-commit');
+  await expect(footer.locator('[data-commit-sql]')).toHaveText(`UPDATE "${table}" SET "score" = 11 WHERE "id" = ${graceId};`);
+  await audit.check('table studio staged edit');
+  const committed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/dashboard/databases/tables/rows');
+  await footer.getByRole('button', { name: 'Commit', exact: true }).click();
+  expect((await committed).status()).toBe(200);
+  await expect(page.locator('#table-commit-status')).toHaveText('Committed 1 change.');
+  await page.reload();
+  await expect(body.filter({ hasText: 'Grace' }).locator('td').nth(2)).toHaveText('11');
+
+  await page.locator('.ts-studio-bar').getByRole('button', { name: 'Add row', exact: true }).click();
+  await expect(adding).toBeVisible();
+  await adding.locator('[data-insert-column="name"]').fill('Linus');
+  await adding.locator('[data-insert-column="score"]').fill('5');
+  await audit.check('table studio add row');
+  await adding.getByRole('button', { name: 'Add row', exact: true }).click();
+  await expect(adding).toBeHidden();
+  await expect(body).toHaveCount(3);
+  await expect(page.locator(`[data-table="${table}"] .ts-studio-rail-count`)).toHaveText('3 rows');
+  await expect(page.locator('#table-commit-status')).toHaveText('Added 1 row.');
+
+  await page.locator('#table-filter').fill('Linus');
+  await expect(rows.locator('tbody tr:not([hidden])')).toHaveCount(1);
+  const linus = body.filter({ hasText: 'Linus' });
+  const linusId = (await linus.locator('td').first().innerText()).trim();
+  await linus.hover();
+  await linus.getByRole('button', { name: 'Delete row', exact: true }).click();
+  const deleting = page.locator('#delete-row');
+  await expect(deleting).toBeVisible();
+  await expect(deleting.locator('[data-delete-sql]')).toHaveText(`DELETE FROM "${table}" WHERE "id" = ${linusId};`);
+  await audit.check('table studio delete row');
+  await deleting.getByRole('button', { name: 'Delete row', exact: true }).click();
+  await expect(deleting).toBeHidden();
+  await expect(page.locator('#table-commit-status')).toHaveText('Deleted 1 row.');
+  await page.locator('#table-filter').fill('');
+  await expect(body).toHaveCount(2);
+  await expect(page.locator(`[data-table="${table}"] .ts-studio-rail-count`)).toHaveText('2 rows');
+
+  await page.getByRole('link', { name: 'Open as SQL', exact: true }).click();
+  await expect(page).toHaveURL(url => url.pathname.endsWith('/sql') && url.searchParams.get('queryTable') === table);
+  const tabs = page.locator('#sql-tabs');
+  await expect(tabs.locator('[aria-current="true"]')).toHaveText(table);
+  await expect(page.locator('#sql')).toHaveValue(`SELECT *\nFROM "${table}"\nLIMIT 100;`);
+  const tree = page.locator('.ts-studio-tree-item').filter({ has: page.locator('summary', { hasText: table }) });
+  await expect(tree.locator('details')).toHaveJSProperty('open', true);
+  const editor = page.locator('#sql-editor ts-code-editor');
+  await expect(editor).toHaveAttribute('data-ready', '');
+  await editor.locator('.monaco-editor').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.press('Delete');
+  await expect(page.locator('#sql')).toHaveValue('');
+  await tree.locator('[data-sql-insert="id"]').click();
+  await tree.locator('[data-sql-insert="name"]').click();
+  await expect(page.locator('#sql')).toHaveValue('"id", "name"');
+  await page.keyboard.type(' FROM ' + table);
+  await expect(page.locator('#sql')).toHaveValue(`"id", "name" FROM ${table}`);
+
+  const sheets = tabs.locator('.ts-studio-tab');
+  const before = await sheets.count();
+  await tabs.getByRole('button', { name: 'New worksheet', exact: true }).click();
+  await expect(sheets).toHaveCount(before + 1);
+  await expect(page.locator('#sql')).toHaveValue('');
+  await tabs.locator('.ts-studio-tab').filter({ hasText: table }).click();
+  await expect(page.locator('#sql')).toHaveValue(`"id", "name" FROM ${table}`);
+  await tree.getByRole('button', { name: 'Query ' + table, exact: true }).click();
+  await expect(sheets).toHaveCount(before + 1);
+  await expect(tabs.locator('[aria-current="true"]')).toHaveText(table);
+  await audit.check('SQL explorer rail and worksheets');
+  await tree.getByRole('link', { name: `Open ${table} in Tables`, exact: true }).click();
+  await expect(page.locator('#table-columns-title')).toHaveText(table);
+});
 });
 
 test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }) => {
