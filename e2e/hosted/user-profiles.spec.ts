@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { authRows } from '../support/auth-storage';
+import { cleanUpAll, deleted } from '../support/cleanup';
 import { request } from '../support/client-address';
 import { Audit, auditedContext, test, expect } from '../support/audit';
 import { prepareAuthManagement, closeAuthManagement, stepUp } from '../support/auth-management';
@@ -263,9 +264,13 @@ test('SDK profiles and imported passwords work on hosted pages and OIDC', async 
     }
     await audit.finish();
   } finally {
-    if (clientId) await sdk.deleteClient(management.ownerToken, current.projectId, clientId);
-    for (const id of [createdId, importedId, ...extraIds]) if (id) await sdk.deleteUser(management.writeKey, current.projectId, id);
-    await closeAuthManagement(page, management, current);
-    await account.remove();
+    const createdClient = clientId;
+    const users = [createdId, importedId, ...extraIds].filter((id): id is string => !!id);
+    await cleanUpAll([
+      createdClient !== undefined && (() => deleted(`OAuth client ${createdClient}`, sdk.deleteClient(management.ownerToken, current.projectId, createdClient))),
+      ...users.map((id) => () => deleted(`user ${id}`, sdk.deleteUser(management.writeKey, current.projectId, id))),
+      () => closeAuthManagement(page, management, current),
+      () => account.remove(),
+    ]);
   }
 });

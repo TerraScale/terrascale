@@ -301,18 +301,35 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
         var now = timeProvider.GetUtcNow();
         var ownerValue = SqlValues.Text(owner);
         var until = SqlValues.Number((now + lease).UnixMs());
+        var renewBefore = SqlValues.Number((now + (lease / 2)).UnixMs());
+        var activeSince = SqlValues.Number((now - ActiveFor).UnixMs());
+        var current = SqlValues.Number(now.UnixMs());
         IReadOnlyList<SqlHttpStatement> statements =
         [
             SqlValues.Statement(
                 "UPDATE platform_shapes SET owner = ?, lease_until = ? WHERE handle IN (SELECT handle FROM platform_shapes WHERE viewer_key = '' "
-                + "AND last_read_at > ? AND (owner = ? OR lease_until < ?) ORDER BY lease_until, handle LIMIT ?)",
+                + "AND last_read_at > ? AND (lease_until < ? OR owner = ? AND lease_until < ?) "
+                + "ORDER BY owner = ? AND lease_until >= ? DESC, owner = ? DESC, lease_until, handle "
+                + "LIMIT max(0, ? - (SELECT COUNT(*) FROM platform_shapes WHERE viewer_key = '' AND owner = ? AND lease_until >= ? "
+                + "AND NOT (last_read_at > ? AND lease_until < ?))))",
                 ownerValue,
                 until,
-                SqlValues.Number((now - ActiveFor).UnixMs()),
+                activeSince,
+                current,
                 ownerValue,
-                SqlValues.Number(now.UnixMs()),
-                SqlValues.Number(limit)),
-            SqlValues.Statement($"SELECT {RecordColumns} FROM platform_shapes WHERE owner = ? AND lease_until = ?", ownerValue, until),
+                renewBefore,
+                ownerValue,
+                current,
+                ownerValue,
+                SqlValues.Number(limit),
+                ownerValue,
+                current,
+                activeSince,
+                renewBefore),
+            SqlValues.Statement(
+                $"SELECT {RecordColumns} FROM platform_shapes WHERE owner = ? AND lease_until >= ? AND viewer_key = '' ORDER BY handle",
+                ownerValue,
+                current),
         ];
         var outcome = await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken);
         return outcome switch

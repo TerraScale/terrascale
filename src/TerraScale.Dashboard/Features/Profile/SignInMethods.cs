@@ -7,10 +7,10 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         public static async Task<IResult> UnlinkAsync(HttpContext http, string provider, DashboardSessions sessions, AccountService accounts, ITsAuthProviders providers)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
@@ -60,10 +60,10 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public static async Task<IResult> SendCodeAsync(HttpContext http, string provider, DashboardSessions sessions, AccountService accounts, ITsAuthProviders providers)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

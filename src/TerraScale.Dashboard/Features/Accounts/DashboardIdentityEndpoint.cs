@@ -21,10 +21,10 @@ namespace TerraScale.Dashboard.Features.Accounts
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             return TypedResults.Json(new AccountIdentityResponse(context.UserId, context.Account.Id,

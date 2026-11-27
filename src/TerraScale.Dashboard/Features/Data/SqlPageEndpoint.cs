@@ -10,9 +10,18 @@ namespace TerraScale.Dashboard.Features.Data
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountRequest.LoginRedirect(http)
-                : await DataEndpoints.PageAsync(http, context, http.Request.RouteValues["databaseId"]?.ToString() ?? "", data, saved);
+            if (http.Request.RouteValues["databaseId"] is not string databaseId)
+            {
+                return TypedResults.NotFound();
+            }
+
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return required switch
+            {
+                AccountContext context => await DataEndpoints.PageAsync(http, context, databaseId, data, saved),
+                AccountUnauthenticated => AccountRequest.LoginRedirect(http),
+                SessionUnavailable => AccountRequest.ServiceUnavailable(http),
+            };
         }
     }
 }

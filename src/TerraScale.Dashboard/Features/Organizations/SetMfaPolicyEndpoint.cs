@@ -13,10 +13,10 @@ namespace TerraScale.Dashboard.Features.Organizations
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             if (context.Role != "owner")

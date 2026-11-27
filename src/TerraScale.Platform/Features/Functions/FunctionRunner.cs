@@ -7,7 +7,12 @@ namespace TerraScale.Platform.Features.Functions;
 
 public sealed record FunctionReturned(string Json, IReadOnlyList<string> Lines);
 
-public sealed record FunctionFailed(string Error, IReadOnlyList<string> Lines);
+public sealed record FunctionFailed(string Error, IReadOnlyList<string> Lines)
+{
+    public const int MaxErrorChars = 4096;
+
+    public string Error { get; } = Error.Length > MaxErrorChars ? Error[..MaxErrorChars] : Error;
+}
 
 public readonly union FunctionRun(FunctionReturned, FunctionFailed);
 

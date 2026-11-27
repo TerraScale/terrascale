@@ -34,10 +34,10 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         private static async Task<IResult> CreateAsync(HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

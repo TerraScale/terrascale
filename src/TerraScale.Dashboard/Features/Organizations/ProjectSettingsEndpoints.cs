@@ -14,22 +14,27 @@ namespace TerraScale.Dashboard.Features.Organizations
     {
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
-            return Page(http, context, context.Project!.Name, renamed: http.Request.Query["renamed"] == "1");
+            if (context.Project is not { } project)
+            {
+                return HttpRedirects.SeeOther("/");
+            }
+
+            return Page(http, context, project.Name, renamed: http.Request.Query["renamed"] == "1");
         }
 
         internal static async Task<IResult> RenameAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationOperations operations)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);

@@ -17,10 +17,10 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
     {
         var http = HttpContext;
         RequestBodies.Allow(http, 3L * TableRowMutations.PayloadBytes + 8192);
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-        if (context is null)
+        var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
         {
-            return TypedResults.Unauthorized();
+            return rejection;
         }
 
         var outcome = await FormRequests.TryReadAsync(http, cancellationToken);

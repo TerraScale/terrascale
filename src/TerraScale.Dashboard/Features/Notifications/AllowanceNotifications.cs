@@ -178,17 +178,16 @@ namespace TerraScale.Dashboard.Features.Notifications
                     var current = await claim.Connection.QuerySingleOrDefaultAsync<AllowanceAlertRow>(PendingEmail, new { alert.Id });
                     if (current is null)
                     {
-                        await claim.ForgetAsync(null, token);
+                        await claim.ForgetAsync(token);
                         return;
                     }
 
                     var outcome = await backend.SendAsync(Alert(current), token);
                     if (outcome != "retryable")
                     {
-                        await using var transaction = await claim.Connection.BeginTransactionAsync(token);
-                        await claim.Connection.ExecuteAsync(SetEmailStatus, new { current.Id, EmailStatus = outcome }, transaction);
-                        await claim.SaveAsync(transaction, token);
-                        await transaction.CommitAsync(token);
+                        await claim.SaveAsync(
+                            (connection, transaction) => connection.ExecuteAsync(SetEmailStatus, new { current.Id, EmailStatus = outcome }, transaction),
+                            token);
                     }
                 }, cancellationToken);
             }

@@ -5,6 +5,27 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 {
     internal static class TsAuthErrors
     {
+        internal static async Task<string?> ReadErrorCodeAsync(
+            HttpResponseMessage response,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var (code, _) = await ReadErrorAsync(response.Content, cancellationToken);
+                return code;
+            }
+            catch (IOException)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return null;
+            }
+            catch (HttpRequestException)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return null;
+            }
+        }
+
         internal static async Task<TsAuthException> CreateAsync(
             HttpResponseMessage response,
             CancellationToken cancellationToken)
@@ -15,7 +36,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             {
                 (code, message) = await ReadErrorAsync(response.Content, cancellationToken);
             }
-            catch (Exception exception) when (exception is IOException or HttpRequestException)
+            catch (IOException)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                code = null;
+            }
+            catch (HttpRequestException)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 code = null;
@@ -79,7 +105,11 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 return (code is not null && KnownErrorCodes.TryGetValue(code, out var known) ? known : null,
                     message is { Length: > 0 and <= MaximumConflictMessageCharacters } ? message : null);
             }
-            catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+            catch (JsonException)
+            {
+                return (null, null);
+            }
+            catch (InvalidOperationException)
             {
                 return (null, null);
             }

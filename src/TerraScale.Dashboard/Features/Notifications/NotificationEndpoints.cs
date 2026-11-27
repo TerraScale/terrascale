@@ -34,10 +34,10 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         internal static async Task<IResult> MarkAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, string? id)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

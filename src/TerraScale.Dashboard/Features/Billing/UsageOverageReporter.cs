@@ -30,6 +30,11 @@ namespace TerraScale.Dashboard.Features.Billing
             SELECT count(*) FROM billing
             WHERE kind = 'stripe' AND state <> 'deleting' AND erasure_id IS NULL AND overage_starts_at <> @Default AND overage_starts_at < @Current
             """;
+        private const string SettlementDue = """
+            SELECT EXISTS (SELECT 1 FROM billing
+                    WHERE kind = 'stripe' AND state <> 'deleting' AND erasure_id IS NULL AND overage_starts_at <> @Default AND overage_starts_at < @Current)
+                OR EXISTS (SELECT 1 FROM billing_overage_charges WHERE state = @Pending)
+            """;
         private const string MonthBindings = DashboardSql.Billing.Select + """
              WHERE kind = 'stripe' AND overage_starts_at = @Month AND (@After IS NULL OR organization_id > @After)
             ORDER BY organization_id LIMIT @Limit
@@ -68,7 +73,24 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 await SettleMonthsAsync(claim, token);
                 await DispatchPendingAsync(token);
-            }, cancellationToken);
+            }, cancellationToken, due: SettlementDueAsync);
+        }
+
+        private async Task<bool> SettlementDueAsync(CancellationToken cancellationToken)
+        {
+            bool due;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
+            {
+                due = await connection.ExecuteScalarAsync<long>(SettlementDue,
+                    new { Current = MonthOf(clock.GetUtcNow()), Default = default(DateTimeOffset), OverageCharge.Pending }) > 0;
+            }
+
+            if (!due)
+            {
+                billing.RecordWaitingOverageMonths(0, 0, 0, null);
+            }
+
+            return due;
         }
 
         private async Task DispatchPendingAsync(CancellationToken cancellationToken)

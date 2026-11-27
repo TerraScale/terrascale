@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using TerraBase.Configuration;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Rules;
 using TerraBase.Hosting;
@@ -220,6 +221,11 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(results);
+        if (PlatformCatalog.IsPlatformProject(target.Project.Id))
+        {
+            return;
+        }
+
         long rowsRead = 0;
         long rowsWritten = 0;
         for (var index = 0; index < results.Count; index++)

@@ -4,11 +4,17 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
+    public sealed record DashboardCredentialsUnavailable(string ErrorType, string Message);
+
+    public readonly union DashboardCredentialsOutcome(DashboardCredentials, DashboardCredentialsUnavailable);
+
     public interface IDashboardIdentity
     {
         DashboardCredentials Current { get; }
 
         Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken);
+
+        Task<DashboardCredentialsOutcome> TryReadAsync(TimeSpan timeout, CancellationToken cancellationToken);
     }
 
     public sealed class DashboardIdentity(Func<string, string?> environment, TimeProvider time) : IDashboardIdentity
@@ -40,6 +46,33 @@ namespace TerraScale.Dashboard.Platform.Persistence
             }
 
             return Current;
+        }
+
+        public async Task<DashboardCredentialsOutcome> TryReadAsync(TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            if (timeout <= TimeSpan.Zero)
+            {
+                return new DashboardCredentialsUnavailable(nameof(TimeoutException), "Dashboard credentials were not read within the request deadline.");
+            }
+
+            using var reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            reading.CancelAfter(timeout);
+            try
+            {
+                return await ReadAsync(reading.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new DashboardCredentialsUnavailable(nameof(TimeoutException), "Dashboard credentials were not read within the request deadline.");
+            }
+            catch (IOException error)
+            {
+                return new DashboardCredentialsUnavailable(nameof(IOException), error.Message);
+            }
+            catch (UnauthorizedAccessException error)
+            {
+                return new DashboardCredentialsUnavailable(nameof(UnauthorizedAccessException), error.Message);
+            }
         }
 
         private bool Fresh(Snapshot? current) => current is not null && time.GetUtcNow() - current.CheckedAt < Recheck;

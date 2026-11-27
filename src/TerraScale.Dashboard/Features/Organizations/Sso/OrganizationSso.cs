@@ -37,12 +37,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
         public static bool PlanIncludesSso(OrganizationRecord organization)
         {
             return PlanCatalog.IsTerraScale(organization) || organization.BillingStatus != "billing_required" && PlanCatalog.For(organization) is { } plan &&
-            (plan.Key == "internal" ? organization.InternalBilling!.BasePlanKey : plan.Key) is "team" or "enterprise";
+            (plan.Key == "internal" ? organization.InternalBilling?.BasePlanKey : plan.Key) is "team" or "enterprise";
         }
 
         public async Task<OrganizationSsoView> ReadAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            var included = PlanIncludesSso(context.Organization!);
+            var included = context.Organization is { } organization && PlanIncludesSso(organization);
             try { return new(await SendAsync(context, HttpMethod.Get, "", null, cancellationToken), included); }
             catch (AccountAccessException error) { return new(null, included, error.Message); }
             catch (Exception error) when (error is HttpRequestException or JsonException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
@@ -134,7 +134,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             var error = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("error", out var value) && value.ValueKind == JsonValueKind.Object ? value : default;
             string Text(string name)
             {
-                return error.ValueKind == JsonValueKind.Object && error.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString()! : "";
+                return error.ValueKind == JsonValueKind.Object && error.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.String && item.GetString() is { } text ? text : "";
             }
 
             var code = Text("code");
@@ -219,10 +219,10 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts,
             OrganizationSsoService sso, IWorkspacePlacement placement, string operation)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

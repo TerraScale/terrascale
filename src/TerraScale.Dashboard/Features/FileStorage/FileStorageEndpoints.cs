@@ -38,10 +38,10 @@ namespace TerraScale.Dashboard.Features.FileStorage
 
         internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FileStorageService files)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             return await PageAsync(http, context, files);
@@ -49,10 +49,10 @@ namespace TerraScale.Dashboard.Features.FileStorage
 
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FileStorageService files, string operation)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

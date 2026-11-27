@@ -113,10 +113,10 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         internal static async Task<IResult> AccessMutationAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string operation, string? id = null)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
@@ -132,7 +132,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 {
                     var invitations = http.RequestServices.GetRequiredService<InvitationService>();
                     var created = operation == "invite" ? await invitations.CreateAsync(context, form["email"].ToString(), form["role"].ToString() is { Length: > 0 } role ? role : "member", http.RequestAborted)
-                        : await invitations.ResendAsync(context, id!, http.RequestAborted);
+                        : await invitations.ResendAsync(context, id ?? throw new AccountAccessException("Invitation not found.", 404), http.RequestAborted);
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted);
                     var view = await access.ReadAsync(context, http.RequestAborted);
                     http.Response.Headers.CacheControl = "no-store";
@@ -149,7 +149,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 }
                 if (operation == "revoke-invitation")
                 {
-                    await http.RequestServices.GetRequiredService<InvitationService>().RevokeAsync(context, id!, http.RequestAborted);
+                    await http.RequestServices.GetRequiredService<InvitationService>().RevokeAsync(context, id ?? throw new AccountAccessException("Invitation not found.", 404), http.RequestAborted);
                 }
                 else
                 {
@@ -210,10 +210,10 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         internal static async Task<IResult> LifecycleAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement, string operation, string? projectId = null)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
@@ -239,7 +239,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 }
                 else if (operation == "delete-project")
                 {
-                    await lifecycle.DeleteProjectAsync(context, projectId!, form["confirmation"].ToString(), http.RequestAborted);
+                    await lifecycle.DeleteProjectAsync(context, projectId ?? throw new AccountAccessException("Project not found.", 404), form["confirmation"].ToString(), http.RequestAborted);
                 }
                 else
                 {
@@ -285,10 +285,20 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string operation, string? projectId = null, AccountContext? scopedContext = null)
         {
-            var context = scopedContext ?? await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            AccountContext context;
+            if (scopedContext is { } existingContext)
             {
-                return TypedResults.Unauthorized();
+                context = existingContext;
+            }
+            else
+            {
+                var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+                if (!AccountRequest.TryResolveApi(http, required, out var loaded, out var rejection))
+                {
+                    return rejection;
+                }
+
+                context = loaded;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

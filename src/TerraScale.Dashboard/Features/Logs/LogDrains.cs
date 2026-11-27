@@ -229,8 +229,7 @@ namespace TerraScale.Dashboard.Features.Logs
                             await connection.QuerySingleOrDefaultAsync<LogDrainRow>(LiveDrain, new { Id = id, drain.Revision, DatabaseId = database.Id }, prepared), prepared);
                         if (current is null)
                         {
-                            await claim.ForgetAsync(prepared, token);
-                            await prepared.CommitAsync(token);
+                            await claim.CommitForgetAsync(prepared, token);
                             return;
                         }
 
@@ -253,8 +252,7 @@ namespace TerraScale.Dashboard.Features.Logs
                                 {
                                     state.Cursor = "gap/" + cursor;
                                     await SaveDrainAsync(connection, current, prepared);
-                                    await claim.SaveAsync(prepared, token);
-                                    await prepared.CommitAsync(token);
+                                    await claim.CommitSaveAsync(prepared, token);
                                 }
 
                                 return;
@@ -264,10 +262,12 @@ namespace TerraScale.Dashboard.Features.Logs
                             state.Payload = Otlp(current.ProjectId, database, batch.Items);
                             state.DeliveryId = AccountService.NewId();
                             await SaveDrainAsync(connection, current, prepared);
-                            await claim.SaveAsync(prepared, token);
+                            await claim.CommitSaveAsync(prepared, token);
                         }
-
-                        await prepared.CommitAsync(token);
+                        else
+                        {
+                            await prepared.CommitAsync(token);
+                        }
                     }
 
                     var saved = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);

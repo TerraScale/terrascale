@@ -323,11 +323,11 @@ internal static class DashboardSql
 
     internal static class DeletionCleanup
     {
-        public const string Select = "SELECT id, acknowledged_at, billing_settled_at, created_at, organization_id, scope, subject_id FROM deletion_cleanup";
+        public const string Select = "SELECT id, acknowledged_at, billing_settled_at, created_at, organization_id, scope, subject_id, targets_complete FROM deletion_cleanup";
 
-        public const string Insert = "INSERT INTO deletion_cleanup (id, acknowledged_at, billing_settled_at, created_at, organization_id, scope, subject_id) VALUES (@Id, @AcknowledgedAt, @BillingSettledAt, @CreatedAt, @OrganizationId, @Scope, @SubjectId)";
+        public const string Insert = "INSERT INTO deletion_cleanup (id, acknowledged_at, billing_settled_at, created_at, organization_id, scope, subject_id, targets_complete) VALUES (@Id, @AcknowledgedAt, @BillingSettledAt, @CreatedAt, @OrganizationId, @Scope, @SubjectId, @TargetsComplete)";
 
-        public const string Update = "UPDATE deletion_cleanup SET acknowledged_at = @AcknowledgedAt, billing_settled_at = @BillingSettledAt, created_at = @CreatedAt, organization_id = @OrganizationId, scope = @Scope, subject_id = @SubjectId WHERE id = @Id";
+        public const string Update = "UPDATE deletion_cleanup SET acknowledged_at = @AcknowledgedAt, billing_settled_at = @BillingSettledAt, created_at = @CreatedAt, organization_id = @OrganizationId, scope = @Scope, subject_id = @SubjectId, targets_complete = @TargetsComplete WHERE id = @Id";
 
         public const string Delete = "DELETE FROM deletion_cleanup WHERE id = @Id";
     }

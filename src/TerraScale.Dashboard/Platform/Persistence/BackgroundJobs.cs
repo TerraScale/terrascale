@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 
 public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clock, ILogger<BackgroundJobs> logger)
 {
-    private static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan Renewal = TimeSpan.FromSeconds(20);
 
     public const string Snapshot = """
@@ -45,7 +45,14 @@ public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clo
           AND lease_until > strftime('%Y-%m-%d %H:%M:%f', 'now')
         """;
 
-    private const string Release = "UPDATE background_jobs SET lease_until = '0001-01-01 00:00:00' WHERE id = @Id AND owner = @Owner AND checkpoint = @Checkpoint";
+    private const string Release = """
+        UPDATE background_jobs
+        SET lease_until = '0001-01-01 00:00:00',
+            available_at = CASE WHEN @HasDelay
+                THEN strftime('%Y-%m-%d %H:%M:%f', 'now', printf('+%f seconds', @Delay))
+                ELSE available_at END
+        WHERE id = @Id AND owner = @Owner AND checkpoint = @Checkpoint
+        """;
 
     private const string Renew = """
         UPDATE background_jobs
@@ -63,11 +70,12 @@ public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clo
     private const string Forget = "DELETE FROM background_jobs WHERE id = @Id AND owner = @OriginalOwner AND checkpoint = @OriginalCheckpoint";
 
     public async Task<bool> RunAsync(string id, TimeSpan interval, Func<Claim, CancellationToken, Task> work, CancellationToken cancellationToken, string? target = null,
-        string? fence = null, string? databaseId = null)
+        string? fence = null, string? databaseId = null, Func<CancellationToken, Task<bool>>? due = null)
     {
         ArgumentNullException.ThrowIfNull(work);
         await using var connection = await storage.OpenAsync(cancellationToken);
-        if (await connection.ExecuteScalarAsync<long>(Busy, new { Id = id, Fence = fence, Target = target }) > 0)
+        if (await connection.ExecuteScalarAsync<long>(Busy, new { Id = id, Fence = fence, Target = target }) > 0
+            || (due is not null && !await due(cancellationToken)))
         {
             return false;
         }
@@ -110,7 +118,7 @@ public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clo
                     var delay = Math.Clamp((claim.Delay ?? interval).TotalSeconds, 0, TimeSpan.FromDays(1).TotalSeconds);
                     held = completed
                         ? await release.ExecuteAsync(Complete, new { Id = id, Owner = owner, row.Checkpoint, Periodic = periodic, Delay = delay }) == 1
-                        : await release.ExecuteAsync(Release, new { Id = id, Owner = owner, row.Checkpoint }) >= 0;
+                        : await release.ExecuteAsync(Release, new { Id = id, Owner = owner, row.Checkpoint, HasDelay = claim.Delay is not null, Delay = delay }) >= 0;
                 }
             }
         }
@@ -186,16 +194,18 @@ public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clo
         public TimeSpan? Delay { get; set; }
         internal bool Forgotten { get; private set; }
 
-        public Task SaveAsync(CancellationToken cancellationToken) => SaveAsync((DbTransaction?)null, cancellationToken);
-
-        public async Task SaveAsync(DbTransaction? transaction, CancellationToken cancellationToken)
+        public async Task SaveAsync(CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            State.AvailableAt = Now + TimeSpan.FromSeconds(Math.Clamp((Delay ?? TimeSpan.Zero).TotalSeconds, 0, TimeSpan.FromDays(1).TotalSeconds));
-            State.OriginalOwner = State.Owner;
-            State.OriginalCheckpoint = State.Checkpoint;
-            State.Checkpoint = AccountService.NewId();
-            DashboardDb.Expect(await Connection.ExecuteAsync(Save, State, transaction));
+            var staged = await StageSaveAsync(null, cancellationToken);
+            ApplySave(staged);
+        }
+
+        public async Task CommitSaveAsync(DbTransaction transaction, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(transaction);
+            var staged = await StageSaveAsync(transaction, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            ApplySave(staged);
         }
 
         public async Task SaveAsync(Func<TerraBaseDbConnection, DbTransaction, Task> stage, CancellationToken cancellationToken)
@@ -203,17 +213,62 @@ public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clo
             ArgumentNullException.ThrowIfNull(stage);
             await using var transaction = await Connection.BeginTransactionAsync(cancellationToken);
             await stage(Connection, transaction);
-            await SaveAsync(transaction, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await CommitSaveAsync(transaction, cancellationToken);
         }
 
-        public async Task ForgetAsync(DbTransaction? transaction, CancellationToken cancellationToken)
+        public async Task ForgetAsync(CancellationToken cancellationToken)
+        {
+            var pending = await StageForgetAsync(null, cancellationToken);
+            ApplyForget(pending);
+        }
+
+        public async Task CommitForgetAsync(DbTransaction transaction, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(transaction);
+            var pending = await StageForgetAsync(transaction, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            ApplyForget(pending);
+        }
+
+        private async Task<BackgroundJobRow> StageForgetAsync(DbTransaction? transaction, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            State.OriginalOwner = State.Owner;
-            State.OriginalCheckpoint = State.Checkpoint;
-            DashboardDb.Expect(await Connection.ExecuteAsync(Forget, State, transaction));
+            var pending = State with
+            {
+                OriginalOwner = State.Owner,
+                OriginalCheckpoint = State.Checkpoint,
+            };
+            DashboardDb.Expect(await Connection.ExecuteAsync(Forget, pending, transaction));
+            return pending;
+        }
+
+        private void ApplyForget(BackgroundJobRow forgotten)
+        {
+            State.OriginalOwner = forgotten.OriginalOwner;
+            State.OriginalCheckpoint = forgotten.OriginalCheckpoint;
             Forgotten = true;
+        }
+
+        private async Task<BackgroundJobRow> StageSaveAsync(DbTransaction? transaction, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pending = State with
+            {
+                AvailableAt = Now + TimeSpan.FromSeconds(Math.Clamp((Delay ?? TimeSpan.Zero).TotalSeconds, 0, TimeSpan.FromDays(1).TotalSeconds)),
+                OriginalOwner = State.Owner,
+                OriginalCheckpoint = State.Checkpoint,
+                Checkpoint = AccountService.NewId(),
+            };
+            DashboardDb.Expect(await Connection.ExecuteAsync(Save, pending, transaction));
+            return pending;
+        }
+
+        private void ApplySave(BackgroundJobRow saved)
+        {
+            State.AvailableAt = saved.AvailableAt;
+            State.OriginalOwner = saved.OriginalOwner;
+            State.OriginalCheckpoint = saved.OriginalCheckpoint;
+            State.Checkpoint = saved.Checkpoint;
         }
     }
 }

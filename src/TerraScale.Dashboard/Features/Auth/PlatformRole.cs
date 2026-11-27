@@ -31,7 +31,13 @@ namespace TerraScale.Dashboard.Features.Auth
             catch (Exception error) when (error is SignInRejectedException or System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException)
             { return null; }
 
-            return await IsActiveAsync(freshlyRotatedSession, cancellationToken) ? "admin" : null;
+            var activity = await IsActiveAsync(freshlyRotatedSession, cancellationToken);
+            return activity switch
+            {
+                SessionStillActive => "admin",
+                SessionEnded => null,
+                SessionActivityUnavailable failure => throw ToDependencyException(failure.ErrorType, failure.StatusCode, failure.ErrorCode, failure.Message),
+            };
         }
     }
 }

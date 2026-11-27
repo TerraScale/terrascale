@@ -55,8 +55,8 @@ namespace TerraScale.Dashboard.Features.Support
             }
 
             var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
-            return body.TryGetProperty("status", out var value) && value.GetString() is "accepted" or "retryable" or "unknown" or "rejected"
-                ? new SupportMailAccepted(value.GetString()!) : throw new IOException("Support email response is invalid.");
+            return body.TryGetProperty("status", out var value) && value.GetString() is ("accepted" or "retryable" or "unknown" or "rejected") and var status
+                ? new SupportMailAccepted(status) : throw new IOException("Support email response is invalid.");
         }
     }
 
@@ -69,10 +69,10 @@ namespace TerraScale.Dashboard.Features.Support
 
         internal static async Task<IResult> SendAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ISupportMail mail, ILogger<SupportMail> logger)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

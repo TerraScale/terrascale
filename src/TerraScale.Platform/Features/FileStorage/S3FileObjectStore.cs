@@ -10,7 +10,7 @@ namespace TerraScale.Platform.Features.FileStorage;
 
 public sealed record FileObjectDeleted;
 
-public sealed record ProjectPrefixErased;
+public sealed record ProjectPrefixErased(bool DeletedAny);
 
 public readonly union SignFileUploadOutcome(FileSignedUrl, PlatformUnavailable);
 
@@ -201,6 +201,7 @@ public sealed class S3FileObjectStore : IDisposable
         }
 
         var prefix = ProjectPrefix(organization, project);
+        var deletedAny = false;
         bool truncated;
         do
         {
@@ -208,26 +209,27 @@ public sealed class S3FileObjectStore : IDisposable
             var swept = listed switch
             {
                 ProjectObjectPage page => await ErasePageAsync(region, prefix, page, cancellationToken),
-                PlatformUnavailable unavailable => (Truncated: false, Failure: unavailable),
+                PlatformUnavailable unavailable => (Truncated: false, DeletedAny: false, Failure: unavailable),
             };
             if (swept.Failure is { } failure)
             {
                 return failure;
             }
 
+            deletedAny |= swept.DeletedAny;
             truncated = swept.Truncated;
         }
         while (truncated);
 
-        return new ProjectPrefixErased();
+        return new ProjectPrefixErased(deletedAny);
     }
 
-    private async ValueTask<(bool Truncated, PlatformUnavailable? Failure)> ErasePageAsync(
+    private async ValueTask<(bool Truncated, bool DeletedAny, PlatformUnavailable? Failure)> ErasePageAsync(
         string region, string prefix, ProjectObjectPage page, CancellationToken cancellationToken)
     {
         if (page.Keys.Any(key => !key.StartsWith(prefix, StringComparison.Ordinal)) || (page.Truncated && page.Keys.Count == 0))
         {
-            return (false, new PlatformUnavailable("the object store returned an invalid project listing", "files_invalid_listing"));
+            return (false, false, new PlatformUnavailable("the object store returned an invalid project listing", "files_invalid_listing"));
         }
 
         PlatformUnavailable? failure = null;
@@ -240,7 +242,7 @@ public sealed class S3FileObjectStore : IDisposable
                     Interlocked.CompareExchange(ref failure, deleteFailure, null);
                 }
             });
-        return (page.Truncated, failure);
+        return (page.Truncated, page.Keys.Count > 0, failure);
     }
 
     private async ValueTask<ListProjectObjectsOutcome> ListProjectObjectsAsync(

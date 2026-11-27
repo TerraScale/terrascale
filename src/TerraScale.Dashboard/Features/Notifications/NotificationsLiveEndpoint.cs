@@ -25,10 +25,16 @@ public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, Accoun
         {
             try
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
+                var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+                var (context, error) = required switch
                 {
-                    return new(LiveErrorView.Create(new(region, 401, "Your session may have expired. Sign in to TerraScale and try again.")), true);
+                    AccountContext active => (active, (LiveFragment?)null),
+                    AccountUnauthenticated => (null, new LiveFragment(LiveErrorView.Create(new(region, 401, "Your session may have expired. Sign in to TerraScale and try again.")), true)),
+                    SessionUnavailable => (null, new LiveFragment(LiveErrorView.Create(new(region, 503, "A TerraScale service is temporarily unavailable. Try again shortly.")), true)),
+                };
+                if (error is not null || context is null)
+                {
+                    return error ?? new(LiveErrorView.Create(new(region, 503, "A TerraScale service is temporarily unavailable. Try again shortly.")), true);
                 }
 
                 context = await NotificationCommands.RefreshAsync(accounts, context, cancellationToken);

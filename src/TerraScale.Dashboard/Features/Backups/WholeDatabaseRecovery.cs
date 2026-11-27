@@ -70,7 +70,8 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw PlatformDatabases.ReadOnly();
             }
 
-            if (source.Status != "ready" || context.Organization!.DeletionRequested)
+            var (organization, _) = RequireWorkspace(context);
+            if (source.Status != "ready" || organization.DeletionRequested)
             {
                 throw new AccountAccessException("Recovery requires an active, ready database.", 409);
             }
@@ -78,26 +79,33 @@ namespace TerraScale.Dashboard.Features.Backups
             return (context, source);
         }
 
+        private static (OrganizationRecord Organization, ProjectRecord Project) RequireWorkspace(AccountContext context) =>
+            context is { Organization: { } organization, Project: { } project }
+                ? (organization, project)
+                : throw new AccountAccessException("Workspace is unavailable.", 404);
+
         public async Task<WholeDatabaseWindow> WindowAsync(AccountContext context, string databaseId, string destination, CancellationToken ct)
         {
             (context, var source) = await SourceAsync(context, databaseId, ct);
+            var (organization, project) = RequireWorkspace(context);
             Destination(destination);
             TerraBaseRestoreWindow? window = null;
-            try { window = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read"], ct)).GetRestoreWindowAsync(context.Project!.Id, source.Name, destination)); }
+            try { window = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read"], ct)).GetRestoreWindowAsync(project.Id, source.Name, destination)); }
             catch (AccountAccessException error) when (error.StatusCode == 404) { }
             if (window is not null && (window.Earliest == default || window.Latest < window.Earliest))
             {
                 throw new HttpRequestException("Invalid PITR window.");
             }
 
-            return new(destination, window, context.Organization!.Projects.Values.Sum(project => project.Databases.Count), DatabaseService.DatabaseLimit(context.Organization));
+            return new(destination, window, organization.Projects.Values.Sum(item => item.Databases.Count), DatabaseService.DatabaseLimit(organization));
         }
 
         public async Task<TerraBasePointInTimePlan> PlanAsync(AccountContext context, string databaseId, string destination, string point, CancellationToken ct)
         {
             (context, var source) = await SourceAsync(context, databaseId, ct);
+            var (_, project) = RequireWorkspace(context);
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
-            var plan = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read"], ct)).PlanPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
+            var plan = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read"], ct)).PlanPointInTimeAsync(project.Id, source.Name, new(instant, null, destination)));
             if (plan.HistoryCheck != "metadata" || plan.PointInTime != instant || plan.SnapshotAt == default || plan.SnapshotAt > instant || plan.SegmentCount < 0 ||
                 plan.Window is null || plan.Window.Earliest > instant || plan.Window.Latest < instant)
             {
@@ -110,10 +118,11 @@ namespace TerraScale.Dashboard.Features.Backups
         public async Task<BackupRestoreStart> StartRestoreAsync(AccountContext context, string databaseId, string destination, string point, string name, string confirmName, CancellationToken ct)
         {
             (context, var source) = await SourceAsync(context, databaseId, ct);
-            DatabaseService.DemandProvision(context.Organization!, context.UserId);
-            DatabaseService.DemandRoom(context.Organization!);
+            var (organization, project) = RequireWorkspace(context);
+            DatabaseService.DemandProvision(organization, context.UserId);
+            DatabaseService.DemandRoom(organization);
             name = DatabaseService.ValidName(name);
-            DatabaseService.DemandName(context.Project!, name);
+            DatabaseService.DemandName(project, name);
             if (confirmName != name)
             {
                 throw new AccountAccessException("Type the new database name exactly to confirm restore as a new database.", 422);
@@ -121,7 +130,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
             var operation = await SafeAsync(async () => (await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct))
-                .StartRestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)))
+                .StartRestorePointInTimeAsync(project.Id, source.Name, new(instant, name, destination)))
                 .Deserialize(BackupBackendJson.Default.ProducerRestoreOperation) ?? throw new JsonException("Invalid restore operation."));
             return await RecordAsync(context, source, operation, ct);
         }
@@ -136,12 +145,13 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("Only a ready database can be branched.", 409);
             }
 
-            DatabaseService.DemandProvision(context.Organization!, context.UserId);
-            DatabaseService.DemandRoom(context.Organization!);
+            var (organization, project) = RequireWorkspace(context);
+            DatabaseService.DemandProvision(organization, context.UserId);
+            DatabaseService.DemandRoom(organization);
             name = DatabaseService.ValidName(name);
-            DatabaseService.DemandName(context.Project!, name);
+            DatabaseService.DemandName(project, name);
             var operation = await SafeAsync(async () => (await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct))
-                .StartRestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, null, ttlSeconds)))
+                .StartRestorePointInTimeAsync(project.Id, source.Name, new(instant, name, null, ttlSeconds)))
                 .Deserialize(BackupBackendJson.Default.ProducerRestoreOperation) ?? throw new JsonException("Invalid restore operation."));
             return await RecordAsync(context, source, operation, ct);
         }
@@ -154,20 +164,22 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("Restore could not be confirmed. Check the database list before submitting another restore.", 503);
             }
 
-            await storage.RecordRestoreAsync(operation.OperationId, context.Organization!.Id, context.Project!.Id, source.Id, time.GetUtcNow(), ct);
+            var (organization, project) = RequireWorkspace(context);
+            await storage.RecordRestoreAsync(operation.OperationId, organization.Id, project.Id, source.Id, time.GetUtcNow(), ct);
             return new(operation.OperationId, operation.Status);
         }
 
         public async Task RewindAsync(AccountContext context, string databaseId, string destination, string point, string confirmDatabase, CancellationToken ct)
         {
             (context, var source) = await SourceAsync(context, databaseId, ct);
+            var (_, project) = RequireWorkspace(context);
             if (confirmDatabase != source.Name)
             {
                 throw new AccountAccessException("Type the database name exactly to confirm restoring it in place.", 422);
             }
 
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
-            var json = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:write"], ct)).RewindPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
+            var json = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:write"], ct)).RewindPointInTimeAsync(project.Id, source.Name, new(instant, null, destination)));
             var rewound = json.Deserialize(BackupBackendJson.Default.ManagedDatabase) ?? throw new JsonException("Invalid restored database.");
             if (rewound.Id != source.Id)
             {
@@ -201,7 +213,8 @@ namespace TerraScale.Dashboard.Features.Backups
         private async Task<RecoveryClient> ClientAsync(AccountContext context, DatabaseRecord source, string[] permissions, CancellationToken ct)
         {
             await databases.HomeAsync(context, source, ct);
-            var access = await tokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, permissions, ct);
+            var (organization, project) = RequireWorkspace(context);
+            var access = await tokens.GetAsync(context.Session, organization.Id, project.Id, permissions, ct);
             return new(terraBase, ServiceCaller.User(access), ct);
         }
 
@@ -271,10 +284,10 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
+                var required = await AccountRequest.RequireAsync(http, sessions, accounts);
+                if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
                 {
-                    return AccountRequest.LoginRedirect(http);
+                    return rejection;
                 }
 
                 try

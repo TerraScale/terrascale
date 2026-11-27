@@ -23,10 +23,15 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
                 return RequestError.FormExpired(http, "/invitations/" + Uri.EscapeDataString(token), TypedResults.StatusCode(403));
             }
 
-            var session = await sessions.ReadAsync(http);
-            if (session is null)
+            var resolvedSession = await sessions.ReadAsync(http);
+            if (!AccountRequest.TryResolveSession(
+                resolvedSession,
+                () => HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token))),
+                () => AccountRequest.ServiceUnavailable(http),
+                out var session,
+                out var rejection))
             {
-                return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)));
+                return rejection;
             }
 
             try

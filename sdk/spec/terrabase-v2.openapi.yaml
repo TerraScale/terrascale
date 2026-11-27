@@ -441,6 +441,8 @@ paths:
                 $ref: '#/components/schemas/Function'
         '400':
           $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
     delete:
       tags: [functions]
       operationId: deleteFunction
@@ -452,6 +454,8 @@ paths:
         '204':
           description: Deleted.
         '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
   /v1/projects/{project}/databases/{database}/functions/{function}/invoke:
     post:

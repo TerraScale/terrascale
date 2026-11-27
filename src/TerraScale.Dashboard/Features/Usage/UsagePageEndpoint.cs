@@ -13,10 +13,10 @@ namespace TerraScale.Dashboard.Features.Usage
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null)
+            var required = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountEndpoints.LoginRedirect(http);
+                return rejection;
             }
 
             if (http.Request.Query["tab"] == "billing")

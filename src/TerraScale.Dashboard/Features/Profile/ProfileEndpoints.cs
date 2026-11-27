@@ -56,10 +56,10 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         internal static async Task<IResult> SignOutEverywhereAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
@@ -80,10 +80,10 @@ namespace TerraScale.Dashboard.Features.Profile
 
         internal static async Task<IResult> SaveAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, bool language)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (!AccountRequest.TryResolveApi(http, required, out var context, out var rejection))
             {
-                return TypedResults.Unauthorized();
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

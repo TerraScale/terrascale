@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -14,12 +15,30 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             cancellationToken);
         }
 
+        public Task<OidcDiscoveryOutcome> TryGetDiscoveryMetadataAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        {
+            return client.TryGetDiscoveryAsync(
+                InstanceRoute("/.well-known/openid-configuration"),
+                TsAuthJsonContext.Default.TsAuthOidcDiscovery,
+                timeout,
+                cancellationToken);
+        }
+
         public Task<JsonElement> GetJwksAsync(CancellationToken cancellationToken = default)
         {
             return client.GetKeySetAsync(
             InstanceRoute("/.well-known/jwks.json"),
                 TsAuthJsonContext.Default.JsonElement,
             cancellationToken);
+        }
+
+        public Task<OidcJwksOutcome> TryGetJwksAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        {
+            return client.TryGetKeySetAsync(
+                InstanceRoute("/.well-known/jwks.json"),
+                TsAuthJsonContext.Default.JsonElement,
+                timeout,
+                cancellationToken);
         }
 
         public Task<TsAuthTokenResponse> ExchangeAuthorizationCodeAsync(
@@ -30,6 +49,40 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             string? codeVerifier = null,
             DateTimeOffset? refreshExpiresAt = null,
             CancellationToken cancellationToken = default)
+        {
+            return client.SendOAuthFormAsync(
+                TokenRoute(),
+                BuildAuthorizationCodeForm(clientId, clientSecret, code, redirectUri, codeVerifier, refreshExpiresAt),
+                authorization: null,
+                TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse,
+                cancellationToken);
+        }
+
+        public Task<OAuthTokenOutcome> TryExchangeAuthorizationCodeAsync(
+            string clientId,
+            string clientSecret,
+            string code,
+            string redirectUri,
+            string? codeVerifier = null,
+            DateTimeOffset? refreshExpiresAt = null,
+            CancellationToken cancellationToken = default)
+        {
+            return client.TrySendOAuthTokenAsync(
+                TokenRoute(),
+                BuildAuthorizationCodeForm(clientId, clientSecret, code, redirectUri, codeVerifier, refreshExpiresAt),
+                authorization: null,
+                TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse,
+                timeout: null,
+                cancellationToken);
+        }
+
+        private static List<KeyValuePair<string, string>> BuildAuthorizationCodeForm(
+            string clientId,
+            string clientSecret,
+            string code,
+            string redirectUri,
+            string? codeVerifier,
+            DateTimeOffset? refreshExpiresAt)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(code);
             ArgumentException.ThrowIfNullOrWhiteSpace(redirectUri);
@@ -51,12 +104,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 form.Add(new("ts_refresh_expires_at", expiresAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture)));
             }
 
-            return client.SendOAuthFormAsync(
-                TokenRoute(),
-                form,
-                authorization: null,
-                TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse,
-                cancellationToken);
+            return form;
         }
 
         public Task<TsAuthTokenResponse> ExchangeApiKeyAsync(string apiKey, string? project, CancellationToken cancellationToken)
@@ -88,10 +136,46 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 cancellationToken);
         }
 
+        public Task<OAuthTokenOutcome> TryRefreshTokenAsync(
+            string clientId,
+            string clientSecret,
+            string refreshToken,
+            TimeSpan? timeout = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(refreshToken);
+            return client.TrySendOAuthTokenAsync(
+                TokenRoute(),
+                [
+                    new KeyValuePair<string, string>("grant_type", "refresh_token"),
+                    new("client_id", clientId),
+                    new("client_secret", clientSecret),
+                    new("refresh_token", refreshToken),
+                ],
+                authorization: null,
+                TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse,
+                timeout,
+                cancellationToken);
+        }
+
         public Task RevokeTokenAsync(string clientId, string clientSecret, string token, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(token);
             return client.SendOAuthFormForSuccessAsync(
+                InstanceRoute("/oauth/revoke"),
+                [
+                    new KeyValuePair<string, string>("client_id", clientId),
+                    new("client_secret", clientSecret),
+                    new("token", token),
+                ],
+                authorization: null,
+                cancellationToken);
+        }
+
+        public Task<TokenRevocationOutcome> TryRevokeTokenAsync(string clientId, string clientSecret, string token, CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(token);
+            return client.TrySendOAuthRevokeAsync(
                 InstanceRoute("/oauth/revoke"),
                 [
                     new KeyValuePair<string, string>("client_id", clientId),
@@ -109,6 +193,16 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             accessToken,
                 TsAuthJsonContext.Default.TsAuthUserInfo,
             cancellationToken);
+        }
+
+        public Task<UserInfoOutcome> TryGetUserInfoAsync(string accessToken, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        {
+            return client.TryGetUserInfoAsync(
+                InstanceRoute("/oauth/userinfo"),
+                accessToken,
+                TsAuthJsonContext.Default.TsAuthUserInfo,
+                timeout,
+                cancellationToken);
         }
 
         public Task<TsAuthTokenResponse> ExchangeTokenAsync(
@@ -207,4 +301,52 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("is_anonymous")] bool? IsAnonymous = null);
 
     public sealed record TsAuthActor([property: JsonPropertyName("sub")] string Subject);
+
+    public sealed record TokenRevoked;
+
+    public sealed record TokenAlreadyRevoked;
+
+    public sealed record TokenRevocationRateLimited(TimeSpan? RetryAfter, string ErrorCode);
+
+    public sealed record TokenRevocationClientRejected(HttpStatusCode? StatusCode, string ErrorCode);
+
+    public sealed record TokenRevocationUnavailable(string ErrorType, HttpStatusCode? StatusCode, string ErrorCode);
+
+    public readonly union TokenRevocationOutcome(
+        TokenRevoked,
+        TokenAlreadyRevoked,
+        TokenRevocationRateLimited,
+        TokenRevocationClientRejected,
+        TokenRevocationUnavailable);
+
+    public sealed record OAuthTokenInvalidGrant;
+
+    public sealed record OAuthTokenInvalidRequest(HttpStatusCode StatusCode, string Message);
+
+    public sealed record OAuthTokenNotStarted(string ErrorType, HttpStatusCode? StatusCode, string ErrorCode, string Message, TimeSpan? RetryAfter = null);
+
+    public sealed record OAuthTokenUnavailable(string ErrorType, HttpStatusCode? StatusCode, string ErrorCode, string Message);
+
+    public readonly union OAuthTokenOutcome(
+        TsAuthTokenResponse,
+        OAuthTokenInvalidGrant,
+        OAuthTokenInvalidRequest,
+        OAuthTokenNotStarted,
+        OAuthTokenUnavailable);
+
+    public sealed record OidcDiscoveryUnavailable(string ErrorType, HttpStatusCode? StatusCode, string ErrorCode, string Message);
+
+    public readonly union OidcDiscoveryOutcome(TsAuthOidcDiscovery, OidcDiscoveryUnavailable);
+
+    public sealed record OidcJwksUnavailable(string ErrorType, HttpStatusCode? StatusCode, string ErrorCode, string Message);
+
+    public readonly union OidcJwksOutcome(JsonElement, OidcJwksUnavailable);
+
+    public readonly union OidcKeySetOutcome(TsAuthJwkSet, OidcJwksUnavailable);
+
+    public sealed record UserInfoUnauthorized;
+
+    public sealed record UserInfoUnavailable(string ErrorType, HttpStatusCode? StatusCode, string ErrorCode, string Message);
+
+    public readonly union UserInfoOutcome(TsAuthUserInfo, UserInfoUnauthorized, UserInfoUnavailable);
 }

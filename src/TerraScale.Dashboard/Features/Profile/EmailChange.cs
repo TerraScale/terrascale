@@ -7,10 +7,10 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         public static async Task<IResult> SubmitAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway, bool confirm)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-            if (context is null)
+            var required = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (!AccountRequest.TryResolvePage(http, required, out var context, out var rejection))
             {
-                return AccountRequest.LoginRedirect(http);
+                return rejection;
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);

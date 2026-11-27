@@ -6,6 +6,7 @@ public readonly union DeleteFunctionReply(
     PlatformUnauthorized,
     PlatformForbidden,
     PlatformNotFound,
+    PlatformConflict,
     PlatformUnavailable);
 
 public sealed class DeleteFunctionEndpoint(PlatformAccess access, FunctionService functions)
@@ -44,6 +45,7 @@ public sealed class DeleteFunctionEndpoint(PlatformAccess access, FunctionServic
             {
                 FunctionDeleted deleted => deleted,
                 PlatformNotFound missing => missing,
+                PlatformConflict conflict => conflict,
                 PlatformUnavailable unavailable => unavailable,
             };
         }

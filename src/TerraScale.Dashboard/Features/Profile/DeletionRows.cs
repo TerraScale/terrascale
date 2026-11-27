@@ -49,6 +49,8 @@ public sealed record DeletionCleanupRow
     public DateTime? AcknowledgedAt { get; init; }
 
     public DateTime? BillingSettledAt { get; init; }
+
+    public required bool TargetsComplete { get; init; }
 }
 
 public sealed record DeletionCleanupTargetRow
