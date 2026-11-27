@@ -23,7 +23,8 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
             return TypedResults.Unauthorized();
         }
 
-        return await FormRequests.TryReadAsync(http, cancellationToken) switch
+        var outcome = await FormRequests.TryReadAsync(http, cancellationToken);
+        return outcome switch
         {
             IFormCollection form => await HandleFormAsync(http, context, form, cancellationToken),
             FormReadRefusal { Status: StatusCodes.Status413PayloadTooLarge } => Refused(StatusCodes.Status413PayloadTooLarge, "The change is too large. Send fewer edits at a time."),
@@ -56,7 +57,8 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
             return Refused(StatusCodes.Status403Forbidden, "Platform databases are read-only here.");
         }
 
-        return await backend.TryRegionsAsync(cancellationToken) switch
+        var outcome = await backend.TryRegionsAsync(cancellationToken);
+        return outcome switch
         {
             IReadOnlyList<DatabaseRegion> regions => await HandleRegionsAsync(http, context, database, form, regions, cancellationToken),
             DatabaseBackendFailure failure => Refused(failure.Status, failure.Message),
@@ -72,7 +74,8 @@ public sealed class MutateTableRowEndpoint(DashboardSessions sessions, AccountSe
         }
 
         var scope = DatabaseService.Scope(context);
-        return await backend.TrySqlTablesAsync(scope, home, database.Id, cancellationToken) switch
+        var outcome = await backend.TrySqlTablesAsync(scope, home, database.Id, cancellationToken);
+        return outcome switch
         {
             DatabaseSqlCatalog catalog => await HandleCatalogAsync(http, context, database.Id, scope, home, catalog, form, cancellationToken),
             DatabaseBackendFailure failure => Refused(failure.Status, failure.Message),

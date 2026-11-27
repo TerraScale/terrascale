@@ -440,7 +440,7 @@ namespace TerraScale.Dashboard.Common.Databases
         private static string CatalogText(SqlExecuteResult result, IReadOnlyList<JsonElement> row, string field)
         {
             var index = result.Columns.ToList().FindIndex(column => column.Name == field);
-            return index >= 0 && index < row.Count && row[index].ValueKind == JsonValueKind.String ? row[index].GetString()!
+            return index >= 0 && index < row.Count && row[index].ValueKind == JsonValueKind.String && row[index].GetString() is { } text ? text
                 : throw new HttpRequestException("TerraBase returned invalid SQL metadata.");
         }
 

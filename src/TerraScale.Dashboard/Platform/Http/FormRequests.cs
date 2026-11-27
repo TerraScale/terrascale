@@ -24,7 +24,8 @@ namespace TerraScale.Dashboard.Platform.Http
 
         public static async Task<IFormCollection> ReadAsync(HttpContext http, CancellationToken cancellationToken = default)
         {
-            return await TryReadAsync(http, cancellationToken) switch
+            var outcome = await TryReadAsync(http, cancellationToken);
+            return outcome switch
             {
                 IFormCollection form => form,
                 FormReadRefusal refusal => throw new AccountAccessException(refusal.Message, refusal.Status),

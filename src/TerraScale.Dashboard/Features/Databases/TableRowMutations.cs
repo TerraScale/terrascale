@@ -74,7 +74,8 @@ public static class TableRowMutations
             }
         }
 
-        return await backend.TrySqlBatchAsync(scope, home, databaseId, batch.Statements, true, cancellationToken) switch
+        var outcome = await backend.TrySqlBatchAsync(scope, home, databaseId, batch.Statements, true, cancellationToken);
+        return outcome switch
         {
             IReadOnlyList<DatabaseSqlResult> results => Summarize(batch, results),
             DatabaseBackendFailure failure => new TableRowSqlRefused(failure.Status, failure.Message),
@@ -138,7 +139,11 @@ public static class TableRowMutations
                 rows.Add(where, entry);
             }
 
-            entry.Guards.TryAdd(column.Name, guard);
+            if (!entry.Guards.TryAdd(column.Name, guard))
+            {
+                return new TableRowPayloadInvalid("Send one edit per cell.");
+            }
+
             entry.Sets[column.Name] = literal;
         }
 
@@ -254,7 +259,8 @@ public static class TableRowMutations
             JsonValueKind.String when Literal(value, false) is { } literal => "typeof(" + ident + ") = 'text' AND " + ident + " COLLATE BINARY = " + literal,
             JsonValueKind.Number => "typeof(" + ident + ") IN ('integer', 'real') AND " + ident + " = " + value.GetRawText(),
             JsonValueKind.Null when allowNull => ident + " IS NULL",
-            _ => null,
+            JsonValueKind.String or JsonValueKind.Null or JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Undefined => null,
+            _ => throw new UnreachableException(),
         };
     }
 
