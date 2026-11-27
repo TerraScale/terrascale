@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>TerraBase.Benchmarks</RootNamespace>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <ProjectReference Include="../../../src/TerraBase/TerraBase.csproj" />
+    <ProjectReference Include="../../../src/TerraBase.Storage/TerraBase.Storage.csproj" />
+    <ProjectReference Include="../../../src/TerraBase.Cluster/TerraBase.Cluster.csproj" />
+    <ProjectReference Include="../../../src/TerraBase.Continuity/TerraBase.Continuity.csproj" />
+    <ProjectReference Include="../../../src/TerraBase.Postgres/TerraBase.Postgres.csproj" />
+    <ProjectReference Include="../../../src/TerraScale.QuicRpc/TerraScale.QuicRpc.csproj" />
+    <ProjectReference Include="../../../src/TerraScale.Contracts/TerraScale.Contracts.csproj" />
+    <ProjectReference Include="../../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <ProjectReference Include="../../../src/TerraScale.Logging/TerraScale.Logging.csproj" />
+  </ItemGroup>
+</Project>

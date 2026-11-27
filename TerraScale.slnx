@@ -22,6 +22,7 @@
   </Folder>
   <Folder Name="/benchmark/">
     <Project Path="benchmark/csharp/TerraScale.Benchmark.csproj" />
+    <Project Path="benchmark/dotnet/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
   </Folder>

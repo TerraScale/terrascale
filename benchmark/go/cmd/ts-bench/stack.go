@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/big"
 	"net"
 	"net/http"
@@ -34,9 +35,10 @@ import (
 )
 
 const (
-	platformAuthProject  = "00000000000000000000000002"
-	platformAuthDatabase = "ts-auth"
-	crockfordLower       = "0123456789abcdefghjkmnpqrstvwxyz"
+	platformAuthProject   = "00000000000000000000000002"
+	platformAuthDatabase  = "ts-auth"
+	crockfordLower        = "0123456789abcdefghjkmnpqrstvwxyz"
+	linuxClockTicksPerSec = 100.0
 )
 
 type stackTarget struct {
@@ -45,6 +47,13 @@ type stackTarget struct {
 	dashboardURL string
 	apiKey       string
 	project      string
+}
+
+type resourceTelemetry struct {
+	CurrentRSSMiB float64
+	PeakRSSMiB    float64
+	CPUTimeMs     float64
+	DiskBytes     int64
 }
 
 type managedProc struct {
@@ -57,10 +66,12 @@ type managedProc struct {
 }
 
 type localStack struct {
-	target   stackTarget
-	tempDir  string
-	tlsProxy *http.Server
-	procs    []*managedProc
+	target    stackTarget
+	tempDir   string
+	tbDataDir string
+	tbProc    *managedProc
+	tlsProxy  *http.Server
+	procs     []*managedProc
 }
 
 func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
@@ -171,6 +182,7 @@ func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
 	if err := os.MkdirAll(tbDataDir, 0o700); err != nil {
 		return nil, err
 	}
+	stack.tbDataDir = tbDataDir
 
 	fmt.Fprintf(os.Stderr, "ts-bench: starting TerraBase on %s (internal %s)...\n", tbPublicURL, tbInternalURL)
 	tbProc, err := startProcess("terrabase", tbPath, nil, mergeEnv(
@@ -189,6 +201,7 @@ func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
 	if err != nil {
 		return nil, err
 	}
+	stack.tbProc = tbProc
 	stack.procs = append(stack.procs, tbProc)
 	if err := waitReady(ctx, tbPublicURL+"/readyz", tbProc, 60*time.Second); err != nil {
 		return nil, err
@@ -254,6 +267,121 @@ func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
 	}
 	ok = true
 	return stack, nil
+}
+
+func (s *localStack) captureTelemetry() (resourceTelemetry, error) {
+	if s.tbProc == nil || s.tbProc.cmd == nil || s.tbProc.cmd.Process == nil {
+		return resourceTelemetry{}, errors.New("terrabase process not running")
+	}
+	pid := s.tbProc.cmd.Process.Pid
+	currentRSSMiB, peakRSSMiB, err := readProcMemoryMiB(pid)
+	if err != nil {
+		return resourceTelemetry{}, err
+	}
+	cpuTimeMs, err := readProcCPUTimeMs(pid)
+	if err != nil {
+		return resourceTelemetry{}, err
+	}
+	diskBytes, err := dirSizeBytes(s.tbDataDir)
+	if err != nil {
+		return resourceTelemetry{}, err
+	}
+	return resourceTelemetry{
+		CurrentRSSMiB: currentRSSMiB,
+		PeakRSSMiB:    peakRSSMiB,
+		CPUTimeMs:     cpuTimeMs,
+		DiskBytes:     diskBytes,
+	}, nil
+}
+
+func readProcMemoryMiB(pid int) (float64, float64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0, 0, fmt.Errorf("read /proc/%d/status: %w", pid, err)
+	}
+	var currentKB, peakKB uint64
+	var haveCurrent, havePeak bool
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(line, "VmRSS:"); ok {
+			val, err := parseProcKB(rest)
+			if err != nil {
+				return 0, 0, fmt.Errorf("parse VmRSS: %w", err)
+			}
+			currentKB = val
+			haveCurrent = true
+		} else if rest, ok := strings.CutPrefix(line, "VmHWM:"); ok {
+			val, err := parseProcKB(rest)
+			if err != nil {
+				return 0, 0, fmt.Errorf("parse VmHWM: %w", err)
+			}
+			peakKB = val
+			havePeak = true
+		}
+	}
+	if !haveCurrent || !havePeak {
+		return 0, 0, fmt.Errorf("/proc/%d/status missing VmRSS or VmHWM", pid)
+	}
+	return float64(currentKB) / 1024.0, float64(peakKB) / 1024.0, nil
+}
+
+func parseProcKB(raw string) (uint64, error) {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return 0, errors.New("empty value")
+	}
+	return strconv.ParseUint(fields[0], 10, 64)
+}
+
+func readProcCPUTimeMs(pid int) (float64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, fmt.Errorf("read /proc/%d/stat: %w", pid, err)
+	}
+	_, after, ok := strings.CutLast(strings.TrimSpace(string(data)), ") ")
+	if !ok {
+		return 0, fmt.Errorf("malformed /proc/%d/stat", pid)
+	}
+	fields := strings.Fields(after)
+	if len(fields) <= 12 {
+		return 0, fmt.Errorf("incomplete /proc/%d/stat fields", pid)
+	}
+	utime, err := strconv.ParseUint(fields[11], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse utime: %w", err)
+	}
+	stime, err := strconv.ParseUint(fields[12], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse stime: %w", err)
+	}
+	return float64(utime+stime) * 1000.0 / linuxClockTicksPerSec, nil
+}
+
+func dirSizeBytes(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, os.ErrNotExist) {
+				return nil
+			}
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		total += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("walk %s: %w", root, err)
+	}
+	return total, nil
 }
 
 func (s *localStack) close() {

@@ -10,4 +10,7 @@
   <ItemGroup>
     <Using Include="TerraScale.Contracts.Storage" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TerraBase.Benchmarks" />
+  </ItemGroup>
 </Project>
