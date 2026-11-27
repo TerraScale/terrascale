@@ -1,12 +1,9 @@
 name: Qualify the exact main revision
-description: Require a completed main push CI run whose changes and all-green jobs succeeded for the exact revision.
+description: Require a successful completed main push CI run whose changes and all-green jobs succeeded for the exact revision.
 inputs:
   revision:
     description: Exact source revision being published or deployed.
     required: true
-  qualification:
-    description: Strict CI success or TerraBase maintenance qualification.
-    default: strict
 runs:
   using: composite
   steps:
@@ -15,35 +12,23 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         REVISION: ${{ inputs.revision }}
-        QUALIFICATION: ${{ inputs.qualification }}
       run: |
         set -euo pipefail
         [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-        [[ "$QUALIFICATION" == strict || "$QUALIFICATION" == terrabase-maintenance ]]
         run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$REVISION&branch=main&event=push&per_page=100" \
           --jq '.workflow_runs | max_by(.id) // empty')
-        jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" --arg qualification "$QUALIFICATION" '
+        jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" '
           .head_sha == $sha and .head_branch == "main" and .event == "push"
           and .head_repository.full_name == $repo and .repository.full_name == $repo
           and .path == ".github/workflows/ci.yml"
-          and .status == "completed"
-          and (.conclusion == "success" or ($qualification == "terrabase-maintenance" and .conclusion == "failure"))
-        ' <<< "$run" > /dev/null || { echo "::error::No eligible completed main CI run for $REVISION"; exit 1; }
+          and .status == "completed" and .conclusion == "success"
+        ' <<< "$run" > /dev/null || { echo "::error::No successful completed main CI run for $REVISION"; exit 1; }
         id=$(jq -r .id <<< "$run")
-        conclusion=$(jq -r .conclusion <<< "$run")
         gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" | \
-          jq -e --arg conclusion "$conclusion" '
-            def live_auth_failure:
-              .name == "main-auth" and .conclusion == "failure"
-              and ([.steps[] | select(.conclusion != "success" and .conclusion != "skipped")] | length == 1
-                and all(.[]; .status == "completed" and .conclusion == "failure"
-                  and .name == "Record the released source for the production journey"));
+          jq -e '
             [.[].jobs[]] as $jobs
-            | [$jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] as $unsuccessful
-            | all($jobs[]; .status == "completed")
+            | all($jobs[]; .status == "completed" and (.conclusion == "success" or .conclusion == "skipped"))
               and any($jobs[]; .name == "changes" and .conclusion == "success")
-              and (if $conclusion == "success" then $unsuccessful == [] and any($jobs[]; .name == "all-green" and .conclusion == "success")
-                   else ($unsuccessful | map(.name) | sort) == ["all-green", "main-auth"]
-                     and all($unsuccessful[] | select(.name == "main-auth"); live_auth_failure) end)
+              and any($jobs[]; .name == "all-green" and .conclusion == "success")
           ' > /dev/null || { echo "::error::Main CI run $id lacks successful qualification for $REVISION"; exit 1; }
         echo "Qualified $REVISION with main CI run $id" >> "$GITHUB_STEP_SUMMARY"

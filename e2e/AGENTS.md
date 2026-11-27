@@ -5,7 +5,7 @@ Read the root [AGENTS.md](../AGENTS.md).
 Playwright Test (TypeScript) drives TerraBase, ts-platform, ts-auth and Dashboard builds from the commit under
 test. The harness provides a per-run CA, Caddy for HTTPS, a PostgreSQL TLS edge, Mailpit for SMTP, a Cloudflare
 send-API sink, and stand-ins for Stripe and S3-compatible object storage. CI never runs the journey: PR CI compiles,
-runs the fast `checks` job and, when `e2e/` changes, type-checks the suite (`e2e` leg, `npm run typecheck`); `main`
+runs the fast `checks` job and, when `e2e/` or `sdk/js/` changes, type-checks the suite (`e2e` leg, `npm run typecheck`); `main`
 pushes only build and deploy (root `AGENTS.md`, "CI"). The user runs the journey manually when needed: on a machine
 against a throwaway environment (below) or against production by dispatching `production-journey.yml`. It never
 blocks a PR or a deploy.
@@ -322,8 +322,7 @@ git diff --quiet "$signed_source" "$dispatch_sha" -- . \
 After all images pass, dispatch with `gh workflow run production-journey.yml --ref main -f suite_sha="$dispatch_sha"`.
 The workflow refuses if main moved after verification. It runs the exact dispatch tree. Without `suite_sha` it runs
 the head of `main` at dispatch time.
-The workflow retains the established minimum step and job reservations for release checkouts that validate those
-environment values at startup. The current shell records its actual phase budgets in `list.txt`.
+The shell records its actual phase budgets in `list.txt`.
 
 A failed run opens the `Production journey failure` issue (found by its exact title in the REST list of open issues)
 with the run link, the trigger and suite commit, both `/readyz` versions, one `Cause:` line when the run knows it

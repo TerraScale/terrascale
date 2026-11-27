@@ -159,6 +159,7 @@ jobs:
               - .github/workflows/ci.yml
             e2e:
               - e2e/**/!(AGENTS.md)
+              - sdk/js/**/!(AGENTS.md)
               - .github/workflows/ci.yml
             dashboard:
               - *shared
@@ -205,11 +206,6 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
           fetch-depth: 2
-      - name: Start the legacy scan
-        run: |
-          (status=0
-            python3 .github/scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 || status=$?
-            echo "$status" > legacy-scan.exit.tmp && mv legacy-scan.exit.tmp legacy-scan.exit) > /dev/null 2>&1 &
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         id: workflow-linter
         with:
@@ -242,28 +238,28 @@ jobs:
       - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
         with:
           version: 1.3.6
-      - name: Prove OCI fallback publication and release ordering
-        run: bash .github/scripts/ci/prove-image-transport.sh
-      - name: No test file outside the journey
-        run: |
-          added=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD)
-          if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)([Tt]ests?|[Tt]esting|__tests__|__mocks__|[^/]*-tests)/|\.(Test[^/]*|E2E)/|(^|/)(tests?|test_[^/]*|conftest)\.py$|(^|/)tests?\.rs$|_tests?\.(go|rs|py)$|\.(test|spec)\.[cm]?[jt]sx?$|([.-]t|T)ests?\.cs$|(^|/)test-[^/]*\.(sh|py|[cm]?js|ts)$|-tests?\.(sh|py|[cm]?js|ts)$|(^|/)(vitest|jest|playwright)[^/]*\.config\.[cm]?[jt]s$'; then
-            echo '::error::This pull request adds the test files above. The journey in e2e/ is the only test.'
-            exit 1
-          fi
-      - name: Workflows name no retired hosting provider
-        run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
-      - name: Storage format migrations
+      - name: Repository policy checks and legacy terms
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: bash .github/scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"}
-      - name: Scan for legacy terms (fail)
-        if: ${{ !cancelled() }}
         run: |
-          until [ -f legacy-scan.exit ]; do sleep 1; done
+          python3 .github/scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 &
+          scan_pid=$!
+          status=0
+          bash .github/scripts/ci/prove-image-transport.sh || status=1
+          added=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD) || status=1
+          if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)([Tt]ests?|[Tt]esting|__tests__|__mocks__|[^/]*-tests)/|\.(Test[^/]*|E2E)/|(^|/)(tests?|test_[^/]*|conftest)\.py$|(^|/)tests?\.rs$|_tests?\.(go|rs|py)$|\.(test|spec)\.[cm]?[jt]sx?$|([.-]t|T)ests?\.cs$|(^|/)test-[^/]*\.(sh|py|[cm]?js|ts)$|-tests?\.(sh|py|[cm]?js|ts)$|(^|/)(vitest|jest|playwright)[^/]*\.config\.[cm]?[jt]s$'; then
+            echo '::error::This pull request adds the test files above. The journey in e2e/ is the only test.'
+            status=1
+          fi
+          if grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"; then
+            echo '::error::Workflows name the retired hosting provider above.'
+            status=1
+          fi
+          bash .github/scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"} || status=1
+          wait "$scan_pid" || { echo '::error::Legacy terms found; see the legacy-hits artifact.'; status=1; }
           head -1 legacy-scan.log
-          exit "$(cat legacy-scan.exit)"
+          exit "$status"
       - name: Retain legacy hits
         if: ${{ !cancelled() && hashFiles('legacy-hits.md') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -527,7 +523,6 @@ jobs:
         if: env.BUILD_ONLY == 'true'
         with:
           revision: ${{ github.sha }}
-          qualification: terrabase-maintenance
       - name: Authenticate to OCIR with GitHub OIDC
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
         with:
@@ -700,7 +695,6 @@ jobs:
       - uses: ./.github/actions/qualified-main
         with:
           revision: ${{ github.sha }}
-          qualification: terrabase-maintenance
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Authenticate to OCIR with GitHub OIDC
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
@@ -767,9 +761,15 @@ jobs:
           domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
           client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
           client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          version: 1.3.6
       - id: cached
         name: Inspect the immutable target image
         if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci/inspect-app-image.sh auth
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
@@ -783,10 +783,6 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-publish-auth-
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        if: steps.live.outputs.deploy == 'true'
-        with:
-          version: 1.3.6
       - id: image
         name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'

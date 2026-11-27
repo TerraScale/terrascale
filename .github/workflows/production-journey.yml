@@ -50,13 +50,6 @@ jobs:
     env:
       JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
       JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
-      PRODUCTION_CHECKOUT_MINUTES: 2
-      PRODUCTION_TOOL_MINUTES: 2
-      PRODUCTION_INSTALL_MINUTES: 15
-      PRODUCTION_SCRUB_MINUTES: 5
-      PRODUCTION_UPLOAD_MINUTES: 2
-      PRODUCTION_STEP_MINUTES: 116
-      PRODUCTION_JOB_MINUTES: 162
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         timeout-minutes: 2
