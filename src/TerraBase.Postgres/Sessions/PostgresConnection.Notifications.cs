@@ -13,7 +13,7 @@ namespace TerraBase.Postgres.Sessions;
 
 internal sealed partial class PostgresConnection
 {
-    private async ValueTask<PgOutcome> ListenAsync(PgListenCommand command, CancellationToken cancellationToken)
+    private PgOutcome Listen(PgListenCommand command)
     {
         if (command.Channel.Length > PostgresLimits.MaxChannelLength)
         {
@@ -25,20 +25,14 @@ internal sealed partial class PostgresConnection
             return PgErrors.TooManyChannels;
         }
 
-        if (session.SubscriptionTask is null || session.SubscriptionTask.IsCompleted)
+        session.Channels.Add(command.Channel);
+        if (session.SubscriptionTask is null)
         {
-            if (await session.Executor.EnsureUsableAsync(cancellationToken) is { } busy)
-            {
-                return PgErrors.From(busy);
-            }
-
-            session.Subscription?.Dispose();
             var subscription = CancellationTokenSource.CreateLinkedTokenSource(closed);
             session.Subscription = subscription;
             session.SubscriptionTask = PumpAsync(session.Executor, session.Executor.CurrentBookmark, session.Notifications.Writer, Reader, subscription.Token);
         }
 
-        session.Channels.Add(command.Channel);
         return PgResult.Command("LISTEN");
     }
 

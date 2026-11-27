@@ -16,7 +16,6 @@ public sealed class DatabaseRestorer(
     ILogger<DatabaseRestorer> logger)
 {
     private const int ScanPageSize = 512;
-    private const int SegmentDownloadParallelism = 8;
     private const string RewoundDirectoryName = "rewound";
 
     private readonly StorageLayout _layout = new(storage);
@@ -55,7 +54,6 @@ public sealed class DatabaseRestorer(
         {
             if (!notifyPeers)
             {
-                manifests.Invalidate(databaseId);
                 await sessions.Catalog.DatabaseReplacedAsync(databaseId, null, cancellationToken);
                 return target switch
                 {
@@ -353,7 +351,6 @@ public sealed class DatabaseRestorer(
             return copied;
         }
 
-        List<ArchivedSegment> needed = [];
         foreach (var group in manifest.Segments.GroupBy(static segment => segment.Origin, StringComparer.Ordinal))
         {
             if (group.Key is not { } origin || !StorageEngineOptions.IsValidRegion(origin))
@@ -371,29 +368,16 @@ public sealed class DatabaseRestorer(
                     break;
                 }
 
-                needed.Add(segment);
+                var path = StorageLayout.SegmentFileIn(staging, sourceId, origin, segment.FirstSequence, segment.LastSequence);
+                var segmentDownload = await manifests.Store.DownloadToFileAsync(segment.Key, path, segment.SizeBytes, cancellationToken);
+                if (Downloaded(segmentDownload, segment.SizeBytes) is { } failure)
+                {
+                    return failure;
+                }
             }
         }
 
-        OperationFailed? firstFailure = null;
-        await Parallel.ForEachAsync(
-            needed,
-            new ParallelOptions { MaxDegreeOfParallelism = SegmentDownloadParallelism, CancellationToken = cancellationToken },
-            async (segment, token) =>
-            {
-                if (Volatile.Read(ref firstFailure) is not null)
-                {
-                    return;
-                }
-
-                var path = StorageLayout.SegmentFileIn(staging, sourceId, segment.Origin, segment.FirstSequence, segment.LastSequence);
-                var segmentDownload = await manifests.Store.DownloadToFileAsync(segment.Key, path, segment.SizeBytes, token);
-                if (Downloaded(segmentDownload, segment.SizeBytes) is { } failure)
-                {
-                    _ = Interlocked.CompareExchange(ref firstFailure, failure, null);
-                }
-            });
-        return firstFailure;
+        return null;
     }
 
     private async ValueTask<ContinuityCopyOutcome> SwapAsync(
@@ -447,7 +431,6 @@ public sealed class DatabaseRestorer(
         }
 
         Cleanup(staging);
-        manifests.Invalidate(databaseId);
         await sessions.Catalog.DatabaseReplacedAsync(databaseId, notifyPeers ? bookmark : null, cancellationToken);
         return bookmark;
     }

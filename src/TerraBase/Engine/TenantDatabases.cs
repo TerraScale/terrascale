@@ -16,7 +16,7 @@ internal readonly union TenantBranchOutcome(ISqlDatabaseSession, ResourceNotFoun
 
 internal readonly union TenantDeleteOutcome(Completed, BackendUnavailable);
 
-internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring keyring, IClusterCoordinator cluster, TimeProvider time, ILogger<TenantDatabases> logger) : IAsyncDisposable
+internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring keyring, IClusterCoordinator cluster, ILogger<TenantDatabases> logger) : IAsyncDisposable
 {
     private static readonly BackendUnavailable MissingKey = new("the database's master key is not configured on this node", "master_key_missing");
 
@@ -28,14 +28,10 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
 
     public bool TryGetOpen(Ulid databaseId, [NotNullWhen(true)] out ISqlDatabaseSession? session)
     {
-        lock (_gate)
+        if (_sessions.TryGetValue(databaseId, out var tracked) && tracked.Session.IsUsable)
         {
-            if (_sessions.TryGetValue(databaseId, out var tracked) && tracked.Session.IsUsable)
-            {
-                tracked.Touch(time.GetTimestamp());
-                session = tracked.Session;
-                return true;
-            }
+            session = tracked.Session;
+            return true;
         }
 
         session = null;
@@ -44,46 +40,15 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
 
     public bool TryGetOpen(Ulid databaseId, string keyId, [NotNullWhen(true)] out ISqlDatabaseSession? session)
     {
-        lock (_gate)
+        if (_sessions.TryGetValue(databaseId, out var tracked)
+            && tracked.Session.IsUsable
+            && string.Equals(tracked.KeyId, keyId, StringComparison.Ordinal))
         {
-            if (TryFindTracked(databaseId, keyId, out var tracked))
-            {
-                tracked.Touch(time.GetTimestamp());
-                session = tracked.Session;
-                return true;
-            }
-        }
-
-        session = null;
-        return false;
-    }
-
-    internal bool TryGetTracked(Ulid databaseId, string keyId, [NotNullWhen(true)] out ISqlDatabaseSession? session)
-    {
-        lock (_gate)
-        {
-            if (TryFindTracked(databaseId, keyId, out var tracked))
-            {
-                session = tracked.Session;
-                return true;
-            }
-        }
-
-        session = null;
-        return false;
-    }
-
-    private bool TryFindTracked(Ulid databaseId, string keyId, [NotNullWhen(true)] out TrackedSession? tracked)
-    {
-        if (_sessions.TryGetValue(databaseId, out var found)
-            && found.Session.IsUsable
-            && string.Equals(found.KeyId, keyId, StringComparison.Ordinal))
-        {
-            tracked = found;
+            session = tracked.Session;
             return true;
         }
 
-        tracked = null;
+        session = null;
         return false;
     }
 
@@ -114,16 +79,6 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
     public ValueTask<TenantReadyOutcome> OpenOrCreateAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken)
     {
         if (TryGetOpen(databaseId, keyId, out var cached))
-        {
-            return ValueTask.FromResult(Ready(cached));
-        }
-
-        return OpenOrCreateSlowAsync(databaseId, keyId, strict, cancellationToken);
-    }
-
-    public ValueTask<TenantReadyOutcome> OpenOrCreateForReplicationAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken)
-    {
-        if (TryGetTracked(databaseId, keyId, out var cached))
         {
             return ValueTask.FromResult(Ready(cached));
         }
@@ -207,79 +162,6 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         if (session is not null)
         {
             await session.DisposeAsync();
-        }
-    }
-
-    public int TrimIdle(TimeSpan readerIdleAfter, TimeSpan shrinkWriterAfter)
-    {
-        TrackedSession[] tracked;
-        lock (_gate)
-        {
-            tracked = [.. _sessions.Values];
-        }
-
-        var trimmed = 0;
-        foreach (var entry in tracked)
-        {
-            if (entry.Session.IsUsable)
-            {
-                var shrinkWriter = IdleFor(entry) >= shrinkWriterAfter && SqliteStorageEngine.IsIdle(entry.Session, shrinkWriterAfter);
-                trimmed += SqliteStorageEngine.TrimIdleResources(entry.Session, readerIdleAfter, shrinkWriter);
-            }
-        }
-
-        return trimmed;
-    }
-
-    public IReadOnlyList<Ulid> IdleDatabaseIds(TimeSpan idleFor)
-    {
-        lock (_gate)
-        {
-            return [.. _sessions
-                .Where(entry => entry.Key != SystemDatabase.Id && IdleFor(entry.Value) >= idleFor)
-                .OrderBy(static entry => entry.Value.LastAccessTimestamp)
-                .Select(static entry => entry.Key)];
-        }
-    }
-
-    public async ValueTask<bool> EvictIdleAsync(Ulid databaseId, TimeSpan idleFor)
-    {
-        if (databaseId == SystemDatabase.Id)
-        {
-            return false;
-        }
-
-        var gate = Gate(databaseId);
-        if (!gate.Wait(0))
-        {
-            return false;
-        }
-
-        try
-        {
-            ISqlDatabaseSession? evicted = null;
-            lock (_gate)
-            {
-                if (_sessions.TryGetValue(databaseId, out var tracked)
-                    && IdleFor(tracked) >= idleFor
-                    && SqliteStorageEngine.IsIdle(tracked.Session, idleFor)
-                    && _sessions.TryRemove(databaseId, out var removed))
-                {
-                    evicted = removed.Session;
-                }
-            }
-
-            if (evicted is null)
-            {
-                return false;
-            }
-
-            await evicted.DisposeAsync();
-            return true;
-        }
-        finally
-        {
-            gate.Release();
         }
     }
 
@@ -433,25 +315,12 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
     {
         lock (_gate)
         {
-            _sessions[databaseId] = new TrackedSession(session, keyId, time.GetTimestamp());
+            _sessions[databaseId] = new TrackedSession(session, keyId);
             cluster.TrackDatabase(databaseId);
         }
 
         return session;
     }
 
-    private TimeSpan IdleFor(TrackedSession tracked) => time.GetElapsedTime(tracked.LastAccessTimestamp);
-
-    private sealed class TrackedSession(ISqlDatabaseSession session, string keyId, long accessedAt)
-    {
-        private long _lastAccessTimestamp = accessedAt;
-
-        public ISqlDatabaseSession Session { get; } = session;
-
-        public string KeyId { get; } = keyId;
-
-        public long LastAccessTimestamp => Volatile.Read(ref _lastAccessTimestamp);
-
-        public void Touch(long timestamp) => Volatile.Write(ref _lastAccessTimestamp, timestamp);
-    }
+    private readonly record struct TrackedSession(ISqlDatabaseSession Session, string KeyId);
 }

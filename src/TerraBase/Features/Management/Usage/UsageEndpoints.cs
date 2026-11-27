@@ -82,7 +82,7 @@ internal sealed class UsageReports(UsageMeter usage, StorageLedger ledger, Stora
 
     public const string WriterStale = "usage_writer_stale";
 
-    private static readonly TimeSpan WriterFreshness = TimeSpan.FromMinutes(12);
+    private static readonly TimeSpan WriterFreshness = TimeSpan.FromMinutes(1);
 
     public const string StorageIncomplete = "storage_sample_incomplete";
 

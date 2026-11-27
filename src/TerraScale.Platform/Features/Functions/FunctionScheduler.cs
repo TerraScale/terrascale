@@ -5,7 +5,6 @@ namespace TerraScale.Platform.Features.Functions;
 
 public sealed class FunctionScheduler(
     PlatformStore store,
-    FunctionService functions,
     FunctionInvoker invoker,
     PlatformReadiness readiness,
     TimeProvider timeProvider,
@@ -13,64 +12,48 @@ public sealed class FunctionScheduler(
 {
     private const int BatchSize = 32;
     private const int Parallelism = 4;
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(15);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var backoff = Interval;
-        var wait = Interval;
-        var idle = false;
-        while (true)
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), timeProvider);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            await (idle ? functions.Scheduled.WaitAsync(wait, timeProvider, stoppingToken) : Task.Delay(wait, timeProvider, stoppingToken));
-            functions.Scheduled.Clear();
             if (!readiness.SchemaReady)
             {
-                (backoff, wait, idle) = (Interval, Interval, false);
                 continue;
             }
 
-            var pass = new SchedulePass(true, null);
             try
             {
-                pass = await TickAsync(stoppingToken);
+                await TickAsync(stoppingToken);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.ZLogWarning(error, $"Function schedule pass failed");
             }
-
-            idle = !pass.Fired;
-            backoff = idle ? IdleWake.Backoff(backoff, IdleInterval) : Interval;
-            wait = idle && pass.NextIn is { } nextIn && nextIn < backoff ? nextIn : backoff;
         }
     }
 
-    private async Task<SchedulePass> TickAsync(CancellationToken cancellationToken)
+    private async Task TickAsync(CancellationToken cancellationToken)
     {
-        var upcomingOutcome = await store.ReadAsync(
+        var now = timeProvider.GetUtcNow();
+        var dueOutcome = await store.ReadAsync(
             SqlValues.Statement(
                 "SELECT f.database_id, f.name, f.organization_id, f.project_id, f.database_name, f.cron, f.cron_next FROM platform_functions f "
-                + $"WHERE f.cron IS NOT NULL AND f.cron_next IS NOT NULL AND {FunctionService.Open} ORDER BY f.cron_next LIMIT ?",
+                + $"WHERE f.cron IS NOT NULL AND f.cron_next IS NOT NULL AND f.cron_next <= ? AND {FunctionService.Open} ORDER BY f.cron_next LIMIT ?",
+                SqlValues.Number(now.UnixMs()),
                 SqlValues.Number(BatchSize)),
             cancellationToken);
-        var upcoming = upcomingOutcome switch
+        var due = dueOutcome switch
         {
             SqlExecuteResponse { Results: var results } => results[0].RowsOf().Select(Schedule).ToArray(),
             PlatformConflict conflict => Skip(conflict.Message),
             PlatformUnavailable unavailable => Skip(unavailable.Message),
         };
-        var now = timeProvider.GetUtcNow();
-        var nowMs = now.UnixMs();
-        DueSchedule[] due = [.. upcoming.Where(schedule => schedule.Due <= nowMs)];
         await Parallel.ForEachAsync(
             due,
             new ParallelOptions { MaxDegreeOfParallelism = Parallelism, CancellationToken = cancellationToken },
             async (schedule, token) => await FireAsync(schedule, now, token));
-        return new SchedulePass(
-            due.Length > 0,
-            upcoming.FirstOrDefault(schedule => schedule.Due > nowMs) is { } next ? next.Due.FromUnixMs() - now : null);
     }
 
     private async ValueTask FireAsync(DueSchedule schedule, DateTimeOffset now, CancellationToken cancellationToken)
@@ -127,6 +110,4 @@ public sealed class FunctionScheduler(
             row.Number(6));
 
     private sealed record DueSchedule(FunctionTarget Target, string Name, string Cron, long Due);
-
-    private sealed record SchedulePass(bool Fired, TimeSpan? NextIn);
 }

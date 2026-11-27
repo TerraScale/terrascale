@@ -37,8 +37,6 @@ public interface IContinuityDatabaseCatalog
     ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken);
 
     ValueTask<DiscardCopyTargetOutcome> DiscardCopyTargetAsync(Ulid databaseId, CancellationToken cancellationToken);
-
-    ValueTask<bool> IsPreferredArchiverAsync(Ulid databaseId, CancellationToken cancellationToken) => ValueTask.FromResult(true);
 }
 
 public sealed class ContinuitySessions(

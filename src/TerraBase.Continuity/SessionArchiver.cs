@@ -10,12 +10,6 @@ internal readonly union ArchivedSegmentOutcome(ArchivedSegment, ContinuityUnavai
 
 internal readonly union SegmentCommitTimeOutcome(DateTimeOffset, ContinuityUnavailable);
 
-internal sealed record SnapshotStillDue;
-
-internal sealed record SnapshotTakenElsewhere;
-
-internal readonly union SnapshotRecheckOutcome(SnapshotStillDue, SnapshotTakenElsewhere, ContinuityUnavailable);
-
 internal sealed class SessionArchiver(
     ISqlDatabaseSession session,
     ArchiveManifests manifests,
@@ -25,12 +19,6 @@ internal sealed class SessionArchiver(
     TimeProvider timeProvider)
 {
     private const string LocalSnapshotPattern = "*.db";
-    private const string StaleCompactPattern = "*.compact";
-    private const string StaleCompactJournalPattern = "*.compact-journal";
-
-    internal IReadOnlyList<ArchivedSegment> UploadedSegments { get; private set; } = [];
-
-    internal ArchivedSnapshot? UploadedSnapshot { get; private set; }
 
     public async ValueTask<ArchiveManifestOutcome> RunAsync(
         ArchiveManifest manifest,
@@ -50,35 +38,17 @@ internal sealed class SessionArchiver(
             }
         }
 
-        var isPreferred = await sessions.Catalog.IsPreferredArchiverAsync(session.DatabaseId, cancellationToken);
         StagedArchiveSnapshot? snapshot = null;
-        if (failure is null && session.CurrentBookmark.Dominates(snapshotFloor) && SnapshotDue(manifest, forceSnapshot, isPreferred))
+        if (failure is null && session.CurrentBookmark.Dominates(snapshotFloor) && SnapshotDue(manifest, forceSnapshot))
         {
-            SnapshotRecheckOutcome recheck = forceSnapshot ? new SnapshotStillDue() : await RecheckSnapshotAsync(isPreferred, cancellationToken);
-            var proceed = recheck switch
+            var staged = await ArchiveSnapshotAsync(cancellationToken);
+            (snapshot, failure) = staged switch
             {
-                SnapshotStillDue => true,
-                SnapshotTakenElsewhere => false,
-                ContinuityUnavailable => false,
+                StagedArchiveSnapshot archived => (archived, (ContinuityUnavailable?)null),
+                ContinuityUnavailable unavailable => ((StagedArchiveSnapshot?)null, unavailable),
             };
-            failure = recheck switch
-            {
-                SnapshotStillDue or SnapshotTakenElsewhere => null,
-                ContinuityUnavailable unavailable => unavailable,
-            };
-            if (proceed)
-            {
-                var staged = await ArchiveSnapshotAsync(cancellationToken);
-                (snapshot, failure) = staged switch
-                {
-                    StagedArchiveSnapshot archived => (archived, (ContinuityUnavailable?)null),
-                    ContinuityUnavailable unavailable => ((StagedArchiveSnapshot?)null, unavailable),
-                };
-            }
         }
 
-        UploadedSegments = segments;
-        UploadedSnapshot = snapshot?.Snapshot;
         var cutoff = await sessions.ReadRetentionCutoffAsync(session.DatabaseId, cancellationToken);
         var saved = await manifests.PublishAsync(session.DatabaseId, segments, snapshot, cutoff, cancellationToken);
         return saved switch
@@ -115,7 +85,7 @@ internal sealed class SessionArchiver(
         }
 
         if (snapshot is not null
-            && stored.Snapshots.Any(archived => archived.Key == snapshot.Snapshot.Key || archived.Bookmark == snapshot.Snapshot.Bookmark)
+            && stored.Snapshots.Any(archived => archived.Key == snapshot.Snapshot.Key)
             && PruneLocalSnapshots(snapshot.Path) is { } ioFailure)
         {
             return ioFailure;
@@ -124,19 +94,7 @@ internal sealed class SessionArchiver(
         return stored;
     }
 
-    private async ValueTask<SnapshotRecheckOutcome> RecheckSnapshotAsync(bool isPreferred, CancellationToken cancellationToken)
-    {
-        var current = await manifests.ReadCurrentAsync(session.DatabaseId, cancellationToken);
-        return current switch
-        {
-            ArchiveManifest fresh when session.CurrentBookmark.Dominates(ArchiveRetention.SnapshotFloor(fresh))
-                && SnapshotDue(fresh, forceSnapshot: false, isPreferred) => new SnapshotStillDue(),
-            ArchiveManifest => new SnapshotTakenElsewhere(),
-            ContinuityUnavailable unavailable => unavailable,
-        };
-    }
-
-    private bool SnapshotDue(ArchiveManifest manifest, bool forceSnapshot, bool isPreferred)
+    private bool SnapshotDue(ArchiveManifest manifest, bool forceSnapshot)
     {
         ArchivedSnapshot? latestArchived = null;
         CausalBookmark? latestBookmark = null;
@@ -165,8 +123,7 @@ internal sealed class SessionArchiver(
             return false;
         }
 
-        var interval = isPreferred ? options.SnapshotInterval : options.SnapshotInterval + options.SnapshotFailoverGrace;
-        return forceSnapshot || timeProvider.GetUtcNow() - latestArchived.TakenAtUtc >= interval;
+        return forceSnapshot || timeProvider.GetUtcNow() - latestArchived.TakenAtUtc >= options.SnapshotInterval;
     }
 
     private async ValueTask<ContinuityUnavailable?> ArchiveSegmentsAsync(
@@ -370,41 +327,30 @@ internal sealed class SessionArchiver(
         }
 
         var listed = ContinuityFiles.ListFiles(directory, LocalSnapshotPattern);
-        var failure = listed switch
-        {
-            IReadOnlyList<string> files => DeleteFiles(files.OrderByDescending(static file => Path.GetFileName(file), StringComparer.Ordinal).Skip(options.LocalSnapshotsRetained)),
-            ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
-        };
-        return failure ?? PruneStale(directory, StaleCompactPattern) ?? PruneStale(directory, StaleCompactJournalPattern);
-    }
-
-    private static ContinuityUnavailable? PruneStale(string directory, string pattern)
-    {
-        var listed = ContinuityFiles.ListFiles(directory, pattern);
         return listed switch
         {
-            IReadOnlyList<string> files => DeleteFiles(files),
-            ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
+            IReadOnlyList<string> files => DeleteOldest(files, options.LocalSnapshotsRetained),
+            ContinuityIoFailure failure => new ContinuityUnavailable(failure.Message, failure.Code),
         };
-    }
 
-    private static ContinuityUnavailable? DeleteFiles(IEnumerable<string> files)
-    {
-        foreach (var file in files)
+        static ContinuityUnavailable? DeleteOldest(IReadOnlyList<string> files, int retained)
         {
-            var deleted = ContinuityFiles.DeleteFile(file);
-            var failure = deleted switch
+            foreach (var file in files.OrderByDescending(static file => Path.GetFileName(file), StringComparer.Ordinal).Skip(retained))
             {
-                ContinuityFilesChanged => (ContinuityUnavailable?)null,
-                ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
-            };
-            if (failure is not null)
-            {
-                return failure;
+                var deleted = ContinuityFiles.DeleteFile(file);
+                var failure = deleted switch
+                {
+                    ContinuityFilesChanged => (ContinuityUnavailable?)null,
+                    ContinuityIoFailure io => new ContinuityUnavailable(io.Message, io.Code),
+                };
+                if (failure is not null)
+                {
+                    return failure;
+                }
             }
-        }
 
-        return null;
+            return null;
+        }
     }
 
     private static ContinuityUnavailable Busy(StorageBusy busy) => new(busy.Message, "storage_busy");

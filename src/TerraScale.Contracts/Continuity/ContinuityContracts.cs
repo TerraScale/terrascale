@@ -19,10 +19,6 @@ public interface IChangefeedHub
     ValueTask PublishAsync(ChangefeedEntry entry, CancellationToken cancellationToken);
 
     IAsyncEnumerable<ChangefeedEntry> SubscribeAsync(ChangefeedSubscription subscription, CancellationToken cancellationToken);
-
-    void ObserveBookmark(Ulid databaseId, CausalBookmark bookmark)
-    {
-    }
 }
 
 public readonly union RestoreTarget(DateTimeOffset, CausalBookmark);

@@ -84,7 +84,7 @@ internal sealed class PostgresSessionFactory(
         var opened = await access.OpenAsync(target.Database, cancellationToken);
         return opened switch
         {
-            ISqlDatabaseSession session => new PostgresGrant(new TerraBaseDatabaseExecutor(target, access, session, coordinator, rules, runner), target.Database.Name,
+            ISqlDatabaseSession session => new PostgresGrant(new TerraBaseDatabaseExecutor(target, session, coordinator, rules, runner), target.Database.Name,
                 target.CanWrite ? SqlAccess.Write : SqlAccess.Read, lease, CancellationToken.None, lifetime.ApplicationStopping),
             BackendUnavailable unavailable => await ReleaseAsync(lease, unavailable),
         };

@@ -49,17 +49,11 @@ internal sealed partial class DatabaseSession
 
     private sealed record class CommitStagedRequest(StagedDescriptor Descriptor, HlcTimestamp CommitHlc, long? LeaseDeadline, TaskCompletionSource<CommitStagedOutcome> Completion) : LaneRequest;
 
-    private sealed record class ShrinkWriterRequest : LaneRequest
-    {
-        public static readonly ShrinkWriterRequest Instance = new();
-    }
-
     private WriteScope WriterScope() => _laneScope ??= new WriteScope(_writer, _metaCache);
 
     public ValueTask<SqlWriteOutcome> ExecuteWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        MarkActive();
         if (!IsClosed && !IsFaulted && (request.After.IsEmpty || _versions.Satisfies(request.After)))
         {
             var completion = NewCompletion<SqlWriteOutcome>();
@@ -92,7 +86,6 @@ internal sealed partial class DatabaseSession
     public async ValueTask<StageWriteOutcome> StageWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        MarkActive();
         var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken);
         if (waited switch { BookmarkReached => false, StorageTimeout => true })
         {
@@ -110,7 +103,6 @@ internal sealed partial class DatabaseSession
 
     public async ValueTask<CommitStagedOutcome> CommitStagedAsync(StagedWriteToken token, HlcTimestamp commitHlc, long? leaseDeadline, CancellationToken cancellationToken)
     {
-        MarkActive();
         if (TakeStaged(token) is not { } descriptor)
         {
             return new StagedWriteMissing(token, "staged write not found or expired");
@@ -139,7 +131,6 @@ internal sealed partial class DatabaseSession
     public async ValueTask<ApplyRemoteBatchOutcome> ApplyRemoteBatchAsync(RemoteCommitBatch batch, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(batch);
-        MarkActive();
         if (batch.DatabaseId != DatabaseId)
         {
             return new StorageCorrupted(DatabaseId, "remote batch targets a different database");
@@ -156,7 +147,6 @@ internal sealed partial class DatabaseSession
 
     internal async ValueTask<ApplyRemoteBatchOutcome> ReplayAsync(IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
     {
-        MarkActive();
         var completion = NewCompletion<ApplyRemoteBatchOutcome>();
         if (!await EnqueueAsync(new RemoteApplyRequest(commits, true, completion, cancellationToken), cancellationToken))
         {
@@ -169,7 +159,6 @@ internal sealed partial class DatabaseSession
     public async ValueTask<BeginTransactionOutcome> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
-        MarkActive();
         var waited = await WaitForBookmarkAsync(options.After, Options.BookmarkWaitTimeout, cancellationToken);
         if (waited switch { BookmarkReached => false, StorageTimeout => true })
         {
@@ -388,22 +377,10 @@ internal sealed partial class DatabaseSession
         _ = _writer.Exec("PRAGMA wal_checkpoint(PASSIVE);");
     }
 
-    private bool ShrinkWriterMemory()
-    {
-        Volatile.Write(ref _shrinkWriterQueued, 0);
-        if (_writer.InTransaction)
-        {
-            return false;
-        }
-
-        Volatile.Write(ref _lastShrunkActivityTimestamp, Volatile.Read(ref _lastActivityTimestamp));
-        return _writer.Exec("PRAGMA shrink_memory;").IsOk;
-    }
-
     private static bool IsGroupable(LaneRequest request) => request switch
     {
         LocalWriteRequest => true,
-        StageRequest or TransactionRequest or RemoteApplyRequest or CommitStagedRequest or ShrinkWriterRequest => false,
+        StageRequest or TransactionRequest or RemoteApplyRequest or CommitStagedRequest => false,
     };
 
     private async Task ProcessSerialAsync(LaneRequest request)
@@ -415,7 +392,6 @@ internal sealed partial class DatabaseSession
             CommitStagedRequest staged => staged.Completion.TrySetResult(CommitStaged(staged.Descriptor, staged.CommitHlc, staged.LeaseDeadline)),
             StageRequest stage => RunSerialStage(stage),
             LocalWriteRequest => ProcessGroupWithSavepoints([request]),
-            ShrinkWriterRequest => ShrinkWriterMemory(),
         };
     }
 
@@ -743,7 +719,7 @@ internal sealed partial class DatabaseSession
             var (touched, groupFull) = request switch
             {
                 LocalWriteRequest local => RunLocalItem(local, completed, useSavepoint, ref nextSequence, ref epoch, ref lastCommittedSequence, ref groupBytes, ref groupRows),
-                StageRequest or TransactionRequest or RemoteApplyRequest or CommitStagedRequest or ShrinkWriterRequest => (RejectFromGroup(request), false),
+                StageRequest or TransactionRequest or RemoteApplyRequest or CommitStagedRequest => (RejectFromGroup(request), false),
             };
             schemaTouched |= touched;
 
@@ -1441,7 +1417,6 @@ internal sealed partial class DatabaseSession
         TransactionRequest transaction => transaction.Transaction.Started.TrySetResult(busy),
         RemoteApplyRequest remote => remote.Completion.TrySetResult(busy),
         CommitStagedRequest staged => staged.Completion.TrySetResult(busy),
-        ShrinkWriterRequest => true,
     };
 
     private static TaskCompletionSource<T> NewCompletion<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);

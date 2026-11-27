@@ -31,9 +31,6 @@ internal static partial class ContinuityLog
     [LoggerMessage(EventId = 2108, Level = LogLevel.Warning, Message = "Backup archive request failed")]
     public static partial void ArchiveRequestFailed(ILogger logger, Exception exception);
 
-    [LoggerMessage(EventId = 2118, Level = LogLevel.Warning, Message = "Backup archive refused a batched delete with {ErrorCode}: {Reason}")]
-    public static partial void ArchiveDeleteRefused(ILogger logger, string errorCode, string reason);
-
     [LoggerMessage(EventId = 2110, Level = LogLevel.Information, Message = "Continuity operation {OperationId} ({Kind}) finished as {State} for {TargetDatabaseId}")]
     public static partial void OperationFinished(ILogger logger, Ulid operationId, string kind, string state, Ulid targetDatabaseId);
 

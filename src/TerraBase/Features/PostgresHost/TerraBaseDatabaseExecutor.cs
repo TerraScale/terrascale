@@ -10,115 +10,40 @@ namespace TerraBase.Features.PostgresHost;
 
 internal readonly union PostgresRequestPreparation(SqlStatementRequest, SqlError);
 
-internal readonly union PostgresSessionOutcome(ISqlDatabaseSession, StorageBusy);
-
 internal sealed class TerraBaseDatabaseExecutor(
-    ResolvedDatabase target, DatabaseAccess access, ISqlDatabaseSession session, IClusterCoordinator coordinator, RulesEnforcer rules, SqlRunner runner) : IPostgresDatabaseExecutor
+    ResolvedDatabase target, ISqlDatabaseSession session, IClusterCoordinator coordinator, RulesEnforcer rules, SqlRunner runner) : IPostgresDatabaseExecutor
 {
-    private static readonly TimeSpan ReopenRetryAfter = TimeSpan.FromSeconds(1);
+    public Ulid DatabaseId => session.DatabaseId;
 
-    private ISqlDatabaseSession _session = session;
+    public ulong? SchemaEpoch => session.SchemaEpoch;
 
-    public Ulid DatabaseId => target.Database.Id;
-
-    public ulong? SchemaEpoch => Volatile.Read(ref _session).SchemaEpoch;
-
-    public CausalBookmark CurrentBookmark => coordinator.CurrentBookmark(target.Database.Id).Merge(Volatile.Read(ref _session).CurrentBookmark);
+    public CausalBookmark CurrentBookmark => coordinator.CurrentBookmark(session.DatabaseId).Merge(session.CurrentBookmark);
 
     public async ValueTask<SqlReadOutcome> ReadAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var resolved = await ResolveSessionAsync(cancellationToken);
-        return resolved switch
+        var prepared = await PrepareAsync(request, cancellationToken);
+        return prepared switch
         {
-            ISqlDatabaseSession current => await ReadWithAsync(current, request, cancellationToken),
-            StorageBusy busy => busy,
+            SqlStatementRequest ready => await ReadPreparedAsync(ready, cancellationToken),
+            SqlError error => error,
         };
     }
 
     public async ValueTask<ClusterWriteOutcome> WriteAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var resolved = await ResolveSessionAsync(cancellationToken);
-        return resolved switch
+        var prepared = await PrepareAsync(request, cancellationToken);
+        return prepared switch
         {
-            ISqlDatabaseSession current => await WriteWithAsync(current, request, cancellationToken),
-            StorageBusy busy => busy,
+            SqlStatementRequest ready => await WritePreparedAsync(ready, cancellationToken),
+            SqlError error => error,
         };
     }
 
     public async ValueTask<ClusterBeginTransactionOutcome> BeginTransactionAsync(SqlTransactionOptions options, CancellationToken cancellationToken)
     {
-        var resolved = await ResolveSessionAsync(cancellationToken);
-        return resolved switch
-        {
-            ISqlDatabaseSession current => await BeginWithAsync(current, options, cancellationToken),
-            StorageBusy busy => busy,
-        };
-    }
-
-    public ValueTask<ClusterCommitTransactionOutcome> CommitAsync(ISqlTransaction transaction, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(transaction);
-        return coordinator.CommitTransactionAsync(
-            Volatile.Read(ref _session),
-            transaction is RulesTransaction wrapped ? wrapped.Inner : transaction,
-            cancellationToken);
-    }
-
-    public async ValueTask<StorageBusy?> EnsureUsableAsync(CancellationToken cancellationToken)
-    {
-        var resolved = await ResolveSessionAsync(cancellationToken);
-        return resolved switch
-        {
-            ISqlDatabaseSession => null,
-            StorageBusy busy => busy,
-        };
-    }
-
-    public IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, CancellationToken cancellationToken) =>
-        Volatile.Read(ref _session).SubscribeChangesAsync(after, cancellationToken);
-
-    private async ValueTask<PostgresSessionOutcome> ResolveSessionAsync(CancellationToken cancellationToken)
-    {
-        var opened = await access.ReopenAsync(target.Database, cancellationToken);
-        return opened switch
-        {
-            ISqlDatabaseSession current => Track(current),
-            ResourceNotFound missing => new StorageBusy(missing.Message, ReopenRetryAfter),
-            BackendUnavailable unavailable => new StorageBusy(unavailable.Message, ReopenRetryAfter),
-        };
-    }
-
-    private PostgresSessionOutcome Track(ISqlDatabaseSession current)
-    {
-        Volatile.Write(ref _session, current);
-        return new PostgresSessionOutcome(current);
-    }
-
-    private async ValueTask<SqlReadOutcome> ReadWithAsync(ISqlDatabaseSession current, SqlStatementRequest request, CancellationToken cancellationToken)
-    {
-        var prepared = await PrepareAsync(current, request, cancellationToken);
-        return prepared switch
-        {
-            SqlStatementRequest ready => await ReadPreparedAsync(current, ready, cancellationToken),
-            SqlError error => error,
-        };
-    }
-
-    private async ValueTask<ClusterWriteOutcome> WriteWithAsync(ISqlDatabaseSession current, SqlStatementRequest request, CancellationToken cancellationToken)
-    {
-        var prepared = await PrepareAsync(current, request, cancellationToken);
-        return prepared switch
-        {
-            SqlStatementRequest ready => await WritePreparedAsync(current, ready, cancellationToken),
-            SqlError error => error,
-        };
-    }
-
-    private async ValueTask<ClusterBeginTransactionOutcome> BeginWithAsync(ISqlDatabaseSession current, SqlTransactionOptions options, CancellationToken cancellationToken)
-    {
-        var begun = await coordinator.BeginTransactionAsync(current, options, cancellationToken);
+        var begun = await coordinator.BeginTransactionAsync(session, options, cancellationToken);
         return begun switch
         {
             ISqlTransaction transaction => Transaction(target.EndUser is { } auth ? new RulesTransaction(transaction, target.Database.Id, auth, rules) : transaction),
@@ -127,11 +52,17 @@ internal sealed class TerraBaseDatabaseExecutor(
         };
     }
 
+    public ValueTask<ClusterCommitTransactionOutcome> CommitAsync(ISqlTransaction transaction, CancellationToken cancellationToken) =>
+        coordinator.CommitTransactionAsync(session, transaction is RulesTransaction wrapped ? wrapped.Inner : transaction, cancellationToken);
+
+    public IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, CancellationToken cancellationToken) =>
+        session.SubscribeChangesAsync(after, cancellationToken);
+
     private static ClusterBeginTransactionOutcome Transaction(ISqlTransaction transaction) => new(transaction);
 
-    private async ValueTask<SqlReadOutcome> ReadPreparedAsync(ISqlDatabaseSession current, SqlStatementRequest request, CancellationToken cancellationToken)
+    private async ValueTask<SqlReadOutcome> ReadPreparedAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
-        var read = await current.ExecuteReadAsync(request, cancellationToken);
+        var read = await session.ExecuteReadAsync(request, cancellationToken);
         return read switch
         {
             SqlReadResult result => Metered(result),
@@ -141,9 +72,9 @@ internal sealed class TerraBaseDatabaseExecutor(
         };
     }
 
-    private async ValueTask<ClusterWriteOutcome> WritePreparedAsync(ISqlDatabaseSession current, SqlStatementRequest request, CancellationToken cancellationToken)
+    private async ValueTask<ClusterWriteOutcome> WritePreparedAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
-        var written = await coordinator.ExecuteWriteAsync(current, request, cancellationToken);
+        var written = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
         return written switch
         {
             SqlWriteResult result => Metered(result),
@@ -168,7 +99,7 @@ internal sealed class TerraBaseDatabaseExecutor(
         return written;
     }
 
-    private async ValueTask<PostgresRequestPreparation> PrepareAsync(ISqlDatabaseSession current, SqlStatementRequest request, CancellationToken cancellationToken)
+    private async ValueTask<PostgresRequestPreparation> PrepareAsync(SqlStatementRequest request, CancellationToken cancellationToken)
     {
         if (target.EndUser is not { } auth)
         {
@@ -184,7 +115,7 @@ internal sealed class TerraBaseDatabaseExecutor(
             }
         }
 
-        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, current, cancellationToken);
+        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, session, cancellationToken);
         return enforced switch
         {
             EnforcedSql ready => request with { Statements = ready.Statements },

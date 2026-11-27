@@ -7,8 +7,6 @@ public readonly union SyncShapeOutcome(ShapeRecord, PlatformUnavailable);
 
 public readonly union LoadShapeChunkOutcome(ShapeChunk, PlatformNotFound, PlatformUnavailable);
 
-public sealed record ShapeDrain(int Due, string? Deferred);
-
 public sealed class ShapeSealer(
     ShapeRegistry registry,
     ShapeObjectStore objects,
@@ -169,13 +167,13 @@ public sealed class ShapeSealer(
         }
     }
 
-    public async ValueTask<ShapeDrain> DrainAsync(CancellationToken cancellationToken)
+    public async ValueTask<string?> DrainAsync(CancellationToken cancellationToken)
     {
         var dueOutcome = await registry.DueDeletionsAsync(_drained, DrainPage, cancellationToken);
         return dueOutcome switch
         {
-            ShapeObjectDeletions { Items: var due } => new ShapeDrain(due.Count, await ClaimAsync(due)),
-            PlatformUnavailable unavailable => new ShapeDrain(0, unavailable.Message),
+            ShapeObjectDeletions { Items: var due } => await ClaimAsync(due),
+            PlatformUnavailable unavailable => unavailable.Message,
         };
 
         async ValueTask<string?> ClaimAsync(IReadOnlyList<ShapeObjectDeletion> due)

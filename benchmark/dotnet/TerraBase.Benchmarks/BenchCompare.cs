@@ -64,25 +64,6 @@ internal static class BenchCompare
     private const double AllocRegressionPct = 15.0;
     private const double NoisyCvPctThreshold = 10.0;
 
-    private static readonly (string Label, Func<BackupCostMetrics, double> Select)[] BackupCostFields =
-    [
-        ("S3 GET", static cost => cost.S3GetCount),
-        ("S3 PUT", static cost => cost.S3PutCount),
-        ("S3 DELETE", static cost => cost.S3DeleteCount),
-        ("S3 batch DELETE", static cost => cost.S3DeleteBatchCount),
-        ("S3 LIST", static cost => cost.S3ListCount),
-        ("S3 304", static cost => cost.S3NotModifiedCount),
-        ("S3 412", static cost => cost.S3ConflictCount),
-        ("Uploaded (B)", static cost => cost.UploadedBytes),
-        ("Downloaded (B)", static cost => cost.DownloadedBytes),
-        ("Manifest uploaded (B)", static cost => cost.ManifestBytesUploaded),
-        ("Snapshot raw (B)", static cost => cost.SnapshotRawBytes),
-        ("Snapshot stored (B)", static cost => cost.SnapshotStoredBytes),
-        ("Objects deleted", static cost => cost.ObjectsDeleted),
-        ("RSS delta (MiB)", static cost => cost.RssDeltaMiB),
-        ("FD delta", static cost => cost.OpenFdDelta),
-    ];
-
     public static LoadReportOutcome LoadReport(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -273,7 +254,6 @@ internal static class BenchCompare
         AppendThroughputSection(sb, "Replication", comparison.Replication, columns, hasThree);
         AppendResourceSection(sb, comparison.ResourceSnapshots, columns, hasThree);
         AppendUnmatchedSection(sb, comparison.NewOrUnmatched, columns);
-        AppendBackupCostSection(sb, comparison, columns);
 
         return sb.ToString();
     }
@@ -460,74 +440,6 @@ internal static class BenchCompare
 
             var flagsStr = row.Flags.Count > 0 ? string.Join(' ', row.Flags) : string.Empty;
             _ = sb.Append(' ').Append(flagsStr).AppendLine(" |");
-        }
-    }
-
-    private static void AppendBackupCostSection(
-        StringBuilder sb,
-        BenchComparisonReport comparison,
-        IReadOnlyList<BenchCompareColumn> columns)
-    {
-        var rows = comparison.CoreThroughput
-            .Concat(comparison.Replication)
-            .Concat(comparison.ResourceSnapshots)
-            .Concat(comparison.NewOrUnmatched)
-            .Where(static row => row.Samples.Any(static sample => sample?.BackupCost is not null))
-            .ToArray();
-        if (rows.Length == 0)
-        {
-            return;
-        }
-
-        _ = sb.AppendLine();
-        _ = sb.AppendLine("## Backup Cost (per op, lower is better)");
-        _ = sb.AppendLine();
-        _ = sb.Append("| Suite | Benchmark | Metric |");
-        foreach (var col in columns)
-        {
-            _ = sb.Append(' ').Append(col.Label).Append(" |");
-        }
-
-        _ = sb.AppendLine(" Delta (final vs A) |");
-        _ = sb.Append("| --- | --- | --- |");
-        for (var i = 0; i < columns.Count; i++)
-        {
-            _ = sb.Append(" ---: |");
-        }
-
-        _ = sb.AppendLine(" ---: |");
-
-        foreach (var row in rows)
-        {
-            foreach (var (label, select) in BackupCostFields)
-            {
-                var values = new double?[row.Samples.Count];
-                var anyNonZero = false;
-                for (var i = 0; i < row.Samples.Count; i++)
-                {
-                    if (row.Samples[i]?.BackupCost is { } cost)
-                    {
-                        var value = select(cost);
-                        values[i] = value;
-                        anyNonZero |= value != 0;
-                    }
-                }
-
-                if (!anyNonZero)
-                {
-                    continue;
-                }
-
-                _ = sb.Append("| ").Append(row.Suite).Append(" | ").Append(row.Name).Append(" | ").Append(label).Append(" |");
-                foreach (var value in values)
-                {
-                    _ = sb.Append(' ')
-                        .Append(value is { } present ? present.ToString(present % 1 == 0 ? "F0" : "F1", CultureInfo.InvariantCulture) : "n/a")
-                        .Append(" |");
-                }
-
-                _ = sb.Append(' ').Append(FormatOptionalPct(ComputeMetricDeltaPct(values[0], values[^1]))).AppendLine(" |");
-            }
         }
     }
 

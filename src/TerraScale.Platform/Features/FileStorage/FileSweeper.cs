@@ -11,8 +11,6 @@ public sealed class FileSweeper(
     ILogger<FileSweeper> logger) : BackgroundService
 {
     private const int BatchSize = 100;
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(120);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -21,37 +19,31 @@ public sealed class FileSweeper(
             return;
         }
 
-        var wait = Interval;
-        while (true)
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), timeProvider);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            await Task.Delay(wait, timeProvider, stoppingToken);
             if (!readiness.SchemaReady)
             {
-                wait = Interval;
                 continue;
             }
 
-            var swept = true;
             try
             {
-                swept = await SweepAsync(stoppingToken);
+                await SweepAsync(stoppingToken);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.ZLogWarning(error, $"File cleanup pass failed");
             }
-
-            wait = swept ? Interval : IdleWake.Backoff(wait, IdleInterval);
         }
     }
 
-    private async Task<bool> SweepAsync(CancellationToken cancellationToken)
+    private async Task SweepAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var nowMs = now.UnixMs();
         var settledMs = (now - FileStorageService.UploadSettle).UnixMs();
         var after = "";
-        var found = false;
         while (true)
         {
             var statement = SqlValues.Statement(
@@ -73,7 +65,6 @@ public sealed class FileSweeper(
                 PlatformConflict conflict => Skip(conflict.Message),
                 PlatformUnavailable unavailable => Skip(unavailable.Message),
             };
-            found |= expired.Length > 0;
             foreach (var row in expired)
             {
                 after = row.Text(3);
@@ -86,16 +77,14 @@ public sealed class FileSweeper(
             }
         }
 
-        found |= await SweepPurgesAsync(nowMs, cancellationToken);
-        return found;
+        await SweepPurgesAsync(nowMs, cancellationToken);
     }
 
-    private async Task<bool> SweepPurgesAsync(long nowMs, CancellationToken cancellationToken)
+    private async Task SweepPurgesAsync(long nowMs, CancellationToken cancellationToken)
     {
         var afterProject = "";
         var afterBucket = "";
         var afterId = "";
-        var found = false;
         while (true)
         {
             var statement = SqlValues.Statement(
@@ -114,7 +103,6 @@ public sealed class FileSweeper(
                 PlatformConflict conflict => Skip(conflict.Message),
                 PlatformUnavailable unavailable => Skip(unavailable.Message),
             };
-            found |= due.Length > 0;
             foreach (var row in due)
             {
                 afterProject = row.Text(1);
@@ -125,7 +113,7 @@ public sealed class FileSweeper(
 
             if (due.Length < BatchSize)
             {
-                return found;
+                return;
             }
         }
     }

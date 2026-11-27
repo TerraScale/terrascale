@@ -287,12 +287,6 @@ internal sealed class DatabaseAccess(
         return OpenSlowAsync(database, cancellationToken);
     }
 
-    public ValueTask<TenantOpenOutcome> ReopenAsync(DatabaseRecord database, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(database);
-        return databases.OpenAsync(database.Id, database.KeyId, cancellationToken);
-    }
-
     private async ValueTask<TenantReadyOutcome> OpenSlowAsync(DatabaseRecord database, CancellationToken cancellationToken)
     {
         var existed = File.Exists(LocalPath(database));

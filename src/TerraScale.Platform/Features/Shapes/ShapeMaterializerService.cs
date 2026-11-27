@@ -22,7 +22,6 @@ public sealed class ShapeMaterializerService(
     private const string RefusedFilter = "its persisted filter is no longer accepted";
     private const string IdleShape = "it was not read for a day";
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan IdleTick = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan Reconnect = TimeSpan.FromSeconds(1);
     private readonly Channel<Ulid> _dirty = Channel.CreateBounded<Ulid>(new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.Wait });
@@ -55,70 +54,52 @@ public sealed class ShapeMaterializerService(
 
     private async Task CleanAsync(CancellationToken stoppingToken)
     {
-        var wait = Tick;
-        while (true)
+        using var timer = new PeriodicTimer(Tick, timeProvider);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            await Task.Delay(wait, timeProvider, stoppingToken);
             if (!readiness.SchemaReady)
             {
-                wait = Tick;
                 continue;
             }
 
-            var cleaned = true;
             try
             {
-                var drained = await sealer.DrainAsync(stoppingToken);
-                if (drained.Deferred is { } undrained)
+                if (await sealer.DrainAsync(stoppingToken) is { } undrained)
                 {
                     logger.ZLogWarning($"Shape object cleanup deferred: {undrained}");
                 }
 
-                var audited = await AuditAsync(stoppingToken);
-                cleaned = drained.Due > 0 || audited;
+                await AuditAsync(stoppingToken);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.ZLogWarning(error, $"Shape cleanup pass failed");
             }
-
-            wait = cleaned ? Tick : IdleWake.Backoff(wait, IdleTick);
         }
     }
 
     private async Task ManageAsync(CancellationToken stoppingToken)
     {
-        var backoff = Tick;
-        var wait = Tick;
-        var idle = false;
-        while (true)
+        using var timer = new PeriodicTimer(Tick, timeProvider);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            await (idle ? registry.Touched.WaitAsync(wait, timeProvider, stoppingToken) : Task.Delay(wait, timeProvider, stoppingToken));
-            registry.Touched.Clear();
             if (!readiness.SchemaReady)
             {
-                (backoff, wait, idle) = (Tick, Tick, false);
                 continue;
             }
 
-            var started = timeProvider.GetTimestamp();
-            var following = true;
             try
             {
-                following = await ReconcileAsync(stoppingToken);
+                await ReconcileAsync(stoppingToken);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.ZLogWarning(error, $"Shape lease pass failed");
             }
-
-            idle = !following;
-            backoff = idle ? IdleWake.Backoff(backoff, IdleTick) : Tick;
-            wait = idle ? backoff : Tick - TimeSpan.FromTicks(Math.Min(timeProvider.GetElapsedTime(started).Ticks, Tick.Ticks));
         }
     }
 
-    private async Task<bool> ReconcileAsync(CancellationToken cancellationToken)
+    private async Task ReconcileAsync(CancellationToken cancellationToken)
     {
         var ownedOutcome = await registry.ClaimAsync(_owner, Lease, ClaimLimit, cancellationToken);
         var owned = ownedOutcome switch
@@ -150,8 +131,6 @@ public sealed class ShapeMaterializerService(
         {
             await EnqueueAsync(shape.Database, "", cancellationToken);
         }
-
-        return owned.Count > 0 || _subscriptions.Count > 0;
     }
 
     private async Task FollowAsync(Ulid database, CancellationToken cancellationToken)
@@ -300,7 +279,7 @@ public sealed class ShapeMaterializerService(
         return null;
     }
 
-    private async Task<bool> AuditAsync(CancellationToken cancellationToken)
+    private async Task AuditAsync(CancellationToken cancellationToken)
     {
         var pageOutcome = await registry.PageAsync(_audited, AuditPage, cancellationToken);
         var page = pageOutcome switch
@@ -325,8 +304,6 @@ public sealed class ShapeMaterializerService(
                 logger.ZLogWarning($"Shape {shape.Handle} was not retired: {outcome}");
             }
         }
-
-        return due.Length > 0 || page.Count == AuditPage;
     }
 
     private async Task<string?> SealAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken)

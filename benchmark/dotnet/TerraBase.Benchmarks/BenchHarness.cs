@@ -42,25 +42,7 @@ public sealed record BenchMetrics(
     double IoPhysicalReadBytesPerOp = 0,
     double IoPhysicalWriteBytesPerOp = 0,
     int UnitsPerOp = 1,
-    string UnitLabel = "",
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupCostMetrics? BackupCost = null);
-
-public sealed record BackupCostMetrics(
-    long S3GetCount,
-    long S3PutCount,
-    long S3DeleteCount,
-    long S3DeleteBatchCount,
-    long S3ListCount,
-    long S3NotModifiedCount,
-    long S3ConflictCount,
-    long UploadedBytes,
-    long DownloadedBytes,
-    long ManifestBytesUploaded,
-    long SnapshotRawBytes,
-    long SnapshotStoredBytes,
-    long ObjectsDeleted,
-    double RssDeltaMiB,
-    int OpenFdDelta);
+    string UnitLabel = "");
 
 internal sealed record BenchReport(
     DateTimeOffset TimestampUtc,
@@ -82,7 +64,6 @@ internal sealed record BenchReport(
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(BenchReport))]
 [JsonSerializable(typeof(BenchMetrics))]
-[JsonSerializable(typeof(BackupCostMetrics))]
 [JsonSerializable(typeof(BenchComparisonReport))]
 [JsonSerializable(typeof(BenchCompareColumn))]
 [JsonSerializable(typeof(BenchCompareRow))]
@@ -134,8 +115,6 @@ public sealed class BenchRunnerContext : IDisposable
     public IReadOnlyList<BenchMetrics> Results => _results;
 
     public bool ShouldRun(string suite) => _runAll || _selectedSuites.Contains(suite);
-
-    public bool IsSuiteSelected(string suite) => _selectedSuites.Contains(suite);
 
     public bool ShouldRunBenchmark(string suite, string name)
     {
@@ -204,30 +183,6 @@ public sealed class BenchRunnerContext : IDisposable
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"[{metrics.Suite}] {metrics.Name,-38} {metrics.OpsPerSec,10:F1} ops/s ({metrics.OpsPerCpuSec,10:F1} /cpu-s) | p50={metrics.P50Us,8:F1}us p99={metrics.P99Us,8:F1}us p999={metrics.P999Us,8:F1}us | alloc={metrics.AllocBytesPerOp,8:F0}B gc={metrics.Gen0Per1kOps:F1}/{metrics.Gen1Per1kOps:F1}/{metrics.Gen2Per1kOps:F1} | heap/nat={metrics.ManagedHeapMiB:F1}/{metrics.NativeRssMiB:F1}MiB fds={metrics.OpenFdCount}({metrics.OpenFdDelta:+#;-#;0}) disk={metrics.DiskBytes,8}B{(metrics.Note.Length > 0 ? string.Concat(" | ", metrics.Note) : string.Empty)}"));
-    }
-
-    public BenchMetrics AttachBackupCost(BenchMetrics metrics, BackupCostMetrics backupCost)
-    {
-        ArgumentNullException.ThrowIfNull(metrics);
-        ArgumentNullException.ThrowIfNull(backupCost);
-        var index = _results.FindLastIndex(item => ReferenceEquals(item, metrics));
-        if (index < 0)
-        {
-            throw new ArgumentException("Backup cost can only be attached to a recorded result.", nameof(metrics));
-        }
-
-        var updated = metrics with { BackupCost = backupCost };
-        _results[index] = updated;
-        Console.WriteLine(string.Concat("[", updated.Suite, "] ", updated.Name.PadRight(38), " cost/op ", FormatBackupCost(backupCost)));
-        return updated;
-    }
-
-    public static string FormatBackupCost(BackupCostMetrics cost)
-    {
-        ArgumentNullException.ThrowIfNull(cost);
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"get={cost.S3GetCount} put={cost.S3PutCount} del={cost.S3DeleteCount} batch_del={cost.S3DeleteBatchCount} list={cost.S3ListCount} 304={cost.S3NotModifiedCount} 412={cost.S3ConflictCount} up={cost.UploadedBytes}B down={cost.DownloadedBytes}B manifest_up={cost.ManifestBytesUploaded}B snap_raw={cost.SnapshotRawBytes}B snap_stored={cost.SnapshotStoredBytes}B objs_deleted={cost.ObjectsDeleted} rss_delta={cost.RssDeltaMiB:F1}MiB fd_delta={cost.OpenFdDelta:+#;-#;0}");
     }
 
     public BenchMetrics RecordSnapshotMetric(
@@ -463,26 +418,6 @@ public sealed class BenchRunnerContext : IDisposable
             Console.WriteLine(string.Create(
                 CultureInfo.InvariantCulture,
                 $"| {item.Suite} | {item.Name} | {item.OpsPerSec:F1} | {item.OpsPerCpuSec:F1} | {item.P50Us:F1} | {item.P95Us:F1} | {item.P99Us:F1} | {item.P999Us:F1} | {item.CpuUsPerOp:F1} | {item.AllocBytesPerOp:F0} | {item.Gen0Per1kOps:F1}/{item.Gen1Per1kOps:F1}/{item.Gen2Per1kOps:F1} | {item.ManagedHeapMiB:F1}/{item.NativeRssMiB:F1} | {item.OpenFdCount}({item.OpenFdDelta:+#;-#;0}) | {item.DiskBytes} | {item.IoWriteBytesPerOp:F0}/{item.IoReadBytesPerOp:F0} | {item.Note} |"));
-        }
-
-        if (!results.Any(static item => item.BackupCost is not null))
-        {
-            return;
-        }
-
-        Console.WriteLine();
-        Console.WriteLine("| Suite | Benchmark | GET | PUT | DELETE | Batch DELETE | LIST | 304 | 412 | Up (B) | Down (B) | Manifest Up (B) | Snapshot Raw (B) | Snapshot Stored (B) | Objects Deleted | RSS Delta (MiB) | FD Delta |");
-        Console.WriteLine("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
-        foreach (var item in results)
-        {
-            if (item.BackupCost is not { } cost)
-            {
-                continue;
-            }
-
-            Console.WriteLine(string.Create(
-                CultureInfo.InvariantCulture,
-                $"| {item.Suite} | {item.Name} | {cost.S3GetCount} | {cost.S3PutCount} | {cost.S3DeleteCount} | {cost.S3DeleteBatchCount} | {cost.S3ListCount} | {cost.S3NotModifiedCount} | {cost.S3ConflictCount} | {cost.UploadedBytes} | {cost.DownloadedBytes} | {cost.ManifestBytesUploaded} | {cost.SnapshotRawBytes} | {cost.SnapshotStoredBytes} | {cost.ObjectsDeleted} | {cost.RssDeltaMiB:F1} | {cost.OpenFdDelta:+#;-#;0} |"));
         }
     }
 
