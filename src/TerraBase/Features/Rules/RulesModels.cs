@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -5,10 +6,43 @@ namespace TerraBase.Features.Rules;
 
 public sealed record RulesSet(IReadOnlyDictionary<string, RulesTable> Tables)
 {
+    private FrozenDictionary<string, RulesTable> _tablesByName = FrozenDictionary<string, RulesTable>.Empty;
+
+    public IReadOnlyDictionary<string, RulesTable> Tables
+    {
+        get;
+        init
+        {
+            field = value;
+            _tablesByName = BuildIndex(value);
+        }
+    } = Tables;
+
     public RulesTable? Table(string name) =>
-        Tables.TryGetValue(name, out var exact)
-            ? exact
-            : Tables.FirstOrDefault(pair => AsciiIgnoreCaseComparer.Instance.Equals(pair.Key, name)).Value;
+        _tablesByName.Count == Tables.Count
+            ? _tablesByName.GetValueOrDefault(name)
+            : Tables.TryGetValue(name, out var exact) ? exact : _tablesByName.GetValueOrDefault(name);
+
+    public bool Equals(RulesSet? other) =>
+        other is not null && EqualityComparer<IReadOnlyDictionary<string, RulesTable>>.Default.Equals(Tables, other.Tables);
+
+    public override int GetHashCode() => EqualityComparer<IReadOnlyDictionary<string, RulesTable>>.Default.GetHashCode(Tables);
+
+    private static FrozenDictionary<string, RulesTable> BuildIndex(IReadOnlyDictionary<string, RulesTable>? tables)
+    {
+        if (tables is null || tables.Count == 0)
+        {
+            return FrozenDictionary<string, RulesTable>.Empty;
+        }
+
+        var map = new Dictionary<string, RulesTable>(tables.Count, AsciiIgnoreCaseComparer.Instance);
+        foreach (var (key, value) in tables)
+        {
+            map.TryAdd(key, value);
+        }
+
+        return map.ToFrozenDictionary(AsciiIgnoreCaseComparer.Instance);
+    }
 }
 
 public sealed record RulesTable(

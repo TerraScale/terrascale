@@ -3,7 +3,7 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-internal sealed record PingMessage(string NodeId, string Region, long SentAtTicks, long InstanceId) : IBinaryMessage<PingMessage>
+internal readonly record struct PingMessage(string NodeId, string Region, long SentAtTicks, long InstanceId) : IBinaryMessage<PingMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -22,7 +22,7 @@ internal sealed record PingMessage(string NodeId, string Region, long SentAtTick
     }
 }
 
-internal sealed record PongMessage(string NodeId, string Region, long SentAtTicks, long InstanceId) : IBinaryMessage<PongMessage>
+internal readonly record struct PongMessage(string NodeId, string Region, long SentAtTicks, long InstanceId) : IBinaryMessage<PongMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -41,10 +41,10 @@ internal sealed record PongMessage(string NodeId, string Region, long SentAtTick
     }
 }
 
-internal readonly record struct DeltaPushMessage(Ulid DatabaseId, string SenderNodeId, IReadOnlyList<CommitMetadata> Commits, bool AckRequested) : IBinaryMessage<DeltaPushMessage>
+internal readonly record struct DeltaPushMessage(Ulid DatabaseId, string SenderNodeId, IReadOnlyList<CommitMetadata> Commits, bool AckRequested, int EstimatedBytes = 0) : IBinaryMessage<DeltaPushMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer) =>
-        ClusterCodec.WriteDeltaPush(writer, DatabaseId, SenderNodeId, Commits, AckRequested);
+        ClusterCodec.WriteDeltaPush(writer, DatabaseId, SenderNodeId, Commits, AckRequested, EstimatedBytes);
 
     public static DeltaPushMessage ReadFrom(ref WireReader reader)
     {
@@ -72,7 +72,7 @@ internal readonly record struct DeltaAckMessage(Ulid DatabaseId, string NodeId, 
     }
 }
 
-internal sealed record CatchUpRequestMessage(Ulid DatabaseId, string RequesterNodeId, CausalBookmark Have, int MaxEntries) : IBinaryMessage<CatchUpRequestMessage>
+internal readonly record struct CatchUpRequestMessage(Ulid DatabaseId, string RequesterNodeId, CausalBookmark Have, int MaxEntries) : IBinaryMessage<CatchUpRequestMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -91,7 +91,7 @@ internal sealed record CatchUpRequestMessage(Ulid DatabaseId, string RequesterNo
     }
 }
 
-internal sealed record CatchUpResponseMessage(Ulid DatabaseId, bool Found, CausalBookmark Bookmark, IReadOnlyList<CommitMetadata> Entries, bool HasMore) : IBinaryMessage<CatchUpResponseMessage>
+internal readonly record struct CatchUpResponseMessage(Ulid DatabaseId, bool Found, CausalBookmark Bookmark, IReadOnlyList<CommitMetadata> Entries, bool HasMore) : IBinaryMessage<CatchUpResponseMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -112,7 +112,7 @@ internal sealed record CatchUpResponseMessage(Ulid DatabaseId, bool Found, Causa
     }
 }
 
-internal sealed record StrongPrepareMessage(StrongPreparePayload Payload, string CoordinatorNodeId, CausalBookmark OriginBookmark) : IBinaryMessage<StrongPrepareMessage>
+internal readonly record struct StrongPrepareMessage(StrongPreparePayload Payload, string CoordinatorNodeId, CausalBookmark OriginBookmark) : IBinaryMessage<StrongPrepareMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -148,7 +148,7 @@ internal sealed record StrongPrepareMessage(StrongPreparePayload Payload, string
     }
 }
 
-internal sealed record StrongPrepareResponseMessage(StrongPrepareOutcome Outcome) : IBinaryMessage<StrongPrepareResponseMessage>
+internal readonly record struct StrongPrepareResponseMessage(StrongPrepareOutcome Outcome) : IBinaryMessage<StrongPrepareResponseMessage>
 {
     private const byte PreparedTag = 0;
     private const byte WoundedTag = 1;
@@ -241,7 +241,7 @@ internal sealed record StrongPrepareResponseMessage(StrongPrepareOutcome Outcome
     }
 }
 
-internal sealed record StrongCommitMessage(StrongCommitPayload Payload, string SenderNodeId) : IBinaryMessage<StrongCommitMessage>
+internal readonly record struct StrongCommitMessage(StrongCommitPayload Payload, string SenderNodeId) : IBinaryMessage<StrongCommitMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -258,7 +258,7 @@ internal sealed record StrongCommitMessage(StrongCommitPayload Payload, string S
     }
 }
 
-internal sealed record StrongWoundMessage(StrongWoundPayload Payload) : IBinaryMessage<StrongWoundMessage>
+internal readonly record struct StrongWoundMessage(StrongWoundPayload Payload) : IBinaryMessage<StrongWoundMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -277,7 +277,7 @@ internal sealed record StrongWoundMessage(StrongWoundPayload Payload) : IBinaryM
     }
 }
 
-internal sealed record StrongWoundResponseMessage(WoundDecision Decision) : IBinaryMessage<StrongWoundResponseMessage>
+internal readonly record struct StrongWoundResponseMessage(WoundDecision Decision) : IBinaryMessage<StrongWoundResponseMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer) => writer.WriteUInt8((byte)Decision);
 

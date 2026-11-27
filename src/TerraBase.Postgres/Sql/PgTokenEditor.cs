@@ -24,6 +24,13 @@ internal enum PgSyntaxFlags : uint
     SpecialKeyword = 1 << 14,
 }
 
+internal readonly struct PooledPgTokenEditor(PgTokenEditor editor) : IDisposable
+{
+    public PgTokenEditor Editor => editor;
+
+    public void Dispose() => editor.ReturnBuffers();
+}
+
 internal sealed class PgTokenEditor
 {
     private const byte FlagSpaceBefore = 1 << 0;
@@ -48,20 +55,24 @@ internal sealed class PgTokenEditor
     }
 
     private readonly string _sql;
-    private readonly TokenMeta[] _slots;
+    private readonly int _count;
+    private TokenMeta[] _slots;
     private TokenEdit[]? _edits;
     private int _editCount;
     private int _addedChars;
+    private bool _pooled;
 
-    private PgTokenEditor(string sql, TokenMeta[] slots, PgSyntaxFlags flags, bool isBalanced)
+    private PgTokenEditor(string sql, TokenMeta[] slots, int count, PgSyntaxFlags flags, bool isBalanced, bool pooled)
     {
         _sql = sql;
         _slots = slots;
+        _count = count;
         Flags = flags;
         IsBalanced = isBalanced;
+        _pooled = pooled;
     }
 
-    public int Count => _slots.Length;
+    public int Count => _count;
 
     public string Source => _sql;
 
@@ -69,23 +80,20 @@ internal sealed class PgTokenEditor
 
     public PgSyntaxFlags Flags { get; }
 
-    public static PgTokenEditor Create(string sql, ReadOnlySpan<PgToken> tokens)
+    public static PgTokenEditor Create(string sql, ReadOnlySpan<PgToken> tokens) =>
+        CreateCore(sql, tokens, pooled: false);
+
+    public static PooledPgTokenEditor CreatePooled(string sql, ReadOnlySpan<PgToken> tokens) =>
+        new(CreateCore(sql, tokens, pooled: true));
+
+    private static PgTokenEditor CreateCore(string sql, ReadOnlySpan<PgToken> tokens, bool pooled)
     {
-        var count = 0;
-        for (var index = 0; index < tokens.Length; index++)
+        if (tokens.IsEmpty)
         {
-            if (tokens[index].Kind != PgTokenKind.Whitespace)
-            {
-                count++;
-            }
+            return new PgTokenEditor(sql, [], 0, PgSyntaxFlags.None, isBalanced: true, pooled: false);
         }
 
-        if (count == 0)
-        {
-            return new PgTokenEditor(sql, [], PgSyntaxFlags.None, isBalanced: true);
-        }
-
-        var slots = new TokenMeta[count];
+        var slots = pooled ? ArrayPool<TokenMeta>.Shared.Rent(tokens.Length) : new TokenMeta[tokens.Length];
         Span<int> stackBuffer = stackalloc int[16];
         int[]? rentedStack = null;
         var openStack = stackBuffer;
@@ -177,7 +185,17 @@ internal sealed class PgTokenEditor
                 slotIndex++;
             }
 
-            return new PgTokenEditor(sql, slots, flags, balanced && openCount == 0);
+            if (slotIndex == 0)
+            {
+                if (pooled)
+                {
+                    ArrayPool<TokenMeta>.Shared.Return(slots);
+                }
+
+                return new PgTokenEditor(sql, [], 0, PgSyntaxFlags.None, isBalanced: true, pooled: false);
+            }
+
+            return new PgTokenEditor(sql, slots, slotIndex, flags, balanced && openCount == 0, pooled);
         }
         finally
         {
@@ -188,11 +206,38 @@ internal sealed class PgTokenEditor
         }
     }
 
+    internal void ReturnBuffers()
+    {
+        if (!_pooled)
+        {
+            return;
+        }
+
+        _pooled = false;
+        if (_slots.Length > 0)
+        {
+            ArrayPool<TokenMeta>.Shared.Return(_slots);
+            _slots = [];
+        }
+
+        if (_edits is { } edits)
+        {
+            if (_editCount > 0)
+            {
+                Array.Clear(edits, 0, _editCount);
+            }
+
+            ArrayPool<TokenEdit>.Shared.Return(edits);
+            _edits = null;
+            _editCount = 0;
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool HasFlag(PgSyntaxFlags flag) => (Flags & flag) != 0;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public PgTokenKind Kind(int index) => (uint)index < (uint)_slots.Length ? _slots[index].Kind : PgTokenKind.Whitespace;
+    public PgTokenKind Kind(int index) => (uint)index < (uint)_count ? _slots[index].Kind : PgTokenKind.Whitespace;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<char> Raw(int index)
@@ -215,7 +260,7 @@ internal sealed class PgTokenEditor
     public int End(int index) => _slots[index].Start + _slots[index].Length;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int Match(int index) => (uint)index < (uint)_slots.Length ? _slots[index].Match : -1;
+    public int Match(int index) => (uint)index < (uint)_count ? _slots[index].Match : -1;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsDead(int index) => (_slots[index].State & FlagDead) != 0;
@@ -235,14 +280,14 @@ internal sealed class PgTokenEditor
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsWord(int index, string word) =>
-        (uint)index < (uint)_slots.Length
+        (uint)index < (uint)_count
         && _slots[index].Kind == PgTokenKind.Word
         && _slots[index].Length == word.Length
         && Raw(index).Equals(word, StringComparison.OrdinalIgnoreCase);
 
     public bool IsAnyWord(int index, params ReadOnlySpan<string> words)
     {
-        if ((uint)index >= (uint)_slots.Length || _slots[index].Kind != PgTokenKind.Word)
+        if ((uint)index >= (uint)_count || _slots[index].Kind != PgTokenKind.Word)
         {
             return false;
         }
@@ -261,18 +306,18 @@ internal sealed class PgTokenEditor
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsOperator(int index, string text) =>
-        (uint)index < (uint)_slots.Length
+        (uint)index < (uint)_count
         && _slots[index].Kind == PgTokenKind.Operator
         && _slots[index].Length == text.Length
         && Raw(index).SequenceEqual(text);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsName(int index) =>
-        (uint)index < (uint)_slots.Length && _slots[index].Kind is PgTokenKind.Word or PgTokenKind.QuotedIdentifier;
+        (uint)index < (uint)_count && _slots[index].Kind is PgTokenKind.Word or PgTokenKind.QuotedIdentifier;
 
     public bool EqualsIdentifier(int index, ReadOnlySpan<char> expectedLower)
     {
-        if ((uint)index >= (uint)_slots.Length)
+        if ((uint)index >= (uint)_count)
         {
             return false;
         }
@@ -362,7 +407,7 @@ internal sealed class PgTokenEditor
 
     public void RemoveRange(int from, int to)
     {
-        var limit = Math.Min(to, _slots.Length - 1);
+        var limit = Math.Min(to, _count - 1);
         for (var index = from; index <= limit; index++)
         {
             Remove(index);
@@ -371,7 +416,7 @@ internal sealed class PgTokenEditor
 
     public void Kill(int from, int to)
     {
-        var limit = Math.Min(to, _slots.Length - 1);
+        var limit = Math.Min(to, _count - 1);
         for (var index = from; index <= limit; index++)
         {
             ref var slot = ref _slots[index];
@@ -394,11 +439,11 @@ internal sealed class PgTokenEditor
         _addedChars += text.Length;
     }
 
-    public string Render() => _slots.Length == 0 ? string.Empty : Render(0, _slots.Length - 1);
+    public string Render() => _count == 0 ? string.Empty : Render(0, _count - 1);
 
     public string Render(int from, int to)
     {
-        var limit = Math.Min(to, _slots.Length - 1);
+        var limit = Math.Min(to, _count - 1);
         if (from > limit)
         {
             return string.Empty;
@@ -492,16 +537,29 @@ internal sealed class PgTokenEditor
         var edits = _edits;
         if (edits is null)
         {
-            edits = new TokenEdit[8];
+            edits = _pooled ? ArrayPool<TokenEdit>.Shared.Rent(8) : new TokenEdit[8];
             _edits = edits;
         }
         else if (_editCount == edits.Length)
         {
-            Array.Resize(ref edits, edits.Length * 2);
+            if (_pooled)
+            {
+                var grown = ArrayPool<TokenEdit>.Shared.Rent(edits.Length * 2);
+                edits.AsSpan(0, _editCount).CopyTo(grown);
+                Array.Clear(edits, 0, _editCount);
+                ArrayPool<TokenEdit>.Shared.Return(edits);
+                edits = grown;
+            }
+            else
+            {
+                Array.Resize(ref edits, edits.Length * 2);
+            }
+
             _edits = edits;
         }
 
         editIndex = (short)_editCount++;
+        edits[editIndex] = default;
         slot.EditIndex = editIndex;
         return ref edits[editIndex];
     }

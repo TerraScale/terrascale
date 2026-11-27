@@ -11,27 +11,79 @@ internal readonly record struct OpenSavepoint(string Name, int DdlCount, Capture
 
 internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
 {
+    private List<string>? _ddl;
+    private List<OpenSavepoint>? _savepoints;
+    private HashSet<string>? _scannedTables;
+
     public CancellationToken CancellationToken { get; set; } = cancellationToken;
 
-    public ConsistencyMode Mode { get; } = mode;
+    public ConsistencyMode Mode { get; private set; } = mode;
 
-    public bool AnalyzeReads { get; } = analyzeReads;
+    public bool AnalyzeReads { get; private set; } = analyzeReads;
 
     public StatementInfo Info { get; } = new();
 
-    public List<SqlResultSet> Results { get; } = [];
+    public List<SqlResultSet> Results { get; private set; } = [];
 
-    public List<string> Ddl { get; } = [];
+    public List<string> Ddl => _ddl ??= [];
 
-    public List<OpenSavepoint> Savepoints { get; } = [];
+    public IReadOnlyList<string> DdlView => _ddl is { Count: > 0 } ddl ? ddl : [];
 
-    public HashSet<string> ScannedTables { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<OpenSavepoint> Savepoints => _savepoints ??= [];
+
+    public HashSet<string> ScannedTables => _scannedTables ??= new(StringComparer.OrdinalIgnoreCase);
 
     public StrongRequiredReason? StrongReason { get; set; }
 
     public SqliteStatus DdlFault { get; set; } = SqliteStatus.Success;
 
-    public bool IsSchemaChange => Ddl.Count > 0;
+    public bool IsSchemaChange => _ddl is { Count: > 0 };
+
+    public void Reset(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
+    {
+        Mode = mode;
+        AnalyzeReads = analyzeReads;
+        CancellationToken = cancellationToken;
+        Info.Reset();
+        Results.Clear();
+        _ddl?.Clear();
+        _savepoints?.Clear();
+        _scannedTables?.Clear();
+        StrongReason = null;
+        DdlFault = SqliteStatus.Success;
+    }
+
+    public List<SqlResultSet> DetachResults()
+    {
+        var results = Results;
+        Results = [];
+        return results;
+    }
+
+    public void AddScannedTables(string[] tables)
+    {
+        if (tables.Length > 0)
+        {
+            ScannedTables.UnionWith(tables);
+        }
+    }
+
+    public string[] TakeScannedTablesArray()
+    {
+        if (_scannedTables is not { Count: > 0 } scanned)
+        {
+            return [];
+        }
+
+        var result = new string[scanned.Count];
+        scanned.CopyTo(result);
+        if (result.Length > 1)
+        {
+            Array.Sort(result, StringComparer.Ordinal);
+        }
+
+        return result;
+    }
 
     public void RecordDdlFault(SqliteStatus status)
     {
@@ -42,7 +94,7 @@ internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, Canc
     }
 }
 
-internal sealed record StagedDescriptor(StagedWrite Staged, IReadOnlyList<ObservedRow> Observed, DateTimeOffset CreatedAt);
+internal sealed record StagedDescriptor(StagedWrite Staged, IReadOnlyList<ObservedRow> Observed, DateTimeOffset CreatedAt, DeltaBatch Batch);
 
 internal sealed partial class DatabaseSession
 {
@@ -72,7 +124,8 @@ internal sealed partial class DatabaseSession
         }
 
         var info = context.Info;
-        if (statement.Scope is null && _writer.TryGetCachedUserStatement(sql) is { HasWriterAnalysis: true } cached)
+        var schemaGeneration = SchemaGeneration;
+        if (statement.Scope is null && _writer.TryGetCachedUserStatement(sql, schemaGeneration) is { HasWriterAnalysis: true } cached)
         {
             if (!context.DdlFault.IsOk)
             {
@@ -86,7 +139,7 @@ internal sealed partial class DatabaseSession
 
             if (context.AnalyzeReads)
             {
-                CollectScannedTables(context, cached.ReadOnly, cached.ReadTables, cached.WrittenTables, cached.AnalyzedSql, cached.IsInsertOrReplace);
+                CollectCachedScannedTables(context, cached);
             }
 
             info.Reset();
@@ -104,6 +157,7 @@ internal sealed partial class DatabaseSession
             {
                 if (stepped.Primary == SqliteNative.Schema)
                 {
+                    BumpSchemaGeneration();
                     _writer.InvalidateSchemaCache();
                 }
 
@@ -180,9 +234,12 @@ internal sealed partial class DatabaseSession
 
             var isDdl = !isExplain && info.IsDdl;
             var inserts = IsInsertOrReplace(tokens);
+            string[]? computedScanned = null;
+            var scannedCacheable = false;
             if (context.AnalyzeReads)
             {
-                CollectScannedTables(context, SqliteConnection.IsReadOnly(handle), info.ReadTables, info.WrittenTables, segment, inserts);
+                computedScanned = ComputeScannedTables(SqliteConnection.IsReadOnly(handle), info.ReadTables, info.WrittenTables, segment, inserts, out scannedCacheable);
+                context.AddScannedTables(computedScanned);
             }
 
             var annotation = SqlAnalyzer.Annotate(tokens, _capture.Resolve);
@@ -194,8 +251,13 @@ internal sealed partial class DatabaseSession
             }
 
             var cacheable = statement.Scope is null && isSingleStatement && !info.IsUncacheable && !info.IsDdl && info.Savepoint is null && info.CreatedTable is null;
-            if (cacheable && _writer.CacheUserStatement(sql, handle, info, hasWriterAnalysis: true, segment, inserts, annotation) is { } entry)
+            if (cacheable && _writer.CacheUserStatement(sql, handle, info, hasWriterAnalysis: true, segment, inserts, annotation, schemaGeneration) is { } entry)
             {
+                if (scannedCacheable && computedScanned is not null)
+                {
+                    entry.ScannedTables = computedScanned;
+                }
+
                 status = _writer.BindUser(entry.Handle, statement);
                 if (!status.IsOk)
                 {
@@ -210,6 +272,7 @@ internal sealed partial class DatabaseSession
                 {
                     if (status.Primary == SqliteNative.Schema)
                     {
+                        BumpSchemaGeneration();
                         _writer.InvalidateSchemaCache();
                     }
 
@@ -227,9 +290,10 @@ internal sealed partial class DatabaseSession
                 return status.ToSqlError(index);
             }
 
-            long cookieBefore = 0;
+            var cookieBefore = 0L;
             if (isDdl)
             {
+                _writer.MarkSchemaDirty();
                 status = _writer.ReadSchemaCookie(out cookieBefore);
                 if (!status.IsOk)
                 {
@@ -252,6 +316,7 @@ internal sealed partial class DatabaseSession
                 status = _writer.ReadSchemaCookie(out var cookieAfter);
                 if (!status.IsOk)
                 {
+                    BumpSchemaGeneration();
                     _writer.InvalidateSchemaCache();
                     context.RecordDdlFault(status);
                     return status.ToSqlError(index);
@@ -262,7 +327,7 @@ internal sealed partial class DatabaseSession
                     context.Ddl.Add(segment.Trim().TrimEnd(';'));
                 }
 
-                status = _writer.ValidateSchemaCache();
+                status = _writer.ValidateSchemaCache(force: true);
                 if (!status.IsOk)
                 {
                     return status.ToSqlError(index);
@@ -298,11 +363,17 @@ internal sealed partial class DatabaseSession
                 return SqliteStatus.Success;
             case SavepointOperation.Rollback when LastSavepoint(savepoints, savepoint.Name) is var target and >= 0:
                 var open = savepoints[target];
-                context.Ddl.RemoveRange(open.DdlCount, context.Ddl.Count - open.DdlCount);
+                var rolledBackDdl = context.IsSchemaChange && context.Ddl.Count > open.DdlCount;
+                if (rolledBackDdl)
+                {
+                    context.Ddl.RemoveRange(open.DdlCount, context.Ddl.Count - open.DdlCount);
+                    BumpSchemaGeneration();
+                }
+
                 savepoints.RemoveRange(target + 1, savepoints.Count - target - 1);
                 _capture.RestoreSavepoint(open.Capture);
                 context.DdlFault = open.DdlFault;
-                return _writer.ValidateSchemaCache();
+                return _writer.ValidateSchemaCache(force: true);
             case SavepointOperation.Release or SavepointOperation.Rollback:
                 return SqliteStatus.Success;
             default:
@@ -380,38 +451,67 @@ internal sealed partial class DatabaseSession
         return false;
     }
 
-    private void CollectScannedTables(
-        WriteContext context,
+    private void CollectCachedScannedTables(WriteContext context, CachedUserStatement cached)
+    {
+        var scanned = cached.ScannedTables;
+        if (scanned is null)
+        {
+            scanned = ComputeScannedTables(cached.ReadOnly, cached.ReadTables, cached.WrittenTables, cached.AnalyzedSql, cached.IsInsertOrReplace, out var cacheable);
+            if (cacheable)
+            {
+                cached.ScannedTables = scanned;
+            }
+        }
+
+        context.AddScannedTables(scanned);
+    }
+
+    private string[] ComputeScannedTables(
         bool readOnly,
         IReadOnlyCollection<string> readTables,
         IReadOnlyCollection<string> writtenTables,
         string segment,
-        bool inserts)
+        bool inserts,
+        out bool cacheable)
     {
+        cacheable = true;
+        HashSet<string>? scanned = null;
         foreach (var table in writtenTables)
         {
             if (_capture.Resolve(table) is { HasSecondaryUnique: true })
             {
-                context.ScannedTables.Add(table);
+                scanned ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                _ = scanned.Add(table);
             }
         }
 
         if (readTables.Count == 0)
         {
-            return;
+            return scanned is null ? [] : [.. scanned];
         }
 
         if (readOnly)
         {
-            context.ScannedTables.UnionWith(readTables);
-            return;
+            if (scanned is null)
+            {
+                return [.. readTables];
+            }
+
+            scanned.UnionWith(readTables);
+            return [.. scanned];
         }
 
         List<string> plan = [];
         if (!_writer.ExplainQueryPlan(segment, plan).IsOk)
         {
-            context.ScannedTables.UnionWith(readTables);
-            return;
+            cacheable = false;
+            if (scanned is null)
+            {
+                return [.. readTables];
+            }
+
+            scanned.UnionWith(readTables);
+            return [.. scanned];
         }
 
         Dictionary<string, int> accesses = new(StringComparer.OrdinalIgnoreCase);
@@ -425,8 +525,13 @@ internal sealed partial class DatabaseSession
 
             if (!ContainsIgnoreCase(readTables, table))
             {
-                context.ScannedTables.UnionWith(readTables);
-                return;
+                if (scanned is null)
+                {
+                    return [.. readTables];
+                }
+
+                scanned.UnionWith(readTables);
+                return [.. scanned];
             }
 
             accesses[table] = accesses.GetValueOrDefault(table) + 1;
@@ -446,9 +551,12 @@ internal sealed partial class DatabaseSession
             };
             if (!readsOnlyWrittenRow)
             {
-                _ = context.ScannedTables.Add(table);
+                scanned ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                _ = scanned.Add(table);
             }
         }
+
+        return scanned is null ? [] : [.. scanned];
     }
 
     private static string? PlanTable(string detail)
@@ -499,48 +607,6 @@ internal sealed partial class DatabaseSession
         return name.Length > 0 && string.Equals(name, schema.PrimaryKeyIndex, StringComparison.Ordinal) && terms.Length >= schema.PrimaryKeyColumnNames.Count;
     }
 
-    private SqliteStatus FinishLocal(WriteContext context, ref long nextSequence, ref ulong epoch, out CommitMetadata? commit)
-    {
-        commit = null;
-        if (!context.DdlFault.IsOk)
-        {
-            _capture.End();
-            return context.DdlFault;
-        }
-
-        List<NetChange> changes = [];
-        var status = _capture.TakeNetChanges(changes);
-        if (!status.IsOk)
-        {
-            return status;
-        }
-
-        if (changes.Count == 0 && context.Ddl.Count == 0)
-        {
-            return SqliteStatus.Success;
-        }
-
-        var hlc = _context.Clock.Tick();
-        var scope = new WriteScope(_writer);
-        Dictionary<string, HlcTimestamp> tables = new(StringComparer.OrdinalIgnoreCase);
-        var mutations = LocalStamper.Stamp(scope, changes, ref hlc, persist: true, [], tables);
-        _context.Clock.Restore(hlc);
-        var sequence = nextSequence;
-        var nextEpoch = context.IsSchemaChange ? epoch + 1 : epoch;
-        MetaStore.TouchTables(scope, tables);
-        MetaStore.SaveVersion(scope, Region, sequence, nextEpoch);
-        if (scope.Failed)
-        {
-            return scope.Failure;
-        }
-
-        var payload = MutationBatchCodec.Encode(new DeltaBatch(context.Ddl, mutations));
-        commit = new CommitMetadata(Ulid.NewUlid(_context.Time.GetUtcNow()), Region, sequence, hlc, nextEpoch, context.Mode, BookmarkWith(Region, sequence), payload);
-        nextSequence = sequence + 1;
-        epoch = nextEpoch;
-        return SqliteStatus.Success;
-    }
-
     private SqliteStatus FinishStage(WriteContext context, out StagedDescriptor? descriptor)
     {
         descriptor = null;
@@ -550,10 +616,12 @@ internal sealed partial class DatabaseSession
             return context.DdlFault;
         }
 
-        List<NetChange> changes = [];
+        var changes = _laneChanges;
+        changes.Clear();
         var status = _capture.TakeNetChanges(changes);
         if (!status.IsOk)
         {
+            changes.Clear();
             return status;
         }
 
@@ -562,10 +630,8 @@ internal sealed partial class DatabaseSession
         var scope = WriterScope();
         scope.Reset();
         var observed = new List<ObservedRow>(changes.Count);
-        var tables = _laneItemTables;
-        tables.Clear();
-        var mutations = LocalStamper.Stamp(scope, changes, ref stamp, persist: false, observed, tables);
-        tables.Clear();
+        var mutations = LocalStamper.Stamp(scope, changes, ref stamp, persist: false, observed, tables: null);
+        changes.Clear();
         if (scope.Failed)
         {
             return scope.Failure;
@@ -580,23 +646,11 @@ internal sealed partial class DatabaseSession
             writeKeys[index] = row.Key;
         }
 
-        string[] scannedTables;
-        if (context.ScannedTables.Count == 0)
-        {
-            scannedTables = [];
-        }
-        else
-        {
-            scannedTables = new string[context.ScannedTables.Count];
-            context.ScannedTables.CopyTo(scannedTables);
-            if (scannedTables.Length > 1)
-            {
-                Array.Sort(scannedTables, StringComparer.Ordinal);
-            }
-        }
-
+        var scannedTables = context.TakeScannedTablesArray();
         var now = _context.Time.GetUtcNow();
-        var payload = MutationBatchCodec.Encode(new DeltaBatch(context.Ddl, mutations));
+        string[] ddl = context.IsSchemaChange ? [.. context.Ddl] : [];
+        var batch = ddl.Length == 0 && mutations.Count == 0 ? DeltaBatch.Empty : new DeltaBatch(ddl, mutations);
+        var payload = MutationBatchCodec.Encode(batch);
         var staged = new StagedWrite(
             new StagedWriteToken(Ulid.NewUlid(now)),
             DatabaseId,
@@ -609,7 +663,7 @@ internal sealed partial class DatabaseSession
             context.IsSchemaChange,
             [.. context.Results],
             payload);
-        descriptor = new StagedDescriptor(staged, observed, now);
+        descriptor = new StagedDescriptor(staged, observed, now, batch);
         return SqliteStatus.Success;
     }
 
@@ -641,7 +695,7 @@ internal sealed partial class DatabaseSession
         }
     }
 
-    internal static ReaderStatementOutcome ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, bool limitResults, CancellationToken cancellationToken)
+    internal ReaderStatementOutcome ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, bool limitResults, CancellationToken cancellationToken)
     {
         if (!SqlLimits.StatementFits(statement.Sql))
         {
@@ -654,7 +708,8 @@ internal sealed partial class DatabaseSession
             return exposure.ToSqlError(index);
         }
 
-        if (statement.Scope is null && reader.TryGetCachedUserStatement(sql) is { } cached)
+        var schemaGeneration = SchemaGeneration;
+        if (statement.Scope is null && reader.TryGetCachedUserStatement(sql, schemaGeneration) is { } cached)
         {
             info.Reset();
             readTables?.UnionWith(cached.ReadTables);
@@ -690,7 +745,7 @@ internal sealed partial class DatabaseSession
 
             readTables?.UnionWith(info.ReadTables);
             var cacheable = statement.Scope is null && isSingleStatement && !info.IsUncacheable && !info.IsDdl && info.Savepoint is null && info.CreatedTable is null;
-            if (cacheable && reader.CacheUserStatement(sql, handle, info, hasWriterAnalysis: false, sql, isInsertOrReplace: false, annotation: null) is { } entry)
+            if (cacheable && reader.CacheUserStatement(sql, handle, info, hasWriterAnalysis: false, sql, isInsertOrReplace: false, annotation: null, schemaGeneration) is { } entry)
             {
                 return ExecuteCachedOnReader(reader, entry, statement, index, info, limitResults, cancellationToken);
             }
@@ -711,7 +766,7 @@ internal sealed partial class DatabaseSession
         return last;
     }
 
-    private static ReaderStatementOutcome ExecuteCachedOnReader(
+    private ReaderStatementOutcome ExecuteCachedOnReader(
         SqliteConnection reader,
         CachedUserStatement cached,
         SqlStatement statement,
@@ -732,6 +787,7 @@ internal sealed partial class DatabaseSession
         {
             if (status.Primary == SqliteNative.Schema)
             {
+                BumpSchemaGeneration();
                 reader.InvalidateSchemaCache();
             }
 

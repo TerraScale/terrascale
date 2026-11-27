@@ -32,7 +32,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 
     private static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly Channel<RequestLogEntry> _queue = Channel.CreateBounded<RequestLogEntry>(new BoundedChannelOptions(8192)
+    private readonly Channel<QueuedLogEntry> _queue = Channel.CreateBounded<QueuedLogEntry>(new BoundedChannelOptions(8192)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
         SingleReader = false,
@@ -44,7 +44,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 
     private readonly Lock _drainGate = new();
 
-    private readonly List<RequestLogEntry> _batchBuffer = new(Batch);
+    private readonly List<QueuedLogEntry> _batchBuffer = new(Batch);
 
     private TaskCompletionSource _wake = NewWake();
 
@@ -62,7 +62,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     {
         var now = time.GetUtcNow();
         var logId = id is not null && RequestIdentity.IsValid(id) ? id : Ulid.NewUlid(now).ToString();
-        if (_queue.Writer.TryWrite(new RequestLogEntry(logId, databaseId, now, Method(method), path, status, Math.Max(0, durationMs), options.Region))
+        if (_queue.Writer.TryWrite(new QueuedLogEntry(logId, databaseId, now, Method(method), path, status, Math.Max(0, durationMs)))
             && Interlocked.Increment(ref _queued) >= Batch)
         {
             SignalWake();
@@ -344,7 +344,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
                 statements[index] = SqlBuild.Statement(
                     InsertSql,
                     SqlBuild.Id(entry.DatabaseId), SqlBuild.Text(entry.Id), SqlBuild.Time(entry.At), SqlBuild.Text(entry.Method), SqlBuild.Text(entry.Path),
-                    SqlBuild.Integer(entry.Status), SqlBuild.Integer(entry.DurationMs), SqlBuild.Text(entry.Region));
+                    SqlBuild.Integer(entry.Status), SqlBuild.Integer(entry.DurationMs), SqlBuild.Text(options.Region));
             }
 
             _batchBuffer.Clear();
@@ -393,6 +393,8 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     private static RequestLogsOutcome Entries(IReadOnlyList<IReadOnlyList<SqlValue>> rows) =>
         new([.. rows.Select(static row => new RequestLogEntry(row.TextAt(0), row.IdAt(1), row.TimeAt(2), row.TextAt(3), row.TextAt(4), (int)row.IntegerAt(5),
             row.IntegerAt(6), row.TextAt(7)))]);
+
+    private readonly record struct QueuedLogEntry(string Id, Ulid DatabaseId, DateTimeOffset At, string Method, string Path, int Status, long DurationMs);
 }
 
 internal static class RequestLogExtensions

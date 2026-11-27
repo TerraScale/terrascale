@@ -54,44 +54,51 @@ public static class MutationBatchCodec
         try
         {
             var bodyLength = WriteMutationsBody(scratch, batch.Mutations);
-            var strings = scratch.Strings;
-            var ddl = batch.Ddl;
-            var headerSize = 1 + VarUIntSize((ulong)strings.Count) + VarUIntSize((ulong)ddl.Count);
-            for (var index = 0; index < strings.Count; index++)
-            {
-                var byteCount = Encoding.UTF8.GetByteCount(strings[index]);
-                headerSize += VarUIntSize((ulong)byteCount) + byteCount;
-            }
-
-            for (var index = 0; index < ddl.Count; index++)
-            {
-                var byteCount = Encoding.UTF8.GetByteCount(ddl[index]);
-                headerSize += VarUIntSize((ulong)byteCount) + byteCount;
-            }
-
-            var result = new byte[headerSize + bodyLength];
-            var destination = result.AsSpan();
-            var offset = 0;
-            destination[offset++] = FormatVersion;
-            offset += WireWriter.WriteVarUInt(destination[offset..], (ulong)strings.Count);
-            for (var index = 0; index < strings.Count; index++)
-            {
-                offset += WriteString(destination[offset..], strings[index]);
-            }
-
-            offset += WireWriter.WriteVarUInt(destination[offset..], (ulong)ddl.Count);
-            for (var index = 0; index < ddl.Count; index++)
-            {
-                offset += WriteString(destination[offset..], ddl[index]);
-            }
-
-            scratch.Body.AsSpan(0, bodyLength).CopyTo(destination[offset..]);
-            return result;
+            return FinalizeEncoded(scratch, batch.Ddl, bodyLength);
         }
         finally
         {
             scratch.Reset();
         }
+    }
+
+    internal static DirectEncoder CreateDirectEncoder(int mutationCount) =>
+        new(_scratch ??= new EncodeScratch(), mutationCount);
+
+    private static byte[] FinalizeEncoded(EncodeScratch scratch, IReadOnlyList<string> ddl, int bodyLength)
+    {
+        var strings = scratch.Strings;
+        var headerSize = 1 + VarUIntSize((ulong)strings.Count) + VarUIntSize((ulong)ddl.Count);
+        for (var index = 0; index < strings.Count; index++)
+        {
+            var byteCount = Encoding.UTF8.GetByteCount(strings[index]);
+            headerSize += VarUIntSize((ulong)byteCount) + byteCount;
+        }
+
+        for (var index = 0; index < ddl.Count; index++)
+        {
+            var byteCount = Encoding.UTF8.GetByteCount(ddl[index]);
+            headerSize += VarUIntSize((ulong)byteCount) + byteCount;
+        }
+
+        var result = new byte[headerSize + bodyLength];
+        var destination = result.AsSpan();
+        var offset = 0;
+        destination[offset++] = FormatVersion;
+        offset += WireWriter.WriteVarUInt(destination[offset..], (ulong)strings.Count);
+        for (var index = 0; index < strings.Count; index++)
+        {
+            offset += WriteString(destination[offset..], strings[index]);
+        }
+
+        offset += WireWriter.WriteVarUInt(destination[offset..], (ulong)ddl.Count);
+        for (var index = 0; index < ddl.Count; index++)
+        {
+            offset += WriteString(destination[offset..], ddl[index]);
+        }
+
+        scratch.Body.AsSpan(0, bodyLength).CopyTo(destination[offset..]);
+        return result;
     }
 
     public static bool TryDecode(ReadOnlySpan<byte> payload, out DeltaBatch batch)
@@ -192,10 +199,11 @@ public static class MutationBatchCodec
         scratch.WriteVarUInt(ref pos, (ulong)count);
         string? lastTable = null;
         var lastTableIndex = 0;
-        var columnHint = 0;
+        var firstColumnHint = 1;
+        var columnHint = 1;
         for (var index = 0; index < count; index++)
         {
-            WriteMutation(scratch, ref pos, mutations[index], ref lastTable, ref lastTableIndex, ref columnHint);
+            WriteMutation(scratch, ref pos, mutations[index], ref lastTable, ref lastTableIndex, ref firstColumnHint, ref columnHint);
         }
 
         return pos;
@@ -207,10 +215,11 @@ public static class MutationBatchCodec
         scratch.WriteVarUInt(ref pos, (ulong)mutations.Length);
         string? lastTable = null;
         var lastTableIndex = 0;
-        var columnHint = 0;
+        var firstColumnHint = 1;
+        var columnHint = 1;
         for (var index = 0; index < mutations.Length; index++)
         {
-            WriteMutation(scratch, ref pos, mutations[index], ref lastTable, ref lastTableIndex, ref columnHint);
+            WriteMutation(scratch, ref pos, mutations[index], ref lastTable, ref lastTableIndex, ref firstColumnHint, ref columnHint);
         }
 
         return pos;
@@ -223,6 +232,7 @@ public static class MutationBatchCodec
         RowMutation mutation,
         ref string? lastTable,
         ref int lastTableIndex,
+        ref int firstColumnHint,
         ref int columnHint)
     {
         var table = mutation.Table;
@@ -233,19 +243,17 @@ public static class MutationBatchCodec
         }
         else
         {
-            tableIndex = scratch.Intern(table, ref columnHint);
+            tableIndex = scratch.InternTable(table);
             lastTable = table;
             lastTableIndex = tableIndex;
+            firstColumnHint = tableIndex + 1;
+            columnHint = firstColumnHint;
         }
-
-        scratch.WriteVarUInt(ref pos, (ulong)tableIndex);
-        scratch.WriteByte(ref pos, (byte)mutation.Op);
-        scratch.WriteVarUInt(ref pos, mutation.CausalLength);
 
         var keys = mutation.PrimaryKey;
         if (keys is SqlValue[] keyArray)
         {
-            scratch.WriteVarUInt(ref pos, (ulong)keyArray.Length);
+            scratch.WriteMutationHeader(ref pos, (ulong)tableIndex, (byte)mutation.Op, mutation.CausalLength, (ulong)keyArray.Length);
             for (var keyIndex = 0; keyIndex < keyArray.Length; keyIndex++)
             {
                 scratch.WriteValue(ref pos, keyArray[keyIndex]);
@@ -254,7 +262,7 @@ public static class MutationBatchCodec
         else if (keys is List<SqlValue> keyList)
         {
             var keySpan = CollectionsMarshal.AsSpan(keyList);
-            scratch.WriteVarUInt(ref pos, (ulong)keySpan.Length);
+            scratch.WriteMutationHeader(ref pos, (ulong)tableIndex, (byte)mutation.Op, mutation.CausalLength, (ulong)keySpan.Length);
             for (var keyIndex = 0; keyIndex < keySpan.Length; keyIndex++)
             {
                 scratch.WriteValue(ref pos, keySpan[keyIndex]);
@@ -262,7 +270,7 @@ public static class MutationBatchCodec
         }
         else
         {
-            scratch.WriteVarUInt(ref pos, (ulong)keys.Count);
+            scratch.WriteMutationHeader(ref pos, (ulong)tableIndex, (byte)mutation.Op, mutation.CausalLength, (ulong)keys.Count);
             for (var keyIndex = 0; keyIndex < keys.Count; keyIndex++)
             {
                 scratch.WriteValue(ref pos, keys[keyIndex]);
@@ -272,46 +280,43 @@ public static class MutationBatchCodec
         var changes = mutation.Changes;
         if (changes is ColumnChange[] changeArray)
         {
-            WriteChangesSpan(scratch, ref pos, changeArray, ref columnHint);
+            WriteChangesSpan(scratch, ref pos, changeArray, firstColumnHint, ref columnHint);
         }
         else if (changes is List<ColumnChange> changeList)
         {
-            WriteChangesSpan(scratch, ref pos, CollectionsMarshal.AsSpan(changeList), ref columnHint);
+            WriteChangesSpan(scratch, ref pos, CollectionsMarshal.AsSpan(changeList), firstColumnHint, ref columnHint);
         }
         else
         {
             scratch.WriteVarUInt(ref pos, (ulong)changes.Count);
             for (var changeIndex = 0; changeIndex < changes.Count; changeIndex++)
             {
-                WriteChange(scratch, ref pos, changes[changeIndex], ref columnHint);
+                WriteChange(scratch, ref pos, changes[changeIndex], firstColumnHint, ref columnHint);
             }
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void WriteChangesSpan(EncodeScratch scratch, ref int pos, ReadOnlySpan<ColumnChange> changes, ref int columnHint)
+    private static void WriteChangesSpan(EncodeScratch scratch, ref int pos, ReadOnlySpan<ColumnChange> changes, int firstColumnHint, ref int columnHint)
     {
         scratch.WriteVarUInt(ref pos, (ulong)changes.Length);
         for (var changeIndex = 0; changeIndex < changes.Length; changeIndex++)
         {
-            WriteChange(scratch, ref pos, changes[changeIndex], ref columnHint);
+            WriteChange(scratch, ref pos, changes[changeIndex], firstColumnHint, ref columnHint);
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void WriteChange(EncodeScratch scratch, ref int pos, ColumnChange change, ref int columnHint)
+    private static void WriteChange(EncodeScratch scratch, ref int pos, ColumnChange change, int firstColumnHint, ref int columnHint)
     {
-        var columnIndex = scratch.Intern(change.Column, ref columnHint);
-        scratch.WriteVarUInt(ref pos, (ulong)columnIndex);
-        scratch.WriteByte(ref pos, (byte)change.Kind);
-        scratch.WriteVarUInt(ref pos, change.Epoch);
+        var columnIndex = scratch.InternColumn(change.Column, ref columnHint, firstColumnHint);
         switch (change.Kind)
         {
             case ChangeKind.Assign or ChangeKind.AbsoluteReset:
-                scratch.WriteValue(ref pos, change.Value);
+                scratch.WriteChangeWithValue(ref pos, (ulong)columnIndex, (byte)change.Kind, change.Epoch, change.Value);
                 break;
             case ChangeKind.DeltaOp:
-                scratch.WriteVarInt(ref pos, change.Delta);
+                scratch.WriteChangeWithDelta(ref pos, (ulong)columnIndex, change.Epoch, change.Delta);
                 break;
             default:
                 throw new UnreachableException();
@@ -331,7 +336,28 @@ public static class MutationBatchCodec
             return 1;
         }
 
-        if (length < 0x80 && Ascii.FromUtf16(value, destination.Slice(1, length), out _) == OperationStatus.Done)
+        if (length <= 16)
+        {
+            var allAscii = true;
+            for (var index = 0; index < length; index++)
+            {
+                var ch = value[index];
+                if (ch > 0x7F)
+                {
+                    allAscii = false;
+                    break;
+                }
+
+                destination[1 + index] = (byte)ch;
+            }
+
+            if (allAscii)
+            {
+                destination[0] = (byte)length;
+                return 1 + length;
+            }
+        }
+        else if (length < 0x80 && Ascii.FromUtf16(value, destination.Slice(1, length), out _) == OperationStatus.Done)
         {
             destination[0] = (byte)length;
             return 1 + length;
@@ -342,7 +368,79 @@ public static class MutationBatchCodec
         return header + Encoding.UTF8.GetBytes(value, destination.Slice(header, count));
     }
 
-    private sealed class EncodeScratch
+    internal ref struct DirectEncoder : IDisposable
+    {
+        private readonly EncodeScratch _scratch;
+        private string? _lastTable;
+        private int _lastTableIndex;
+        private int _firstColumnHint;
+        private int _columnHint;
+        private int _pos;
+
+        internal DirectEncoder(EncodeScratch scratch, int mutationCount)
+        {
+            _scratch = scratch;
+            _lastTable = null;
+            _lastTableIndex = 0;
+            _firstColumnHint = 1;
+            _columnHint = 1;
+            _pos = 0;
+            scratch.WriteVarUInt(ref _pos, (ulong)mutationCount);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void BeginMutation(string table, MutationOp op, ulong causalLength, ReadOnlySpan<SqlValue> primaryKey, int changeCount)
+        {
+            int tableIndex;
+            if (ReferenceEquals(table, _lastTable))
+            {
+                tableIndex = _lastTableIndex;
+            }
+            else
+            {
+                tableIndex = _scratch.InternTable(table);
+                _lastTable = table;
+                _lastTableIndex = tableIndex;
+                _firstColumnHint = tableIndex + 1;
+                _columnHint = _firstColumnHint;
+            }
+
+            _scratch.WriteMutationHeader(ref _pos, (ulong)tableIndex, (byte)op, causalLength, (ulong)primaryKey.Length);
+            for (var index = 0; index < primaryKey.Length; index++)
+            {
+                _scratch.WriteValue(ref _pos, primaryKey[index]);
+            }
+
+            _scratch.WriteVarUInt(ref _pos, (ulong)changeCount);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void WriteAssign(string column, ulong epoch, SqlValue value)
+        {
+            var columnIndex = _scratch.InternColumn(column, ref _columnHint, _firstColumnHint);
+            _scratch.WriteChangeWithValue(ref _pos, (ulong)columnIndex, (byte)ChangeKind.Assign, epoch, value);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void WriteAbsoluteReset(string column, ulong epoch, SqlValue value)
+        {
+            var columnIndex = _scratch.InternColumn(column, ref _columnHint, _firstColumnHint);
+            _scratch.WriteChangeWithValue(ref _pos, (ulong)columnIndex, (byte)ChangeKind.AbsoluteReset, epoch, value);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void WriteDelta(string column, ulong epoch, long delta)
+        {
+            var columnIndex = _scratch.InternColumn(column, ref _columnHint, _firstColumnHint);
+            _scratch.WriteChangeWithDelta(ref _pos, (ulong)columnIndex, epoch, delta);
+        }
+
+        public readonly byte[] Finish(IReadOnlyList<string> ddl) => FinalizeEncoded(_scratch, ddl, _pos);
+
+        public readonly void Dispose() => _scratch.Reset();
+    }
+
+    internal sealed class EncodeScratch
     {
         private Dictionary<string, int>? _lookup;
         private bool _usingLookup;
@@ -352,24 +450,16 @@ public static class MutationBatchCodec
         public byte[] Body { get; private set; } = new byte[4096];
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public int Intern(string value, ref int hint)
+        public int InternTable(string value)
         {
             var span = CollectionsMarshal.AsSpan(Strings);
             var count = span.Length;
-            if ((uint)hint < (uint)count && ReferenceEquals(span[hint], value))
-            {
-                var matched = hint;
-                hint = matched + 1 < count ? matched + 1 : 0;
-                return matched;
-            }
-
             if (!_usingLookup)
             {
                 for (var index = 0; index < count; index++)
                 {
                     if (ReferenceEquals(span[index], value))
                     {
-                        hint = index + 1 < count ? index + 1 : 0;
                         return index;
                     }
                 }
@@ -378,7 +468,6 @@ public static class MutationBatchCodec
                 {
                     if (string.Equals(span[index], value, StringComparison.Ordinal))
                     {
-                        hint = index + 1 < count ? index + 1 : 0;
                         return index;
                     }
                 }
@@ -386,7 +475,6 @@ public static class MutationBatchCodec
                 if (count < LinearInternLimit)
                 {
                     Strings.Add(value);
-                    hint = 0;
                     return count;
                 }
 
@@ -401,7 +489,60 @@ public static class MutationBatchCodec
                 Strings.Add(value);
             }
 
-            hint = slot + 1 < Strings.Count ? slot + 1 : 0;
+            return slot;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int InternColumn(string value, ref int hint, int firstColumnHint)
+        {
+            var span = CollectionsMarshal.AsSpan(Strings);
+            var count = span.Length;
+            if ((uint)hint < (uint)count && ReferenceEquals(span[hint], value))
+            {
+                var matched = hint;
+                hint = matched + 1 < count ? matched + 1 : firstColumnHint;
+                return matched;
+            }
+
+            if (!_usingLookup)
+            {
+                for (var index = 0; index < count; index++)
+                {
+                    if (ReferenceEquals(span[index], value))
+                    {
+                        hint = index + 1 < count ? index + 1 : firstColumnHint;
+                        return index;
+                    }
+                }
+
+                for (var index = 0; index < count; index++)
+                {
+                    if (string.Equals(span[index], value, StringComparison.Ordinal))
+                    {
+                        hint = index + 1 < count ? index + 1 : firstColumnHint;
+                        return index;
+                    }
+                }
+
+                if (count < LinearInternLimit)
+                {
+                    Strings.Add(value);
+                    hint = firstColumnHint;
+                    return count;
+                }
+
+                PromoteToLookup();
+            }
+
+            var lookup = _lookup ?? throw new UnreachableException();
+            ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(lookup, value, out var exists);
+            if (!exists)
+            {
+                slot = Strings.Count;
+                Strings.Add(value);
+            }
+
+            hint = slot + 1 < Strings.Count ? slot + 1 : firstColumnHint;
             return slot;
         }
 
@@ -418,10 +559,60 @@ public static class MutationBatchCodec
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void WriteByte(ref int pos, byte value)
+        public void WriteMutationHeader(ref int pos, ulong tableIndex, byte op, ulong causalLength, ulong keyCount)
         {
-            Ensure(pos, 1);
-            Body[pos++] = value;
+            Ensure(pos, 32);
+            var buffer = Body;
+            WriteVarUIntUnchecked(buffer, ref pos, tableIndex);
+            buffer[pos++] = op;
+            WriteVarUIntUnchecked(buffer, ref pos, causalLength);
+            WriteVarUIntUnchecked(buffer, ref pos, keyCount);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void WriteChangeWithValue(ref int pos, ulong columnIndex, byte kind, ulong epoch, SqlValue value)
+        {
+            Ensure(pos, 32);
+            var buffer = Body;
+            WriteVarUIntUnchecked(buffer, ref pos, columnIndex);
+            buffer[pos++] = kind;
+            WriteVarUIntUnchecked(buffer, ref pos, epoch);
+            buffer[pos++] = (byte)value.Kind;
+            switch (value.Kind)
+            {
+                case SqlValueKind.Null:
+                    break;
+                case SqlValueKind.Integral:
+                    _ = value.TryGetIntegral(out var integral);
+                    WriteVarUIntUnchecked(buffer, ref pos, (ulong)((integral << 1) ^ (integral >> 63)));
+                    break;
+                case SqlValueKind.Real:
+                    _ = value.TryGetReal(out var real);
+                    BinaryPrimitives.WriteDoubleLittleEndian(buffer.AsSpan(pos), real);
+                    pos += 8;
+                    break;
+                case SqlValueKind.Text:
+                    _ = value.TryGetText(out var text);
+                    WriteStringValue(ref pos, text ?? throw new UnreachableException());
+                    break;
+                case SqlValueKind.Blob:
+                    _ = value.TryGetBlob(out var blob);
+                    WriteBlobPayload(ref pos, blob.Span);
+                    break;
+                default:
+                    throw new UnreachableException();
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void WriteChangeWithDelta(ref int pos, ulong columnIndex, ulong epoch, long delta)
+        {
+            Ensure(pos, 32);
+            var buffer = Body;
+            WriteVarUIntUnchecked(buffer, ref pos, columnIndex);
+            buffer[pos++] = (byte)ChangeKind.DeltaOp;
+            WriteVarUIntUnchecked(buffer, ref pos, epoch);
+            WriteVarUIntUnchecked(buffer, ref pos, (ulong)((delta << 1) ^ (delta >> 63)));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -435,7 +626,62 @@ public static class MutationBatchCodec
             }
 
             Ensure(pos, 10);
+            WriteVarUIntUnchecked(Body, ref pos, value);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void WriteValue(ref int pos, SqlValue value)
+        {
+            Ensure(pos, 11);
             var buffer = Body;
+            buffer[pos++] = (byte)value.Kind;
+            switch (value.Kind)
+            {
+                case SqlValueKind.Null:
+                    break;
+                case SqlValueKind.Integral:
+                    _ = value.TryGetIntegral(out var integral);
+                    WriteVarUIntUnchecked(buffer, ref pos, (ulong)((integral << 1) ^ (integral >> 63)));
+                    break;
+                case SqlValueKind.Real:
+                    _ = value.TryGetReal(out var real);
+                    BinaryPrimitives.WriteDoubleLittleEndian(buffer.AsSpan(pos), real);
+                    pos += 8;
+                    break;
+                case SqlValueKind.Text:
+                    _ = value.TryGetText(out var text);
+                    WriteStringValue(ref pos, text ?? throw new UnreachableException());
+                    break;
+                case SqlValueKind.Blob:
+                    _ = value.TryGetBlob(out var blob);
+                    WriteBlobPayload(ref pos, blob.Span);
+                    break;
+                default:
+                    throw new UnreachableException();
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteBlobPayload(ref int pos, ReadOnlySpan<byte> bytes)
+        {
+            WriteVarUInt(ref pos, (ulong)bytes.Length);
+            if (!bytes.IsEmpty)
+            {
+                Ensure(pos, bytes.Length);
+                bytes.CopyTo(Body.AsSpan(pos));
+                pos += bytes.Length;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void WriteVarUIntUnchecked(byte[] buffer, ref int pos, ulong value)
+        {
+            if (value < 0x80)
+            {
+                buffer[pos++] = (byte)value;
+                return;
+            }
+
             while (value >= 0x80)
             {
                 buffer[pos++] = (byte)(value | 0x80);
@@ -446,59 +692,42 @@ public static class MutationBatchCodec
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void WriteVarInt(ref int pos, long value) =>
-            WriteVarUInt(ref pos, (ulong)((value << 1) ^ (value >> 63)));
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void WriteValue(ref int pos, SqlValue value)
-        {
-            WriteByte(ref pos, (byte)value.Kind);
-            switch (value.Kind)
-            {
-                case SqlValueKind.Null:
-                    break;
-                case SqlValueKind.Integral:
-                    _ = value.TryGetIntegral(out var integral);
-                    WriteVarInt(ref pos, integral);
-                    break;
-                case SqlValueKind.Real:
-                    _ = value.TryGetReal(out var real);
-                    Ensure(pos, 8);
-                    BinaryPrimitives.WriteDoubleLittleEndian(Body.AsSpan(pos), real);
-                    pos += 8;
-                    break;
-                case SqlValueKind.Text:
-                    _ = value.TryGetText(out var text);
-                    WriteStringValue(ref pos, text ?? throw new UnreachableException());
-                    break;
-                case SqlValueKind.Blob:
-                    _ = value.TryGetBlob(out var blob);
-                    var bytes = blob.Span;
-                    WriteVarUInt(ref pos, (ulong)bytes.Length);
-                    if (!bytes.IsEmpty)
-                    {
-                        Ensure(pos, bytes.Length);
-                        bytes.CopyTo(Body.AsSpan(pos));
-                        pos += bytes.Length;
-                    }
-
-                    break;
-                default:
-                    throw new UnreachableException();
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteStringValue(ref int pos, string value)
         {
             var length = value.Length;
             if (length == 0)
             {
-                WriteByte(ref pos, 0);
+                Ensure(pos, 1);
+                Body[pos++] = 0;
                 return;
             }
 
-            if (length < 0x80)
+            if (length <= 16)
+            {
+                Ensure(pos, 1 + length);
+                var buffer = Body;
+                var start = pos + 1;
+                var allAscii = true;
+                for (var index = 0; index < length; index++)
+                {
+                    var ch = value[index];
+                    if (ch > 0x7F)
+                    {
+                        allAscii = false;
+                        break;
+                    }
+
+                    buffer[start + index] = (byte)ch;
+                }
+
+                if (allAscii)
+                {
+                    buffer[pos] = (byte)length;
+                    pos = start + length;
+                    return;
+                }
+            }
+            else if (length < 0x80)
             {
                 Ensure(pos, 1 + length);
                 if (Ascii.FromUtf16(value, Body.AsSpan(pos + 1, length), out _) == OperationStatus.Done)
@@ -510,8 +739,8 @@ public static class MutationBatchCodec
             }
 
             var count = Encoding.UTF8.GetByteCount(value);
-            WriteVarUInt(ref pos, (ulong)count);
-            Ensure(pos, count);
+            Ensure(pos, 10 + count);
+            WriteVarUIntUnchecked(Body, ref pos, (ulong)count);
             pos += Encoding.UTF8.GetBytes(value, Body.AsSpan(pos, count));
         }
 

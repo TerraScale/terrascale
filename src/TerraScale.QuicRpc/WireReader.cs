@@ -12,11 +12,16 @@ public ref struct WireReader(ReadOnlySpan<byte> buffer)
     private int _position;
     private bool _faulted;
 
+    public readonly int Position => _position;
+
     public readonly int Remaining => _buffer.Length - _position;
 
     public readonly bool IsFaulted => _faulted;
 
     public readonly bool IsComplete => !_faulted && _position == _buffer.Length;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly ReadOnlySpan<byte> Slice(int start, int length) => _buffer.Slice(start, length);
 
     public void MarkFaulted() => _faulted = true;
 
@@ -132,6 +137,21 @@ public ref struct WireReader(ReadOnlySpan<byte> buffer)
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<byte> ReadBytesSpan() => Take(ReadLength());
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public (int Start, int Length) ReadBytesRange()
+    {
+        var length = ReadLength();
+        var position = _position;
+        if (_faulted || (uint)length > (uint)(_buffer.Length - position))
+        {
+            _faulted = true;
+            return (0, 0);
+        }
+
+        _position = position + length;
+        return (position, length);
+    }
 
     public byte[] ReadBytes()
     {

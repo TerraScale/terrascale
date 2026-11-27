@@ -42,22 +42,24 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
             }
         }
 
-        var seen = isRemoteCoordinator ? originBookmark : null;
-        if (await ValidateAsync(session, payload, seen, cancellationToken) is { } invalid)
+        if (payload.SchemaEpoch != session.SchemaEpoch)
         {
-            return invalid;
+            return new SchemaEpochStale(payload.TxId, payload.SchemaEpoch, session.SchemaEpoch);
         }
 
+        var seen = isRemoteCoordinator ? originBookmark : null;
+        var validatedBeforeWound = false;
         var holder = StrongLockHolder.From(payload, coordinatorNodeId, locks.LeaseDeadline(options.StrongLockLease));
         for (var round = 0; round < MaxWoundRounds; round++)
         {
             var attempt = locks.TryAcquire(holder);
-            var decision = attempt switch
+            var (decision, wounded) = attempt switch
             {
-                LockGranted => await GrantedAsync(session, payload, seen, cancellationToken),
-                LockDenied denied => Denied(payload, denied.Winner),
-                LockWoundRequired wound => await WoundAllAsync(payload, wound.Victims, cancellationToken),
+                LockGranted => (await GrantedAsync(session, payload, seen, cancellationToken), false),
+                LockDenied denied => (Vote(Denied(payload, denied.Winner)), false),
+                LockWoundRequired wound => (await ValidateAndWoundAsync(session, payload, seen, wound.Victims, validatedBeforeWound, cancellationToken), true),
             };
+            validatedBeforeWound |= wounded;
             if (decision is { } decided)
             {
                 return decided;
@@ -92,6 +94,22 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
 
     private static StrongVote Denied(StrongPreparePayload payload, StrongLockHolder winner) =>
         new Wounded(payload.TxId, winner.TxId, winner.Priority);
+
+    private async ValueTask<StrongVote?> ValidateAndWoundAsync(
+        ISqlDatabaseSession session,
+        StrongPreparePayload payload,
+        CausalBookmark? seen,
+        IReadOnlyList<StrongLockHolder> victims,
+        bool alreadyValidated,
+        CancellationToken cancellationToken)
+    {
+        if (!alreadyValidated && await ValidateAsync(session, payload, seen, cancellationToken) is { } invalid)
+        {
+            return invalid;
+        }
+
+        return await WoundAllAsync(payload, victims, cancellationToken);
+    }
 
     private async ValueTask<StrongVote?> WoundAllAsync(StrongPreparePayload payload, IReadOnlyList<StrongLockHolder> victims, CancellationToken cancellationToken)
     {
@@ -137,9 +155,22 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
         };
     }
 
-    private static async ValueTask<StrongVote?> ValidateAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CausalBookmark? seen, CancellationToken cancellationToken)
+    private static ValueTask<StrongVote?> ValidateAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CausalBookmark? seen, CancellationToken cancellationToken)
     {
         var covered = Covered(session, seen);
+        if (session.IsUsable
+            && payload.SchemaEpoch == session.SchemaEpoch
+            && payload.ReadSet.Count == 0
+            && (payload.ScannedTables.Count == 0 || (covered && Covered(session, seen))))
+        {
+            return ValueTask.FromResult<StrongVote?>(null);
+        }
+
+        return ValidateSlowAsync(session, payload, seen, covered, cancellationToken);
+    }
+
+    private static async ValueTask<StrongVote?> ValidateSlowAsync(ISqlDatabaseSession session, StrongPreparePayload payload, CausalBookmark? seen, bool covered, CancellationToken cancellationToken)
+    {
         var validated = await ValidateReadSetAsync(session, payload, covered, cancellationToken);
         if (covered && !Covered(session, seen))
         {

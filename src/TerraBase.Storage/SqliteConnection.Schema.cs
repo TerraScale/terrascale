@@ -41,8 +41,17 @@ internal sealed unsafe partial class SqliteConnection
         return status;
     }
 
-    public SqliteStatus ValidateSchemaCache()
+    public void MarkSchemaDirty() => _writerSchemaClean = false;
+
+    public SqliteStatus ValidateSchemaCache(bool force = false)
     {
+        var deltaVersion = _options.DeltaColumns.Version;
+        if (!force && _writerSchemaClean && deltaVersion == _deltaVersion)
+        {
+            MarkUserCacheValidated(_schemaCookie, deltaVersion);
+            return SqliteStatus.Success;
+        }
+
         var status = ReadSchemaCookie(out var cookie);
         if (!status.IsOk)
         {
@@ -50,9 +59,9 @@ internal sealed unsafe partial class SqliteConnection
             return status;
         }
 
-        var deltaVersion = _options.DeltaColumns.Version;
         if (cookie == _schemaCookie && deltaVersion == _deltaVersion)
         {
+            _writerSchemaClean = true;
             MarkUserCacheValidated(cookie, deltaVersion);
             return SqliteStatus.Success;
         }
@@ -88,6 +97,7 @@ internal sealed unsafe partial class SqliteConnection
 
         _schemaCookie = cookie;
         _deltaVersion = deltaVersion;
+        _writerSchemaClean = true;
         MarkUserCacheValidated(cookie, deltaVersion);
         return SqliteStatus.Success;
     }
@@ -96,6 +106,8 @@ internal sealed unsafe partial class SqliteConnection
     {
         _schemas.Clear();
         _schemaCookie = -1;
+        _writerSchemaClean = false;
+        Capture?.InvalidateSchemaCache();
         ClearStatementCaches();
     }
 

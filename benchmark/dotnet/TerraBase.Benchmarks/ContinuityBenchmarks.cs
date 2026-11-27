@@ -28,9 +28,20 @@ public static class ContinuityBenchmarks
             return;
         }
 
-        await RunArchivedSegmentValidateReplayAsync(ctx, cancellationToken);
-        await RunSessionArchiverSealAndUploadAsync(ctx, cancellationToken);
-        await RunChangefeedFanoutFourSubscribersAsync(ctx, cancellationToken);
+        if (ctx.ShouldRunBenchmark("continuity", "archived_segment_validate_replay"))
+        {
+            await RunArchivedSegmentValidateReplayAsync(ctx, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark("continuity", "session_archiver_seal_and_upload"))
+        {
+            await RunSessionArchiverSealAndUploadAsync(ctx, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark("continuity", "changefeed_fanout_4_subscribers"))
+        {
+            await RunChangefeedFanoutFourSubscribersAsync(ctx, cancellationToken);
+        }
     }
 
     private static async Task RunArchivedSegmentValidateReplayAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)

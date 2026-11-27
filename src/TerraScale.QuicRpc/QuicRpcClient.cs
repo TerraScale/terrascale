@@ -164,7 +164,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         _inFlight.Enter();
         try
         {
-            using var scope = CallScope.Create(timeout ?? QuicMeshLimits.CallTimeout, _timeProvider, _pool.ShutdownToken, cancellationToken);
+            var effectiveTimeout = timeout ?? QuicMeshLimits.CallTimeout;
             using var builder = FrameBuilder.Encode(request);
             var requestId = NextRequestId();
             var resolved = Resolve(peerId);
@@ -180,6 +180,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             }
             else
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 slot.BeginUse();
                 UnaryStreamSlot? rented = null;
                 if (slot.CurrentActive() is { SupportsPersistentUnary: true } active)
@@ -189,19 +190,21 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
 
                 if (rented is not null)
                 {
-                    var pooledOutcome = await ExchangePooledAsync<TRes>(rented, builder, messageTypeId, requestId, scope, allowRetry: true);
+                    var pooledOutcome = await ExchangePooledAsync<TRes>(rented, builder, messageTypeId, requestId, default, effectiveTimeout, useOwnedScope: true, allowRetry: true, cancellationToken);
                     if (pooledOutcome is { } completed)
                     {
                         result = completed;
                     }
                     else
                     {
+                        using var scope = CallScope.Create(effectiveTimeout, _timeProvider, _pool.ShutdownToken, cancellationToken);
                         result = await AcquireAndExchangeAsync<TRes>(slot, builder, messageTypeId, requestId, scope);
                     }
                 }
                 else
                 {
                     slot.EndUse();
+                    using var scope = CallScope.Create(effectiveTimeout, _timeProvider, _pool.ShutdownToken, cancellationToken);
                     result = await AcquireAndExchangeAsync<TRes>(slot, builder, messageTypeId, requestId, scope);
                 }
             }
@@ -240,12 +243,12 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         _inFlight.Enter();
         try
         {
-            using var scope = CallScope.Create(QuicMeshLimits.CallTimeout, _timeProvider, _pool.ShutdownToken, cancellationToken);
             using var builder = FrameBuilder.Encode(message);
             var encoded = builder.Seal(messageTypeId, QuicProtocol.ControlNone, NextRequestId());
             PushDeliveryOutcome delivered;
             if (orderedChannelKey is null)
             {
+                using var scope = CallScope.Create(QuicMeshLimits.CallTimeout, _timeProvider, _pool.ShutdownToken, cancellationToken);
                 delivered = await PushUnorderedAsync(peerId, encoded, scope);
             }
             else
@@ -266,11 +269,11 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
                 }
                 else
                 {
-                    var outcome = await channel.PushAsync(encoded, scope);
+                    var outcome = await channel.PushAsync(encoded, cancellationToken);
                     var firstDone = UnpackOrderedPush(outcome);
                     delivered = firstDone is { } final
                         ? final
-                        : await PushOrderedRetryAsync(peerId, orderedChannelKey, encoded, scope);
+                        : await PushOrderedRetryAsync(peerId, orderedChannelKey, encoded, cancellationToken);
                 }
             }
 
@@ -433,7 +436,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         var acquired = await _pool.AcquireUnaryStreamAsync(slot, scope, preferPooled: false);
         return acquired switch
         {
-            UnaryStreamSlot unarySlot => (await ExchangePooledAsync<TRes>(unarySlot, builder, messageTypeId, requestId, scope, allowRetry: false))
+            UnaryStreamSlot unarySlot => (await ExchangePooledAsync<TRes>(unarySlot, builder, messageTypeId, requestId, scope, default, useOwnedScope: false, allowRetry: false, CancellationToken.None))
                 ?? Failed<TRes>(new ConnectionLost("The QUIC unary stream closed unexpectedly.")),
             StreamLease lease => await ExchangeOneShotAsync<TRes>(lease, builder.Seal(messageTypeId, QuicProtocol.ControlEndOfStream, requestId), messageTypeId, requestId, scope),
             QuicFault fault => Failed<TRes>(fault),
@@ -446,13 +449,28 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         FrameBuilder builder,
         ushort messageTypeId,
         ulong requestId,
-        CallScope scope,
-        bool allowRetry)
+        CallScope externalScope,
+        TimeSpan timeout,
+        bool useOwnedScope,
+        bool allowRetry,
+        CancellationToken cancellationToken)
         where TRes : IBinaryMessage<TRes>
     {
         var healthy = false;
+        var scopeActive = false;
         try
         {
+            CallScope scope;
+            if (useOwnedScope)
+            {
+                scope = unarySlot.BeginCall(timeout, _timeProvider, cancellationToken);
+                scopeActive = true;
+            }
+            else
+            {
+                scope = externalScope;
+            }
+
             var encoded = builder.Seal(messageTypeId, QuicProtocol.ControlNone, requestId);
             var stream = unarySlot.Stream;
             var written = await QuicIo.WriteAsync(stream, encoded, false, scope);
@@ -526,6 +544,11 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         }
         finally
         {
+            if (scopeActive)
+            {
+                unarySlot.EndCall(_timeProvider);
+            }
+
             _pool.ReturnUnaryStream(unarySlot, healthy);
         }
     }
@@ -665,7 +688,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
         return fault;
     }
 
-    private async ValueTask<PushDeliveryOutcome> PushOrderedRetryAsync(string peerId, string channelKey, ReadOnlyMemory<byte> encoded, CallScope scope)
+    private async ValueTask<PushDeliveryOutcome> PushOrderedRetryAsync(string peerId, string channelKey, ReadOnlyMemory<byte> encoded, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -681,7 +704,7 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
                 return new TransportShutdown("The peer was removed from the QUIC client.");
             }
 
-            var outcome = await channel.PushAsync(encoded, scope);
+            var outcome = await channel.PushAsync(encoded, cancellationToken);
             if (UnpackOrderedPush(outcome) is { } final)
             {
                 return final;

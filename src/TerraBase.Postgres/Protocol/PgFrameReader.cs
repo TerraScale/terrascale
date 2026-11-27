@@ -4,6 +4,7 @@ using System.IO.Pipelines;
 using System.Text;
 using System.Text.Unicode;
 using TerraBase.Postgres.Hosting;
+using TerraBase.Postgres.Sessions;
 
 namespace TerraBase.Postgres.Protocol;
 
@@ -18,12 +19,34 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
     private const int InitialParameterSlices = 16;
     private const int MaxRetainedParameterSlices = 256;
 
+    private static readonly TimeSpan MaxTimerDelay = TimeSpan.FromDays(30);
     private static readonly short[] FormatZero = [0];
     private static readonly short[] FormatOne = [1];
+    private static readonly int[] OidZero = [0];
+    private static readonly int[] OidInt8 = [PgOid.Int8];
+    private static readonly int[] OidInt4 = [PgOid.Int4];
+    private static readonly int[] OidText = [PgOid.Text];
+    private static readonly int[] OidZeroZero = [0, 0];
+    private static readonly int[] OidInt8Int8 = [PgOid.Int8, PgOid.Int8];
 
+    private readonly Lock _timerGate = new();
+    private readonly PgQueryMessage _queryMessage = new();
+    private readonly PgParseMessage _parseMessage = new();
+    private readonly PgBindMessage _bindMessage = new();
+    private readonly PgDescribeMessage _describeMessage = new();
+    private readonly PgExecuteMessage _executeMessage = new();
+    private readonly PgCloseMessage _closeMessage = new();
+
+    private PostgresSession? _session;
     private long? _interruptedStart;
     private long _interruptedSeen;
     private CancellationTokenSource? _readCts;
+    private CancellationTokenSource? _activeReadCts;
+    private ITimer? _readTimer;
+    private long _readGeneration;
+    private long _readDeadline;
+    private long _timerScheduledDeadline = long.MaxValue;
+    private bool _disposed;
     private CancellationToken _registeredToken;
     private CancellationTokenRegistration _closedRegistration;
     private byte[] _parameterBuffer = new byte[InitialParameterBufferBytes];
@@ -31,10 +54,22 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
     public long LastMessageStarted { get; private set; }
 
+    public void AttachSession(PostgresSession session) => _session = session;
+
     public void Interrupt() => input.CancelPendingRead();
 
     public void Dispose()
     {
+        lock (_timerGate)
+        {
+            _disposed = true;
+            _activeReadCts = null;
+            _readGeneration++;
+            _timerScheduledDeadline = long.MaxValue;
+            _readTimer?.Dispose();
+            _readTimer = null;
+        }
+
         _closedRegistration.Dispose();
         _readCts?.Dispose();
         _readCts = null;
@@ -140,7 +175,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         _interruptedSeen = 0;
         var initial = started is { } resumed ? Remaining(resumed, seen, ceiling, called) : timeout;
         var cts = PrepareReadCts(cancellationToken);
-        cts.CancelAfter(initial > TimeSpan.Zero ? initial : TimeSpan.Zero);
+        var generation = BeginRead(cts, initial);
         var oversized = 0L;
         var discarded = 0L;
         try
@@ -162,8 +197,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                 {
                     var first = started ??= timeProvider.GetTimestamp();
                     seen = discarded + buffer.Length;
-                    var remaining = Remaining(first, seen, ceiling, called);
-                    cts.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+                    UpdateReadDeadline(generation, Remaining(first, seen, ceiling, called));
                 }
 
                 if (oversized == 0 && buffer.Length >= 5)
@@ -223,11 +257,116 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         }
         finally
         {
-            if (!cts.IsCancellationRequested)
+            EndRead(generation);
+        }
+    }
+
+    private long BeginRead(CancellationTokenSource cts, TimeSpan duration)
+    {
+        lock (_timerGate)
+        {
+            var generation = ++_readGeneration;
+            if (_disposed)
             {
-                cts.CancelAfter(Timeout.InfiniteTimeSpan);
+                return generation;
+            }
+
+            _activeReadCts = cts;
+            ArmReadTimerLocked(cts, duration);
+            return generation;
+        }
+    }
+
+    private void UpdateReadDeadline(long generation, TimeSpan duration)
+    {
+        lock (_timerGate)
+        {
+            if (_disposed || _readGeneration != generation || _activeReadCts is not { } cts)
+            {
+                return;
+            }
+
+            ArmReadTimerLocked(cts, duration);
+        }
+    }
+
+    private void ArmReadTimerLocked(CancellationTokenSource cts, TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero)
+        {
+            _readDeadline = timeProvider.GetTimestamp();
+            cts.Cancel();
+            return;
+        }
+
+        var clamped = duration > MaxTimerDelay ? MaxTimerDelay : duration;
+        var now = timeProvider.GetTimestamp();
+        var deadline = AddTimestamp(now, clamped);
+        _readDeadline = deadline;
+        if (_readTimer is null)
+        {
+            _timerScheduledDeadline = deadline;
+            _readTimer = timeProvider.CreateTimer(static state =>
+            {
+                if (state is PgFrameReader owner)
+                {
+                    owner.OnReadTimer();
+                }
+            }, this, clamped, Timeout.InfiniteTimeSpan);
+        }
+        else if (deadline < _timerScheduledDeadline)
+        {
+            _timerScheduledDeadline = deadline;
+            _readTimer.Change(clamped, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void EndRead(long generation)
+    {
+        lock (_timerGate)
+        {
+            if (_readGeneration == generation)
+            {
+                _activeReadCts = null;
+                _readGeneration++;
             }
         }
+    }
+
+    private void OnReadTimer()
+    {
+        lock (_timerGate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _timerScheduledDeadline = long.MaxValue;
+            if (_activeReadCts is not { } cts)
+            {
+                return;
+            }
+
+            var remaining = timeProvider.GetElapsedTime(timeProvider.GetTimestamp(), _readDeadline);
+            if (remaining <= TimeSpan.Zero)
+            {
+                cts.Cancel();
+                return;
+            }
+
+            var clamped = remaining > MaxTimerDelay ? MaxTimerDelay : remaining;
+            _timerScheduledDeadline = _readDeadline;
+            _readTimer?.Change(clamped, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private long AddTimestamp(long now, TimeSpan duration)
+    {
+        var ticks = timeProvider.TimestampFrequency == TimeSpan.TicksPerSecond
+            ? duration.Ticks
+            : (long)(duration.Ticks * ((double)timeProvider.TimestampFrequency / TimeSpan.TicksPerSecond));
+        return now > long.MaxValue - ticks ? long.MaxValue : now + ticks;
     }
 
     private CancellationTokenSource PrepareReadCts(CancellationToken cancellationToken)
@@ -254,7 +393,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
         _closedRegistration.Dispose();
         _readCts?.Dispose();
-        var created = new CancellationTokenSource(Timeout.InfiniteTimeSpan, timeProvider);
+        var created = new CancellationTokenSource();
         _readCts = created;
         _registeredToken = cancellationToken;
         _closedRegistration = cancellationToken.CanBeCanceled
@@ -385,11 +524,11 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             'P' => ParseParse(ref reader),
             'B' => ParseBind(ref reader),
             'D' => reader.TryByte(out var describeTarget) && reader.TryCString(out var describeName) && describeTarget is (byte)'S' or (byte)'P'
-                ? new PgDescribeMessage((char)describeTarget, describeName)
+                ? _describeMessage.Reset((char)describeTarget, describeName)
                 : null,
-            'E' => reader.TryCString(out var portal) && reader.TryInt32(out var maxRows) ? new PgExecuteMessage(portal, maxRows) : null,
+            'E' => reader.TryCString(out var portal) && reader.TryInt32(out var maxRows) ? _executeMessage.Reset(portal, maxRows) : null,
             'C' => reader.TryByte(out var closeTarget) && reader.TryCString(out var closeName) && closeTarget is (byte)'S' or (byte)'P'
-                ? new PgCloseMessage((char)closeTarget, closeName)
+                ? _closeMessage.Reset((char)closeTarget, closeName)
                 : null,
             'S' => PgSyncMessage.Instance,
             'H' => PgFlushMessage.Instance,
@@ -403,19 +542,89 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         return message is null ? PgError.ProtocolViolation($"invalid message format for message type '{type}'") : message;
     }
 
-    private static PgQueryMessage? ParseQuery(ReadOnlySpan<byte> body) =>
-        body is [.. var sql, 0] && Utf8.IsValid(sql) ? new PgQueryMessage(Encoding.UTF8.GetString(sql)) : null;
-
-    private static PgParseMessage? ParseParse(ref PgSpanReader reader)
+    private PgQueryMessage? ParseQuery(ReadOnlySpan<byte> body)
     {
-        if (!reader.TryCString(out var name) || !reader.TryCString(out var sql) || !reader.TryInt16(out var count) || count < 0)
+        if (body is not [.. var sqlUtf8, 0])
         {
             return null;
         }
 
+        if (_session is { } session)
+        {
+            return session.TryResolveUtf8Sql(sqlUtf8, out var resolved, out var entry)
+                ? _queryMessage.Reset(resolved, entry)
+                : null;
+        }
+
+        return Utf8.IsValid(sqlUtf8)
+            ? _queryMessage.Reset(sqlUtf8.IsEmpty ? string.Empty : Encoding.UTF8.GetString(sqlUtf8), null)
+            : null;
+    }
+
+    private PgParseMessage? ParseParse(ref PgSpanReader reader)
+    {
+        if (!reader.TryCString(out var name) || !reader.TryCStringBytes(out var sqlUtf8) || !reader.TryInt16(out var count) || count < 0)
+        {
+            return null;
+        }
+
+        string sql;
+        CachedParseEntry? entry;
+        if (_session is { } session)
+        {
+            if (!session.TryResolveUtf8Sql(sqlUtf8, out sql, out entry))
+            {
+                return null;
+            }
+        }
+        else
+        {
+            if (!Utf8.IsValid(sqlUtf8))
+            {
+                return null;
+            }
+
+            sql = sqlUtf8.IsEmpty ? string.Empty : Encoding.UTF8.GetString(sqlUtf8);
+            entry = null;
+        }
+
         if (count == 0)
         {
-            return new PgParseMessage(name, sql, []);
+            return _parseMessage.Reset(name, sql, [], entry);
+        }
+
+        if (count == 1)
+        {
+            if (!reader.TryInt32(out var singleOid))
+            {
+                return null;
+            }
+
+            int[] singleOids = singleOid switch
+            {
+                0 => OidZero,
+                PgOid.Int8 => OidInt8,
+                PgOid.Int4 => OidInt4,
+                PgOid.Text => OidText,
+                _ => [singleOid],
+            };
+            return _parseMessage.Reset(name, sql, singleOids, entry);
+        }
+
+        if (count == 2)
+        {
+            if (!reader.TryInt32(out var firstOid) || !reader.TryInt32(out var secondOid))
+            {
+                return null;
+            }
+
+            int[] pairOids = (firstOid, secondOid) switch
+            {
+                (0, 0) => OidZeroZero,
+                (PgOid.Int8, PgOid.Int8) => OidInt8Int8,
+                _ => [firstOid, secondOid],
+            };
+            return _parseMessage.Reset(name, sql, pairOids, entry);
         }
 
         var oids = new int[count];
@@ -427,7 +636,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             }
         }
 
-        return new PgParseMessage(name, sql, oids);
+        return _parseMessage.Reset(name, sql, oids, entry);
     }
 
     private PgBindMessage? ParseBind(ref PgSpanReader reader)
@@ -493,7 +702,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                 return null;
             }
 
-            return new PgBindMessage(portal, statement, formats, _parameterBuffer, _parameterSlices, parameterCount, results);
+            return _bindMessage.Reset(portal, statement, formats, _parameterBuffer, _parameterSlices, parameterCount, results);
         }
         finally
         {
@@ -594,6 +803,20 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
             value = _data[..count];
             _data = _data[count..];
+            return true;
+        }
+
+        public bool TryCStringBytes(out ReadOnlySpan<byte> value)
+        {
+            var end = _data.IndexOf((byte)0);
+            if (end < 0)
+            {
+                value = [];
+                return false;
+            }
+
+            value = _data[..end];
+            _data = _data[(end + 1)..];
             return true;
         }
 

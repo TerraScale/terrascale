@@ -526,6 +526,8 @@ internal sealed class QuicRpcServerCore(
             var isSystemClock = ReferenceEquals(timeProvider, TimeProvider.System);
             var writeArmed = true;
             var writeArmedTicks = timeProvider.GetTimestamp();
+            var idleArmed = false;
+            var idleArmedTicks = 0L;
 
             var firstRead = await reader.ReadNextAsync(stream, writeScope);
             var (firstReady, firstEnded, firstFault) = UnpackRead(firstRead);
@@ -557,7 +559,7 @@ internal sealed class QuicRpcServerCore(
                     var unmapped = new QuicRemoteError(QuicRemoteError.UnmappedMessageType, $"No unary or server-stream handler is mapped for message type {header.MessageType}.");
                     var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
                     closingAfterReply |= Volatile.Read(ref _draining) != 0;
-                    EnsureWriteDeadline(ref writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
+                    EnsureDeadline(ref writeScope, QuicMeshLimits.CallTimeout, isSystemClock, ref writeArmed, ref writeArmedTicks);
                     var written = await WriteErrorWithScopeAsync(stream, context, unmapped, closingAfterReply, writeScope);
                     Complete(context, QuicPattern.Unary, started, written, QuicOutcome.RemoteError);
                     if (closingAfterReply || Fault(written) is not null)
@@ -587,7 +589,7 @@ internal sealed class QuicRpcServerCore(
 
                     if (unaryRoute is not null)
                     {
-                        if (writeArmed)
+                        if (!isSystemClock && writeArmed)
                         {
                             CallScope.Disarm(ref writeScope, timeProvider);
                             writeArmed = false;
@@ -596,7 +598,7 @@ internal sealed class QuicRpcServerCore(
                         var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
                         var reply = await unaryRoute(context, payload, cancellationToken);
                         closingAfterReply |= Volatile.Read(ref _draining) != 0;
-                        EnsureWriteDeadline(ref writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
+                        EnsureDeadline(ref writeScope, QuicMeshLimits.CallTimeout, isSystemClock, ref writeArmed, ref writeArmedTicks);
                         var (replyBuilder, replyError) = UnpackUnaryReply(reply);
                         QuicIoWriteOutcome written;
                         QuicOutcome outcome;
@@ -640,18 +642,23 @@ internal sealed class QuicRpcServerCore(
                     return;
                 }
 
-                if (writeArmed)
+                if (!isSystemClock && writeArmed)
                 {
                     CallScope.Disarm(ref writeScope, timeProvider);
                     writeArmed = false;
                 }
 
-                CallScope.ReArm(ref idleReadScope, QuicMeshLimits.PushReadTimeout, timeProvider);
+                EnsureDeadline(ref idleReadScope, QuicMeshLimits.PushReadTimeout, isSystemClock, ref idleArmed, ref idleArmedTicks);
                 var nextRead = await reader.ReadNextAsync(stream, idleReadScope);
                 var (nextReady, nextEnded, nextFault) = UnpackRead(nextRead);
                 if (nextReady)
                 {
-                    CallScope.Disarm(ref idleReadScope, timeProvider);
+                    if (!isSystemClock)
+                    {
+                        CallScope.Disarm(ref idleReadScope, timeProvider);
+                        idleArmed = false;
+                    }
+
                     continue;
                 }
 
@@ -715,13 +722,13 @@ internal sealed class QuicRpcServerCore(
         QuicRemoteError error => error,
     };
 
-    private void EnsureWriteDeadline(ref CallScope writeScope, bool isSystemClock, ref bool writeArmed, ref long writeArmedTicks)
+    private void EnsureDeadline(ref CallScope scope, TimeSpan timeout, bool isSystemClock, ref bool armed, ref long armedTicks)
     {
-        if (!writeArmed || !isSystemClock || writeScope.IsDeadlineExpired || timeProvider.GetElapsedTime(writeArmedTicks) >= DeadlineRefreshInterval)
+        if (!armed || !isSystemClock || scope.IsDeadlineExpired || timeProvider.GetElapsedTime(armedTicks) >= DeadlineRefreshInterval)
         {
-            CallScope.ReArm(ref writeScope, QuicMeshLimits.CallTimeout, timeProvider);
-            writeArmed = true;
-            writeArmedTicks = timeProvider.GetTimestamp();
+            CallScope.ReArm(ref scope, timeout, timeProvider);
+            armed = true;
+            armedTicks = timeProvider.GetTimestamp();
         }
     }
 
@@ -816,13 +823,25 @@ internal sealed class QuicRpcServerCore(
         try
         {
             using var reader = new QuicFrameReader();
+            var isSystemClock = ReferenceEquals(timeProvider, TimeProvider.System);
             var scope = CallScope.CreateArmable(timeProvider, cancellationToken, CancellationToken.None);
+            var armed = false;
+            var armedTicks = 0L;
             try
             {
                 while (true)
                 {
-                    CallScope.ReArm(ref scope, QuicMeshLimits.PushReadTimeout, timeProvider);
-                    var read = await reader.ReadNextAsync(stream, scope);
+                    StreamFrameStatus read;
+                    if (!cancellationToken.IsCancellationRequested && reader.TryReadBuffered(out var buffered))
+                    {
+                        read = buffered;
+                    }
+                    else
+                    {
+                        EnsureDeadline(ref scope, QuicMeshLimits.PushReadTimeout, isSystemClock, ref armed, ref armedTicks);
+                        read = await reader.ReadNextAsync(stream, scope);
+                    }
+
                     var (ready, ended, readFault) = UnpackRead(read);
                     if (!ready)
                     {
@@ -834,7 +853,12 @@ internal sealed class QuicRpcServerCore(
                         return;
                     }
 
-                    CallScope.Disarm(ref scope, timeProvider);
+                    if (!isSystemClock && armed)
+                    {
+                        CallScope.Disarm(ref scope, timeProvider);
+                        armed = false;
+                    }
+
                     metrics.Received(QuicSide.Server, reader.CurrentTotalLength);
                     var header = reader.CurrentHeader;
                     var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);

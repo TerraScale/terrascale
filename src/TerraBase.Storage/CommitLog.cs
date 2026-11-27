@@ -29,15 +29,15 @@ public static class SqliteCommitLog
 
 internal sealed class CommitLogCipher : IDisposable
 {
+    public const int StackAssociatedLimit = 256;
     private const int NonceSize = 12;
     private const int TagSize = 16;
     private const int NoncePoolBytes = 4092;
-    private const int StackAssociatedLimit = 256;
     private static readonly byte[] Info = Encoding.ASCII.GetBytes("terrabase-commitlog-v1");
 
     private readonly Lock _gate = new();
     private readonly AesGcm _aes;
-    private readonly byte[] _noncePool = new byte[NoncePoolBytes];
+    private byte[]? _noncePool;
     private int _nonceOffset = NoncePoolBytes;
     private bool _disposed;
 
@@ -51,23 +51,15 @@ internal sealed class CommitLogCipher : IDisposable
 
     public static int Overhead => NonceSize + TagSize;
 
+    public CipherScope BeginBatch(scoped ReadOnlySpan<byte> originUtf8, Span<byte> stackAssociated) =>
+        new(this, originUtf8, stackAssociated);
+
     public void Seal(ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associated, Span<byte> destination)
     {
-        var nonce = destination[..NonceSize];
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_nonceOffset + NonceSize > _noncePool.Length)
-            {
-                RandomNumberGenerator.Fill(_noncePool);
-                _nonceOffset = 0;
-            }
-
-            var pooledNonce = _noncePool.AsSpan(_nonceOffset, NonceSize);
-            pooledNonce.CopyTo(nonce);
-            pooledNonce.Clear();
-            _nonceOffset += NonceSize;
-            _aes.Encrypt(nonce, plaintext, destination[(NonceSize + TagSize)..], destination.Slice(NonceSize, TagSize), associated);
+            SealLocked(plaintext, associated, destination);
         }
     }
 
@@ -104,15 +96,7 @@ internal sealed class CommitLogCipher : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            try
-            {
-                _aes.Decrypt(sealedBytes[..NonceSize], sealedBytes[(NonceSize + TagSize)..], sealedBytes.Slice(NonceSize, TagSize), plaintext, associated);
-                return true;
-            }
-            catch (CryptographicException)
-            {
-                return false;
-            }
+            return TryOpenLocked(sealedBytes, associated, plaintext);
         }
     }
 
@@ -149,8 +133,102 @@ internal sealed class CommitLogCipher : IDisposable
             }
 
             _disposed = true;
-            CryptographicOperations.ZeroMemory(_noncePool);
+            if (_noncePool is not null)
+            {
+                CryptographicOperations.ZeroMemory(_noncePool);
+            }
+
             _aes.Dispose();
+        }
+    }
+
+    private void SealLocked(ReadOnlySpan<byte> plaintext, ReadOnlySpan<byte> associated, Span<byte> destination)
+    {
+        var nonce = destination[..NonceSize];
+        var noncePool = _noncePool ??= new byte[NoncePoolBytes];
+        if (_nonceOffset + NonceSize > noncePool.Length)
+        {
+            RandomNumberGenerator.Fill(noncePool);
+            _nonceOffset = 0;
+        }
+
+        var pooledNonce = noncePool.AsSpan(_nonceOffset, NonceSize);
+        pooledNonce.CopyTo(nonce);
+        pooledNonce.Clear();
+        _nonceOffset += NonceSize;
+        _aes.Encrypt(nonce, plaintext, destination[(NonceSize + TagSize)..], destination.Slice(NonceSize, TagSize), associated);
+    }
+
+    private bool TryOpenLocked(ReadOnlySpan<byte> sealedBytes, ReadOnlySpan<byte> associated, Span<byte> plaintext)
+    {
+        try
+        {
+            _aes.Decrypt(sealedBytes[..NonceSize], sealedBytes[(NonceSize + TagSize)..], sealedBytes.Slice(NonceSize, TagSize), plaintext, associated);
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
+
+    public ref struct CipherScope : IDisposable
+    {
+        private readonly CommitLogCipher _cipher;
+        private readonly Span<byte> _associated;
+        private Lock.Scope _lock;
+        private byte[]? _rented;
+
+        internal CipherScope(CommitLogCipher cipher, scoped ReadOnlySpan<byte> originUtf8, Span<byte> stackAssociated)
+        {
+            _cipher = cipher;
+            var associatedLength = sizeof(long) + originUtf8.Length;
+            if (associatedLength <= stackAssociated.Length)
+            {
+                _associated = stackAssociated[..associatedLength];
+                _rented = null;
+            }
+            else
+            {
+                _rented = ArrayPool<byte>.Shared.Rent(associatedLength);
+                _associated = _rented.AsSpan(0, associatedLength);
+            }
+
+            originUtf8.CopyTo(_associated[sizeof(long)..]);
+            _lock = cipher._gate.EnterScope();
+            if (cipher._disposed)
+            {
+                Dispose();
+                ObjectDisposedException.ThrowIf(true, cipher);
+            }
+        }
+
+        public readonly void Seal(scoped ReadOnlySpan<byte> plaintext, long sequence, scoped Span<byte> destination)
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(_associated, sequence);
+            _cipher.SealLocked(plaintext, _associated, destination);
+        }
+
+        public readonly bool TryOpen(scoped ReadOnlySpan<byte> sealedBytes, long sequence, scoped Span<byte> plaintext)
+        {
+            if (sealedBytes.Length < Overhead || plaintext.Length != sealedBytes.Length - Overhead)
+            {
+                return false;
+            }
+
+            BinaryPrimitives.WriteInt64LittleEndian(_associated, sequence);
+            return _cipher.TryOpenLocked(sealedBytes, _associated, plaintext);
+        }
+
+        public void Dispose()
+        {
+            _lock.Dispose();
+            if (_rented is not null)
+            {
+                var rented = _rented;
+                _rented = null;
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
     }
 }
@@ -170,9 +248,12 @@ internal static class CommitFrame
         EncodedSize(commit, Encoding.UTF8.GetByteCount(commit.OriginRegion));
 
     public static long EncodedSize(CommitMetadata commit, int originUtf8Length) =>
+        EncodedSize(commit, originUtf8Length, commit.Bookmark.GetBinarySize());
+
+    public static long EncodedSize(CommitMetadata commit, int originUtf8Length, int bookmarkSize) =>
         PrefixSize + SequenceSize + CommitLogCipher.Overhead + 16 + sizeof(ushort)
         + HlcTimestamp.EncodedSize + sizeof(ulong) + 1 + sizeof(uint) + sizeof(uint) + CrcSize
-        + (long)originUtf8Length + commit.DeltaPayload.Length + commit.Bookmark.GetBinarySize();
+        + (long)originUtf8Length + commit.DeltaPayload.Length + bookmarkSize;
 
     public static IEnumerable<IReadOnlyList<CommitMetadata>> Batches(IReadOnlyList<CommitMetadata> commits, long maxBytes)
     {
@@ -203,10 +284,10 @@ internal static class CommitFrame
         ArrayBufferWriter<byte> plainBuffer,
         CommitMetadata commit,
         ReadOnlySpan<byte> originUtf8,
-        CommitLogCipher cipher)
+        int bookmarkSize,
+        in CommitLogCipher.CipherScope cipher)
     {
         var payloadSpan = commit.DeltaPayload.Span;
-        var bookmarkSize = commit.Bookmark.GetBinarySize();
         var fixedHeaderLength = 16 + sizeof(ushort) + originUtf8.Length + HlcTimestamp.EncodedSize + sizeof(ulong) + 1 + sizeof(uint);
         var plainLength = fixedHeaderLength + payloadSpan.Length + sizeof(uint) + bookmarkSize;
         plainBuffer.ResetWrittenCount();
@@ -243,7 +324,7 @@ internal static class CommitFrame
         BinaryPrimitives.WriteUInt32LittleEndian(frame, (uint)bodyLength);
         var body = frame.Slice(PrefixSize, bodyLength);
         BinaryPrimitives.WriteInt64LittleEndian(body, commit.Sequence);
-        cipher.Seal(plainBuffer.WrittenSpan, commit.Sequence, originUtf8, body[SequenceSize..]);
+        cipher.Seal(plainBuffer.WrittenSpan, commit.Sequence, body[SequenceSize..]);
         BinaryPrimitives.WriteUInt32LittleEndian(frame[(PrefixSize + bodyLength)..], Crc32.HashToUInt32(Crc32ParameterSet.Crc32C, body));
         destination.Advance(totalLength);
     }
@@ -277,6 +358,18 @@ internal static class CommitFrame
         CommitLogCipher cipher,
         out CommitMetadata commit)
     {
+        Span<byte> associatedStack = stackalloc byte[CommitLogCipher.StackAssociatedLimit];
+        using var scope = cipher.BeginBatch(expectedOriginUtf8, associatedStack);
+        return TryDecode(body, expectedOrigin, expectedOriginUtf8, in scope, out commit);
+    }
+
+    public static bool TryDecode(
+        ReadOnlySpan<byte> body,
+        string expectedOrigin,
+        ReadOnlySpan<byte> expectedOriginUtf8,
+        in CommitLogCipher.CipherScope cipher,
+        out CommitMetadata commit)
+    {
         commit = Empty;
         if (body.Length < SequenceSize + CommitLogCipher.Overhead)
         {
@@ -293,7 +386,7 @@ internal static class CommitFrame
         try
         {
             var plain = plainBuffer[..plainLength];
-            if (!cipher.TryOpen(sealedBytes, sequence, expectedOriginUtf8, plain))
+            if (!cipher.TryOpen(sealedBytes, sequence, plain))
             {
                 return false;
             }
@@ -390,6 +483,8 @@ internal static class CommitFrame
         long fromSequence = 0,
         int maxEntries = int.MaxValue)
     {
+        Span<byte> associatedStack = stackalloc byte[CommitLogCipher.StackAssociatedLimit];
+        using var open = cipher.BeginBatch(originUtf8, associatedStack);
         var decoded = 0;
         while (!bytes.IsEmpty && decoded < maxEntries)
         {
@@ -417,7 +512,7 @@ internal static class CommitFrame
                 continue;
             }
 
-            if (!TryDecode(body, origin, originUtf8, cipher, out var commit))
+            if (!TryDecode(body, origin, originUtf8, in open, out var commit))
             {
                 return false;
             }
@@ -476,7 +571,6 @@ internal sealed class OriginLog : IDisposable
     private readonly List<(long Offset, long Sequence)> _frames = [];
     private readonly List<(long Offset, long Sequence)> _addedOffsets = [];
     private readonly List<CommitMetadata> _pendingTail = [];
-    private readonly CommitMetadata?[] _tail = new CommitMetadata?[TailMaxCount];
     private readonly List<(CommitLogSegment Segment, string Path)> _sealed;
     private readonly string _directory;
     private readonly string _prefix;
@@ -485,8 +579,9 @@ internal sealed class OriginLog : IDisposable
     private readonly CommitLogOptions _options;
     private readonly TimeProvider _time;
     private readonly Ulid _databaseId;
-    private ArrayBufferWriter<byte> _frameBuffer = new(InitialBufferCapacity);
-    private ArrayBufferWriter<byte> _plainBuffer = new(InitialBufferCapacity);
+    private CommitMetadata?[]? _tail;
+    private ArrayBufferWriter<byte>? _frameBuffer;
+    private ArrayBufferWriter<byte>? _plainBuffer;
     private SafeFileHandle? _active;
     private long _length;
     private long _committedLength;
@@ -686,39 +781,46 @@ internal sealed class OriginLog : IDisposable
                 return SqliteStatus.Success;
             }
 
-            _frameBuffer.ResetWrittenCount();
+            var frameBuffer = _frameBuffer ??= new ArrayBufferWriter<byte>(InitialBufferCapacity);
+            var plainBuffer = _plainBuffer ??= new ArrayBufferWriter<byte>(InitialBufferCapacity);
+            frameBuffer.ResetWrittenCount();
             _addedOffsets.Clear();
             try
             {
                 var originUtf8Length = _originUtf8.Length;
-                foreach (var commit in commits)
+                Span<byte> associatedStack = stackalloc byte[CommitLogCipher.StackAssociatedLimit];
+                using (var seal = _cipher.BeginBatch(_originUtf8, associatedStack))
                 {
-                    if (!string.Equals(commit.OriginRegion, Origin, StringComparison.Ordinal))
+                    foreach (var commit in commits)
                     {
-                        return SqliteStatus.Fail(string.Concat("commit log origin mismatch for origin ", Origin));
-                    }
+                        if (!string.Equals(commit.OriginRegion, Origin, StringComparison.Ordinal))
+                        {
+                            return SqliteStatus.Fail(string.Concat("commit log origin mismatch for origin ", Origin));
+                        }
 
-                    if (commit.Sequence != _lastSequence + 1 + _addedOffsets.Count)
-                    {
-                        return SqliteStatus.Fail(string.Concat("commit log sequence gap for origin ", Origin));
-                    }
+                        if (commit.Sequence != _lastSequence + 1 + _addedOffsets.Count)
+                        {
+                            return SqliteStatus.Fail(string.Concat("commit log sequence gap for origin ", Origin));
+                        }
 
-                    var frameSize = CommitFrame.EncodedSize(commit, originUtf8Length);
-                    if (frameSize > CommitFrame.MaxEncodedSize)
-                    {
-                        return SqliteStatus.Fail("commit log frame exceeds the maximum frame size");
-                    }
+                        var bookmarkSize = commit.Bookmark.GetBinarySize();
+                        var frameSize = CommitFrame.EncodedSize(commit, originUtf8Length, bookmarkSize);
+                        if (frameSize > CommitFrame.MaxEncodedSize)
+                        {
+                            return SqliteStatus.Fail("commit log frame exceeds the maximum frame size");
+                        }
 
-                    if (_frameBuffer.WrittenCount + frameSize > SqliteCommitLog.MaxSegmentBytes)
-                    {
-                        return SqliteStatus.Fail("commit log batch exceeds the maximum segment size");
-                    }
+                        if (frameBuffer.WrittenCount + frameSize > SqliteCommitLog.MaxSegmentBytes)
+                        {
+                            return SqliteStatus.Fail("commit log batch exceeds the maximum segment size");
+                        }
 
-                    _addedOffsets.Add((_frameBuffer.WrittenCount, commit.Sequence));
-                    CommitFrame.EncodeInto(_frameBuffer, _plainBuffer, commit, _originUtf8, _cipher);
+                        _addedOffsets.Add((frameBuffer.WrittenCount, commit.Sequence));
+                        CommitFrame.EncodeInto(frameBuffer, plainBuffer, commit, _originUtf8, bookmarkSize, in seal);
+                    }
                 }
 
-                var writtenBytes = _frameBuffer.WrittenSpan;
+                var writtenBytes = frameBuffer.WrittenSpan;
                 if (_frames.Count > 0 && _length + writtenBytes.Length > SqliteCommitLog.MaxSegmentBytes)
                 {
                     SealIfDue(force: true);
@@ -813,7 +915,7 @@ internal sealed class OriginLog : IDisposable
             }
 
             _frames.RemoveAll(frame => frame.Offset >= length);
-            var truncated = _active is { } active && FileIo.SetLength(active, length) is null;
+            var truncated = EnsureActiveHandle() is { } active && FileIo.SetLength(active, length) is null;
             _length = length;
             _lastSequence = lastSequence;
             if (_committedLength > length)
@@ -940,7 +1042,7 @@ internal sealed class OriginLog : IDisposable
                         if (byteCount > 0)
                         {
                             rented = ArrayPool<byte>.Shared.Rent(byteCount);
-                            if (_active is not { } active || FileIo.Read(active, rented.AsSpan(0, byteCount), startOffset) is not null)
+                            if (EnsureActiveHandle() is not { } active || FileIo.Read(active, rented.AsSpan(0, byteCount), startOffset) is not null)
                             {
                                 activeError = true;
                             }
@@ -1164,8 +1266,8 @@ internal sealed class OriginLog : IDisposable
             _disposed = true;
             ClearTail();
             _pendingTail.Clear();
-            _plainBuffer.Clear();
-            _frameBuffer.ResetWrittenCount();
+            _plainBuffer?.Clear();
+            _frameBuffer?.ResetWrittenCount();
             _active?.Dispose();
             _active = null;
         }
@@ -1186,7 +1288,12 @@ internal sealed class OriginLog : IDisposable
 
     private void SealIfDue(bool force)
     {
-        if (_active is null || _uncommitted || _frames.Count == 0 || (!force && _length < _options.SegmentMaxBytes && _time.GetUtcNow() - _activeSince < _options.SegmentMaxAge))
+        if (_uncommitted || _frames.Count == 0 || (!force && _length < _options.SegmentMaxBytes && _time.GetUtcNow() - _activeSince < _options.SegmentMaxAge))
+        {
+            return;
+        }
+
+        if (EnsureActiveHandle() is not { } active)
         {
             return;
         }
@@ -1194,7 +1301,7 @@ internal sealed class OriginLog : IDisposable
         var first = _frames[0].Sequence;
         var activePath = ActivePath();
         var sealedPath = Path.Combine(_directory, string.Create(CultureInfo.InvariantCulture, $"{_prefix}.{first:D19}-{_lastSequence:D19}{SealedExtension}"));
-        if (FileIo.Flush(_active) is not null)
+        if (FileIo.Flush(active) is not null)
         {
             return;
         }
@@ -1211,13 +1318,13 @@ internal sealed class OriginLog : IDisposable
                 return;
             }
 
-            _active.Dispose();
+            active.Dispose();
             _active = null;
             CompleteSealLocked(first, sealedPath);
             return;
         }
 
-        _active.Dispose();
+        active.Dispose();
         _active = fresh;
         CompleteSealLocked(first, sealedPath);
     }
@@ -1244,119 +1351,131 @@ internal sealed class OriginLog : IDisposable
     {
         _lastSequence = baseSequence;
         _committedSequence = baseSequence;
-        if (_active is null)
+        if (_active is not { } active)
         {
             return "active commit log handle missing";
         }
 
-        var fileLength = RandomAccess.GetLength(_active);
-        if (fileLength == 0)
-        {
-            return null;
-        }
-
-        if (fileLength > int.MaxValue)
-        {
-            return "active commit log exceeds maximum supported length";
-        }
-
-        var rented = ArrayPool<byte>.Shared.Rent((int)fileLength);
         try
         {
-            var span = rented.AsSpan(0, (int)fileLength);
-            if (FileIo.Read(_active, span, 0) is { } readError)
+            var fileLength = RandomAccess.GetLength(active);
+            if (fileLength == 0)
             {
-                return readError;
+                return null;
             }
 
-            long offset = 0;
-            var expected = baseSequence + 1;
-            var first = true;
-            var verifiedCommitted = committedSequence == 0 || (_sealed.Count > 0 && _sealed[^1].Segment.LastSequence >= committedSequence);
-            while (offset + CommitFrame.PrefixSize <= fileLength)
+            if (fileLength > int.MaxValue)
             {
-                var bodyLength = BinaryPrimitives.ReadUInt32LittleEndian(span[(int)offset..]);
-                var end = offset + CommitFrame.PrefixSize + bodyLength + CommitFrame.CrcSize;
-                if (bodyLength > CommitFrame.MaxBodySize || end > fileLength)
-                {
-                    if (verifiedCommitted)
-                    {
-                        break;
-                    }
-
-                    return "commit log frame truncated or corrupt before committed sequence";
-                }
-
-                var body = span.Slice((int)offset + CommitFrame.PrefixSize, (int)bodyLength);
-                var crc = BinaryPrimitives.ReadUInt32LittleEndian(span[(int)(end - CommitFrame.CrcSize)..]);
-                if (Crc32.HashToUInt32(Crc32ParameterSet.Crc32C, body) != crc)
-                {
-                    if (verifiedCommitted)
-                    {
-                        break;
-                    }
-
-                    return "commit log frame failed CRC32C verification";
-                }
-
-                if (!CommitFrame.TryDecode(body, Origin, _originUtf8, _cipher, out var commit))
-                {
-                    if (verifiedCommitted)
-                    {
-                        break;
-                    }
-
-                    return "commit log frame failed authentication";
-                }
-
-                if (first && _sealed.Count == 0)
-                {
-                    expected = commit.Sequence;
-                }
-
-                first = false;
-                if (commit.Sequence != expected)
-                {
-                    if (verifiedCommitted)
-                    {
-                        break;
-                    }
-
-                    return "commit log sequence gap";
-                }
-
-                _frames.Add((offset, commit.Sequence));
-                _lastSequence = commit.Sequence;
-                RecordActiveCommitTime(commit.Hlc.WallTime);
-                PushTail(commit);
-                if (_lastSequence >= committedSequence)
-                {
-                    verifiedCommitted = true;
-                }
-
-                expected++;
-                offset = end;
+                return "active commit log exceeds maximum supported length";
             }
 
-            if (!verifiedCommitted)
+            var rented = ArrayPool<byte>.Shared.Rent((int)fileLength);
+            try
             {
-                return "commit log ended before committed sequence";
-            }
+                var span = rented.AsSpan(0, (int)fileLength);
+                if (FileIo.Read(active, span, 0) is { } readError)
+                {
+                    return readError;
+                }
 
-            _length = offset;
-            _committedLength = offset;
-            _committedSequence = _lastSequence;
-            _committedFrameCount = _frames.Count;
-            if (offset != fileLength)
+                var offset = 0L;
+                var expected = baseSequence + 1;
+                var first = true;
+                var verifiedCommitted = committedSequence == 0 || (_sealed.Count > 0 && _sealed[^1].Segment.LastSequence >= committedSequence);
+                Span<byte> associatedStack = stackalloc byte[CommitLogCipher.StackAssociatedLimit];
+                using (var open = _cipher.BeginBatch(_originUtf8, associatedStack))
+                {
+                    while (offset + CommitFrame.PrefixSize <= fileLength)
+                    {
+                        var bodyLength = BinaryPrimitives.ReadUInt32LittleEndian(span[(int)offset..]);
+                        var end = offset + CommitFrame.PrefixSize + bodyLength + CommitFrame.CrcSize;
+                        if (bodyLength > CommitFrame.MaxBodySize || end > fileLength)
+                        {
+                            if (verifiedCommitted)
+                            {
+                                break;
+                            }
+
+                            return "commit log frame truncated or corrupt before committed sequence";
+                        }
+
+                        var body = span.Slice((int)offset + CommitFrame.PrefixSize, (int)bodyLength);
+                        var crc = BinaryPrimitives.ReadUInt32LittleEndian(span[(int)(end - CommitFrame.CrcSize)..]);
+                        if (Crc32.HashToUInt32(Crc32ParameterSet.Crc32C, body) != crc)
+                        {
+                            if (verifiedCommitted)
+                            {
+                                break;
+                            }
+
+                            return "commit log frame failed CRC32C verification";
+                        }
+
+                        if (!CommitFrame.TryDecode(body, Origin, _originUtf8, in open, out var commit))
+                        {
+                            if (verifiedCommitted)
+                            {
+                                break;
+                            }
+
+                            return "commit log frame failed authentication";
+                        }
+
+                        if (first && _sealed.Count == 0)
+                        {
+                            expected = commit.Sequence;
+                        }
+
+                        first = false;
+                        if (commit.Sequence != expected)
+                        {
+                            if (verifiedCommitted)
+                            {
+                                break;
+                            }
+
+                            return "commit log sequence gap";
+                        }
+
+                        _frames.Add((offset, commit.Sequence));
+                        _lastSequence = commit.Sequence;
+                        RecordActiveCommitTime(commit.Hlc.WallTime);
+                        PushTail(commit);
+                        if (_lastSequence >= committedSequence)
+                        {
+                            verifiedCommitted = true;
+                        }
+
+                        expected++;
+                        offset = end;
+                    }
+                }
+
+                if (!verifiedCommitted)
+                {
+                    return "commit log ended before committed sequence";
+                }
+
+                _length = offset;
+                _committedLength = offset;
+                _committedSequence = _lastSequence;
+                _committedFrameCount = _frames.Count;
+                if (offset != fileLength)
+                {
+                    _ = FileIo.SetLength(active, offset);
+                }
+
+                return null;
+            }
+            finally
             {
-                _ = FileIo.SetLength(_active, offset);
+                ArrayPool<byte>.Shared.Return(rented);
             }
-
-            return null;
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(rented);
+            active.Dispose();
+            _active = null;
         }
     }
 
@@ -1375,10 +1494,11 @@ internal sealed class OriginLog : IDisposable
             return;
         }
 
+        var tail = _tail ??= new CommitMetadata?[TailMaxCount];
         if (_tailCount > 0)
         {
             var newestIndex = (_tailHead + _tailCount - 1) % TailMaxCount;
-            if (_tail[newestIndex] is not { } newest || commit.Sequence != newest.Sequence + 1)
+            if (tail[newestIndex] is not { } newest || commit.Sequence != newest.Sequence + 1)
             {
                 ClearTail();
             }
@@ -1390,17 +1510,17 @@ internal sealed class OriginLog : IDisposable
         }
 
         var slot = (_tailHead + _tailCount) % TailMaxCount;
-        _tail[slot] = commit;
+        tail[slot] = commit;
         _tailCount++;
         _tailPayloadBytes += payloadBytes;
     }
 
     private void PopOldestTail()
     {
-        if (_tail[_tailHead] is { } oldest)
+        if (_tail is { } tail && tail[_tailHead] is { } oldest)
         {
             _tailPayloadBytes -= oldest.DeltaPayload.Length;
-            _tail[_tailHead] = null;
+            tail[_tailHead] = null;
         }
 
         _tailHead = (_tailHead + 1) % TailMaxCount;
@@ -1414,7 +1534,7 @@ internal sealed class OriginLog : IDisposable
 
     private void EvictTailBelow(long firstAvailable)
     {
-        while (_tailCount > 0 && _tail[_tailHead] is { } oldest && oldest.Sequence < firstAvailable)
+        while (_tailCount > 0 && _tail is { } tail && tail[_tailHead] is { } oldest && oldest.Sequence < firstAvailable)
         {
             PopOldestTail();
         }
@@ -1422,16 +1542,21 @@ internal sealed class OriginLog : IDisposable
 
     private void TruncateTailAbove(long lastSequence)
     {
+        if (_tail is not { } tail)
+        {
+            return;
+        }
+
         while (_tailCount > 0)
         {
             var newestIndex = (_tailHead + _tailCount - 1) % TailMaxCount;
-            if (_tail[newestIndex] is not { } newest || newest.Sequence <= lastSequence)
+            if (tail[newestIndex] is not { } newest || newest.Sequence <= lastSequence)
             {
                 break;
             }
 
             _tailPayloadBytes -= newest.DeltaPayload.Length;
-            _tail[newestIndex] = null;
+            tail[newestIndex] = null;
             _tailCount--;
         }
 
@@ -1444,7 +1569,11 @@ internal sealed class OriginLog : IDisposable
 
     private void ClearTail()
     {
-        Array.Clear(_tail);
+        if (_tail is not null)
+        {
+            Array.Clear(_tail);
+        }
+
         _tailHead = 0;
         _tailCount = 0;
         _tailPayloadBytes = 0;
@@ -1452,13 +1581,13 @@ internal sealed class OriginLog : IDisposable
 
     private CommitMetadata[]? TryReadFromTailLocked(long fromSequence, int maxEntries)
     {
-        if (_tailCount == 0 || _tail[_tailHead] is not { } oldest)
+        if (_tailCount == 0 || _tail is not { } tail || tail[_tailHead] is not { } oldest)
         {
             return null;
         }
 
         var newestIndex = (_tailHead + _tailCount - 1) % TailMaxCount;
-        if (_tail[newestIndex] is not { } newest || fromSequence < oldest.Sequence || fromSequence > newest.Sequence)
+        if (tail[newestIndex] is not { } newest || fromSequence < oldest.Sequence || fromSequence > newest.Sequence)
         {
             return null;
         }
@@ -1470,7 +1599,7 @@ internal sealed class OriginLog : IDisposable
         for (var index = 0; index < count; index++)
         {
             var slot = (_tailHead + startOffset + index) % TailMaxCount;
-            if (_tail[slot] is not { } commit)
+            if (tail[slot] is not { } commit)
             {
                 return null;
             }
@@ -1567,20 +1696,26 @@ internal sealed class OriginLog : IDisposable
 
     private void TrimBuffersIfOversized()
     {
-        _frameBuffer.ResetWrittenCount();
-        if (_frameBuffer.Capacity > MaxRetainedBufferBytes)
+        if (_frameBuffer is not null)
         {
-            _frameBuffer = new ArrayBufferWriter<byte>(InitialBufferCapacity);
+            _frameBuffer.ResetWrittenCount();
+            if (_frameBuffer.Capacity > MaxRetainedBufferBytes)
+            {
+                _frameBuffer = new ArrayBufferWriter<byte>(InitialBufferCapacity);
+            }
         }
 
-        if (_plainBuffer.Capacity > MaxRetainedBufferBytes)
+        if (_plainBuffer is not null)
         {
-            _plainBuffer.Clear();
-            _plainBuffer = new ArrayBufferWriter<byte>(InitialBufferCapacity);
-        }
-        else
-        {
-            _plainBuffer.ResetWrittenCount();
+            if (_plainBuffer.Capacity > MaxRetainedBufferBytes)
+            {
+                _plainBuffer.Clear();
+                _plainBuffer = new ArrayBufferWriter<byte>(InitialBufferCapacity);
+            }
+            else
+            {
+                _plainBuffer.ResetWrittenCount();
+            }
         }
     }
 }

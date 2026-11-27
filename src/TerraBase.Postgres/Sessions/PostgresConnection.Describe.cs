@@ -11,10 +11,10 @@ internal sealed partial class PostgresConnection
 {
     private static readonly PgDescription NoData = new(null);
 
-    private async ValueTask<PgDescribeResult> DescribeColumnsAsync(PgCommand command, IReadOnlyList<SqlValue> parameters) => command switch
+    private async ValueTask<PgDescribeResult> DescribeColumnsAsync(PgCommand command, IReadOnlyList<SqlValue> parameters, CachedParseEntry? cacheEntry = null) => command switch
     {
         PgSqlCommand { Explain: true } => new PgDescription([new PgColumn("QUERY PLAN", PgOid.Text)]),
-        PgSqlCommand { Access: SqlAccess.Read } read => await ProbeAsync(read, parameters),
+        PgSqlCommand { Access: SqlAccess.Read } read => await ProbeAsync(read, parameters, cacheEntry),
         PgSqlCommand { Returning: { } items, TargetTable: { } table } => await ReturningAsync(table, items),
         PgSqlCommand => NoData,
         PgCannedCommand canned => new PgDescription(canned.Result.Columns),
@@ -29,19 +29,47 @@ internal sealed partial class PostgresConnection
             or PgUnlistenCommand or PgNoOpCommand or PgCopyFromCommand or PgCopyToCommand => NoData,
     };
 
-    private async ValueTask<PgDescribeResult> ProbeAsync(PgSqlCommand command, IReadOnlyList<SqlValue> parameters)
+    private async ValueTask<PgDescribeResult> ProbeAsync(PgSqlCommand command, IReadOnlyList<SqlValue> parameters, CachedParseEntry? cacheEntry)
     {
         if (session.Transaction is { Failed: true })
         {
             return PgError.InFailedTransaction;
         }
 
+        session.ObserveCurrentSchemaEpoch();
+        if (cacheEntry is { Commands.Count: 1, InferredColumns: { } cachedColumns }
+            && cacheEntry.CacheGeneration == session.CacheGeneration
+            && cacheEntry.SchemaEpoch == session.SchemaEpoch)
+        {
+            return new PgDescription(cachedColumns);
+        }
+
         var probed = await ReadMetadataAsync(command.Rewrite.ProbeSql, command.Rewrite.Bind(parameters));
         return probed switch
         {
-            SqlResultSet set => new PgDescription(set.Columns.Count == 0 ? null : InferColumns(set.Columns, set.Rows, command.Rewrite.UsesCatalog)),
+            SqlResultSet set => DescribedProbe(command, set, cacheEntry),
             PgError error => error,
         };
+    }
+
+    private PgDescribeResult DescribedProbe(PgSqlCommand command, SqlResultSet set, CachedParseEntry? cacheEntry)
+    {
+        if (set.Columns.Count == 0)
+        {
+            return NoData;
+        }
+
+        var inferred = InferColumns(set.Columns, set.Rows, command.Rewrite.UsesCatalog, out var allDeclared);
+        if (allDeclared
+            && session.Transaction is null
+            && cacheEntry is { Commands.Count: 1 }
+            && cacheEntry.CacheGeneration == session.CacheGeneration
+            && cacheEntry.SchemaEpoch == session.SchemaEpoch)
+        {
+            cacheEntry.InferredColumns = inferred;
+        }
+
+        return new PgDescription(inferred);
     }
 
     private async ValueTask<PgDescribeResult> ReturningAsync(string table, IReadOnlyList<PgReturningItem> items)

@@ -40,12 +40,16 @@ internal sealed partial class PostgresConnection
         return tags;
     }
 
-    private async ValueTask<PgOutcome> GuardAsync(PgCommand command, IReadOnlyList<SqlValue> parameters, IReadOnlyList<PgColumn>? describedColumns)
+    private async ValueTask<PgOutcome> GuardAsync(
+        PgCommand command,
+        IReadOnlyList<SqlValue> parameters,
+        IReadOnlyList<PgColumn>? describedColumns,
+        CachedParseEntry? cacheEntry = null)
     {
         using var scope = session.BeginStatement(closed);
         try
         {
-            return await RunAsync(command, parameters, describedColumns, scope.Token);
+            return await RunAsync(command, parameters, describedColumns, cacheEntry, scope.Token);
         }
         catch (OperationCanceledException) when (!closed.IsCancellationRequested)
         {
@@ -63,7 +67,12 @@ internal sealed partial class PostgresConnection
         }
     }
 
-    private async ValueTask<PgOutcome> RunAsync(PgCommand command, IReadOnlyList<SqlValue> parameters, IReadOnlyList<PgColumn>? describedColumns, CancellationToken cancellationToken)
+    private async ValueTask<PgOutcome> RunAsync(
+        PgCommand command,
+        IReadOnlyList<SqlValue> parameters,
+        IReadOnlyList<PgColumn>? describedColumns,
+        CachedParseEntry? cacheEntry,
+        CancellationToken cancellationToken)
     {
         if (session.Transaction is { Failed: true } && command is not (PgCommitCommand or PgRollbackCommand or PgRollbackToCommand or PgEmptyCommand))
         {
@@ -73,7 +82,7 @@ internal sealed partial class PostgresConnection
         return command switch
         {
             PgEmptyCommand => PgResult.EmptyQuery,
-            PgSqlCommand sql => await ExecuteSqlAsync(sql, parameters, describedColumns, cancellationToken),
+            PgSqlCommand sql => await ExecuteSqlAsync(sql, parameters, describedColumns, cacheEntry, cancellationToken),
             PgCannedCommand canned => canned.Result,
             PgBeginCommand begin => Begin(begin),
             PgCommitCommand => await CommitAsync(cancellationToken),
@@ -96,7 +105,12 @@ internal sealed partial class PostgresConnection
         };
     }
 
-    private async ValueTask<PgOutcome> ExecuteSqlAsync(PgSqlCommand command, IReadOnlyList<SqlValue> parameters, IReadOnlyList<PgColumn>? describedColumns, CancellationToken cancellationToken)
+    private async ValueTask<PgOutcome> ExecuteSqlAsync(
+        PgSqlCommand command,
+        IReadOnlyList<SqlValue> parameters,
+        IReadOnlyList<PgColumn>? describedColumns,
+        CachedParseEntry? cacheEntry,
+        CancellationToken cancellationToken)
     {
         if (parameters.Count < command.Rewrite.ParameterCount)
         {
@@ -117,7 +131,7 @@ internal sealed partial class PostgresConnection
 
         return executed switch
         {
-            SqlResultSet set => ToResult(command, set, describedColumns),
+            SqlResultSet set => ToResult(command, set, describedColumns, cacheEntry),
             PgError error => error,
         };
     }
@@ -139,30 +153,37 @@ internal sealed partial class PostgresConnection
             };
         }
 
-        var request = new SqlStatementRequest(session.Executor.DatabaseId, [statement], access, session.Settings.DefaultMode, session.Bookmark);
-        if (access == SqlAccess.Read)
+        var request = new SqlStatementRequest(session.Executor.DatabaseId, session.SingleStatement(statement), access, session.Settings.DefaultMode, session.Bookmark);
+        try
         {
-            var read = await session.Executor.ReadAsync(request, cancellationToken);
-            return read switch
+            if (access == SqlAccess.Read)
             {
-                SqlReadResult result => ObservedRead(result),
+                var read = await session.Executor.ReadAsync(request, cancellationToken);
+                return read switch
+                {
+                    SqlReadResult result => ObservedRead(result),
+                    SqlError error => PgErrors.From(error),
+                    StorageBusy busy => PgErrors.From(busy),
+                    StorageTimeout timeout => PgErrors.From(timeout),
+                };
+            }
+
+            var written = await session.Executor.WriteAsync(request, cancellationToken);
+            return written switch
+            {
+                SqlWriteResult write => ObservedWrite(write),
                 SqlError error => PgErrors.From(error),
+                SerializationConflict conflict => PgErrors.From(conflict),
+                SchemaMismatch mismatch => ObservedSchemaMismatch(mismatch),
+                ClusterUnavailable unavailable => PgErrors.From(unavailable),
+                ClusterTimeout timeout => PgErrors.From(timeout),
                 StorageBusy busy => PgErrors.From(busy),
-                StorageTimeout timeout => PgErrors.From(timeout),
             };
         }
-
-        var written = await session.Executor.WriteAsync(request, cancellationToken);
-        return written switch
+        finally
         {
-            SqlWriteResult write => ObservedWrite(write),
-            SqlError error => PgErrors.From(error),
-            SerializationConflict conflict => PgErrors.From(conflict),
-            SchemaMismatch mismatch => ObservedSchemaMismatch(mismatch),
-            ClusterUnavailable unavailable => PgErrors.From(unavailable),
-            ClusterTimeout timeout => PgErrors.From(timeout),
-            StorageBusy busy => PgErrors.From(busy),
-        };
+            session.ClearSingleStatement();
+        }
     }
 
     private PgStatementResult ObservedRead(SqlReadResult result)
@@ -202,7 +223,7 @@ internal sealed partial class PostgresConnection
         return sets.Count > 0 ? sets[0] : new SqlResultSet([], [], 0, 0);
     }
 
-    private static PgResult ToResult(PgSqlCommand command, SqlResultSet set, IReadOnlyList<PgColumn>? describedColumns)
+    private PgResult ToResult(PgSqlCommand command, SqlResultSet set, IReadOnlyList<PgColumn>? describedColumns, CachedParseEntry? cacheEntry)
     {
         if (command.Explain)
         {
@@ -211,10 +232,35 @@ internal sealed partial class PostgresConnection
             return new PgResult([new PgColumn("QUERY PLAN", PgOid.Text)], plan, "EXPLAIN");
         }
 
-        IReadOnlyList<PgColumn>? columns = set.Columns.Count == 0 ? null : InferColumns(set.Columns, set.Rows, command.Rewrite.UsesCatalog);
-        if (describedColumns is { } described && columns is { } actual && described.Count == actual.Count)
+        IReadOnlyList<PgColumn>? columns;
+        if (set.Columns.Count == 0)
+        {
+            columns = null;
+        }
+        else if (describedColumns is { } described && described.Count == set.Columns.Count)
         {
             columns = described;
+        }
+        else if (cacheEntry is { Commands.Count: 1, InferredColumns: { } cachedColumns }
+            && cacheEntry.CacheGeneration == session.CacheGeneration
+            && cacheEntry.SchemaEpoch == session.SchemaEpoch
+            && cachedColumns.Length == set.Columns.Count)
+        {
+            columns = cachedColumns;
+        }
+        else
+        {
+            var inferred = InferColumns(set.Columns, set.Rows, command.Rewrite.UsesCatalog, out var allDeclared);
+            if (allDeclared
+                && session.Transaction is null
+                && cacheEntry is { Commands.Count: 1 }
+                && cacheEntry.CacheGeneration == session.CacheGeneration
+                && cacheEntry.SchemaEpoch == session.SchemaEpoch)
+            {
+                cacheEntry.InferredColumns = inferred;
+            }
+
+            columns = inferred;
         }
 
         return new PgResult(columns, set.Rows, Tag(command, set));
@@ -238,15 +284,20 @@ internal sealed partial class PostgresConnection
         };
     }
 
-    internal static IReadOnlyList<PgColumn> InferColumns(IReadOnlyList<SqlColumn> columns, IReadOnlyList<IReadOnlyList<SqlValue>> rows, bool catalog)
+    internal static IReadOnlyList<PgColumn> InferColumns(IReadOnlyList<SqlColumn> columns, IReadOnlyList<IReadOnlyList<SqlValue>> rows, bool catalog) =>
+        InferColumns(columns, rows, catalog, out _);
+
+    internal static PgColumn[] InferColumns(IReadOnlyList<SqlColumn> columns, IReadOnlyList<IReadOnlyList<SqlValue>> rows, bool catalog, out bool allDeclared)
     {
         var inferred = new PgColumn[columns.Count];
+        allDeclared = true;
         for (var index = 0; index < columns.Count; index++)
         {
             var column = columns[index];
             var oid = PgOid.FromDeclaredType(column.DeclaredType);
             if (oid == 0)
             {
+                allDeclared = false;
                 var kind = SqlValueKind.Null;
                 foreach (var row in rows)
                 {

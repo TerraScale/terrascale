@@ -73,7 +73,10 @@ public sealed class QuicRpcHost : IAsyncDisposable
                 return ValueTask.FromResult<UnaryDispatchOutcome>(Malformed(context));
             }
 
-            return AwaitUnaryAsync(handler(context, request, cancellationToken));
+            var pending = handler(context, request, cancellationToken);
+            return pending.IsCompletedSuccessfully
+                ? ValueTask.FromResult(EncodeUnaryOutcome(pending.Result))
+                : AwaitUnaryAsync(pending);
         };
         Register(messageTypeId, dispatch);
         return this;
@@ -158,17 +161,16 @@ public sealed class QuicRpcHost : IAsyncDisposable
         }
     }
 
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<UnaryDispatchOutcome>))]
-    private static async ValueTask<UnaryDispatchOutcome> AwaitUnaryAsync<TRes>(ValueTask<QuicHandlerOutcome<TRes>> pending)
-        where TRes : IBinaryMessage<TRes>
-    {
-        var outcome = await pending;
-        return outcome switch
+    private static UnaryDispatchOutcome EncodeUnaryOutcome<TRes>(QuicHandlerOutcome<TRes> outcome)
+        where TRes : IBinaryMessage<TRes> => outcome switch
         {
             TRes response => FrameBuilder.Encode(response),
             QuicRemoteError error => error,
         };
-    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<UnaryDispatchOutcome>))]
+    private static async ValueTask<UnaryDispatchOutcome> AwaitUnaryAsync<TRes>(ValueTask<QuicHandlerOutcome<TRes>> pending)
+        where TRes : IBinaryMessage<TRes> => EncodeUnaryOutcome(await pending);
 
     private static QuicRemoteError Malformed(QuicCallContext context) =>
         new(QuicRemoteError.MalformedRequest, $"The payload for message type {context.MessageTypeId} is malformed.");

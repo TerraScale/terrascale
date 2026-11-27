@@ -118,6 +118,38 @@ internal static class PgValueCodec
                 output.Advance(4 + blob.Length);
                 return true;
             }
+            else if (oid is PgOid.Text or PgOid.Varchar or PgOid.Bpchar or PgOid.Json or PgOid.Unknown
+                && value.Kind == SqlValueKind.Text
+                && value.TryGetText(out var binaryText)
+                && TryWriteAsciiPrefixed(output, binaryText))
+            {
+                return true;
+            }
+        }
+        else if (value.Kind == SqlValueKind.Integral && value.TryGetIntegral(out var textIntegral))
+        {
+            if (oid == PgOid.Bool)
+            {
+                var boolSpan = output.GetSpan(5);
+                BinaryPrimitives.WriteInt32BigEndian(boolSpan, 1);
+                boolSpan[4] = textIntegral != 0 ? (byte)'t' : (byte)'f';
+                output.Advance(5);
+                return true;
+            }
+
+            var intSpan = output.GetSpan(24);
+            Utf8Formatter.TryFormat(textIntegral, intSpan[4..], out var integralLength);
+            BinaryPrimitives.WriteInt32BigEndian(intSpan, integralLength);
+            output.Advance(4 + integralLength);
+            return true;
+        }
+        else if (value.Kind == SqlValueKind.Text
+            && value.TryGetText(out var textValue)
+            && (oid is not (PgOid.Bool or PgOid.Date or PgOid.Time or PgOid.Timestamp or PgOid.Timestamptz)
+                || (oid == PgOid.Timestamptz && PgTemporal.IsCanonicalTimestamptz(textValue)))
+            && TryWriteAsciiPrefixed(output, textValue))
+        {
+            return true;
         }
 
         var lengthAt = output.ReserveInt32();
@@ -130,6 +162,27 @@ internal static class PgValueCodec
         }
 
         output.PatchInt32(lengthAt, output.Length - start);
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TryWriteAsciiPrefixed(PgMessageBuffer output, string text)
+    {
+        var length = text.Length;
+        if (length == 0)
+        {
+            output.WriteInt32(0);
+            return true;
+        }
+
+        var span = output.GetSpan(4 + length);
+        if (Ascii.FromUtf16(text, span.Slice(4, length), out _) != OperationStatus.Done)
+        {
+            return false;
+        }
+
+        BinaryPrimitives.WriteInt32BigEndian(span, length);
+        output.Advance(4 + length);
         return true;
     }
 

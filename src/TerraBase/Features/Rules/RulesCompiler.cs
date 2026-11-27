@@ -30,7 +30,90 @@ public sealed record ConditionParameter(string Name, ConditionSource Source, str
 
 public readonly union ConditionPart(string, ConditionParameter);
 
-public sealed record CompiledCondition(IReadOnlyList<ConditionPart> Parts, bool UsesNew);
+public sealed record CompiledCondition(IReadOnlyList<ConditionPart> Parts, bool UsesNew)
+{
+    public bool UsesRequestTime { get; init; }
+}
+
+internal sealed record ParameterizedCondition(string Sql, ConditionParameter[] Parameters, bool HasClaimList)
+{
+    public bool CanUseDirectly(RulesAuth auth)
+    {
+        if (!HasClaimList)
+        {
+            return true;
+        }
+
+        for (var i = 0; i < Parameters.Length; i++)
+        {
+            var parameter = Parameters[i];
+            if (parameter.Source == ConditionSource.ClaimList
+                && !(parameter.Key is { } key && auth.Claims.TryGetValue(key, out var claim) && RulesCompiler.IsClaimList(claim)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+internal ref struct CharBuffer(Span<char> initial)
+{
+    private Span<char> _buffer = initial;
+    private char[]? _rented;
+    private int _length;
+
+    public void Append(char value)
+    {
+        EnsureCapacity(1);
+        _buffer[_length++] = value;
+    }
+
+    public void Append(string value) => Append(value.AsSpan());
+
+    public void Append(scoped ReadOnlySpan<char> value)
+    {
+        if (value.IsEmpty)
+        {
+            return;
+        }
+
+        EnsureCapacity(value.Length);
+        value.CopyTo(_buffer[_length..]);
+        _length += value.Length;
+    }
+
+    public readonly string BuildString() => new(_buffer[.._length]);
+
+    public void Dispose()
+    {
+        if (_rented is { } rented)
+        {
+            _rented = null;
+            ArrayPool<char>.Shared.Return(rented);
+        }
+    }
+
+    private void EnsureCapacity(int additional)
+    {
+        if (_length + additional <= _buffer.Length)
+        {
+            return;
+        }
+
+        var nextSize = Math.Max(_buffer.Length * 2, _length + additional);
+        var next = ArrayPool<char>.Shared.Rent(nextSize);
+        _buffer[.._length].CopyTo(next);
+        if (_rented is { } previous)
+        {
+            ArrayPool<char>.Shared.Return(previous);
+        }
+
+        _rented = next;
+        _buffer = next;
+    }
+}
 
 internal static class RulesCompiler
 {
@@ -83,6 +166,7 @@ internal static class RulesCompiler
         List<bool> lists = [];
         List<(string Reference, string Column)>? referencedColumns = null;
         var usesNew = false;
+        var usesRequestTime = false;
         for (var index = 0; index < tokens.Count; index++)
         {
             var token = tokens[index];
@@ -90,7 +174,7 @@ internal static class RulesCompiler
             var opens = index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Open;
             if (token.Kind == SqlTokenKind.Word && index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Dot)
             {
-                var failure = Reference(tokens, ref index, columns, operation, previous.Is("IN"), HasTrue(lists), ref referencedColumns, ref usesNew) switch
+                var failure = Reference(tokens, ref index, columns, operation, previous.Is("IN"), HasTrue(lists), ref referencedColumns, ref usesNew, ref usesRequestTime) switch
                 {
                     ConditionPart part => Append(parts, part),
                     InvalidInput refused => refused,
@@ -160,7 +244,7 @@ internal static class RulesCompiler
 
         parts.Add(new ConditionPart(") IS TRUE)"));
         var compacted = Compact(parts);
-        var compiled = new CompiledCondition(compacted, usesNew);
+        var compiled = new CompiledCondition(compacted, usesNew) { UsesRequestTime = usesRequestTime };
         var entry = new CachedCondition(compiled, referencedColumns is null ? [] : [.. referencedColumns]);
         Store((condition, operation), entry);
         return compiled;
@@ -249,11 +333,87 @@ internal static class RulesCompiler
         var builder = new CharBuffer(initial);
         try
         {
+            AppendCondition(ref builder, condition, auth, requestTime, newPrefix, rowPrefix);
+            return builder.BuildString();
+        }
+        finally
+        {
+            builder.Dispose();
+        }
+    }
+
+    public static void AppendCondition(
+        ref CharBuffer builder,
+        CompiledCondition condition,
+        RulesAuth auth,
+        long? requestTime,
+        string? newPrefix = null,
+        string? rowPrefix = null)
+    {
+        if (condition.Parts is ConditionPart[] array)
+        {
+            for (var i = 0; i < array.Length; i++)
+            {
+                AppendPart(ref builder, array[i], auth, requestTime, newPrefix, rowPrefix);
+            }
+        }
+        else
+        {
+            var count = condition.Parts.Count;
+            for (var i = 0; i < count; i++)
+            {
+                AppendPart(ref builder, condition.Parts[i], auth, requestTime, newPrefix, rowPrefix);
+            }
+        }
+    }
+
+    public static ParameterizedCondition CompileParameterized(CompiledCondition condition, string? newPrefix = null, string? rowPrefix = null) =>
+        BuildParameterized(condition, auth: null, newPrefix, rowPrefix);
+
+    public static ParameterizedCondition RenderParameterized(CompiledCondition condition, RulesAuth auth, string? newPrefix = null, string? rowPrefix = null) =>
+        BuildParameterized(condition, auth, newPrefix, rowPrefix);
+
+    public static SqlValue BindParameter(ConditionParameter parameter, RulesAuth auth, long? requestTime) => parameter.Source switch
+    {
+        ConditionSource.Uid => SqlValue.FromText(auth.Uid),
+        ConditionSource.OrgId => auth.OrgId is { } orgId ? SqlValue.FromText(orgId) : SqlValue.Null,
+        ConditionSource.OrgRole => auth.OrgRole is { } orgRole ? SqlValue.FromText(orgRole) : SqlValue.Null,
+        ConditionSource.IsAnonymous => SqlValue.FromIntegral(auth.IsAnonymous ? 1 : 0),
+        ConditionSource.RequestTime => requestTime is { } milliseconds ? SqlValue.FromIntegral(milliseconds) : SqlValue.Null,
+        ConditionSource.Claim => parameter.Key is { } key && auth.Claims.TryGetValue(key, out var claim) ? ClaimValue(claim) : SqlValue.Null,
+        ConditionSource.ClaimList => parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list) && IsClaimList(list)
+            ? SqlValue.FromText(ClaimJson(list))
+            : SqlValue.Null,
+        _ => throw new UnreachableException(),
+    };
+
+    public static void BindParameters(ConditionParameter[] parameters, RulesAuth auth, long? requestTime, Span<SqlValue> destination)
+    {
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            destination[i] = BindParameter(parameters[i], auth, requestTime);
+        }
+    }
+
+    internal static bool IsClaimList(RulesClaim claim) => claim switch
+    {
+        IReadOnlyList<RulesScalar> => true,
+        string or long or double => false,
+    };
+
+    private static ParameterizedCondition BuildParameterized(CompiledCondition condition, RulesAuth? auth, string? newPrefix, string? rowPrefix)
+    {
+        Span<char> initial = stackalloc char[512];
+        var builder = new CharBuffer(initial);
+        List<ConditionParameter>? bound = null;
+        var hasClaimList = false;
+        try
+        {
             if (condition.Parts is ConditionPart[] array)
             {
                 for (var i = 0; i < array.Length; i++)
                 {
-                    AppendPart(ref builder, array[i], auth, requestTime, newPrefix, rowPrefix);
+                    AppendParameterizedPart(ref builder, array[i], auth, newPrefix, rowPrefix, ref bound, ref hasClaimList);
                 }
             }
             else
@@ -261,16 +421,64 @@ internal static class RulesCompiler
                 var count = condition.Parts.Count;
                 for (var i = 0; i < count; i++)
                 {
-                    AppendPart(ref builder, condition.Parts[i], auth, requestTime, newPrefix, rowPrefix);
+                    AppendParameterizedPart(ref builder, condition.Parts[i], auth, newPrefix, rowPrefix, ref bound, ref hasClaimList);
                 }
             }
 
-            return builder.BuildString();
+            return new ParameterizedCondition(builder.BuildString(), bound is null ? [] : [.. bound], hasClaimList);
         }
         finally
         {
             builder.Dispose();
         }
+    }
+
+    private static void AppendParameterizedPart(
+        ref CharBuffer builder,
+        ConditionPart part,
+        RulesAuth? auth,
+        string? newPrefix,
+        string? rowPrefix,
+        ref List<ConditionParameter>? bound,
+        ref bool hasClaimList)
+    {
+        _ = part switch
+        {
+            string literal when literal.StartsWith("new.", StringComparison.Ordinal) => AppendPrefixed(ref builder, newPrefix, literal.AsSpan(4)),
+            string literal when literal.StartsWith("row.", StringComparison.Ordinal) => AppendPrefixed(ref builder, rowPrefix, literal.AsSpan(4)),
+            string literal => AppendSpan(ref builder, literal),
+            ConditionParameter parameter => AppendParameterizedParameter(ref builder, parameter, auth, ref bound, ref hasClaimList),
+        };
+    }
+
+    private static bool AppendParameterizedParameter(
+        ref CharBuffer builder,
+        ConditionParameter parameter,
+        RulesAuth? auth,
+        ref List<ConditionParameter>? bound,
+        ref bool hasClaimList)
+    {
+        if (parameter.Source == ConditionSource.ClaimList)
+        {
+            hasClaimList = true;
+            if (auth is null || (parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list) && IsClaimList(list)))
+            {
+                builder.Append("(SELECT value FROM json_each(?))");
+                bound ??= [];
+                bound.Add(parameter);
+            }
+            else
+            {
+                builder.Append("(SELECT NULL)");
+            }
+
+            return true;
+        }
+
+        builder.Append('?');
+        bound ??= [];
+        bound.Add(parameter);
+        return true;
     }
 
     private static void AppendPart(ref CharBuffer builder, ConditionPart part, RulesAuth auth, long? requestTime, string? newPrefix, string? rowPrefix)
@@ -340,7 +548,7 @@ internal static class RulesCompiler
 
                 break;
             case ConditionSource.ClaimList:
-                if (parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list) && list is IReadOnlyList<RulesScalar>)
+                if (parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list) && IsClaimList(list))
                 {
                     builder.Append("(SELECT value FROM json_each(");
                     AppendLiteral(ref builder, ClaimJson(list));
@@ -552,7 +760,8 @@ internal static class RulesCompiler
         bool listPosition,
         bool inList,
         ref List<(string Reference, string Column)>? referencedColumns,
-        ref bool usesNew)
+        ref bool usesNew,
+        ref bool usesRequestTime)
     {
         var head = tokens[index].Value;
         List<SqlToken> path = [];
@@ -616,9 +825,13 @@ internal static class RulesCompiler
             case "auth" when isClaim:
                 return new ConditionPart(new ConditionParameter(string.Concat("auth_claim_", path[1].Value), ConditionSource.Claim, path[1].Value));
             case "request" when name == "time":
-                return operation == RulesOperation.Read
-                    ? new InvalidInput("request.time is not allowed in read", "reference_not_allowed")
-                    : new ConditionPart(new ConditionParameter("request_time", ConditionSource.RequestTime));
+                if (operation == RulesOperation.Read)
+                {
+                    return new InvalidInput("request.time is not allowed in read", "reference_not_allowed");
+                }
+
+                usesRequestTime = true;
+                return new ConditionPart(new ConditionParameter("request_time", ConditionSource.RequestTime));
             case "request" when name == "ulid":
                 return new InvalidInput("request.ulid is allowed only as a set.create value", "reference_not_allowed");
             default:
@@ -699,63 +912,6 @@ internal static class RulesCompiler
     private static InvalidInput Refused(string message) => new(message, "unsafe_where");
 
     private sealed record CachedCondition(CompiledCondition Compiled, (string Reference, string Column)[] ReferencedColumns);
-
-    private ref struct CharBuffer(Span<char> initial)
-    {
-        private Span<char> _buffer = initial;
-        private char[]? _rented;
-        private int _length;
-
-        public void Append(char value)
-        {
-            EnsureCapacity(1);
-            _buffer[_length++] = value;
-        }
-
-        public void Append(string value) => Append(value.AsSpan());
-
-        public void Append(scoped ReadOnlySpan<char> value)
-        {
-            if (value.IsEmpty)
-            {
-                return;
-            }
-
-            EnsureCapacity(value.Length);
-            value.CopyTo(_buffer[_length..]);
-            _length += value.Length;
-        }
-
-        public readonly string BuildString() => new(_buffer[.._length]);
-
-        public void Dispose()
-        {
-            if (_rented is { } rented)
-            {
-                _rented = null;
-                ArrayPool<char>.Shared.Return(rented);
-            }
-        }
-
-        private void EnsureCapacity(int additional)
-        {
-            if (_length + additional <= _buffer.Length)
-            {
-                return;
-            }
-
-            var nextSize = Math.Max(_buffer.Length * 2, _length + additional);
-            var next = ArrayPool<char>.Shared.Rent(nextSize);
-            _buffer[.._length].CopyTo(next);
-            if (_rented is { } previous)
-            {
-                ArrayPool<char>.Shared.Return(previous);
-            }
-
-            _rented = next;
-            _buffer = next;
-        }
-    }
 }
 
 [JsonSerializable(typeof(string))]

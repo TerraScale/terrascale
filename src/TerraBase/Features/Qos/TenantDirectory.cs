@@ -21,27 +21,34 @@ internal readonly union CallerTenantResolution(Tenant, NoTenant, ForeignProject,
 
 internal sealed class TenantDirectory(CatalogStore catalog)
 {
-    public ValueTask<CallerTenantResolution> ForCallerProjectAsync(Caller caller, Ulid projectId, CancellationToken cancellationToken)
+    public bool TryForCallerProject(Caller caller, Ulid projectId, out CallerTenantResolution resolved)
     {
         ArgumentNullException.ThrowIfNull(caller);
         if (PinnedElsewhere(caller, projectId))
         {
-            return ValueTask.FromResult<CallerTenantResolution>(ForeignProject.Instance);
+            resolved = ForeignProject.Instance;
+            return true;
         }
 
         if (catalog.TryGetProject(projectId, out var cachedProject)
             && catalog.TryGetOrganization(cachedProject.OrganizationId, out var cachedOrganization))
         {
-            CallerTenantResolution resolved = Owns(caller, cachedProject, cachedOrganization.CreatedBy)
+            resolved = Owns(caller, cachedProject, cachedOrganization.CreatedBy)
                 ? cachedProject.OrganizationId == PlatformCatalog.OrganizationId
                     ? NoTenant.Instance
-                    : new Tenant(cachedOrganization.Id, cachedOrganization.Plan)
+                    : cachedOrganization.AsTenant()
                 : ForeignProject.Instance;
-            return ValueTask.FromResult(resolved);
+            return true;
         }
 
-        return ForCallerProjectSlowAsync(caller, projectId, cancellationToken);
+        resolved = default;
+        return false;
     }
+
+    public ValueTask<CallerTenantResolution> ForCallerProjectAsync(Caller caller, Ulid projectId, CancellationToken cancellationToken) =>
+        TryForCallerProject(caller, projectId, out var resolved)
+            ? ValueTask.FromResult(resolved)
+            : ForCallerProjectSlowAsync(caller, projectId, cancellationToken);
 
     private async ValueTask<CallerTenantResolution> ForCallerProjectSlowAsync(Caller caller, Ulid projectId, CancellationToken cancellationToken)
     {
@@ -61,44 +68,62 @@ internal sealed class TenantDirectory(CatalogStore catalog)
         };
     }
 
-    public ValueTask<TenantResolution> ForOrganizationAsync(Ulid organizationId, CancellationToken cancellationToken)
+    public bool TryForOrganization(Ulid organizationId, out TenantResolution resolved)
     {
         if (organizationId == PlatformCatalog.OrganizationId)
         {
-            return ValueTask.FromResult<TenantResolution>(NoTenant.Instance);
+            resolved = NoTenant.Instance;
+            return true;
         }
 
         if (catalog.TryGetOrganization(organizationId, out var cached))
         {
-            return ValueTask.FromResult<TenantResolution>(new Tenant(cached.Id, cached.Plan));
+            resolved = cached.AsTenant();
+            return true;
         }
 
-        return ForOrganizationSlowAsync(organizationId, cancellationToken);
+        resolved = default;
+        return false;
     }
+
+    public ValueTask<TenantResolution> ForOrganizationAsync(Ulid organizationId, CancellationToken cancellationToken) =>
+        TryForOrganization(organizationId, out var resolved)
+            ? ValueTask.FromResult(resolved)
+            : ForOrganizationSlowAsync(organizationId, cancellationToken);
 
     private async ValueTask<TenantResolution> ForOrganizationSlowAsync(Ulid organizationId, CancellationToken cancellationToken)
     {
         var organization = await catalog.GetOrganizationAsync(organizationId, cancellationToken);
         return organization switch
         {
-            OrganizationRecord record => new Tenant(record.Id, record.Plan),
+            OrganizationRecord record => record.AsTenant(),
             ResourceNotFound => NoTenant.Instance,
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<TenantResolution> ForAsync(ProjectRecord project, CancellationToken cancellationToken)
+    public ValueTask<TenantResolution> ForAsync(ProjectRecord project, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
         if (project.OrganizationId == PlatformCatalog.OrganizationId)
         {
-            return NoTenant.Instance;
+            return ValueTask.FromResult<TenantResolution>(NoTenant.Instance);
         }
 
+        if (catalog.TryGetOrganization(project.OrganizationId, out var cached))
+        {
+            return ValueTask.FromResult<TenantResolution>(cached.AsTenant());
+        }
+
+        return ForSlowAsync(project, cancellationToken);
+    }
+
+    private async ValueTask<TenantResolution> ForSlowAsync(ProjectRecord project, CancellationToken cancellationToken)
+    {
         var organization = await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken);
         return organization switch
         {
-            OrganizationRecord record => new Tenant(record.Id, record.Plan),
+            OrganizationRecord record => record.AsTenant(),
             ResourceNotFound => new Tenant(project.OrganizationId, project.Plan ?? Plans.Hobby),
             BackendUnavailable unavailable => unavailable,
         };
@@ -109,7 +134,7 @@ internal sealed class TenantDirectory(CatalogStore catalog)
         var organization = await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken);
         return organization switch
         {
-            OrganizationRecord record when Owns(caller, project, record.CreatedBy) => new Tenant(record.Id, record.Plan),
+            OrganizationRecord record when Owns(caller, project, record.CreatedBy) => record.AsTenant(),
             ResourceNotFound when Owns(caller, project, creator: null) => new Tenant(project.OrganizationId, project.Plan ?? Plans.Hobby),
             OrganizationRecord or ResourceNotFound => ForeignProject.Instance,
             BackendUnavailable unavailable => unavailable,

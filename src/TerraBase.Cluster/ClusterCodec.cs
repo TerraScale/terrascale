@@ -10,12 +10,15 @@ namespace TerraBase.Cluster;
 
 internal static class ClusterCodec
 {
-    private const int BookmarkStackLimit = 512;
-    private const int FastBookmarkEntryLimit = 32;
     private const int StringPoolMask = 127;
     private const int MaxPooledStringBytes = 64;
+    private const int MaxSlabBytes = 256 * 1024;
+    private const int StackPayloadRangeLimit = 64;
 
     private static readonly PooledUtf8String?[] StringPool = new PooledUtf8String?[StringPoolMask + 1];
+
+    [ThreadStatic]
+    private static List<KeyValuePair<string, long>>? BookmarkScratch;
 
     extension(IBufferWriter<byte> writer)
     {
@@ -98,9 +101,9 @@ internal static class ClusterCodec
         }
     }
 
-    public static void WriteDeltaPush(IBufferWriter<byte> writer, Ulid databaseId, string senderNodeId, IReadOnlyList<CommitMetadata> commits, bool ackRequested)
+    public static void WriteDeltaPush(IBufferWriter<byte> writer, Ulid databaseId, string senderNodeId, IReadOnlyList<CommitMetadata> commits, bool ackRequested, int estimatedBytes = 0)
     {
-        var maxSize = 16 + 5 + (senderNodeId.Length * 3) + EstimateCommitsSize(commits) + 1;
+        var maxSize = estimatedBytes > 0 ? estimatedBytes : 16 + 5 + (senderNodeId.Length * 3) + EstimateCommitsSize(commits) + 1;
         var span = writer.GetSpan(maxSize);
         if (!databaseId.TryWriteBytes(span))
         {
@@ -127,23 +130,27 @@ internal static class ClusterCodec
             return string.Empty;
         }
 
-        var length = bytes.Length;
-        if (length > MaxPooledStringBytes)
-        {
-            return Encoding.UTF8.GetString(bytes);
-        }
+        return bytes.Length > MaxPooledStringBytes
+            ? Encoding.UTF8.GetString(bytes)
+            : DecodePooledShort(bytes).Value;
+    }
 
+    private static PooledUtf8String DecodePooledShort(ReadOnlySpan<byte> bytes)
+    {
+        var length = bytes.Length;
         var hash = ((uint)length * 31u) ^ bytes[0] ^ ((uint)bytes[length - 1] << 5) ^ ((uint)bytes[length >> 1] << 2);
         var slot = (int)(hash & StringPoolMask);
         var cached = Volatile.Read(ref StringPool[slot]);
         if (cached is not null && cached.Utf8.AsSpan().SequenceEqual(bytes))
         {
-            return cached.Value;
+            return cached;
         }
 
         var decoded = Encoding.UTF8.GetString(bytes);
-        Volatile.Write(ref StringPool[slot], new PooledUtf8String(bytes.ToArray(), decoded));
-        return decoded;
+        var isValidRegion = !string.IsNullOrWhiteSpace(decoded) && Encoding.UTF8.GetByteCount(decoded) <= CausalBookmark.MaxRegionBytes;
+        var created = new PooledUtf8String(bytes.ToArray(), decoded, isValidRegion);
+        Volatile.Write(ref StringPool[slot], created);
+        return created;
     }
 
     public static HlcTimestamp ReadHlc(ref WireReader reader)
@@ -174,12 +181,58 @@ internal static class ClusterCodec
             return CausalBookmark.Empty;
         }
 
-        if (count <= FastBookmarkEntryLimit)
+        if (count == 1)
         {
-            return ReadBookmarkFast(ref reader, count);
+            var regionBytes = reader.ReadBytesSpan();
+            var sequence = reader.ReadVarUInt64();
+            if (reader.IsFaulted || regionBytes.IsEmpty || regionBytes.Length > CausalBookmark.MaxRegionBytes || sequence is 0 or > long.MaxValue)
+            {
+                return CausalBookmark.Empty;
+            }
+
+            var pooled = DecodePooledShort(regionBytes);
+            return pooled.IsValidRegion ? CausalBookmark.ForRegion(pooled.Value, (long)sequence) : CausalBookmark.Empty;
         }
 
-        return ReadBookmarkSlow(ref reader, count, null);
+        var list = BookmarkScratch;
+        if (list is null)
+        {
+            list = new List<KeyValuePair<string, long>>(Math.Min(count, 16));
+            BookmarkScratch = list;
+        }
+        else
+        {
+            list.Clear();
+        }
+
+        try
+        {
+            for (var index = 0; index < count && !reader.IsFaulted; index++)
+            {
+                var regionBytes = reader.ReadBytesSpan();
+                var sequence = reader.ReadVarUInt64();
+                if (reader.IsFaulted || regionBytes.IsEmpty || regionBytes.Length > CausalBookmark.MaxRegionBytes || sequence > long.MaxValue)
+                {
+                    continue;
+                }
+
+                var pooled = DecodePooledShort(regionBytes);
+                if (pooled.IsValidRegion)
+                {
+                    list.Add(new(pooled.Value, (long)sequence));
+                }
+            }
+
+            return list.Count == 0 ? CausalBookmark.Empty : CausalBookmark.Create(list);
+        }
+        finally
+        {
+            list.Clear();
+            if (list.Capacity > 64)
+            {
+                list.Capacity = 64;
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -206,14 +259,87 @@ internal static class ClusterCodec
             return [];
         }
 
-        var commits = new CommitMetadata[count];
-        var read = 0;
-        for (; read < count && !reader.IsFaulted; read++)
+        if (count == 1)
         {
-            commits[read] = ReadCommit(ref reader);
+            return reader.IsFaulted ? [] : [ReadCommit(ref reader)];
         }
 
-        return read == count ? commits : commits[..read];
+        var headers = ArrayPool<CommitHeader>.Shared.Rent(count);
+        PayloadRange[]? rentedRanges = count > StackPayloadRangeLimit
+            ? ArrayPool<PayloadRange>.Shared.Rent(count)
+            : null;
+        Span<PayloadRange> ranges = rentedRanges is not null
+            ? rentedRanges.AsSpan(0, count)
+            : stackalloc PayloadRange[StackPayloadRangeLimit];
+        try
+        {
+            var read = 0;
+            var totalPayloadBytes = 0L;
+            for (; read < count && !reader.IsFaulted; read++)
+            {
+                var txId = reader.ReadUlid();
+                var origin = ReadPooledString(ref reader);
+                var sequence = (long)Math.Min(reader.ReadVarUInt64(), long.MaxValue);
+                var hlc = ReadCommitHlc(ref reader);
+                var epoch = reader.ReadVarUInt64();
+                var mode = ReadMode(ref reader);
+                var bookmark = ReadBookmark(ref reader);
+                var (start, length) = reader.ReadBytesRange();
+                headers[read] = new CommitHeader(txId, origin, sequence, hlc, epoch, mode, bookmark);
+                ranges[read] = new PayloadRange(start, length);
+                totalPayloadBytes += length;
+            }
+
+            if (read == 0)
+            {
+                return [];
+            }
+
+            var commits = new CommitMetadata[read];
+            if (totalPayloadBytes is > 0 and <= MaxSlabBytes)
+            {
+                var slab = new byte[(int)totalPayloadBytes];
+                var cursor = 0;
+                for (var index = 0; index < read; index++)
+                {
+                    ref readonly var header = ref headers[index];
+                    var range = ranges[index];
+                    ReadOnlyMemory<byte> payload;
+                    if (range.Length > 0)
+                    {
+                        reader.Slice(range.Start, range.Length).CopyTo(slab.AsSpan(cursor, range.Length));
+                        payload = slab.AsMemory(cursor, range.Length);
+                        cursor += range.Length;
+                    }
+                    else
+                    {
+                        payload = ReadOnlyMemory<byte>.Empty;
+                    }
+
+                    commits[index] = new CommitMetadata(header.TxId, header.Origin, header.Sequence, header.Hlc, header.Epoch, header.Mode, header.Bookmark, payload);
+                }
+            }
+            else
+            {
+                for (var index = 0; index < read; index++)
+                {
+                    ref readonly var header = ref headers[index];
+                    var range = ranges[index];
+                    ReadOnlyMemory<byte> payload = range.Length > 0 ? reader.Slice(range.Start, range.Length).ToArray() : ReadOnlyMemory<byte>.Empty;
+                    commits[index] = new CommitMetadata(header.TxId, header.Origin, header.Sequence, header.Hlc, header.Epoch, header.Mode, header.Bookmark, payload);
+                }
+            }
+
+            return commits;
+        }
+        finally
+        {
+            ArrayPool<CommitHeader>.Shared.Return(headers, clearArray: true);
+            if (rentedRanges is not null)
+            {
+                ArrayPool<PayloadRange>.Shared.Return(rentedRanges);
+            }
+        }
     }
 
     public static RowKey ReadRowKey(ref WireReader reader)
@@ -357,119 +483,26 @@ internal static class ClusterCodec
         return offset;
     }
 
-    private static CausalBookmark ReadBookmarkFast(ref WireReader reader, int count)
+    private static int EstimateBookmarkSize(IReadOnlyList<KeyValuePair<string, long>> entries)
     {
-        Span<byte> scratch = stackalloc byte[BookmarkStackLimit];
-        scratch[0] = 1;
-        scratch[1] = (byte)count;
-        var offset = 2;
-        var prevOffset = 0;
-        var prevLength = 0;
-
-        for (var index = 0; index < count && !reader.IsFaulted; index++)
+        var total = 5;
+        if (entries is KeyValuePair<string, long>[] array)
         {
-            var regionBytes = reader.ReadBytesSpan();
-            var sequence = reader.ReadVarUInt64();
-            var regionLen = regionBytes.Length;
-            if (regionLen is 0 or > CausalBookmark.MaxRegionBytes
-                || sequence is 0 or > long.MaxValue
-                || offset + 1 + regionLen + 10 > BookmarkStackLimit)
+            for (var index = 0; index < array.Length; index++)
             {
-                var fallback = CollectExistingFromScratch(scratch[..offset], index);
-                AddIfValid(fallback, regionBytes, sequence);
-                return ReadBookmarkSlow(ref reader, count - index - 1, fallback);
+                total += (array[index].Key.Length * 3) + 12;
             }
 
-            var writeStart = offset + 1;
-            var allPrintableAscii = true;
-            for (var byteIndex = 0; byteIndex < regionLen; byteIndex++)
-            {
-                var b = regionBytes[byteIndex];
-                if (b is < 0x21 or > 0x7E)
-                {
-                    allPrintableAscii = false;
-                    break;
-                }
-
-                scratch[writeStart + byteIndex] = b;
-            }
-
-            if (!allPrintableAscii || (index > 0 && regionBytes.SequenceCompareTo(scratch.Slice(prevOffset, prevLength)) <= 0))
-            {
-                var fallback = CollectExistingFromScratch(scratch[..offset], index);
-                AddIfValid(fallback, regionBytes, sequence);
-                return ReadBookmarkSlow(ref reader, count - index - 1, fallback);
-            }
-
-            scratch[offset] = (byte)regionLen;
-            prevOffset = writeStart;
-            prevLength = regionLen;
-            offset = writeStart + regionLen;
-            if (sequence < 0x80)
-            {
-                scratch[offset++] = (byte)sequence;
-            }
-            else
-            {
-                offset += WriteVarUInt64ToSpan(scratch[offset..], sequence);
-            }
+            return total;
         }
 
-        if (reader.IsFaulted)
+        for (var index = 0; index < entries.Count; index++)
         {
-            return CausalBookmark.Empty;
+            total += (entries[index].Key.Length * 3) + 12;
         }
 
-        ReadOnlySpan<byte> encoded = scratch[..offset];
-        return CausalBookmark.TryRead(ref encoded, out var bookmark) ? bookmark : CausalBookmark.Empty;
+        return total;
     }
-
-    private static List<KeyValuePair<string, long>> CollectExistingFromScratch(ReadOnlySpan<byte> scratch, int parsedCount)
-    {
-        List<KeyValuePair<string, long>> entries = new(parsedCount + 1);
-        var span = scratch[1..];
-        _ = ReadVarUIntSpan(ref span);
-        for (var index = 0; index < parsedCount; index++)
-        {
-            var len = (int)ReadVarUIntSpan(ref span);
-            var region = DecodePooledString(span[..len]);
-            span = span[len..];
-            var sequence = (long)ReadVarUIntSpan(ref span);
-            entries.Add(new(region, sequence));
-        }
-
-        return entries;
-    }
-
-    private static CausalBookmark ReadBookmarkSlow(ref WireReader reader, int remainingCount, List<KeyValuePair<string, long>>? existing)
-    {
-        var entries = existing ?? new List<KeyValuePair<string, long>>(remainingCount);
-        for (var index = 0; index < remainingCount && !reader.IsFaulted; index++)
-        {
-            var regionBytes = reader.ReadBytesSpan();
-            var sequence = reader.ReadVarUInt64();
-            AddIfValid(entries, regionBytes, sequence);
-        }
-
-        return CausalBookmark.Create(entries);
-    }
-
-    private static void AddIfValid(List<KeyValuePair<string, long>> entries, ReadOnlySpan<byte> regionBytes, ulong sequence)
-    {
-        if (regionBytes.IsEmpty || regionBytes.Length > CausalBookmark.MaxRegionBytes || sequence > long.MaxValue)
-        {
-            return;
-        }
-
-        var region = DecodePooledString(regionBytes);
-        if (!string.IsNullOrWhiteSpace(region))
-        {
-            entries.Add(new(region, (long)sequence));
-        }
-    }
-
-    private static int EstimateBookmarkSize(IReadOnlyList<KeyValuePair<string, long>> entries) =>
-        5 + (entries.Count * (CausalBookmark.MaxRegionBytes + 12));
 
     private static int WriteBookmarkToSpan(Span<byte> destination, IReadOnlyList<KeyValuePair<string, long>> entries)
     {
@@ -507,26 +540,10 @@ internal static class ClusterCodec
             return 1;
         }
 
-        if (length < 128)
+        if (length < 128 && Ascii.FromUtf16(value, destination.Slice(1, length), out _) == OperationStatus.Done)
         {
-            var allAscii = true;
-            for (var index = 0; index < length; index++)
-            {
-                var ch = value[index];
-                if (ch > 0x7F)
-                {
-                    allAscii = false;
-                    break;
-                }
-
-                destination[1 + index] = (byte)ch;
-            }
-
-            if (allAscii)
-            {
-                destination[0] = (byte)length;
-                return 1 + length;
-            }
+            destination[0] = (byte)length;
+            return 1 + length;
         }
 
         var byteCount = Encoding.UTF8.GetByteCount(value);
@@ -555,27 +572,6 @@ internal static class ClusterCodec
         return count;
     }
 
-    private static ulong ReadVarUIntSpan(ref ReadOnlySpan<byte> source)
-    {
-        ulong result = 0;
-        var shift = 0;
-        for (var index = 0; index < source.Length; index++)
-        {
-            var current = source[index];
-            result |= (ulong)(current & 0x7F) << shift;
-            if ((current & 0x80) == 0)
-            {
-                source = source[(index + 1)..];
-                return result;
-            }
-
-            shift += 7;
-        }
-
-        source = [];
-        return result;
-    }
-
     private static byte EncodeMode(ConsistencyMode mode) => mode switch
     {
         ConsistencyMode.Fast => 0,
@@ -583,5 +579,16 @@ internal static class ClusterCodec
         _ => throw new UnreachableException(),
     };
 
-    private sealed record PooledUtf8String(byte[] Utf8, string Value);
+    private sealed record PooledUtf8String(byte[] Utf8, string Value, bool IsValidRegion);
+
+    private readonly record struct PayloadRange(int Start, int Length);
+
+    private readonly record struct CommitHeader(
+        Ulid TxId,
+        string Origin,
+        long Sequence,
+        HlcTimestamp Hlc,
+        ulong Epoch,
+        ConsistencyMode Mode,
+        CausalBookmark Bookmark);
 }

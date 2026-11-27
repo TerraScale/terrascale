@@ -25,7 +25,7 @@ internal enum RaftProposeStatus : byte
     Failed = 2,
 }
 
-internal sealed record RaftWireEntry(long Term, int? CommandId, bool IsConfiguration, ReadOnlyMemory<byte> Payload);
+internal readonly record struct RaftWireEntry(long Term, int? CommandId, bool IsConfiguration, ReadOnlyMemory<byte> Payload);
 
 internal static class RaftCodec
 {
@@ -61,7 +61,7 @@ internal static class RaftCodec
     }
 }
 
-internal sealed record RaftVoteMessage(ushort Shard, RaftVoteKind Kind, ClusterMemberId Sender, long Term, long LastLogIndex, long LastLogTerm, int StateVersion) : IBinaryMessage<RaftVoteMessage>
+internal readonly record struct RaftVoteMessage(ushort Shard, RaftVoteKind Kind, ClusterMemberId Sender, long Term, long LastLogIndex, long LastLogTerm, int StateVersion) : IBinaryMessage<RaftVoteMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -86,7 +86,7 @@ internal sealed record RaftVoteMessage(ushort Shard, RaftVoteKind Kind, ClusterM
     }
 }
 
-internal sealed record RaftVoteResponse(long Term, long Value, bool HasValue) : IBinaryMessage<RaftVoteResponse>
+internal readonly record struct RaftVoteResponse(long Term, long Value, bool HasValue) : IBinaryMessage<RaftVoteResponse>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -103,7 +103,7 @@ internal sealed record RaftVoteResponse(long Term, long Value, bool HasValue) : 
     }
 }
 
-internal sealed record RaftAppendMessage(
+internal readonly record struct RaftAppendMessage(
     ushort Shard,
     RaftAppendKind Kind,
     ClusterMemberId Sender,
@@ -164,7 +164,7 @@ internal sealed record RaftAppendMessage(
     }
 }
 
-internal sealed record RaftAppendResponse(long Term, byte Heartbeat, long LastIndex, RaftProposeStatus Status) : IBinaryMessage<RaftAppendResponse>
+internal readonly record struct RaftAppendResponse(long Term, byte Heartbeat, long LastIndex, RaftProposeStatus Status) : IBinaryMessage<RaftAppendResponse>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {
@@ -183,7 +183,7 @@ internal sealed record RaftAppendResponse(long Term, byte Heartbeat, long LastIn
     }
 }
 
-internal sealed record RaftSnapshotMessage(ushort Shard, ClusterMemberId Sender, long Term, long SnapshotIndex, int StateVersion, RaftWireEntry Snapshot) : IBinaryMessage<RaftSnapshotMessage>
+internal readonly record struct RaftSnapshotMessage(ushort Shard, ClusterMemberId Sender, long Term, long SnapshotIndex, int StateVersion, RaftWireEntry Snapshot) : IBinaryMessage<RaftSnapshotMessage>
 {
     public void WriteTo(IBufferWriter<byte> writer)
     {

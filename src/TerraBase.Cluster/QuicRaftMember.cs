@@ -153,7 +153,7 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, Cl
         where TRequest : IBinaryMessage<TRequest>
         where TResponse : IBinaryMessage<TResponse>
     {
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, _pending.Token);
+        using var linked = PooledRaftCts.CreateLinked(token, _pending.Token);
         var outcome = await context.Client.CallAsync<TRequest, TResponse>(NodeId, messageType, request, context.RequestTimeout, linked.Token);
         var (response, failure) = outcome switch
         {

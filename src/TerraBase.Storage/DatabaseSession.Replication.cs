@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace TerraBase.Storage;
 
@@ -60,10 +62,30 @@ internal sealed partial class DatabaseSession
     public ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken) =>
         ExecuteReadAsync(request, limitResults: true, cancellationToken);
 
-    internal async ValueTask<SqlReadOutcome> ExecuteReadAsync(
+    internal ValueTask<SqlReadOutcome> ExecuteReadAsync(
         SqlStatementRequest request, bool limitResults, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<SqlReadOutcome>(cancellationToken);
+        }
+
+        if (request.After.IsEmpty || _versions.Satisfies(request.After))
+        {
+            var observed = _versions.Snapshot();
+            if (TryRentIdleReader(out var reader) && reader is not null)
+            {
+                return ValueTask.FromResult(ExecuteReadWithReader(reader, request, observed, limitResults, cancellationToken));
+            }
+        }
+
+        return ExecuteReadSlowAsync(request, limitResults, cancellationToken);
+    }
+
+    private async ValueTask<SqlReadOutcome> ExecuteReadSlowAsync(
+        SqlStatementRequest request, bool limitResults, CancellationToken cancellationToken)
+    {
         var waited = await WaitForBookmarkAsync(request.After, Options.BookmarkWaitTimeout, cancellationToken);
         if (waited switch { BookmarkReached => false, StorageTimeout => true })
         {
@@ -76,6 +98,12 @@ internal sealed partial class DatabaseSession
             return Closing();
         }
 
+        return ExecuteReadWithReader(reader, request, observed, limitResults, cancellationToken);
+    }
+
+    private SqlReadOutcome ExecuteReadWithReader(
+        SqliteConnection reader, SqlStatementRequest request, CausalBookmark observed, bool limitResults, CancellationToken cancellationToken)
+    {
         var info = _readerStatementInfo ??= new StatementInfo();
         try
         {
@@ -184,21 +212,7 @@ internal sealed partial class DatabaseSession
 
             var scope = new WriteScope(reader);
             List<RowKey> staleKeys = [];
-            foreach (var key in readSet)
-            {
-                if (!PrimaryKeyCodec.TryDecodeKeyString(key.Key.PrimaryKey, out var encoded))
-                {
-                    staleKeys.Add(key.Key);
-                    continue;
-                }
-
-                if (MetaStore.Load(scope, key.Key.Table, encoded).RowHlc != key.Observed)
-                {
-                    staleKeys.Add(key.Key);
-                }
-            }
-
-            List<string> staleTables = [.. scannedTables.Where(table => TableHlc(scope, table) > readSnapshot)];
+            ValidateReadSetCore(scope, readSet, scannedTables, readSnapshot, staleKeys, out var staleTables);
             _ = reader.Exec("COMMIT;");
             if (scope.Failed)
             {
@@ -212,6 +226,51 @@ internal sealed partial class DatabaseSession
         finally
         {
             ReturnReader(reader);
+        }
+    }
+
+    private static void ValidateReadSetCore(
+        WriteScope scope,
+        IReadOnlyList<ReadKey> readSet,
+        IReadOnlyList<string> scannedTables,
+        HlcTimestamp readSnapshot,
+        List<RowKey> staleKeys,
+        out List<string> staleTables)
+    {
+        Span<byte> keyBuffer = stackalloc byte[128];
+        for (var index = 0; index < readSet.Count; index++)
+        {
+            var key = readSet[index];
+            scoped ReadOnlySpan<byte> encoded;
+            if (PrimaryKeyCodec.TryDecodeKeyString(key.Key.PrimaryKey, keyBuffer, out var written))
+            {
+                encoded = keyBuffer[..written];
+            }
+            else if (Base64Url.GetMaxDecodedLength(key.Key.PrimaryKey.Length) > keyBuffer.Length
+                && PrimaryKeyCodec.TryDecodeKeyString(key.Key.PrimaryKey, out var fallback))
+            {
+                encoded = fallback;
+            }
+            else
+            {
+                staleKeys.Add(key.Key);
+                continue;
+            }
+
+            if (MetaStore.Load(scope, key.Key.Table, encoded).RowHlc != key.Observed)
+            {
+                staleKeys.Add(key.Key);
+            }
+        }
+
+        staleTables = [];
+        for (var index = 0; index < scannedTables.Count; index++)
+        {
+            var table = scannedTables[index];
+            if (MetaStore.LoadTableHlc(scope, table) > readSnapshot)
+            {
+                staleTables.Add(table);
+            }
         }
     }
 
@@ -271,26 +330,6 @@ internal sealed partial class DatabaseSession
     {
         results[index] = result;
         return null;
-    }
-
-    private static HlcTimestamp TableHlc(WriteScope scope, string table)
-    {
-        if (scope.MetaCache is { } cache && cache.TryGetTableHlc(table, out var cached))
-        {
-            return cached;
-        }
-
-        var hlc = scope.First(MetaStore.SelectTableHlcSql, SqlValue.FromText(table)) is { } row
-            && row[0].TryGetBlob(out var blob)
-            && blob.Length == HlcTimestamp.EncodedSize
-            ? HlcCodec.Read(blob.Span)
-            : HlcTimestamp.Zero;
-        if (!scope.Failed && hlc > HlcTimestamp.Zero)
-        {
-            scope.MetaCache?.SetTableHlc(table, hlc);
-        }
-
-        return hlc;
     }
 
     private RecoverOutcome Recover()
@@ -439,7 +478,6 @@ internal sealed partial class DatabaseSession
         if (allowGreedyDrain)
         {
             var reader = _requests.Reader;
-            var added = false;
             while (requests.Count < Options.MaxBatchSize
                 && reader.TryPeek(out var peeked)
                 && peeked is RemoteApplyRequest { IsReplay: false }
@@ -447,12 +485,7 @@ internal sealed partial class DatabaseSession
                 && extra is RemoteApplyRequest remoteExtra)
             {
                 requests.Add(remoteExtra);
-                added = true;
-            }
-
-            if (added)
-            {
-                Volatile.Write(ref _inFlight, [.. requests]);
+                _laneDrained.Add(remoteExtra);
             }
         }
 
@@ -915,67 +948,77 @@ internal sealed partial class DatabaseSession
                 progressed = false;
                 foreach (var (origin, queue) in _pending)
                 {
-                    if (isolate && order.Count > 0)
-                    {
-                        batchFull = true;
-                        break;
-                    }
-
+                    var isLocalOrigin = string.Equals(origin, Region, StringComparison.Ordinal);
                     var next = tentative.GetValueOrDefault(origin) + 1;
-                    if (!queue.TryGetValue(next, out var commit) || !Satisfied(commit, tentative))
+                    while (true)
                     {
-                        continue;
-                    }
-
-                    if (persist && commit.Hlc.IsValid && commit.Hlc.WallMs > horizon && !string.Equals(origin, Region, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    var decoded = MutationBatchCodec.TryDecode(commit.DeltaPayload.Span, out var batch);
-                    var malformed = !commit.Hlc.IsValid || !decoded;
-                    var regressed = false;
-                    if (malformed)
-                    {
-                        batch = EmptyBatch;
-                    }
-                    else if (batch.Ddl.Count > 0 && commit.SchemaEpoch != epoch + 1)
-                    {
-                        if (commit.SchemaEpoch > epoch)
-                        {
-                            continue;
-                        }
-
-                        regressed = true;
-                    }
-                    else if (batch.Ddl.Count == 0 && commit.SchemaEpoch > epoch)
-                    {
-                        continue;
-                    }
-
-                    if (persist)
-                    {
-                        var size = CommitFrame.EncodedSize(commit);
-                        if (size > CommitFrame.MaxEncodedSize)
-                        {
-                            _ = queue.Remove(next);
-                            return new StorageCorrupted(DatabaseId, "remote commit exceeds the maximum commit log frame size");
-                        }
-
-                        if (order.Count > 0 && bytes + size > Options.SegmentMaxBytes)
+                        if (isolate && order.Count > 0)
                         {
                             batchFull = true;
                             break;
                         }
 
-                        bytes += size;
+                        if (!queue.TryGetValue(next, out var commit) || !Satisfied(commit, tentative))
+                        {
+                            break;
+                        }
+
+                        if (persist && commit.Hlc.IsValid && commit.Hlc.WallMs > horizon && !isLocalOrigin)
+                        {
+                            break;
+                        }
+
+                        var decoded = MutationBatchCodec.TryDecode(commit.DeltaPayload.Span, out var batch);
+                        var malformed = !commit.Hlc.IsValid || !decoded;
+                        var regressed = false;
+                        if (malformed)
+                        {
+                            batch = EmptyBatch;
+                        }
+                        else if (batch.Ddl.Count > 0 && commit.SchemaEpoch != epoch + 1)
+                        {
+                            if (commit.SchemaEpoch > epoch)
+                            {
+                                break;
+                            }
+
+                            regressed = true;
+                        }
+                        else if (batch.Ddl.Count == 0 && commit.SchemaEpoch > epoch)
+                        {
+                            break;
+                        }
+
+                        if (persist)
+                        {
+                            var size = CommitFrame.EncodedSize(commit);
+                            if (size > CommitFrame.MaxEncodedSize)
+                            {
+                                _ = queue.Remove(next);
+                                return new StorageCorrupted(DatabaseId, "remote commit exceeds the maximum commit log frame size");
+                            }
+
+                            if (order.Count > 0 && bytes + size > Options.SegmentMaxBytes)
+                            {
+                                batchFull = true;
+                                break;
+                            }
+
+                            bytes += size;
+                        }
+
+                        var poison = malformed || regressed || (poisoned is not null && poisoned.Contains((origin, next)));
+                        epoch = !malformed && !regressed && batch.Ddl.Count > 0 ? commit.SchemaEpoch : epoch;
+                        order.Add(new PendingApply(commit, poison ? EmptyBatch : batch, poison, poison ? epoch : commit.SchemaEpoch));
+                        tentative[origin] = next;
+                        next++;
+                        progressed = true;
                     }
 
-                    var poison = malformed || regressed || (poisoned is not null && poisoned.Contains((origin, next)));
-                    epoch = !malformed && !regressed && batch.Ddl.Count > 0 ? commit.SchemaEpoch : epoch;
-                    order.Add(new PendingApply(commit, poison ? EmptyBatch : batch, poison, poison ? epoch : commit.SchemaEpoch));
-                    tentative[origin] = next;
-                    progressed = true;
+                    if (batchFull)
+                    {
+                        break;
+                    }
                 }
             }
 
@@ -1093,6 +1136,19 @@ internal sealed partial class DatabaseSession
             return status;
         }
 
+        return ApplyInOpenTransaction(CollectionsMarshal.AsSpan(order), persist, out skipped, out dataFault, skippedKeys, leaseDeadline);
+    }
+
+    private SqliteStatus ApplyInOpenTransaction(
+        ReadOnlySpan<PendingApply> order,
+        bool persist,
+        out int skipped,
+        out bool dataFault,
+        List<(string Origin, long Sequence)>? skippedKeys = null,
+        long? leaseDeadline = null)
+    {
+        skipped = 0;
+        dataFault = false;
         _capture.Suppressed = true;
         var scope = WriterScope();
         scope.Reset();
@@ -1105,10 +1161,11 @@ internal sealed partial class DatabaseSession
         var schemaChanged = false;
         var hasRemoteOrigin = false;
         var appliedRows = 0;
-        for (var index = 0; index < order.Count; index++)
+        TableSchema? lastSchema = null;
+        for (var index = 0; index < order.Length; index++)
         {
             var (commit, batch, quarantined, savedEpoch) = order[index];
-            var receipt = quarantined ? HlcTimestamp.Zero : _context.Clock.Observe(commit.Hlc);
+            var receipt = quarantined ? HlcTimestamp.Zero : _context.Clock.Observe(commit.Hlc, nowMs);
             var local = string.Equals(commit.OriginRegion, Region, StringComparison.Ordinal);
             hasRemoteOrigin |= !local;
             if (quarantined)
@@ -1134,19 +1191,20 @@ internal sealed partial class DatabaseSession
                     schemaChanged = true;
                 }
 
-                if (batch.Ddl.Count > 0 && _writer.ValidateSchemaCache() is { IsOk: false } stale)
-                {
-                    scope.Fail(stale.IsEnvironmental ? stale : new SqliteStatus(SqliteNative.Schema, stale.Message));
-                }
-
                 if (batch.Ddl.Count > 0)
                 {
+                    lastSchema = null;
+                    if (_writer.ValidateSchemaCache(force: true) is { IsOk: false } stale)
+                    {
+                        scope.Fail(stale.IsEnvironmental ? stale : new SqliteStatus(SqliteNative.Schema, stale.Message));
+                    }
+
                     _metaCache.Clear();
                 }
 
                 for (var mutationIndex = 0; mutationIndex < batch.Mutations.Count; mutationIndex++)
                 {
-                    CrdtApplier.Apply(scope, batch.Mutations[mutationIndex], commit.Hlc, receipt, batchTables);
+                    CrdtApplier.Apply(scope, batch.Mutations[mutationIndex], commit.Hlc, receipt, batchTables, ref lastSchema);
                 }
 
                 appliedRows += batch.Mutations.Count;
@@ -1200,7 +1258,7 @@ internal sealed partial class DatabaseSession
 
                 var last = log.LastSequence;
                 fresh.Clear();
-                for (var index = 0; index < order.Count; index++)
+                for (var index = 0; index < order.Length; index++)
                 {
                     var pending = order[index];
                     if (pending.Commit.Sequence > last && string.Equals(pending.Commit.OriginRegion, origin, StringComparison.Ordinal))
@@ -1230,6 +1288,11 @@ internal sealed partial class DatabaseSession
         versions.Clear();
         if (!scope.Failed)
         {
+            if (schemaChanged)
+            {
+                BumpSchemaGeneration();
+            }
+
             scope.Fail(LeaseExpired(leaseDeadline)
                 ? new SqliteStatus(SqliteNative.Interrupt, "the staged commit's participant lease expired")
                 : _writer.Exec("COMMIT;"));
@@ -1242,6 +1305,11 @@ internal sealed partial class DatabaseSession
             foreach (var (log, length, last) in appended)
             {
                 truncated &= log.Truncate(length, last);
+            }
+
+            if (schemaChanged)
+            {
+                BumpSchemaGeneration();
             }
 
             var cleared = _writer.RollbackOpenTransaction();
@@ -1269,7 +1337,6 @@ internal sealed partial class DatabaseSession
         }
 
         _rowsSinceCheckpoint += appliedRows;
-        _ = _writer.SetApplyMode(false);
         if (schemaChanged)
         {
             _writer.InvalidateSchemaCache();
@@ -1306,18 +1373,79 @@ internal sealed partial class DatabaseSession
             return new SchemaMismatch(DatabaseId, staged.SchemaEpoch, SchemaEpoch);
         }
 
-        var cleared = _writer.RollbackOpenTransaction();
-        if (!cleared.IsOk)
+        var begun = BeginWrite(applying: true);
+        if (!begun.IsOk)
         {
-            return cleared.ToBusy();
+            return begun.ToBusy();
         }
 
         var scope = WriterScope();
         scope.Reset();
         List<RowKey> staleKeys = [];
-        foreach (var observed in descriptor.Observed)
+        ValidateObservedSetCore(scope, descriptor.Observed, staged.ScannedTables, staged.ReadSnapshot, staleKeys, out var staleTables);
+        if (scope.Failed)
         {
-            if (!PrimaryKeyCodec.TryDecodeKeyString(observed.Key.PrimaryKey, out var encoded))
+            _ = _writer.Exec("ROLLBACK;");
+            _metaCache.Clear();
+            _ = _writer.SetApplyMode(false);
+            return scope.Failure.ToBusy();
+        }
+
+        if (staleKeys.Count > 0 || staleTables.Count > 0)
+        {
+            _ = _writer.Exec("ROLLBACK;");
+            return new ReadSetConflict(DatabaseId, staleKeys, staleTables);
+        }
+
+        if (staged.DeltaPayload.IsEmpty)
+        {
+            _ = _writer.Exec("ROLLBACK;");
+            return NoOpCommit(ConsistencyMode.Strong);
+        }
+
+        var batch = descriptor.Batch;
+        _ = _context.Clock.Observe(commitHlc);
+        var sequence = _versions.Get(Region) + 1;
+        var epoch = batch.Ddl.Count > 0 ? SchemaEpoch + 1 : SchemaEpoch;
+        var commit = new CommitMetadata(staged.TxId, Region, sequence, commitHlc, epoch, ConsistencyMode.Strong, BookmarkWith(Region, sequence), staged.DeltaPayload);
+        ReadOnlySpan<PendingApply> single = [new PendingApply(commit, batch, false, commit.SchemaEpoch)];
+        var status = ApplyInOpenTransaction(single, persist: true, out _, out _, skippedKeys: null, leaseDeadline: leaseDeadline);
+        if (!status.IsOk)
+        {
+            return LeaseExpired(leaseDeadline)
+                ? new StorageTimeout("the staged commit's participant lease expired before commit")
+                : status.ToBusy();
+        }
+
+        RecordFilteredChange(batch);
+        Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
+        _versions.AdvanceSingle(Region, sequence, commit.Bookmark);
+        return commit;
+    }
+
+    private static void ValidateObservedSetCore(
+        WriteScope scope,
+        IReadOnlyList<ObservedRow> observedRows,
+        IReadOnlyList<string> scannedTables,
+        HlcTimestamp readSnapshot,
+        List<RowKey> staleKeys,
+        out List<string> staleTables)
+    {
+        Span<byte> keyBuffer = stackalloc byte[128];
+        for (var index = 0; index < observedRows.Count; index++)
+        {
+            var observed = observedRows[index];
+            scoped ReadOnlySpan<byte> encoded;
+            if (PrimaryKeyCodec.TryDecodeKeyString(observed.Key.PrimaryKey, keyBuffer, out var written))
+            {
+                encoded = keyBuffer[..written];
+            }
+            else if (Base64Url.GetMaxDecodedLength(observed.Key.PrimaryKey.Length) > keyBuffer.Length
+                && PrimaryKeyCodec.TryDecodeKeyString(observed.Key.PrimaryKey, out var fallback))
+            {
+                encoded = fallback;
+            }
+            else
             {
                 staleKeys.Add(observed.Key);
                 continue;
@@ -1330,43 +1458,14 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        List<string> staleTables = [.. staged.ScannedTables.Where(table => TableHlc(scope, table) > staged.ReadSnapshot)];
-        if (scope.Failed)
+        staleTables = [];
+        for (var index = 0; index < scannedTables.Count; index++)
         {
-            return scope.Failure.ToBusy();
+            var table = scannedTables[index];
+            if (MetaStore.LoadTableHlc(scope, table) > readSnapshot)
+            {
+                staleTables.Add(table);
+            }
         }
-
-        if (staleKeys.Count > 0 || staleTables.Count > 0)
-        {
-            return new ReadSetConflict(DatabaseId, staleKeys, staleTables);
-        }
-
-        if (staged.DeltaPayload.IsEmpty)
-        {
-            return NoOpCommit(ConsistencyMode.Strong);
-        }
-
-        if (!MutationBatchCodec.TryDecode(staged.DeltaPayload.Span, out var batch))
-        {
-            return new StorageBusy("staged payload could not be decoded", TimeSpan.Zero);
-        }
-
-        _ = _context.Clock.Observe(commitHlc);
-        var sequence = _versions.Get(Region) + 1;
-        var epoch = batch.Ddl.Count > 0 ? SchemaEpoch + 1 : SchemaEpoch;
-        var commit = new CommitMetadata(staged.TxId, Region, sequence, commitHlc, epoch, ConsistencyMode.Strong, BookmarkWith(Region, sequence), staged.DeltaPayload);
-        var status = ApplyInTransaction([new PendingApply(commit, batch, false, commit.SchemaEpoch)], persist: true, out _, out _, skippedKeys: null, leaseDeadline: leaseDeadline);
-        if (!status.IsOk)
-        {
-            return LeaseExpired(leaseDeadline)
-                ? new StorageTimeout("the staged commit's participant lease expired before commit")
-                : status.ToBusy();
-        }
-
-        RecordFilteredChange(batch);
-        Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
-        _laneVersionUpdate[0] = new KeyValuePair<string, long>(Region, sequence);
-        _versions.Set(_laneVersionUpdate);
-        return commit;
     }
 }

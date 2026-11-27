@@ -41,7 +41,7 @@ internal sealed class SqlExecuteEndpoint(SqlFlow flow)
             return new InvalidInput("durability is local or all", "invalid_request");
         }
 
-        var outcome = await flow.ExecuteAsync(HttpContext, request.Project, request.Database, request.Statements, cancellationToken);
+        var outcome = await flow.ExecuteAsync(HttpContext, request, cancellationToken);
         return outcome switch
         {
             SqlRun run => SqlWire.Legacy(run.Results),

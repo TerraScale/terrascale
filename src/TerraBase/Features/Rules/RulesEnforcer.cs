@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -14,14 +15,27 @@ internal readonly union EnforcementOutcome(EnforcedSql, SqlRefusal);
 
 internal readonly union StatementEnforcement(SqlStatement, SqlRefusal);
 
-internal readonly union ReadConditionOutcome(RewrittenSql, SqlRefusal);
+internal readonly union TemplateBuildOutcome(EnforcedTemplate, SqlRefusal);
+
+internal readonly union ReadTemplateOutcome(ReadTemplate, SqlRefusal);
 
 internal readonly union EndUserStatementOutcome(EndUserStatement, SqlRefusal);
 
 internal sealed record EnforcedSql(IReadOnlyList<SqlStatement> Statements, string? RulesVersion);
 
-internal sealed record RewrittenSql(
-    string[] Pieces, IReadOnlyDictionary<string, string> Guards, IReadOnlyDictionary<string, SqlTableScope> Tables, long? SchemaVersion);
+internal sealed record EnforcedTemplate(
+    string[] StaticChunks,
+    CompiledCondition[] Conditions,
+    SqlRuleScope Scope,
+    bool UsesRequestTime);
+
+internal sealed record ReadTemplate(
+    string[] Pieces,
+    string[] GuardHeaders,
+    CompiledCondition[] GuardConditions,
+    IReadOnlyDictionary<string, string> Guards,
+    IReadOnlyDictionary<string, SqlTableScope> Tables,
+    long? SchemaVersion);
 
 internal delegate ValueTask<SqlReadOutcome> CatalogReader(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken);
 
@@ -99,24 +113,126 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
     private int _liveTableCount;
 
-    public async ValueTask<EnforcementOutcome> ApplyAsync(
+    private readonly ConcurrentDictionary<EnforcedTemplateKey, EnforcedTemplate> _templates = new();
+
+    private int _templateCount;
+
+    public ValueTask<EnforcementOutcome> ApplyAsync(
         Ulid databaseId, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken, CatalogReader? catalog = null)
     {
         ArgumentNullException.ThrowIfNull(auth);
         ArgumentNullException.ThrowIfNull(statements);
-        var loaded = await store.CurrentAsync(databaseId, cancellationToken);
+        var session = catalog?.Target is SessionCatalog sessionCatalog ? sessionCatalog.Session : null;
+        return ApplyCoreAsync(databaseId, auth, statements, session, catalog, cancellationToken);
+    }
+
+    public ValueTask<EnforcementOutcome> ApplyAsync(
+        Ulid databaseId, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, ISqlDatabaseSession session, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(auth);
+        ArgumentNullException.ThrowIfNull(statements);
+        ArgumentNullException.ThrowIfNull(session);
+        return ApplyCoreAsync(databaseId, auth, statements, session, catalog: null, cancellationToken);
+    }
+
+    private ValueTask<EnforcementOutcome> ApplyCoreAsync(
+        Ulid databaseId,
+        RulesAuth auth,
+        IReadOnlyList<PlannedStatement> statements,
+        ISqlDatabaseSession? session,
+        CatalogReader? catalog,
+        CancellationToken cancellationToken)
+    {
+        var cacheSession = session is not null && session.DatabaseId == databaseId ? session : null;
+        var loaded = store.CurrentAsync(databaseId, cancellationToken);
+        if (loaded.IsCompletedSuccessfully)
+        {
+            return loaded.Result switch
+            {
+                StoredRules current when cacheSession is not null && TryRenderAllCached(current.Version, cacheSession, auth, statements, out var fast) =>
+                    ValueTask.FromResult<EnforcementOutcome>(fast),
+                StoredRules current => RewriteAllAsync(current.Rules, current.Version, session, cacheSession, auth, statements, catalog, cancellationToken),
+                ResourceNotFound => DenyMissingRulesAsync(session, auth, statements, catalog, cancellationToken),
+                BackendUnavailable unavailable => ValueTask.FromResult<EnforcementOutcome>(SqlRefusal.From(unavailable)),
+            };
+        }
+
+        return ApplySlowAsync(loaded, session, cacheSession, auth, statements, catalog, cancellationToken);
+    }
+
+    private async ValueTask<EnforcementOutcome> ApplySlowAsync(
+        ValueTask<StoredRulesLookup> loadedTask,
+        ISqlDatabaseSession? session,
+        ISqlDatabaseSession? cacheSession,
+        RulesAuth auth,
+        IReadOnlyList<PlannedStatement> statements,
+        CatalogReader? catalog,
+        CancellationToken cancellationToken)
+    {
+        var loaded = await loadedTask;
         return loaded switch
         {
-            StoredRules current => await RewriteAllAsync(current.Rules, current.Version, auth, statements, catalog, cancellationToken),
-            ResourceNotFound => await DenyMissingRulesAsync(auth, statements, catalog, cancellationToken),
+            StoredRules current when cacheSession is not null && TryRenderAllCached(current.Version, cacheSession, auth, statements, out var fast) => fast,
+            StoredRules current => await RewriteAllAsync(current.Rules, current.Version, session, cacheSession, auth, statements, catalog, cancellationToken),
+            ResourceNotFound => await DenyMissingRulesAsync(session, auth, statements, catalog, cancellationToken),
             BackendUnavailable unavailable => SqlRefusal.From(unavailable),
         };
     }
 
-    private async ValueTask<EnforcementOutcome> DenyMissingRulesAsync(
-        RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CatalogReader? catalog, CancellationToken cancellationToken)
+    private bool TryRenderAllCached(
+        string rulesVersion,
+        ISqlDatabaseSession session,
+        RulesAuth auth,
+        IReadOnlyList<PlannedStatement> statements,
+        [NotNullWhen(true)] out EnforcedSql? enforced)
     {
-        var checkedEmpty = await RewriteAllAsync(new RulesSet(FrozenDictionary<string, RulesTable>.Empty), "", auth, statements, catalog, cancellationToken);
+        var count = statements.Count;
+        if (count == 0)
+        {
+            enforced = new EnforcedSql([], rulesVersion);
+            return true;
+        }
+
+        var databaseId = session.DatabaseId;
+        var incarnation = session.SessionIncarnation;
+        var epoch = session.SchemaEpoch;
+        var first = statements[0];
+        if (first.Statement.Sql.Length > MaxCachedSqlLength
+            || !_templates.TryGetValue(new EnforcedTemplateKey(databaseId, incarnation, epoch, rulesVersion, first.Statement.Sql, first.Kind), out var firstTemplate))
+        {
+            enforced = null;
+            return false;
+        }
+
+        if (count == 1)
+        {
+            enforced = new EnforcedSql([RenderTemplate(firstTemplate, auth, first.Statement)], rulesVersion);
+            return true;
+        }
+
+        var rewritten = new SqlStatement[count];
+        rewritten[0] = RenderTemplate(firstTemplate, auth, first.Statement);
+        for (var i = 1; i < count; i++)
+        {
+            var planned = statements[i];
+            if (planned.Statement.Sql.Length > MaxCachedSqlLength
+                || !_templates.TryGetValue(new EnforcedTemplateKey(databaseId, incarnation, epoch, rulesVersion, planned.Statement.Sql, planned.Kind), out var template))
+            {
+                enforced = null;
+                return false;
+            }
+
+            rewritten[i] = RenderTemplate(template, auth, planned.Statement);
+        }
+
+        enforced = new EnforcedSql(rewritten, rulesVersion);
+        return true;
+    }
+
+    private async ValueTask<EnforcementOutcome> DenyMissingRulesAsync(
+        ISqlDatabaseSession? session, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CatalogReader? catalog, CancellationToken cancellationToken)
+    {
+        var checkedEmpty = await RewriteAllAsync(new RulesSet(FrozenDictionary<string, RulesTable>.Empty), "", session, cacheSession: null, auth, statements, catalog, cancellationToken);
         return checkedEmpty switch
         {
             SqlRefusal refusal => refusal,
@@ -125,12 +241,19 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
     }
 
     private async ValueTask<EnforcementOutcome> RewriteAllAsync(
-        RulesSet rules, string rulesVersion, RulesAuth auth, IReadOnlyList<PlannedStatement> statements, CatalogReader? catalog, CancellationToken cancellationToken)
+        RulesSet rules,
+        string rulesVersion,
+        ISqlDatabaseSession? session,
+        ISqlDatabaseSession? cacheSession,
+        RulesAuth auth,
+        IReadOnlyList<PlannedStatement> statements,
+        CatalogReader? catalog,
+        CancellationToken cancellationToken)
     {
         var rewritten = new SqlStatement[statements.Count];
         for (var index = 0; index < statements.Count; index++)
         {
-            var outcome = await RewriteAsync(rules, auth, statements[index], index, catalog, cancellationToken);
+            var outcome = await RewriteWithCacheAsync(rules, rulesVersion, session, cacheSession, auth, statements[index], index, catalog, cancellationToken);
             var failure = outcome switch
             {
                 SqlStatement statement => Assign(rewritten, index, statement),
@@ -145,11 +268,122 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return new EnforcedSql(rewritten, rulesVersion);
     }
 
+    private async ValueTask<StatementEnforcement> RewriteWithCacheAsync(
+        RulesSet rules,
+        string rulesVersion,
+        ISqlDatabaseSession? session,
+        ISqlDatabaseSession? cacheSession,
+        RulesAuth auth,
+        PlannedStatement planned,
+        int index,
+        CatalogReader? catalog,
+        CancellationToken cancellationToken)
+    {
+        var canCache = cacheSession is not null && rulesVersion.Length > 0 && planned.Statement.Sql.Length <= MaxCachedSqlLength;
+        ulong epoch = 0;
+        long incarnation = 0;
+        EnforcedTemplateKey key = default;
+        if (canCache && cacheSession is not null)
+        {
+            epoch = cacheSession.SchemaEpoch;
+            incarnation = cacheSession.SessionIncarnation;
+            key = new EnforcedTemplateKey(cacheSession.DatabaseId, incarnation, epoch, rulesVersion, planned.Statement.Sql, planned.Kind);
+            if (_templates.TryGetValue(key, out var cached))
+            {
+                return RenderTemplate(cached, auth, planned.Statement);
+            }
+        }
+
+        var outcome = await BuildTemplateAsync(rules, planned, index, session, catalog, cancellationToken);
+        return outcome switch
+        {
+            EnforcedTemplate built => RenderAndCache(built, canCache, cacheSession, key, epoch, incarnation, auth, planned.Statement),
+            SqlRefusal refusal => refusal,
+        };
+    }
+
+    private SqlStatement RenderAndCache(
+        EnforcedTemplate built,
+        bool canCache,
+        ISqlDatabaseSession? cacheSession,
+        EnforcedTemplateKey key,
+        ulong epoch,
+        long incarnation,
+        RulesAuth auth,
+        SqlStatement statement)
+    {
+        if (canCache && cacheSession is not null && cacheSession.SchemaEpoch == epoch && cacheSession.SessionIncarnation == incarnation)
+        {
+            StoreTemplate(key, built);
+        }
+
+        return RenderTemplate(built, auth, statement);
+    }
+
+    private void StoreTemplate(EnforcedTemplateKey key, EnforcedTemplate template)
+    {
+        if (!_templates.ContainsKey(key) && Volatile.Read(ref _templateCount) >= MaxCacheEntries)
+        {
+            _templates.Clear();
+            Volatile.Write(ref _templateCount, 0);
+        }
+
+        if (_templates.TryAdd(key, template))
+        {
+            Interlocked.Increment(ref _templateCount);
+        }
+        else
+        {
+            _templates[key] = template;
+        }
+    }
+
+    private SqlStatement RenderTemplate(EnforcedTemplate template, RulesAuth auth, SqlStatement statement)
+    {
+        if (template.Conditions.Length == 0)
+        {
+            return statement with { Sql = template.StaticChunks[0], Scope = template.Scope };
+        }
+
+        long? renderTime = template.UsesRequestTime ? time.GetUtcNow().ToUnixTimeMilliseconds() : null;
+        Span<char> initial = stackalloc char[512];
+        var builder = new CharBuffer(initial);
+        try
+        {
+            builder.Append(template.StaticChunks[0]);
+            var conditions = template.Conditions;
+            for (var i = 0; i < conditions.Length; i++)
+            {
+                RulesCompiler.AppendCondition(ref builder, conditions[i], auth, renderTime);
+                builder.Append(template.StaticChunks[i + 1]);
+            }
+
+            return statement with { Sql = builder.BuildString(), Scope = template.Scope };
+        }
+        finally
+        {
+            builder.Dispose();
+        }
+    }
+
     public async ValueTask<StatementEnforcement> RewriteAsync(
         RulesSet rules, RulesAuth auth, PlannedStatement planned, int index, CatalogReader? catalog, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rules);
+        ArgumentNullException.ThrowIfNull(auth);
         ArgumentNullException.ThrowIfNull(planned);
+        var session = catalog?.Target is SessionCatalog sessionCatalog ? sessionCatalog.Session : null;
+        var outcome = await BuildTemplateAsync(rules, planned, index, session, catalog, cancellationToken);
+        return outcome switch
+        {
+            EnforcedTemplate built => RenderTemplate(built, auth, planned.Statement),
+            SqlRefusal refusal => refusal,
+        };
+    }
+
+    private async ValueTask<TemplateBuildOutcome> BuildTemplateAsync(
+        RulesSet rules, PlannedStatement planned, int index, ISqlDatabaseSession? session, CatalogReader? catalog, CancellationToken cancellationToken)
+    {
         if (planned.Kind is StatementKind.Schema or StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback)
         {
             return SqlRefusal.RuleDenied("end users cannot change the schema or control transactions", index);
@@ -157,13 +391,13 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
         return Parse(planned.Statement.Sql, index) switch
         {
-            EndUserStatement statement => await EnforceAsync(rules, auth, planned, statement, index, catalog, cancellationToken),
+            EndUserStatement statement => await EnforceTemplateAsync(rules, planned, statement, index, session, catalog, cancellationToken),
             SqlRefusal refusal => refusal,
         };
     }
 
-    private async ValueTask<StatementEnforcement> EnforceAsync(
-        RulesSet rules, RulesAuth auth, PlannedStatement planned, EndUserStatement statement, int index, CatalogReader? catalog, CancellationToken cancellationToken)
+    private async ValueTask<TemplateBuildOutcome> EnforceTemplateAsync(
+        RulesSet rules, PlannedStatement planned, EndUserStatement statement, int index, ISqlDatabaseSession? session, CatalogReader? catalog, CancellationToken cancellationToken)
     {
         var main = statement.Tokens[statement.Main];
         if (main.Is("PRAGMA"))
@@ -174,25 +408,21 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return planned.Kind switch
         {
             StatementKind.Read when main.Is("SELECT") || main.Is("VALUES") =>
-                await ReadsAsync(rules, auth, statement, index, skipTarget: -1, new SchemaVersions(), catalog, cancellationToken) switch
+                await BuildReadsTemplateAsync(rules, statement, index, skipTarget: -1, new SchemaVersions(), session, catalog, cancellationToken) switch
                 {
-                    RewrittenSql text => planned.Statement with
-                    {
-                        Sql = Join(text.Pieces),
-                        Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, null, text.SchemaVersion),
-                    },
+                    ReadTemplate read => AssembleReadTemplate(statement, read),
                     SqlRefusal refusal => refusal,
                 },
             StatementKind.Read => SqlRefusal.RuleDenied("end users run SELECT, UPDATE and DELETE statements", index),
-            StatementKind.Write => await WriteAsync(rules, auth, planned, statement, index, catalog, cancellationToken),
+            StatementKind.Write => await BuildWriteTemplateAsync(rules, statement, index, session, catalog, cancellationToken),
             StatementKind.Schema or StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback =>
                 SqlRefusal.RuleDenied("end users cannot change the schema or control transactions", index),
             _ => throw new UnreachableException(),
         };
     }
 
-    private async ValueTask<StatementEnforcement> WriteAsync(
-        RulesSet rules, RulesAuth auth, PlannedStatement planned, EndUserStatement statement, int index, CatalogReader? catalog, CancellationToken cancellationToken)
+    private async ValueTask<TemplateBuildOutcome> BuildWriteTemplateAsync(
+        RulesSet rules, EndUserStatement statement, int index, ISqlDatabaseSession? session, CatalogReader? catalog, CancellationToken cancellationToken)
     {
         var tokens = statement.Tokens;
         var verb = tokens[statement.Main];
@@ -269,7 +499,8 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             : table;
         var versions = new SchemaVersions();
         LiveTable? targetLive = null;
-        if (catalog is not null && Track(await LiveTableAsync(catalog, table, index, cancellationToken), ref versions, out targetLive) is { } targetFailure)
+        if ((session is not null || catalog is not null)
+            && Track(await LiveTableAsync(session, catalog, table, index, cancellationToken), ref versions, out targetLive) is { } targetFailure)
         {
             return targetFailure;
         }
@@ -281,21 +512,22 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
         var targetVisible = BuildVisibleScope(readableColumns, compiled, HasRowIdKeys(tokens, targetAt, targetAlias, targetLive, written));
         var target = new SqlTargetScope(table, targetVisible, readableColumns, writableSet);
-        var predicate = RulesCompiler.Render(compiled, auth, time.GetUtcNow().ToUnixTimeMilliseconds());
-        var rewrittenReads = await ReadsAsync(rules, auth, statement, index, skipTarget: targetAt, versions, catalog, cancellationToken);
+        var rewrittenReads = await BuildReadsTemplateAsync(rules, statement, index, skipTarget: targetAt, versions, session, catalog, cancellationToken);
         return rewrittenReads switch
         {
-            RewrittenSql text => planned.Statement with
-            {
-                Sql = AppendWhere(tokens, statement.Main, text.Pieces, predicate),
-                Scope = new SqlRuleScope(text.Tables, statement.Ctes, text.Guards, target, text.SchemaVersion),
-            },
+            ReadTemplate read => AssembleWriteTemplate(statement, read, compiled, target),
             SqlRefusal refusal => refusal,
         };
     }
 
-    private async ValueTask<ReadConditionOutcome> ReadsAsync(
-        RulesSet rules, RulesAuth auth, EndUserStatement statement, int index, int skipTarget, SchemaVersions versions, CatalogReader? catalog,
+    private async ValueTask<ReadTemplateOutcome> BuildReadsTemplateAsync(
+        RulesSet rules,
+        EndUserStatement statement,
+        int index,
+        int skipTarget,
+        SchemaVersions versions,
+        ISqlDatabaseSession? session,
+        CatalogReader? catalog,
         CancellationToken cancellationToken)
     {
         var tokens = statement.Tokens;
@@ -442,7 +674,8 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             {
                 live = existingPlan.Live;
             }
-            else if (catalog is not null && Track(await LiveTableAsync(catalog, table, index, cancellationToken), ref versions, out live) is { } liveFailure)
+            else if ((session is not null || catalog is not null)
+                && Track(await LiveTableAsync(session, catalog, table, index, cancellationToken), ref versions, out live) is { } liveFailure)
             {
                 return liveFailure;
             }
@@ -505,22 +738,20 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
         if (ordered is null || ordered.Count == 0)
         {
-            return new RewrittenSql(pieces, EmptyGuards, EmptyTables, versions.Version);
+            return new ReadTemplate(pieces, [], [], EmptyGuards, EmptyTables, versions.Version);
         }
 
         Dictionary<string, IReadOnlyList<string>?>? guardColumns = anyKeys ? new Dictionary<string, IReadOnlyList<string>?>(ordered.Count, AsciiIgnoreCaseComparer.Instance) : null;
         HashSet<string>? keyed = anyKeys ? new HashSet<string>(AsciiIgnoreCaseComparer.Instance) : null;
         var guards = new Dictionary<string, string>(ordered.Count, AsciiIgnoreCaseComparer.Instance);
         var scoped = new Dictionary<string, SqlTableScope>(ordered.Count, AsciiIgnoreCaseComparer.Instance);
-        var definitions = new StringBuilder();
-        var renderTime = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var guardHeaders = new string[ordered.Count];
+        var guardConditions = new CompiledCondition[ordered.Count];
+        var headerBuilder = new StringBuilder();
         for (var i = 0; i < ordered.Count; i++)
         {
             var plan = ordered[i];
-            if (i > 0)
-            {
-                definitions.Append(", ");
-            }
+            headerBuilder.Clear();
 
             var hasPlanKeys = plan.Keys is { Count: > 0 };
             if (hasPlanKeys && plan.Keys is { } planKeys)
@@ -534,31 +765,31 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 guardColumns[plan.Table] = plan.Readable ?? plan.Live?.Names;
             }
 
-            definitions.Append(RulesCompiler.Quote(plan.Name));
-            definitions.Append(" AS (SELECT ");
+            headerBuilder.Append(RulesCompiler.Quote(plan.Name));
+            headerBuilder.Append(" AS (SELECT ");
             if (hasPlanKeys && plan.Keys is { } keys)
             {
                 for (var k = 0; k < keys.Count; k++)
                 {
                     if (k > 0)
                     {
-                        definitions.Append(", ");
+                        headerBuilder.Append(", ");
                     }
 
-                    definitions.Append(plan.Live?.RowIdSource ?? keys[k]);
-                    definitions.Append(" AS ");
-                    definitions.Append(RulesCompiler.Quote(keys[k]));
+                    headerBuilder.Append(plan.Live?.RowIdSource ?? keys[k]);
+                    headerBuilder.Append(" AS ");
+                    headerBuilder.Append(RulesCompiler.Quote(keys[k]));
                 }
 
-                definitions.Append(", ");
+                headerBuilder.Append(", ");
             }
 
-            definitions.Append(plan.Readable is null ? "*" : CachedQuotedColumns(plan.Readable));
-            definitions.Append(" FROM main.");
-            definitions.Append(RulesCompiler.Quote(plan.Table));
-            definitions.Append(" WHERE ");
-            definitions.Append(RulesCompiler.Render(plan.Condition, auth, renderTime));
-            definitions.Append(')');
+            headerBuilder.Append(plan.Readable is null ? "*" : CachedQuotedColumns(plan.Readable));
+            headerBuilder.Append(" FROM main.");
+            headerBuilder.Append(RulesCompiler.Quote(plan.Table));
+            headerBuilder.Append(" WHERE ");
+            guardHeaders[i] = headerBuilder.ToString();
+            guardConditions[i] = plan.Condition;
 
             guards[plan.Name] = plan.Table;
             var readableSet = plan.Readable is null ? null : CachedAsciiSet(plan.Readable);
@@ -571,21 +802,156 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             return SqlRefusal.RuleDenied(wildcard, index);
         }
 
-        var guardList = definitions.ToString();
-        if (tokens[statement.Start].Is("WITH"))
+        return new ReadTemplate(
+            pieces,
+            guardHeaders,
+            guardConditions,
+            guards.ToFrozenDictionary(AsciiIgnoreCaseComparer.Instance),
+            scoped.ToFrozenDictionary(AsciiIgnoreCaseComparer.Instance),
+            versions.Version);
+    }
+
+    private static EnforcedTemplate AssembleReadTemplate(EndUserStatement statement, ReadTemplate read)
+    {
+        var scope = new SqlRuleScope(read.Tables, statement.Ctes, read.Guards, null, read.SchemaVersion);
+        var guardCount = read.GuardConditions.Length;
+        if (guardCount == 0)
         {
-            var firstCte = statement.Start + (tokens[statement.Start + 1].Is("RECURSIVE") ? 2 : 1);
-            pieces[firstCte] = string.Concat(guardList, ", ", pieces[firstCte]);
+            return new EnforcedTemplate([Join(read.Pieces)], [], scope, UsesRequestTime: false);
+        }
+
+        var tokens = statement.Tokens;
+        var pieces = read.Pieces;
+        var hasWith = tokens[statement.Start].Is("WITH");
+        var insertAt = hasWith ? statement.Start + (tokens[statement.Start + 1].Is("RECURSIVE") ? 2 : 1) : statement.Start;
+        var chunks = new string[guardCount + 1];
+        chunks[0] = BuildGuardPrefix(pieces, insertAt, hasWith, read.GuardHeaders[0]);
+        for (var i = 1; i < guardCount; i++)
+        {
+            chunks[i] = string.Concat("), ", read.GuardHeaders[i]);
+        }
+
+        var tail = JoinRange(pieces, insertAt + 1, pieces.Length);
+        chunks[guardCount] = tail.Length == 0
+            ? string.Concat(hasWith ? "), " : ") ", pieces[insertAt])
+            : string.Concat(hasWith ? "), " : ") ", pieces[insertAt], " ", tail);
+        return new EnforcedTemplate(chunks, read.GuardConditions, scope, AnyUsesRequestTime(read.GuardConditions));
+    }
+
+    private static EnforcedTemplate AssembleWriteTemplate(EndUserStatement statement, ReadTemplate read, CompiledCondition writeCondition, SqlTargetScope target)
+    {
+        var scope = new SqlRuleScope(read.Tables, statement.Ctes, read.Guards, target, read.SchemaVersion);
+        var tokens = statement.Tokens;
+        var pieces = read.Pieces;
+        FindWhereAndTail(tokens, statement.Main, out var whereAt, out var tailAt);
+        var end = tailAt >= 0 ? tailAt : pieces.Length;
+        var tail = JoinRange(pieces, end, pieces.Length);
+        var finalChunk = tail.Length == 0 ? "" : string.Concat(" ", tail);
+        var guardCount = read.GuardConditions.Length;
+        if (guardCount == 0)
+        {
+            var sb = new StringBuilder(64);
+            AppendWritePredicatePrefix(sb, pieces, 0, whereAt, end);
+            return new EnforcedTemplate([sb.ToString(), finalChunk], [writeCondition], scope, writeCondition.UsesRequestTime);
+        }
+
+        var hasWith = tokens[statement.Start].Is("WITH");
+        var insertAt = hasWith ? statement.Start + (tokens[statement.Start + 1].Is("RECURSIVE") ? 2 : 1) : statement.Start;
+        var chunks = new string[guardCount + 2];
+        var conditions = new CompiledCondition[guardCount + 1];
+        chunks[0] = BuildGuardPrefix(pieces, insertAt, hasWith, read.GuardHeaders[0]);
+        conditions[0] = read.GuardConditions[0];
+        for (var i = 1; i < guardCount; i++)
+        {
+            chunks[i] = string.Concat("), ", read.GuardHeaders[i]);
+            conditions[i] = read.GuardConditions[i];
+        }
+
+        var mid = new StringBuilder(64);
+        mid.Append(hasWith ? "), " : ") ");
+        mid.Append(pieces[insertAt]);
+        AppendWritePredicatePrefix(mid, pieces, insertAt + 1, whereAt, end);
+        chunks[guardCount] = mid.ToString();
+        conditions[guardCount] = writeCondition;
+        chunks[guardCount + 1] = finalChunk;
+        return new EnforcedTemplate(chunks, conditions, scope, writeCondition.UsesRequestTime || AnyUsesRequestTime(read.GuardConditions));
+    }
+
+    private static string BuildGuardPrefix(string[] pieces, int insertAt, bool hasWith, string firstGuardHeader)
+    {
+        var before = JoinRange(pieces, 0, insertAt);
+        if (hasWith)
+        {
+            return before.Length == 0 ? firstGuardHeader : string.Concat(before, " ", firstGuardHeader);
+        }
+
+        return before.Length == 0 ? string.Concat("WITH ", firstGuardHeader) : string.Concat(before, " WITH ", firstGuardHeader);
+    }
+
+    private static void FindWhereAndTail(SqlToken[] tokens, int main, out int whereAt, out int tailAt)
+    {
+        var depth = 0;
+        whereAt = -1;
+        tailAt = -1;
+        for (var at = main; at < tokens.Length; at++)
+        {
+            var token = tokens[at];
+            depth += token.Kind switch
+            {
+                SqlTokenKind.Open => 1,
+                SqlTokenKind.Close => -1,
+                SqlTokenKind.Word or SqlTokenKind.Quoted or SqlTokenKind.String or SqlTokenKind.Blob or SqlTokenKind.Number or SqlTokenKind.Parameter
+                    or SqlTokenKind.Semicolon or SqlTokenKind.Dot or SqlTokenKind.Comma or SqlTokenKind.Symbol => 0,
+                _ => throw new UnreachableException(),
+            };
+            if (depth != 0 || token.Kind != SqlTokenKind.Word)
+            {
+                continue;
+            }
+
+            if (token.Is("WHERE") && whereAt < 0)
+            {
+                whereAt = at;
+            }
+            else if (TailClauses.Contains(token.Value) && tailAt < 0)
+            {
+                tailAt = at;
+            }
+        }
+    }
+
+    private static void AppendWritePredicatePrefix(StringBuilder sb, string[] pieces, int start, int whereAt, int end)
+    {
+        if (whereAt < 0)
+        {
+            AppendPieces(sb, pieces, start, end);
+            AppendPart(sb, "WHERE");
         }
         else
         {
-            pieces[statement.Start] = string.Concat("WITH ", guardList, " ", pieces[statement.Start]);
+            AppendPieces(sb, pieces, start, whereAt + 1);
+            AppendPart(sb, "(");
+            AppendPieces(sb, pieces, whereAt + 1, end);
+            AppendPart(sb, ") AND");
         }
 
-        return new RewrittenSql(pieces, guards, scoped, versions.Version);
+        sb.Append(' ');
     }
 
-    private static IReadOnlySet<string>? BuildVisibleScope(FrozenSet<string>? readableSet, CompiledCondition condition, bool hasRowIdKey)
+    private static bool AnyUsesRequestTime(CompiledCondition[] conditions)
+    {
+        for (var i = 0; i < conditions.Length; i++)
+        {
+            if (conditions[i].UsesRequestTime)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static FrozenSet<string>? BuildVisibleScope(FrozenSet<string>? readableSet, CompiledCondition condition, bool hasRowIdKey)
     {
         if (readableSet is null)
         {
@@ -618,7 +984,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             expanded.Add("rowid");
         }
 
-        return expanded is not null ? expanded : readableSet;
+        return expanded is not null ? expanded.ToFrozenSet(AsciiIgnoreCaseComparer.Instance) : readableSet;
     }
 
     private static FrozenSet<string> CachedAsciiSet(IReadOnlyList<string> items)
@@ -900,11 +1266,13 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         _ => throw new UnreachableException(),
     };
 
-    private static string Join(string[] pieces)
+    private static string Join(string[] pieces) => JoinRange(pieces, 0, pieces.Length);
+
+    private static string JoinRange(string[] pieces, int start, int end)
     {
         var total = 0;
         var nonEmpty = 0;
-        for (var i = 0; i < pieces.Length; i++)
+        for (var i = start; i < end; i++)
         {
             var length = pieces[i].Length;
             if (length > 0)
@@ -920,10 +1288,11 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         }
 
         total += nonEmpty - 1;
-        return string.Create(total, pieces, static (span, items) =>
+        return string.Create(total, (pieces, start, end), static (span, state) =>
         {
+            var (items, from, to) = state;
             var offset = 0;
-            for (var i = 0; i < items.Length; i++)
+            for (var i = from; i < to; i++)
             {
                 var item = items[i];
                 if (item.Length == 0)
@@ -950,11 +1319,11 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
 
     public static CatalogReader Catalog(ISqlTransaction transaction) => transaction.ReadCatalogAsync;
 
-    private async ValueTask<LiveTableOutcome> LiveTableAsync(CatalogReader catalog, string table, int index, CancellationToken cancellationToken)
+    private async ValueTask<LiveTableOutcome> LiveTableAsync(
+        ISqlDatabaseSession? session, CatalogReader? catalog, string table, int index, CancellationToken cancellationToken)
     {
-        if (catalog.Target is SessionCatalog sessionCatalog)
+        if (session is not null)
         {
-            var session = sessionCatalog.Session;
             var epoch = session.SchemaEpoch;
             var incarnation = session.SessionIncarnation;
             var key = new LiveTableKey(session.DatabaseId, incarnation, table, epoch);
@@ -963,7 +1332,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
                 return cached.Live is { } live ? live : new MissingTable(cached.SchemaVersion);
             }
 
-            var fetched = await QueryLiveTableAsync(catalog, table, index, cancellationToken);
+            var fetched = await QueryLiveTableAsync(session, table, index, cancellationToken);
             if (session.SchemaEpoch == epoch && session.SessionIncarnation == incarnation)
             {
                 _ = fetched switch
@@ -975,6 +1344,11 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             }
 
             return fetched;
+        }
+
+        if (catalog is null)
+        {
+            return SqlRefusal.RuleDenied("the table schema could not be read", index);
         }
 
         return await QueryLiveTableAsync(catalog, table, index, cancellationToken);
@@ -1000,17 +1374,35 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return true;
     }
 
-    private static async ValueTask<LiveTableOutcome> QueryLiveTableAsync(CatalogReader catalog, string table, int index, CancellationToken cancellationToken)
+    private static SqlStatement[] BuildLiveTableQueries(string table)
     {
         var name = RulesCompiler.Literal(table);
-        var outcome = await catalog(
-            [
-                new SqlStatement(string.Concat("SELECT name, type, pk, hidden FROM pragma_table_xinfo(", name, ")"), [], SqlBuild.NoNamed),
-                new SqlStatement(string.Concat("SELECT type, wr FROM pragma_table_list(", name, ") WHERE schema = 'main'"), [], SqlBuild.NoNamed),
-                new SqlStatement(string.Concat("SELECT count(*) FROM pragma_index_list(", name, ") WHERE origin = 'pk'"), [], SqlBuild.NoNamed),
-                new SqlStatement("PRAGMA schema_version", [], SqlBuild.NoNamed),
-            ],
+        return
+        [
+            new SqlStatement(string.Concat("SELECT name, type, pk, hidden FROM pragma_table_xinfo(", name, ")"), [], SqlBuild.NoNamed),
+            new SqlStatement(string.Concat("SELECT type, wr FROM pragma_table_list(", name, ") WHERE schema = 'main'"), [], SqlBuild.NoNamed),
+            new SqlStatement(string.Concat("SELECT count(*) FROM pragma_index_list(", name, ") WHERE origin = 'pk'"), [], SqlBuild.NoNamed),
+            new SqlStatement("PRAGMA schema_version", [], SqlBuild.NoNamed),
+        ];
+    }
+
+    private static async ValueTask<LiveTableOutcome> QueryLiveTableAsync(ISqlDatabaseSession session, string table, int index, CancellationToken cancellationToken)
+    {
+        var outcome = await session.ExecuteReadAsync(
+            new SqlStatementRequest(session.DatabaseId, BuildLiveTableQueries(table), SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty),
             cancellationToken);
+        return outcome switch
+        {
+            SqlReadResult read => Describe(read.ResultSets, index),
+            SqlError error => SqlRefusal.From(error),
+            StorageBusy busy => SqlRefusal.From(busy),
+            StorageTimeout timeout => SqlRefusal.From(timeout),
+        };
+    }
+
+    private static async ValueTask<LiveTableOutcome> QueryLiveTableAsync(CatalogReader catalog, string table, int index, CancellationToken cancellationToken)
+    {
+        var outcome = await catalog(BuildLiveTableQueries(table), cancellationToken);
         return outcome switch
         {
             SqlReadResult read => Describe(read.ResultSets, index),
@@ -1510,59 +1902,6 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         return null;
     }
 
-    private static string AppendWhere(SqlToken[] tokens, int main, string[] pieces, string predicate)
-    {
-        var depth = 0;
-        var whereAt = -1;
-        var tailAt = -1;
-        for (var at = main; at < tokens.Length; at++)
-        {
-            var token = tokens[at];
-            depth += token.Kind switch
-            {
-                SqlTokenKind.Open => 1,
-                SqlTokenKind.Close => -1,
-                SqlTokenKind.Word or SqlTokenKind.Quoted or SqlTokenKind.String or SqlTokenKind.Blob or SqlTokenKind.Number or SqlTokenKind.Parameter
-                    or SqlTokenKind.Semicolon or SqlTokenKind.Dot or SqlTokenKind.Comma or SqlTokenKind.Symbol => 0,
-                _ => throw new UnreachableException(),
-            };
-            if (depth != 0 || token.Kind != SqlTokenKind.Word)
-            {
-                continue;
-            }
-
-            if (token.Is("WHERE") && whereAt < 0)
-            {
-                whereAt = at;
-            }
-            else if (TailClauses.Contains(token.Value) && tailAt < 0)
-            {
-                tailAt = at;
-            }
-        }
-
-        var end = tailAt >= 0 ? tailAt : pieces.Length;
-        var sb = new StringBuilder(predicate.Length + 64);
-        if (whereAt < 0)
-        {
-            AppendPieces(sb, pieces, 0, end);
-            AppendPart(sb, "WHERE");
-            AppendPart(sb, predicate);
-            AppendPieces(sb, pieces, end, pieces.Length);
-        }
-        else
-        {
-            AppendPieces(sb, pieces, 0, whereAt + 1);
-            AppendPart(sb, "(");
-            AppendPieces(sb, pieces, whereAt + 1, end);
-            AppendPart(sb, ") AND");
-            AppendPart(sb, predicate);
-            AppendPieces(sb, pieces, end, pieces.Length);
-        }
-
-        return sb.ToString();
-    }
-
     private static void AppendPieces(StringBuilder sb, string[] pieces, int start, int end)
     {
         for (var i = start; i < end; i++)
@@ -1619,6 +1958,14 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         public ValueTask<SqlReadOutcome> ReadAsync(IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken) =>
             session.ExecuteReadAsync(new SqlStatementRequest(session.DatabaseId, statements, SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty), cancellationToken);
     }
+
+    private readonly record struct EnforcedTemplateKey(
+        Ulid DatabaseId,
+        long SessionIncarnation,
+        ulong SchemaEpoch,
+        string RulesVersion,
+        string Sql,
+        StatementKind Kind);
 
     private readonly record struct LiveTableKey(Ulid DatabaseId, long SessionIncarnation, string Table, ulong SchemaEpoch);
 

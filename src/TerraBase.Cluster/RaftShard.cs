@@ -113,7 +113,12 @@ internal sealed class RaftShard(RaftMemberConfiguration configuration, RaftShard
     private ValueTask<Result<PreVoteResult>> ReceivePreVoteAsync(RaftVoteMessage message, CancellationToken cancellationToken) =>
         PreVoteAsync(message.Sender, message.Term, message.LastLogIndex, message.LastLogTerm, message.StateVersion, cancellationToken);
 
-    private async ValueTask<Result<ReplicationStatus>> ReceiveAppendAsync(RaftAppendMessage message, CancellationToken cancellationToken)
+    private ValueTask<Result<ReplicationStatus>> ReceiveAppendAsync(RaftAppendMessage message, CancellationToken cancellationToken) =>
+        message.Entries.Count == 0
+            ? AppendEntriesAsync(message.Sender, message.Term, EmptyEntryProducer.Instance, message.PrevLogIndex, message.PrevLogTerm, message.CommitIndex, message.StateVersion, cancellationToken)
+            : ReceiveAppendWithEntriesAsync(message, cancellationToken);
+
+    private async ValueTask<Result<ReplicationStatus>> ReceiveAppendWithEntriesAsync(RaftAppendMessage message, CancellationToken cancellationToken)
     {
         var producer = new RaftEntryProducer(message.Entries);
         await using (producer)

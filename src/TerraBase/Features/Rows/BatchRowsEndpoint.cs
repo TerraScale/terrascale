@@ -28,9 +28,10 @@ internal sealed class BatchRowsEndpoint(RowsService rows)
             return new InvalidInput("operations holds 1 to 100 operations", "invalid_request");
         }
 
-        List<RowCommand> commands = [];
-        foreach (var operation in operations)
+        var commands = new List<RowCommand>(operations.Count);
+        for (var i = 0; i < operations.Count; i++)
         {
+            var operation = operations[i];
             var action = operation?.Op switch
             {
                 "create" => RowAction.Create,

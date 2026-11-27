@@ -13,7 +13,7 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
 
     private const string BearerPrefix = "Bearer ";
 
-    public ValueTask<CallerAuthenticationOutcome> AuthenticateAsync(HttpContext context, CancellationToken cancellationToken)
+    internal bool TryAuthenticateFast(HttpContext context, out CallerAuthenticationOutcome outcome)
     {
         ArgumentNullException.ThrowIfNull(context);
         var admitted = context.Features.Get<AdmittedCaller>();
@@ -21,13 +21,14 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         {
             if (acting is not [{ Length: 26 } user] || !Ulid.TryParse(user, out _))
             {
-                return ValueTask.FromResult<CallerAuthenticationOutcome>(new CredentialRejected(UserHeader + " must be one canonical uppercase ULID", "invalid_user"));
+                outcome = new CredentialRejected(UserHeader + " must be one canonical uppercase ULID", "invalid_user");
+                return true;
             }
 
-            CallerAuthenticationOutcome acted = admitted.Identity is { } identity && !identity.Grants.Contains("act-as")
+            outcome = admitted.Identity is { } identity && !identity.Grants.Contains("act-as")
                 ? new CredentialRejected("acting as a user needs the act-as grant", "forbidden_caller")
                 : new UserCaller(user, ViaOperator: true);
-            return ValueTask.FromResult(acted);
+            return true;
         }
 
         if (TryReadBearer(context.Request, out var source, out var start, out var length))
@@ -37,27 +38,49 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
             {
                 if (keys.TryFindCached(tokenSpan, out var lookup))
                 {
-                    return ValueTask.FromResult(MapApiKeyOutcome(lookup));
+                    outcome = MapApiKeyOutcome(lookup);
+                    return true;
                 }
 
-                return AuthenticateApiKeyAsync(new string(tokenSpan), cancellationToken);
+                outcome = default;
+                return false;
             }
 
             if (tokens.TryVerifyCached(tokenSpan, out var verified))
             {
-                return ValueTask.FromResult<CallerAuthenticationOutcome>(verified);
+                outcome = verified;
+                return true;
             }
 
-            return tokens.VerifyAsync(new string(tokenSpan), cancellationToken);
+            outcome = default;
+            return false;
         }
 
-        CallerAuthenticationOutcome fallback = admitted switch
+        outcome = admitted switch
         {
             { Identity: { } identity } => new ServiceCaller(identity.Key.Caller, identity.Grants),
-            not null => new PeerCaller(),
+            not null => PeerCaller.Instance,
             null => AnonymousCaller.Instance,
         };
-        return ValueTask.FromResult(fallback);
+        return true;
+    }
+
+    public ValueTask<CallerAuthenticationOutcome> AuthenticateAsync(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (TryAuthenticateFast(context, out var cached))
+        {
+            return ValueTask.FromResult(cached);
+        }
+
+        if (TryReadBearer(context.Request, out var source, out var start, out var length))
+        {
+            var tokenSpan = source.AsSpan(start, length);
+            return tokenSpan.StartsWith(ApiKeyStore.SecretPrefix, StringComparison.Ordinal)
+                ? AuthenticateApiKeyAsync(new string(tokenSpan), cancellationToken)
+                : tokens.VerifyAsync(new string(tokenSpan), cancellationToken);
+        }
+
+        return ValueTask.FromResult<CallerAuthenticationOutcome>(AnonymousCaller.Instance);
     }
 
     public ValueTask<CallerAuthenticationOutcome> AuthenticateBearerAsync(string token, CancellationToken cancellationToken)
@@ -89,7 +112,7 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
 
     private static CallerAuthenticationOutcome MapApiKeyOutcome(ApiKeyLookup outcome) => outcome switch
     {
-        ApiKeyRecord key => new ApiKeyCaller(key),
+        ApiKeyRecord key => key.Caller,
         ResourceNotFound missing => new CredentialRejected(missing.Message, "invalid_key"),
         BackendUnavailable unavailable => unavailable,
     };
@@ -178,36 +201,20 @@ internal static class CallerAuthenticationExtensions
         public WebApplication UseTerraBaseCallers()
         {
             var authentication = app.Services.GetRequiredService<CallerAuthentication>();
-            app.Use(async (context, next) =>
+            app.Use((context, next) =>
             {
                 if (context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>() is { } served
                     && (ReferenceEquals(served, ListenerMetadata.Probe) || ReferenceEquals(served, ListenerMetadata.Metrics)))
                 {
-                    await next(context);
-                    return;
+                    return next(context);
                 }
 
-                var outcome = await authentication.AuthenticateAsync(context, context.RequestAborted);
-                var refusal = outcome switch
+                if (authentication.TryAuthenticateFast(context, out var outcome))
                 {
-                    Caller caller => Accept(context, caller),
-                    CredentialRejected error => ErrorResults.Json(StatusCodes.Status401Unauthorized, error.Code, error.Message),
-                    BackendUnavailable error => ErrorResults.Json(StatusCodes.Status503ServiceUnavailable, error.Code, error.Message, retryAfter: TimeSpan.FromSeconds(1)),
-                };
-                if (refusal is not null)
-                {
-                    context.Response.Headers.WWWAuthenticate = "Bearer";
-                    await refusal.ExecuteAsync(context);
-                    return;
+                    return CompleteAuthenticationAsync(context, next, outcome);
                 }
 
-                if (context.Caller is ServiceCaller service && context.Request.Path.Value is { } path && !ServicePathAllowed(service, path))
-                {
-                    await ErrorResults.Json(StatusCodes.Status403Forbidden, "forbidden_caller", "the service caller does not grant access to this route").ExecuteAsync(context);
-                    return;
-                }
-
-                await next(context);
+                return AuthenticateAndContinueAsync(context, next, authentication);
             });
             return app;
         }
@@ -263,9 +270,34 @@ internal static class CallerAuthenticationExtensions
         AnonymousCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => false,
     };
 
-    private static IResult? Accept(HttpContext context, Caller caller)
+    private static async Task AuthenticateAndContinueAsync(HttpContext context, RequestDelegate next, CallerAuthentication authentication)
+    {
+        var outcome = await authentication.AuthenticateAsync(context, context.RequestAborted);
+        await CompleteAuthenticationAsync(context, next, outcome);
+    }
+
+    private static Task CompleteAuthenticationAsync(HttpContext context, RequestDelegate next, CallerAuthenticationOutcome outcome) =>
+        outcome switch
+        {
+            Caller caller => AcceptAndContinueAsync(context, next, caller),
+            CredentialRejected error => RefuseAsync(context, ErrorResults.Json(StatusCodes.Status401Unauthorized, error.Code, error.Message)),
+            BackendUnavailable error => RefuseAsync(context, ErrorResults.Json(StatusCodes.Status503ServiceUnavailable, error.Code, error.Message, retryAfter: TimeSpan.FromSeconds(1))),
+        };
+
+    private static Task AcceptAndContinueAsync(HttpContext context, RequestDelegate next, Caller caller)
     {
         context.SetCaller(caller);
-        return null;
+        if (caller is ServiceCaller service && context.Request.Path.Value is { } path && !ServicePathAllowed(service, path))
+        {
+            return ErrorResults.Json(StatusCodes.Status403Forbidden, "forbidden_caller", "the service caller does not grant access to this route").ExecuteAsync(context);
+        }
+
+        return next(context);
+    }
+
+    private static Task RefuseAsync(HttpContext context, IResult refusal)
+    {
+        context.Response.Headers.WWWAuthenticate = "Bearer";
+        return refusal.ExecuteAsync(context);
     }
 }

@@ -321,23 +321,25 @@ internal sealed class CatalogStore(SystemDatabase system)
             BackendUnavailable unavailable => unavailable,
         };
 
-    public bool TryFindDatabase(Ulid projectId, string reference, [NotNullWhen(true)] out DatabaseRecord? database)
-    {
-        var generation = system.CatalogGeneration;
-        if (reference.Length == 26 && Ulid.TryParse(reference, out var id))
-        {
-            if (_databasesById.TryGet(generation, id, out var cachedById) && cachedById.ProjectId == projectId)
-            {
-                database = cachedById;
-                return true;
-            }
+    public bool TryFindDatabase(Ulid projectId, string reference, [NotNullWhen(true)] out DatabaseRecord? database) =>
+        reference.Length == 26 && Ulid.TryParse(reference, out var id)
+            ? TryFindDatabaseById(projectId, id, out database)
+            : TryFindDatabaseByName(projectId, reference, out database);
 
-            database = null;
-            return false;
+    public bool TryFindDatabaseById(Ulid projectId, Ulid id, [NotNullWhen(true)] out DatabaseRecord? database)
+    {
+        if (_databasesById.TryGet(system.CatalogGeneration, id, out var cached) && cached.ProjectId == projectId)
+        {
+            database = cached;
+            return true;
         }
 
-        return _databasesByName.TryGet(generation, new DatabaseNameKey(projectId, reference), out database);
+        database = null;
+        return false;
     }
+
+    public bool TryFindDatabaseByName(Ulid projectId, string name, [NotNullWhen(true)] out DatabaseRecord? database) =>
+        _databasesByName.TryGet(system.CatalogGeneration, new DatabaseNameKey(projectId, name), out database);
 
     public ValueTask<DatabaseLookup> FindDatabaseAsync(Ulid projectId, string reference, CancellationToken cancellationToken)
     {

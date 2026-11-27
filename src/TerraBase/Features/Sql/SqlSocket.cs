@@ -3,7 +3,6 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Qos;
@@ -15,7 +14,7 @@ namespace TerraBase.Features.Sql;
 
 internal readonly union SocketAnswerOutcome(SocketAnswer, SqlRefusal);
 
-internal sealed record SocketAnswer(IReadOnlyList<SqlResultSet> Results);
+internal readonly record struct SocketAnswer(IReadOnlyList<SqlResultSet> Results);
 
 internal readonly record struct SocketMessage(byte[] Buffer, int Length, long Started, long Completed);
 
@@ -42,6 +41,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private const int MaxRetainedBufferBytes = 64 * 1024;
 
+    private const int SqlCacheSlots = 32;
+
     private static readonly TimeSpan PartialDrainBudget = TimeSpan.FromSeconds(2);
 
     private static readonly TimeSpan CloseBudget = TimeSpan.FromSeconds(2);
@@ -57,6 +58,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private readonly long _accepted = services.Time.GetTimestamp();
     private readonly CancellationTokenSource _pumpStop = new();
     private readonly Lock _progress = new();
+    private readonly SqlResultSet[] _singleResult = new SqlResultSet[1];
+    private readonly (ulong Hash, byte[]? Utf8, string? Sql)[] _sqlCache = new (ulong, byte[]?, string?)[SqlCacheSlots];
     private ArrayBufferWriter<byte> _sendBuffer = new(4096);
     private Utf8JsonWriter? _sendWriter;
     private ArrayBufferWriter<byte>? _multiFrame;
@@ -79,7 +82,9 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private long _transactionStarted;
     private CausalBookmark _bookmark = CausalBookmark.Empty;
     private CausalBookmark _encodedBookmarkKey = CausalBookmark.Empty;
-    private string? _encodedBookmarkValue;
+    private string _encodedBookmarkValue = "";
+    private byte[] _encodedBookmarkUtf8 = [];
+    private bool _hasEncodedBookmark;
 
     private bool InTransaction => _transaction is not null || _failed;
 
@@ -181,7 +186,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                 return true;
             }
 
-            _bookmark = _bookmark.Merge(bookmark);
+            _bookmark = _bookmark.IsEmpty ? bookmark : _bookmark.Merge(bookmark);
         }
 
         if (_transaction is not null && ExpiredBeforeDispatch(message))
@@ -315,6 +320,20 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
         }
 
+        if (statements.Length == 1
+            && !InTransaction
+            && target.EndUser is null
+            && SqlPlan.TryClassifyCached(statements[0].Sql, out var kind)
+            && kind is not (StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback))
+        {
+            var outcome = await runner.RunSingleAutocommitAsync(target, statements, kind, mode ?? _mode, _bookmark, cancellationToken);
+            return outcome switch
+            {
+                SqlRun run => Answer(run),
+                SqlRefusal refusal => refusal,
+            };
+        }
+
         return SqlPlan.Batch(statements, allowTransactionControl: true) switch
         {
             SqlBatch { Statements: [{ Kind: StatementKind.Begin } begin] } => await BeginAsync(begin.BeginMode ?? mode ?? _mode, cancellationToken),
@@ -346,7 +365,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private SocketAnswer Answer(SqlRun run)
     {
-        _bookmark = _bookmark.Merge(run.Bookmark);
+        _bookmark = _bookmark.IsEmpty ? run.Bookmark : _bookmark.Merge(run.Bookmark);
         return new SocketAnswer(run.Results);
     }
 
@@ -408,7 +427,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private async ValueTask<SocketAnswerOutcome> RunInTransactionAsync(
         ResolvedDatabase target, ISqlTransaction transaction, IReadOnlyList<SqlStatement> statements, bool writes, CancellationToken cancellationToken)
     {
-        var results = new SqlResultSet[statements.Count];
+        var results = statements.Count == 1 ? _singleResult : new SqlResultSet[statements.Count];
         for (var index = 0; index < statements.Count; index++)
         {
             var failureOutcome = await transaction.ExecuteAsync(statements[index], cancellationToken);
@@ -421,6 +440,11 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             };
             if (failure is not null)
             {
+                if (ReferenceEquals(results, _singleResult))
+                {
+                    Array.Clear(_singleResult);
+                }
+
                 return await FailAsync(failure);
             }
         }
@@ -490,7 +514,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private SocketAnswer Committed(CommitMetadata commit)
     {
-        _bookmark = _bookmark.Merge(commit.Bookmark);
+        _bookmark = _bookmark.IsEmpty ? commit.Bookmark : _bookmark.Merge(commit.Bookmark);
         return new SocketAnswer([]);
     }
 
@@ -502,7 +526,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private static ConsistencyMode? Mode(string? value) => value is not null && ConsistencyHeaders.TryParse(value, out var mode) ? mode : null;
 
-    private static ParsedSocketFrame? Parse(ReadOnlySpan<byte> payload)
+    private ParsedSocketFrame? Parse(ReadOnlySpan<byte> payload)
     {
         try
         {
@@ -527,7 +551,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                     return null;
                 }
 
-                if (PropertyEquals(ref reader, "id"u8))
+                if (SqlWire.PropertyEquals(ref reader, "id"u8))
                 {
                     if (!reader.Read())
                     {
@@ -547,7 +571,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                         return null;
                     }
                 }
-                else if (PropertyEquals(ref reader, "type"u8))
+                else if (SqlWire.PropertyEquals(ref reader, "type"u8))
                 {
                     if (!reader.Read())
                     {
@@ -567,7 +591,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                         return null;
                     }
                 }
-                else if (PropertyEquals(ref reader, "statements"u8))
+                else if (SqlWire.PropertyEquals(ref reader, "statements"u8))
                 {
                     if (!reader.Read())
                     {
@@ -581,7 +605,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                     }
                     else if (reader.TokenType == JsonTokenType.StartArray)
                     {
-                        if (!TryReadStatements(ref reader, out statements, out statementsError))
+                        if (!SqlWire.TryReadStatements(ref reader, out statements, out statementsError, _sqlCache))
                         {
                             return null;
                         }
@@ -591,7 +615,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                         return null;
                     }
                 }
-                else if (PropertyEquals(ref reader, "token"u8))
+                else if (SqlWire.PropertyEquals(ref reader, "token"u8))
                 {
                     if (!reader.Read())
                     {
@@ -611,7 +635,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                         return null;
                     }
                 }
-                else if (PropertyEquals(ref reader, "consistency"u8))
+                else if (SqlWire.PropertyEquals(ref reader, "consistency"u8))
                 {
                     if (!reader.Read())
                     {
@@ -631,7 +655,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                         return null;
                     }
                 }
-                else if (PropertyEquals(ref reader, "bookmark"u8))
+                else if (SqlWire.PropertyEquals(ref reader, "bookmark"u8))
                 {
                     if (!reader.Read())
                     {
@@ -675,36 +699,6 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         }
     }
 
-    private static bool PropertyEquals(ref Utf8JsonReader reader, ReadOnlySpan<byte> lowerAsciiName)
-    {
-        if (reader.ValueTextEquals(lowerAsciiName))
-        {
-            return true;
-        }
-
-        if (!reader.HasValueSequence && reader.ValueSpan.Length == lowerAsciiName.Length)
-        {
-            var span = reader.ValueSpan;
-            for (var i = 0; i < span.Length; i++)
-            {
-                var b = span[i];
-                if (b is >= (byte)'A' and <= (byte)'Z')
-                {
-                    b = (byte)(b + 32);
-                }
-
-                if (b != lowerAsciiName[i])
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        return string.Equals(reader.GetString(), Encoding.ASCII.GetString(lowerAsciiName), StringComparison.OrdinalIgnoreCase);
-    }
-
     private static string? ReadFrameType(ref Utf8JsonReader reader) =>
         reader.ValueTextEquals("execute"u8) ? "execute"
         : reader.ValueTextEquals("batch"u8) ? "batch"
@@ -719,383 +713,6 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         : reader.ValueTextEquals("strong"u8) ? "strong"
         : reader.GetString();
 
-    private static bool TryReadStatements(ref Utf8JsonReader reader, out SqlStatement[]? statements, out SqlRefusal? error)
-    {
-        statements = null;
-        error = null;
-        SqlStatement? first = null;
-        List<SqlStatement>? list = null;
-        var count = 0;
-
-        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
-        {
-            if (reader.TokenType == JsonTokenType.Null)
-            {
-                error ??= SqlRefusal.Invalid("arguments are null, finite numbers, booleans, strings or {\"base64\": …} blobs", count);
-                count++;
-                continue;
-            }
-
-            if (reader.TokenType != JsonTokenType.StartObject)
-            {
-                return false;
-            }
-
-            if (!TryReadStatement(ref reader, out var statement, out var validArgs))
-            {
-                return false;
-            }
-
-            if (count >= SqlPlan.MaxStatements)
-            {
-                error ??= SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
-                count++;
-                continue;
-            }
-
-            if (statement is null || !validArgs)
-            {
-                error ??= SqlRefusal.Invalid("arguments are null, finite numbers, booleans, strings or {\"base64\": …} blobs", count);
-            }
-            else if (error is null)
-            {
-                if (count == 0)
-                {
-                    first = statement;
-                }
-                else
-                {
-                    if (list is null)
-                    {
-                        list = new List<SqlStatement>(4);
-                        if (first is not null)
-                        {
-                            list.Add(first);
-                        }
-                    }
-
-                    list.Add(statement);
-                }
-            }
-
-            count++;
-        }
-
-        if (count is 0 or > SqlPlan.MaxStatements)
-        {
-            error = SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
-            return true;
-        }
-
-        if (error is not null)
-        {
-            return true;
-        }
-
-        statements = list is not null ? [.. list] : first is not null ? [first] : [];
-        return true;
-    }
-
-    private static bool TryReadStatement(ref Utf8JsonReader reader, out SqlStatement? statement, out bool validArgs)
-    {
-        statement = null;
-        validArgs = true;
-        string? sql = null;
-        IReadOnlyList<SqlValue> positional = [];
-        IReadOnlyDictionary<string, SqlValue> named = SqlBuild.NoNamed;
-
-        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
-        {
-            if (reader.TokenType != JsonTokenType.PropertyName)
-            {
-                return false;
-            }
-
-            if (PropertyEquals(ref reader, "sql"u8))
-            {
-                if (!reader.Read())
-                {
-                    return false;
-                }
-
-                if (reader.TokenType == JsonTokenType.Null)
-                {
-                    sql = null;
-                }
-                else if (reader.TokenType == JsonTokenType.String)
-                {
-                    sql = reader.GetString();
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else if (PropertyEquals(ref reader, "args"u8))
-            {
-                if (!reader.Read())
-                {
-                    return false;
-                }
-
-                if (reader.TokenType == JsonTokenType.Null)
-                {
-                    positional = [];
-                }
-                else if (reader.TokenType == JsonTokenType.StartArray)
-                {
-                    if (!TryReadPositionalArgs(ref reader, out positional, out var argsOk))
-                    {
-                        return false;
-                    }
-
-                    if (!argsOk)
-                    {
-                        validArgs = false;
-                    }
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else if (PropertyEquals(ref reader, "named"u8))
-            {
-                if (!reader.Read())
-                {
-                    return false;
-                }
-
-                if (reader.TokenType == JsonTokenType.Null)
-                {
-                    named = SqlBuild.NoNamed;
-                }
-                else if (reader.TokenType == JsonTokenType.StartObject)
-                {
-                    if (!TryReadNamedArgs(ref reader, out named, out var namedOk))
-                    {
-                        return false;
-                    }
-
-                    if (!namedOk)
-                    {
-                        validArgs = false;
-                    }
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                if (!reader.Read())
-                {
-                    return false;
-                }
-
-                reader.Skip();
-            }
-        }
-
-        if (sql is not null && validArgs)
-        {
-            statement = new SqlStatement(sql, positional, named);
-        }
-
-        return true;
-    }
-
-    private static bool TryReadPositionalArgs(ref Utf8JsonReader reader, out IReadOnlyList<SqlValue> args, out bool valid)
-    {
-        args = [];
-        valid = true;
-        SqlValue first = default;
-        SqlValue second = default;
-        List<SqlValue>? list = null;
-        var count = 0;
-
-        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
-        {
-            var value = ReadSqlValue(ref reader, out var syntaxOk);
-            if (!syntaxOk)
-            {
-                return false;
-            }
-
-            if (value is not { } parsed)
-            {
-                valid = false;
-            }
-            else if (valid)
-            {
-                if (count == 0)
-                {
-                    first = parsed;
-                }
-                else if (count == 1)
-                {
-                    second = parsed;
-                }
-                else
-                {
-                    if (list is null)
-                    {
-                        list = new List<SqlValue>(4) { first, second };
-                    }
-
-                    list.Add(parsed);
-                }
-            }
-
-            count++;
-        }
-
-        if (valid)
-        {
-            args = count switch
-            {
-                0 => [],
-                1 => [first],
-                2 => [first, second],
-                _ => list is not null ? [.. list] : [],
-            };
-        }
-
-        return true;
-    }
-
-    private static bool TryReadNamedArgs(ref Utf8JsonReader reader, out IReadOnlyDictionary<string, SqlValue> named, out bool valid)
-    {
-        named = SqlBuild.NoNamed;
-        valid = true;
-        Dictionary<string, SqlValue>? map = null;
-
-        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
-        {
-            if (reader.TokenType != JsonTokenType.PropertyName)
-            {
-                return false;
-            }
-
-            var key = reader.GetString();
-            if (!reader.Read())
-            {
-                return false;
-            }
-
-            var value = ReadSqlValue(ref reader, out var syntaxOk);
-            if (!syntaxOk)
-            {
-                return false;
-            }
-
-            if (key is null || value is not { } parsed)
-            {
-                valid = false;
-            }
-            else if (valid)
-            {
-                map ??= new Dictionary<string, SqlValue>(StringComparer.Ordinal);
-                map[key] = parsed;
-            }
-        }
-
-        if (valid && map is { Count: > 0 })
-        {
-            named = map;
-        }
-
-        return true;
-    }
-
-    private static SqlValue? ReadSqlValue(ref Utf8JsonReader reader, out bool syntaxOk)
-    {
-        syntaxOk = true;
-        switch (reader.TokenType)
-        {
-            case JsonTokenType.Null:
-                return SqlValue.Null;
-            case JsonTokenType.True:
-                return SqlValue.FromIntegral(1);
-            case JsonTokenType.False:
-                return SqlValue.FromIntegral(0);
-            case JsonTokenType.String:
-                return reader.GetString() is { } text ? SqlValue.FromText(text) : null;
-            case JsonTokenType.Number:
-                if (reader.TryGetInt64(out var integer))
-                {
-                    return SqlValue.FromIntegral(integer);
-                }
-
-                return reader.TryGetDouble(out var real) && double.IsFinite(real) ? SqlValue.FromReal(real) : null;
-            case JsonTokenType.StartObject:
-                return ReadBlobObject(ref reader, out syntaxOk);
-            case JsonTokenType.StartArray:
-                reader.Skip();
-                return null;
-            default:
-                syntaxOk = false;
-                return null;
-        }
-    }
-
-    private static SqlValue? ReadBlobObject(ref Utf8JsonReader reader, out bool syntaxOk)
-    {
-        syntaxOk = true;
-        SqlValue? blob = null;
-        var propertyCount = 0;
-        var valid = true;
-
-        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
-        {
-            if (reader.TokenType != JsonTokenType.PropertyName)
-            {
-                syntaxOk = false;
-                return null;
-            }
-
-            var isBase64 = reader.ValueTextEquals("base64"u8);
-            propertyCount++;
-            if (!reader.Read())
-            {
-                syntaxOk = false;
-                return null;
-            }
-
-            if (propertyCount == 1 && isBase64 && reader.TokenType == JsonTokenType.String)
-            {
-                if (reader.TryGetBytesFromBase64(out var decoded))
-                {
-                    blob = SqlValue.FromBlob(decoded);
-                }
-                else if (reader.GetString() is { } text)
-                {
-                    var buffer = new byte[(text.Length * 3 / 4) + 3];
-                    if (Convert.TryFromBase64String(text, buffer, out var written))
-                    {
-                        blob = SqlValue.FromBlob(buffer.AsMemory(0, written));
-                    }
-                    else
-                    {
-                        valid = false;
-                    }
-                }
-                else
-                {
-                    valid = false;
-                }
-            }
-            else
-            {
-                valid = false;
-                reader.Skip();
-            }
-        }
-
-        return valid && propertyCount == 1 ? blob : null;
-    }
-
     private readonly record struct ParsedSocketFrame(
         long? Id,
         string? Type,
@@ -1105,15 +722,29 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         string? Consistency,
         string? Bookmark);
 
-    private string EncodedBookmark()
+    private ReadOnlySpan<byte> EncodedBookmarkUtf8()
     {
-        if (_encodedBookmarkValue is not null && _encodedBookmarkKey.Equals(_bookmark))
+        if (_hasEncodedBookmark && ReferenceEquals(_encodedBookmarkKey, _bookmark))
         {
-            return _encodedBookmarkValue;
+            return _encodedBookmarkUtf8;
+        }
+
+        if (_hasEncodedBookmark && _encodedBookmarkKey.Equals(_bookmark))
+        {
+            _encodedBookmarkKey = _bookmark;
+            return _encodedBookmarkUtf8;
         }
 
         _encodedBookmarkKey = _bookmark;
-        _encodedBookmarkValue = _bookmark.Encode();
+        _encodedBookmarkValue = SqlRunner.EncodeBookmark(_bookmark);
+        _encodedBookmarkUtf8 = _encodedBookmarkValue.Length == 0 ? [] : Encoding.ASCII.GetBytes(_encodedBookmarkValue);
+        _hasEncodedBookmark = true;
+        return _encodedBookmarkUtf8;
+    }
+
+    private string EncodedBookmark()
+    {
+        _ = EncodedBookmarkUtf8();
         return _encodedBookmarkValue;
     }
 
@@ -1133,101 +764,128 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private ValueTask ResultAsync(long? id, IReadOnlyList<SqlResultSet> results, CancellationToken cancellationToken)
     {
-        var writer = ResetSendWriter();
+        _sendBuffer.ResetWrittenCount();
         if (v2)
         {
-            WriteV2Result(writer, id ?? 0, results, EncodedBookmark(), InTransaction);
+            WriteV2Result(_sendBuffer, id ?? 0, results, EncodedBookmarkUtf8(), InTransaction);
         }
         else
         {
-            WriteLegacyResult(writer, id, results, InTransaction);
+            WriteLegacyResult(_sendBuffer, id, results, InTransaction);
         }
 
-        writer.Flush();
+        if (ReferenceEquals(results, _singleResult))
+        {
+            Array.Clear(_singleResult);
+        }
+
         return SendBufferedAsync(cancellationToken);
     }
 
-    private static void WriteV2Result(Utf8JsonWriter writer, long id, IReadOnlyList<SqlResultSet> results, string bookmark, bool inTransaction)
+    private static void WriteV2Result(IBufferWriter<byte> output, long id, IReadOnlyList<SqlResultSet> results, ReadOnlySpan<byte> bookmarkUtf8, bool inTransaction)
     {
-        writer.WriteStartObject();
-        writer.WriteString("type"u8, "result"u8);
-        writer.WriteNumber("id"u8, id);
-        writer.WritePropertyName("results"u8);
-        writer.WriteStartArray();
+        var json = new RawJsonBuffer(output);
+        json.Write("{\"type\":\"result\",\"id\":"u8);
+        json.WriteInt64(id);
+        json.Write(",\"results\":["u8);
         for (var i = 0; i < results.Count; i++)
         {
-            var result = results[i];
-            writer.WriteStartObject();
-            writer.WritePropertyName("columns"u8);
-            writer.WriteStartArray();
-            for (var j = 0; j < result.Columns.Count; j++)
+            if (i > 0)
             {
-                var column = result.Columns[j];
-                writer.WriteStartObject();
-                writer.WriteString("name"u8, column.Name);
+                json.WriteByte((byte)',');
+            }
+
+            var result = results[i];
+            json.Write("{\"columns\":["u8);
+            var columns = result.Columns;
+            for (var j = 0; j < columns.Count; j++)
+            {
+                if (j > 0)
+                {
+                    json.WriteByte((byte)',');
+                }
+
+                var column = columns[j];
+                json.Write("{\"name\":"u8);
+                json.WriteJsonString(column.Name);
                 if (column.DeclaredType is { } declaredType)
                 {
-                    writer.WriteString("type"u8, declaredType);
+                    json.Write(",\"type\":"u8);
+                    json.WriteJsonString(declaredType);
                 }
 
-                writer.WriteEndObject();
+                json.WriteByte((byte)'}');
             }
 
-            writer.WriteEndArray();
-            writer.WritePropertyName("rows"u8);
-            SqlRowsConverter.WriteRows(writer, result.Rows);
-            writer.WriteNumber("rowsAffected"u8, result.RowsAffected);
-            writer.WriteNumber("lastInsertRowId"u8, result.LastInsertRowId);
-            writer.WriteEndObject();
+            json.Write("],\"rows\":"u8);
+            SqlRowsConverter.WriteRows(ref json, result.Rows);
+            json.Write(",\"rowsAffected\":"u8);
+            json.WriteInt64(result.RowsAffected);
+            json.Write(",\"lastInsertRowId\":"u8);
+            json.WriteInt64(result.LastInsertRowId);
+            json.WriteByte((byte)'}');
         }
 
-        writer.WriteEndArray();
-        writer.WriteString("bookmark"u8, bookmark);
-        writer.WriteBoolean("transaction"u8, inTransaction);
-        writer.WriteEndObject();
+        json.Write("],\"bookmark\":\""u8);
+        json.Write(bookmarkUtf8);
+        json.Write(inTransaction ? "\",\"transaction\":true}"u8 : "\",\"transaction\":false}"u8);
+        json.Flush();
     }
 
-    private static void WriteLegacyResult(Utf8JsonWriter writer, long? id, IReadOnlyList<SqlResultSet> results, bool inTransaction)
+    private static void WriteLegacyResult(IBufferWriter<byte> output, long? id, IReadOnlyList<SqlResultSet> results, bool inTransaction)
     {
-        writer.WriteStartObject();
+        var json = new RawJsonBuffer(output);
         if (id is { } frameId)
         {
-            writer.WriteNumber("id"u8, frameId);
+            json.Write("{\"id\":"u8);
+            json.WriteInt64(frameId);
+            json.Write(",\"type\":\"result\",\"results\":["u8);
+        }
+        else
+        {
+            json.Write("{\"type\":\"result\",\"results\":["u8);
         }
 
-        writer.WriteString("type"u8, "result"u8);
-        writer.WritePropertyName("results"u8);
-        writer.WriteStartArray();
         for (var i = 0; i < results.Count; i++)
         {
-            var result = results[i];
-            writer.WriteStartObject();
-            writer.WritePropertyName("columns"u8);
-            writer.WriteStartArray();
-            for (var j = 0; j < result.Columns.Count; j++)
+            if (i > 0)
             {
-                var column = result.Columns[j];
-                writer.WriteStartObject();
-                writer.WriteString("name"u8, column.Name);
-                if (column.DeclaredType is { } decltype)
-                {
-                    writer.WriteString("decltype"u8, decltype);
-                }
-
-                writer.WriteEndObject();
+                json.WriteByte((byte)',');
             }
 
-            writer.WriteEndArray();
-            writer.WritePropertyName("rows"u8);
-            SqlRowsConverter.WriteRows(writer, result.Rows);
-            writer.WriteNumber("rows_affected"u8, result.RowsAffected);
-            writer.WriteNumber("last_insert_rowid"u8, result.LastInsertRowId);
-            writer.WriteEndObject();
+            var result = results[i];
+            json.Write("{\"columns\":["u8);
+            var columns = result.Columns;
+            for (var j = 0; j < columns.Count; j++)
+            {
+                if (j > 0)
+                {
+                    json.WriteByte((byte)',');
+                }
+
+                var column = columns[j];
+                json.Write("{\"name\":"u8);
+                json.WriteJsonString(column.Name);
+                if (column.DeclaredType is { } decltype)
+                {
+                    json.Write(",\"decltype\":"u8);
+                    json.WriteJsonString(decltype);
+                }
+
+                json.WriteByte((byte)'}');
+            }
+
+            json.Write("],\"rows\":"u8);
+            SqlRowsConverter.WriteRows(ref json, result.Rows);
+            json.Write(",\"rows_affected\":"u8);
+            json.WriteInt64(result.RowsAffected);
+            json.Write(",\"last_insert_rowid\":"u8);
+            json.WriteInt64(result.LastInsertRowId);
+            json.WriteByte((byte)'}');
         }
 
-        writer.WriteEndArray();
-        writer.WriteBoolean("transaction"u8, inTransaction);
-        writer.WriteEndObject();
+        json.Write(inTransaction ? "],\"transaction\":true}"u8 : "],\"transaction\":false}"u8);
+        json.Flush();
     }
 
     private ValueTask ErrorAsync(long? id, SqlRefusal refusal, CancellationToken cancellationToken)

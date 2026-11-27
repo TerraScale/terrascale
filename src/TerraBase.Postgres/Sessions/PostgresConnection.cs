@@ -35,6 +35,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
 
     public async Task RunAsync()
     {
+        Reader.AttachSession(session);
         using var closedRegistration = closed.Register(session.AbortStatement);
         using var revocation = session.Grant.Revocation.Register(() =>
         {
@@ -108,7 +109,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
 
         return message switch
         {
-            PgQueryMessage query => SimpleQueryAsync(query.Sql),
+            PgQueryMessage query => SimpleQueryAsync(query),
             PgParseMessage parse => ExtendedAsync(ParseAsync(parse)),
             PgBindMessage bind => Bind(bind) is { } bindError ? HandleExtendedErrorAsync(bindError) : ValueTask.FromResult(true),
             PgDescribeMessage describe => ExtendedAsync(DescribeAsync(describe)),
@@ -124,20 +125,25 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         };
     }
 
-    private async ValueTask<bool> SimpleQueryAsync(string sql)
+    private async ValueTask<bool> SimpleQueryAsync(PgQueryMessage query)
     {
         session.ObserveCurrentSchemaEpoch();
         PgError? failure;
-        if (session.TryGetCachedParse(sql, out var cached))
+        var entry = query.CachedEntry is { } preResolved && preResolved.CacheGeneration == session.CacheGeneration
+            ? preResolved
+            : session.TryGetCachedParseEntry(query.Sql, out var cached)
+                ? cached
+                : null;
+        if (entry is not null)
         {
-            failure = await RunCommandsAsync(cached);
+            failure = await RunCommandsAsync(entry.Commands, entry);
         }
         else
         {
-            var parsed = PgCommandParser.Parse(sql, session.RewriteContext);
+            var parsed = PgCommandParser.Parse(query.Sql, session.RewriteContext);
             failure = parsed switch
             {
-                IReadOnlyList<PgCommand> commands => await CacheAndRunAsync(sql, commands),
+                IReadOnlyList<PgCommand> commands => await CacheAndRunAsync(query.Sql, commands),
                 PgError error => error,
             };
         }
@@ -158,11 +164,11 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
 
     private ValueTask<PgError?> CacheAndRunAsync(string sql, IReadOnlyList<PgCommand> commands)
     {
-        session.CacheParse(sql, commands);
-        return RunCommandsAsync(commands);
+        var entry = session.CacheParse(sql, commands);
+        return RunCommandsAsync(commands, entry);
     }
 
-    private async ValueTask<PgError?> RunCommandsAsync(IReadOnlyList<PgCommand> commands)
+    private async ValueTask<PgError?> RunCommandsAsync(IReadOnlyList<PgCommand> commands, CachedParseEntry? cacheEntry)
     {
         var implicitBlock = commands.Count > 1 && session.Transaction is null
             && commands.Any(static command => command is PgSqlCommand { Access: SqlAccess.Write } or PgCopyFromCommand)
@@ -172,9 +178,10 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
             session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
         }
 
+        var singleCacheEntry = commands.Count == 1 ? cacheEntry : null;
         foreach (var command in commands)
         {
-            var outcome = await GuardAsync(command, [], describedColumns: null);
+            var outcome = await GuardAsync(command, [], describedColumns: null, singleCacheEntry);
             var failure = outcome switch
             {
                 PgResult result => WriteResult(result, [], describe: true, columns: null),
@@ -223,12 +230,9 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
             Writer.RowDescription(shape, formats);
         }
 
-        foreach (var row in result.Rows)
+        if (result.Rows.Count > 0 && Writer.WriteRows(result.Rows, 0, result.Rows.Count, shape ?? [], formats, stopWhenFull: false, out _) is { } error)
         {
-            if (Writer.DataRow(row, shape ?? [], formats) is { } error)
-            {
-                return error;
-            }
+            return error;
         }
 
         if (result.Notice is { } notice)
@@ -255,7 +259,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
     private async ValueTask<bool> SyncAsync()
     {
         session.SkipUntilSync = false;
-        session.Portals.Remove(string.Empty);
+        session.RemovePortal(string.Empty);
         return await ReadyAsync();
     }
 

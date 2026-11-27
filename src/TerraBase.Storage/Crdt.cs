@@ -6,7 +6,14 @@ internal readonly record struct ObservedRow(RowKey Key, ulong CausalLength, HlcT
 
 internal readonly record struct MetaCacheKey(string Table, byte[] PrimaryKey);
 
-internal sealed class MetaCacheKeyComparer : IEqualityComparer<MetaCacheKey>
+internal readonly ref struct MetaCacheKeyRef(string table, ReadOnlySpan<byte> primaryKey)
+{
+    public string Table { get; } = table;
+
+    public ReadOnlySpan<byte> PrimaryKey { get; } = primaryKey;
+}
+
+internal sealed class MetaCacheKeyComparer : IEqualityComparer<MetaCacheKey>, IAlternateEqualityComparer<MetaCacheKeyRef, MetaCacheKey>
 {
     public static MetaCacheKeyComparer Instance { get; } = new();
 
@@ -25,6 +32,20 @@ internal sealed class MetaCacheKeyComparer : IEqualityComparer<MetaCacheKey>
         hash.AddBytes(obj.PrimaryKey);
         return hash.ToHashCode();
     }
+
+    public bool Equals(MetaCacheKeyRef alternate, MetaCacheKey other) =>
+        string.Equals(alternate.Table, other.Table, StringComparison.OrdinalIgnoreCase)
+        && alternate.PrimaryKey.SequenceEqual(other.PrimaryKey);
+
+    public int GetHashCode(MetaCacheKeyRef alternate)
+    {
+        var hash = new HashCode();
+        hash.Add(alternate.Table, StringComparer.OrdinalIgnoreCase);
+        hash.AddBytes(alternate.PrimaryKey);
+        return hash.ToHashCode();
+    }
+
+    public MetaCacheKey Create(MetaCacheKeyRef alternate) => new(alternate.Table, alternate.PrimaryKey.ToArray());
 }
 
 internal sealed class MetaCache
@@ -40,9 +61,10 @@ internal sealed class MetaCache
     private int _head = -1;
     private int _tail = -1;
 
-    public bool TryGet(string table, byte[] primaryKey, out RowMeta? meta)
+    public bool TryGet(string table, ReadOnlySpan<byte> primaryKey, out RowMeta? meta)
     {
-        if (_index.TryGetValue(new MetaCacheKey(table, primaryKey), out var slot))
+        var lookup = _index.GetAlternateLookup<MetaCacheKeyRef>();
+        if (lookup.TryGetValue(new MetaCacheKeyRef(table, primaryKey), out var slot))
         {
             MoveToFront(slot);
             meta = _entries[slot].Meta;
@@ -53,16 +75,18 @@ internal sealed class MetaCache
         return false;
     }
 
-    public void Set(string table, byte[] primaryKey, RowMeta meta)
+    public void Set(string table, ReadOnlySpan<byte> primaryKey, RowMeta meta, byte[]? ownedKey = null)
     {
-        var key = new MetaCacheKey(table, primaryKey);
-        if (_index.TryGetValue(key, out var existing))
+        var lookup = _index.GetAlternateLookup<MetaCacheKeyRef>();
+        if (lookup.TryGetValue(new MetaCacheKeyRef(table, primaryKey), out var existing))
         {
             _entries[existing].Meta = meta;
             MoveToFront(existing);
             return;
         }
 
+        var keyBytes = ownedKey ?? primaryKey.ToArray();
+        var key = new MetaCacheKey(table, keyBytes);
         if (_count < MaxEntries)
         {
             if (_count == _entries.Length)
@@ -72,7 +96,7 @@ internal sealed class MetaCache
             }
 
             var slot = _count++;
-            _entries[slot] = new Entry(table, primaryKey, meta, -1, _head);
+            _entries[slot] = new Entry(table, keyBytes, meta, -1, _head);
             if (_head >= 0)
             {
                 _entries[_head].Prev = slot;
@@ -93,7 +117,7 @@ internal sealed class MetaCache
         _ = _index.Remove(new MetaCacheKey(evicted.Table, evicted.PrimaryKey));
         _ = _completeTables.Remove(evicted.Table);
         evicted.Table = table;
-        evicted.PrimaryKey = primaryKey;
+        evicted.PrimaryKey = keyBytes;
         evicted.Meta = meta;
         _index[key] = evictedSlot;
         MoveToFront(evictedSlot);
@@ -204,30 +228,20 @@ internal static class MetaStore
 
     public const string SelectAppliedSql = "SELECT 1 FROM _tb_applied WHERE tx_id = ?1";
 
-    private const string SelectAnyRowMetaSql = "SELECT 1 FROM _tb_meta WHERE tbl = ?1 AND pk > X'' LIMIT 1";
-
-    private const string UpsertMetaSql =
-        "INSERT INTO _tb_meta (tbl, pk, meta) VALUES (?1, ?2, ?3) ON CONFLICT (tbl, pk) DO UPDATE SET meta = excluded.meta";
-
-    private const string TouchTableSql =
-        "INSERT INTO _tb_meta (tbl, pk, meta) VALUES (?1, X'', ?2) ON CONFLICT (tbl, pk) DO UPDATE SET meta = excluded.meta WHERE excluded.meta > _tb_meta.meta";
-
-    private const string UpdateTableHlcSql =
-        "UPDATE _tb_meta SET meta = ?2 WHERE tbl = ?1 AND pk = X'' AND meta < ?2";
-
-    private const string UpsertVersionSql =
-        "INSERT INTO _tb_vv (origin, seq, schema_epoch) VALUES (?1, ?2, ?3) ON CONFLICT (origin) DO UPDATE SET seq = excluded.seq, schema_epoch = excluded.schema_epoch";
-
-    private const string InsertAppliedSql = "INSERT OR IGNORE INTO _tb_applied (tx_id, applied_at) VALUES (?1, ?2)";
-
     private const string PruneAppliedSql = "DELETE FROM _tb_applied WHERE tx_id IN (SELECT tx_id FROM _tb_applied WHERE tx_id < ?1 LIMIT 64)";
 
     private static readonly TimeSpan AppliedRetention = TimeSpan.FromDays(7);
 
     private static readonly byte[] FloorRandomness = new byte[10];
 
-    public static RowMeta Load(WriteScope scope, string table, byte[] key)
+    public static RowMeta Load(WriteScope scope, TableSchema schema, ReadOnlySpan<byte> key, byte[]? ownedKey = null)
     {
+        if (scope.Failed)
+        {
+            return RowMeta.Empty;
+        }
+
+        var table = schema.Table;
         var cache = scope.MetaCache;
         if (cache is not null)
         {
@@ -243,29 +257,36 @@ internal static class MetaStore
 
             if (!cache.HasCheckedTable(table))
             {
-                var probe = scope.First(SelectAnyRowMetaSql, SqlValue.FromText(table));
-                if (scope.Failed)
+                var probeStatus = scope.Connection.MetaHasAnyRow(schema.TableUtf8, out var hasAny);
+                if (!probeStatus.IsOk)
                 {
+                    scope.Fail(probeStatus);
                     return RowMeta.Empty;
                 }
 
-                cache.MarkTableChecked(table, isEmpty: probe is null);
-                if (probe is null)
+                cache.MarkTableChecked(table, isEmpty: !hasAny);
+                if (!hasAny)
                 {
                     return RowMeta.Empty;
                 }
             }
         }
 
-        var row = scope.First(SelectMetaSql, SqlValue.FromText(table), SqlValue.FromBlob(key));
-        if (row is null || !row[0].TryGetBlob(out var blob))
+        var selectStatus = scope.Connection.MetaSelectRow(schema.TableUtf8, key, out var meta, out var found);
+        if (!selectStatus.IsOk)
+        {
+            scope.Fail(selectStatus);
+            return RowMeta.Empty;
+        }
+
+        if (!found)
         {
             return RowMeta.Empty;
         }
 
-        if (RowMeta.Decode(blob.Span) is { } meta)
+        if (meta is not null)
         {
-            cache?.Set(table, key, meta);
+            cache?.Set(table, key, meta, ownedKey);
             return meta;
         }
 
@@ -273,19 +294,118 @@ internal static class MetaStore
         return RowMeta.Empty;
     }
 
-    public static void Save(WriteScope scope, string table, byte[] key, RowMeta meta)
+    public static RowMeta Load(WriteScope scope, string table, ReadOnlySpan<byte> key, byte[]? ownedKey = null)
     {
+        if (scope.Failed)
+        {
+            return RowMeta.Empty;
+        }
+
+        var cache = scope.MetaCache;
+        if (cache is not null)
+        {
+            if (cache.TryGet(table, key, out var cached) && cached is not null)
+            {
+                return cached;
+            }
+
+            if (cache.IsCompleteTable(table))
+            {
+                return RowMeta.Empty;
+            }
+
+            if (!cache.HasCheckedTable(table))
+            {
+                var probeStatus = scope.Connection.MetaHasAnyRow(table, out var hasAny);
+                if (!probeStatus.IsOk)
+                {
+                    scope.Fail(probeStatus);
+                    return RowMeta.Empty;
+                }
+
+                cache.MarkTableChecked(table, isEmpty: !hasAny);
+                if (!hasAny)
+                {
+                    return RowMeta.Empty;
+                }
+            }
+        }
+
+        var selectStatus = scope.Connection.MetaSelectRow(table, key, out var meta, out var found);
+        if (!selectStatus.IsOk)
+        {
+            scope.Fail(selectStatus);
+            return RowMeta.Empty;
+        }
+
+        if (!found)
+        {
+            return RowMeta.Empty;
+        }
+
+        if (meta is not null)
+        {
+            cache?.Set(table, key, meta, ownedKey);
+            return meta;
+        }
+
+        scope.Fail(new SqliteStatus(SqliteNative.Corrupt, string.Concat("corrupt _tb_meta row for table ", table)));
+        return RowMeta.Empty;
+    }
+
+    public static void Save(WriteScope scope, TableSchema schema, ReadOnlySpan<byte> key, RowMeta meta, byte[]? ownedKey = null)
+    {
+        if (scope.Failed)
+        {
+            return;
+        }
+
         var buffer = scope.GetMetaScratch(meta.MaxEncodedSize);
         var written = meta.EncodeTo(buffer);
-        scope.Run(UpsertMetaSql, SqlValue.FromText(table), SqlValue.FromBlob(key), SqlValue.FromBlob(buffer.AsMemory(0, written)));
-        if (!scope.Failed)
+        var status = scope.Connection.MetaUpsertRow(schema.TableUtf8, key, buffer.AsSpan(0, written));
+        if (!status.IsOk)
         {
-            scope.MetaCache?.Set(table, key, meta);
+            scope.Fail(status);
+            return;
         }
+
+        scope.MetaCache?.Set(schema.Table, key, meta, ownedKey);
+    }
+
+    public static HlcTimestamp LoadTableHlc(WriteScope scope, string table)
+    {
+        if (scope.Failed)
+        {
+            return HlcTimestamp.Zero;
+        }
+
+        if (scope.MetaCache is { } cache && cache.TryGetTableHlc(table, out var cached))
+        {
+            return cached;
+        }
+
+        var status = scope.Connection.MetaSelectTableHlc(table, out var hlc);
+        if (!status.IsOk)
+        {
+            scope.Fail(status);
+            return HlcTimestamp.Zero;
+        }
+
+        if (hlc > HlcTimestamp.Zero)
+        {
+            scope.MetaCache?.SetTableHlc(table, hlc);
+        }
+
+        return hlc;
     }
 
     public static void TouchTables(WriteScope scope, IReadOnlyDictionary<string, HlcTimestamp> tables)
     {
+        if (scope.Failed)
+        {
+            return;
+        }
+
         var encoded = scope.HlcScratch;
         var cache = scope.MetaCache;
         foreach (var (table, hlc) in tables)
@@ -298,39 +418,61 @@ internal static class MetaStore
                 }
 
                 HlcCodec.Write(encoded, hlc);
-                scope.Run(UpdateTableHlcSql, SqlValue.FromText(table), SqlValue.FromBlob(encoded));
-                if (!scope.Failed)
+                var updated = scope.Connection.MetaUpdateTableHlc(table, encoded);
+                if (!updated.IsOk)
                 {
-                    cache.SetTableHlc(table, hlc);
+                    scope.Fail(updated);
+                    return;
                 }
 
+                cache.SetTableHlc(table, hlc);
                 continue;
             }
 
             HlcCodec.Write(encoded, hlc);
-            scope.Run(TouchTableSql, SqlValue.FromText(table), SqlValue.FromBlob(encoded));
-            if (!scope.Failed)
+            var touched = scope.Connection.MetaTouchTable(table, encoded);
+            if (!touched.IsOk)
             {
-                cache?.SetTableHlc(table, hlc);
+                scope.Fail(touched);
+                return;
             }
+
+            cache?.SetTableHlc(table, hlc);
         }
     }
 
-    public static void SaveVersion(WriteScope scope, string origin, long sequence, ulong schemaEpoch) =>
-        scope.Run(UpsertVersionSql, SqlValue.FromText(origin), SqlValue.FromIntegral(sequence), SqlValue.FromIntegral((long)schemaEpoch));
+    public static void SaveVersion(WriteScope scope, string origin, long sequence, ulong schemaEpoch)
+    {
+        if (!scope.Failed)
+        {
+            scope.Fail(scope.Connection.MetaUpsertVersion(origin, sequence, schemaEpoch));
+        }
+    }
 
     public static void MarkApplied(WriteScope scope, Ulid txId, long appliedAtMs)
     {
+        if (scope.Failed)
+        {
+            return;
+        }
+
         var bytes = scope.UlidScratch;
         _ = txId.TryWriteBytes(bytes);
-        scope.Run(InsertAppliedSql, SqlValue.FromBlob(bytes), SqlValue.FromIntegral(appliedAtMs));
+        scope.Fail(scope.Connection.MetaInsertApplied(bytes, appliedAtMs, out _));
     }
 
     public static bool TryMarkApplied(WriteScope scope, Ulid txId, long appliedAtMs)
     {
+        if (scope.Failed)
+        {
+            return false;
+        }
+
         var bytes = scope.UlidScratch;
         _ = txId.TryWriteBytes(bytes);
-        return scope.RunChanges(InsertAppliedSql, SqlValue.FromBlob(bytes), SqlValue.FromIntegral(appliedAtMs)) > 0;
+        var status = scope.Connection.MetaInsertApplied(bytes, appliedAtMs, out var changes);
+        scope.Fail(status);
+        return status.IsOk && changes > 0;
     }
 
     public static long PruneApplied(WriteScope scope, DateTimeOffset now)
@@ -360,24 +502,49 @@ internal static class MetaStore
 
 internal static class LocalStamper
 {
-    public static List<RowMutation> Stamp(
+    public static byte[] StampAndEncode(
         WriteScope scope,
         IReadOnlyList<NetChange> changes,
+        IReadOnlyList<string> ddl,
         ref HlcTimestamp hlc,
-        bool persist,
-        List<ObservedRow>? observed,
         Dictionary<string, HlcTimestamp> tables)
     {
-        var metas = new RowMeta[changes.Count];
-        var maxExisting = HlcTimestamp.Zero;
-        for (var index = 0; index < changes.Count; index++)
+        var count = changes.Count;
+        if (count == 0)
         {
-            var change = changes[index];
-            var meta = MetaStore.Load(scope, change.Schema.Table, change.EncodedKey);
-            metas[index] = meta;
-            if (!ReferenceEquals(meta, RowMeta.Empty))
+            if (ddl.Count == 0)
             {
-                maxExisting = HlcCodec.Max(maxExisting, meta.MaxHlc());
+                return [];
+            }
+
+            using var ddlEncoder = MutationBatchCodec.CreateDirectEncoder(0);
+            return ddlEncoder.Finish(ddl);
+        }
+
+        RowMeta? singleMeta = null;
+        RowMeta[]? metas = null;
+        var maxExisting = HlcTimestamp.Zero;
+        if (count == 1)
+        {
+            var change = changes[0];
+            singleMeta = MetaStore.Load(scope, change.Schema, change.EncodedKey, change.EncodedKey);
+            if (!ReferenceEquals(singleMeta, RowMeta.Empty))
+            {
+                maxExisting = singleMeta.MaxHlc();
+            }
+        }
+        else
+        {
+            metas = new RowMeta[count];
+            for (var index = 0; index < count; index++)
+            {
+                var change = changes[index];
+                var meta = MetaStore.Load(scope, change.Schema, change.EncodedKey, change.EncodedKey);
+                metas[index] = meta;
+                if (!ReferenceEquals(meta, RowMeta.Empty))
+                {
+                    maxExisting = HlcCodec.Max(maxExisting, meta.MaxHlc());
+                }
             }
         }
 
@@ -386,44 +553,42 @@ internal static class LocalStamper
             hlc = AdvancePast(hlc, maxExisting);
         }
 
-        var mutations = new List<RowMutation>(changes.Count);
+        using var encoder = MutationBatchCodec.CreateDirectEncoder(count);
         string? lastRaisedTable = null;
-        for (var changeIndex = 0; changeIndex < changes.Count; changeIndex++)
+        for (var changeIndex = 0; changeIndex < count; changeIndex++)
         {
             var change = changes[changeIndex];
             var schema = change.Schema;
-            var meta = metas[changeIndex];
-            observed?.Add(new ObservedRow(new RowKey(schema.Table, PrimaryKeyCodec.ToKeyString(change.EncodedKey)), meta.CausalLength, meta.RowHlc));
+            var meta = metas is not null ? metas[changeIndex] : singleMeta ?? RowMeta.Empty;
             RowMeta next;
-            IReadOnlyList<ColumnChange> columnChanges;
             switch (change.Op)
             {
                 case MutationOp.Insert:
-                    next = new RowMeta(schema.DataColumns.Count)
+                    var dataCount = schema.DataColumns.Count;
+                    next = new RowMeta(dataCount)
                     {
                         CausalLength = meta.CausalLength == 0 ? 1 : meta.Alive ? meta.CausalLength + 2 : meta.CausalLength + 1,
                         RowHlc = hlc,
                     };
-                    var insertedColumns = schema.DataColumns.Count == 0 ? [] : new ColumnChange[schema.DataColumns.Count];
-                    for (var index = 0; index < schema.DataColumns.Count; index++)
+                    encoder.BeginMutation(schema.Table, MutationOp.Insert, next.CausalLength, change.PrimaryKey, dataCount);
+                    for (var index = 0; index < dataCount; index++)
                     {
                         var column = schema.DataColumns[index];
-                        insertedColumns[index] = new ColumnChange(column.Name, ChangeKind.Assign, 0, Value(change.Final, index), 0);
+                        encoder.WriteAssign(column.Name, 0, Value(change.Final, index));
                         next.SetColumn(column.Index, new ColumnMeta(hlc, 0, 0));
                     }
 
-                    columnChanges = insertedColumns;
                     break;
                 case MutationOp.Update:
-                    next = new RowMeta(Math.Max(meta.ColumnCount, change.ChangedColumns.Count))
+                    var changedCount = change.ChangedColumns.Count;
+                    next = new RowMeta(Math.Max(meta.ColumnCount, changedCount))
                     {
                         CausalLength = meta.Alive ? meta.CausalLength : meta.CausalLength + 1,
                         RowHlc = hlc,
                     };
                     next.CloneColumnsFrom(meta);
-
-                    var updatedColumns = new ColumnChange[change.ChangedColumns.Count];
-                    for (var changedIndex = 0; changedIndex < change.ChangedColumns.Count; changedIndex++)
+                    encoder.BeginMutation(schema.Table, MutationOp.Update, next.CausalLength, change.PrimaryKey, changedCount);
+                    for (var changedIndex = 0; changedIndex < changedCount; changedIndex++)
                     {
                         var index = change.ChangedColumns[changedIndex];
                         var column = schema.DataColumns[index];
@@ -431,7 +596,7 @@ internal static class LocalStamper
                         var final = Value(change.Final, index);
                         if (!column.IsDeltaCounter)
                         {
-                            updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.Assign, current.Epoch, final, 0);
+                            encoder.WriteAssign(column.Name, current.Epoch, final);
                             next.SetColumn(column.Index, current with { Hlc = hlc });
                             continue;
                         }
@@ -441,17 +606,16 @@ internal static class LocalStamper
                         if (hasBefore && hasAfter && !change.Replaced && !change.AbsoluteColumns.Contains(column.Name)
                             && DeltaMath.TryDifference(after, before, out var delta))
                         {
-                            updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.DeltaOp, current.Epoch, SqlValue.Null, delta);
+                            encoder.WriteDelta(column.Name, current.Epoch, delta);
                             next.SetColumn(column.Index, current with { DeltaSum = DeltaMath.Sum(current.DeltaSum, delta) });
                         }
                         else
                         {
-                            updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.AbsoluteReset, current.Epoch + 1, final, 0);
+                            encoder.WriteAbsoluteReset(column.Name, current.Epoch + 1, final);
                             next.SetColumn(column.Index, new ColumnMeta(hlc, current.Epoch + 1, 0));
                         }
                     }
 
-                    columnChanges = updatedColumns;
                     break;
                 case MutationOp.Delete:
                     next = new RowMeta
@@ -459,24 +623,175 @@ internal static class LocalStamper
                         CausalLength = meta.Alive ? meta.CausalLength + 1 : meta.CausalLength + 2,
                         RowHlc = hlc,
                     };
+                    encoder.BeginMutation(schema.Table, MutationOp.Delete, next.CausalLength, change.PrimaryKey, 0);
+                    break;
+                default:
+                    throw new UnreachableException();
+            }
+
+            MetaStore.Save(scope, schema, change.EncodedKey, next, change.EncodedKey);
+            if (!ReferenceEquals(schema.Table, lastRaisedTable))
+            {
+                MetaStore.Raise(tables, schema.Table, hlc);
+                lastRaisedTable = schema.Table;
+            }
+        }
+
+        return encoder.Finish(ddl);
+    }
+
+    public static List<RowMutation> Stamp(
+        WriteScope scope,
+        IReadOnlyList<NetChange> changes,
+        ref HlcTimestamp hlc,
+        bool persist,
+        List<ObservedRow>? observed,
+        Dictionary<string, HlcTimestamp>? tables)
+    {
+        var count = changes.Count;
+        if (count == 0)
+        {
+            return [];
+        }
+
+        RowMeta? singleMeta = null;
+        RowMeta[]? metas = null;
+        var maxExisting = HlcTimestamp.Zero;
+        if (count == 1)
+        {
+            var change = changes[0];
+            singleMeta = MetaStore.Load(scope, change.Schema, change.EncodedKey, change.EncodedKey);
+            if (!ReferenceEquals(singleMeta, RowMeta.Empty))
+            {
+                maxExisting = singleMeta.MaxHlc();
+            }
+        }
+        else
+        {
+            metas = new RowMeta[count];
+            for (var index = 0; index < count; index++)
+            {
+                var change = changes[index];
+                var meta = MetaStore.Load(scope, change.Schema, change.EncodedKey, change.EncodedKey);
+                metas[index] = meta;
+                if (!ReferenceEquals(meta, RowMeta.Empty))
+                {
+                    maxExisting = HlcCodec.Max(maxExisting, meta.MaxHlc());
+                }
+            }
+        }
+
+        if (maxExisting >= hlc)
+        {
+            hlc = AdvancePast(hlc, maxExisting);
+        }
+
+        var mutations = new List<RowMutation>(count);
+        string? lastRaisedTable = null;
+        for (var changeIndex = 0; changeIndex < count; changeIndex++)
+        {
+            var change = changes[changeIndex];
+            var schema = change.Schema;
+            var meta = metas is not null ? metas[changeIndex] : singleMeta ?? RowMeta.Empty;
+            observed?.Add(new ObservedRow(new RowKey(schema.Table, PrimaryKeyCodec.ToKeyString(change.EncodedKey)), meta.CausalLength, meta.RowHlc));
+            RowMeta? next = null;
+            ulong causalLength;
+            IReadOnlyList<ColumnChange> columnChanges;
+            switch (change.Op)
+            {
+                case MutationOp.Insert:
+                    causalLength = meta.CausalLength == 0 ? 1 : meta.Alive ? meta.CausalLength + 2 : meta.CausalLength + 1;
+                    if (persist)
+                    {
+                        next = new RowMeta(schema.DataColumns.Count)
+                        {
+                            CausalLength = causalLength,
+                            RowHlc = hlc,
+                        };
+                    }
+
+                    var insertedColumns = schema.DataColumns.Count == 0 ? [] : new ColumnChange[schema.DataColumns.Count];
+                    for (var index = 0; index < schema.DataColumns.Count; index++)
+                    {
+                        var column = schema.DataColumns[index];
+                        insertedColumns[index] = new ColumnChange(column.Name, ChangeKind.Assign, 0, Value(change.Final, index), 0);
+                        next?.SetColumn(column.Index, new ColumnMeta(hlc, 0, 0));
+                    }
+
+                    columnChanges = insertedColumns;
+                    break;
+                case MutationOp.Update:
+                    causalLength = meta.Alive ? meta.CausalLength : meta.CausalLength + 1;
+                    if (persist)
+                    {
+                        next = new RowMeta(Math.Max(meta.ColumnCount, change.ChangedColumns.Count))
+                        {
+                            CausalLength = causalLength,
+                            RowHlc = hlc,
+                        };
+                        next.CloneColumnsFrom(meta);
+                    }
+
+                    var updatedColumns = new ColumnChange[change.ChangedColumns.Count];
+                    for (var changedIndex = 0; changedIndex < change.ChangedColumns.Count; changedIndex++)
+                    {
+                        var index = change.ChangedColumns[changedIndex];
+                        var column = schema.DataColumns[index];
+                        var current = (next ?? meta).Column(column.Index);
+                        var final = Value(change.Final, index);
+                        if (!column.IsDeltaCounter)
+                        {
+                            updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.Assign, current.Epoch, final, 0);
+                            next?.SetColumn(column.Index, current with { Hlc = hlc });
+                            continue;
+                        }
+
+                        var hasBefore = Value(change.Original, index).TryGetIntegral(out var before);
+                        var hasAfter = final.TryGetIntegral(out var after);
+                        if (hasBefore && hasAfter && !change.Replaced && !change.AbsoluteColumns.Contains(column.Name)
+                            && DeltaMath.TryDifference(after, before, out var delta))
+                        {
+                            updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.DeltaOp, current.Epoch, SqlValue.Null, delta);
+                            next?.SetColumn(column.Index, current with { DeltaSum = DeltaMath.Sum(current.DeltaSum, delta) });
+                        }
+                        else
+                        {
+                            updatedColumns[changedIndex] = new ColumnChange(column.Name, ChangeKind.AbsoluteReset, current.Epoch + 1, final, 0);
+                            next?.SetColumn(column.Index, new ColumnMeta(hlc, current.Epoch + 1, 0));
+                        }
+                    }
+
+                    columnChanges = updatedColumns;
+                    break;
+                case MutationOp.Delete:
+                    causalLength = meta.Alive ? meta.CausalLength + 1 : meta.CausalLength + 2;
+                    if (persist)
+                    {
+                        next = new RowMeta
+                        {
+                            CausalLength = causalLength,
+                            RowHlc = hlc,
+                        };
+                    }
+
                     columnChanges = [];
                     break;
                 default:
                     throw new UnreachableException();
             }
 
-            if (persist)
+            if (next is not null)
             {
-                MetaStore.Save(scope, schema.Table, change.EncodedKey, next);
+                MetaStore.Save(scope, schema, change.EncodedKey, next, change.EncodedKey);
             }
 
-            if (!ReferenceEquals(schema.Table, lastRaisedTable))
+            if (tables is not null && !ReferenceEquals(schema.Table, lastRaisedTable))
             {
                 MetaStore.Raise(tables, schema.Table, hlc);
                 lastRaisedTable = schema.Table;
             }
 
-            mutations.Add(new RowMutation(schema.Table, change.Op, next.CausalLength, change.PrimaryKey, columnChanges));
+            mutations.Add(new RowMutation(schema.Table, change.Op, causalLength, change.PrimaryKey, columnChanges));
         }
 
         return mutations;
@@ -513,26 +828,52 @@ internal static class CrdtApplier
         return null;
     }
 
-    public static void Apply(WriteScope scope, RowMutation mutation, HlcTimestamp hlc, Dictionary<string, HlcTimestamp> tables) =>
-        Apply(scope, mutation, hlc, hlc, tables);
+    public static void Apply(WriteScope scope, RowMutation mutation, HlcTimestamp hlc, Dictionary<string, HlcTimestamp> tables)
+    {
+        TableSchema? cached = null;
+        Apply(scope, mutation, hlc, hlc, tables, ref cached);
+    }
 
     public static void Apply(WriteScope scope, RowMutation mutation, HlcTimestamp hlc, HlcTimestamp tableHlc, Dictionary<string, HlcTimestamp> tables)
     {
-        var lookup = scope.Connection.Schema(mutation.Table);
-        var resolved = lookup switch
+        TableSchema? cached = null;
+        Apply(scope, mutation, hlc, tableHlc, tables, ref cached);
+    }
+
+    public static void Apply(WriteScope scope, RowMutation mutation, HlcTimestamp hlc, HlcTimestamp tableHlc, Dictionary<string, HlcTimestamp> tables, ref TableSchema? lastSchema)
+    {
+        TableSchema? resolved;
+        if (lastSchema is not null && string.Equals(lastSchema.Table, mutation.Table, StringComparison.OrdinalIgnoreCase))
         {
-            TableSchema found => found,
-            TableNotFound => null,
-            SqliteStatus failure => Unresolved(scope, failure),
-        };
+            resolved = lastSchema;
+        }
+        else
+        {
+            var lookup = scope.Connection.Schema(mutation.Table);
+            resolved = lookup switch
+            {
+                TableSchema found => found,
+                TableNotFound => null,
+                SqliteStatus failure => Unresolved(scope, failure),
+            };
+            if (resolved is not null)
+            {
+                lastSchema = resolved;
+            }
+        }
+
         if (resolved is not { } schema || mutation.PrimaryKey.Count != schema.PrimaryKeyColumnNames.Count)
         {
             return;
         }
 
         var keyValues = mutation.PrimaryKey as SqlValue[] ?? [.. mutation.PrimaryKey];
-        var key = PrimaryKeyCodec.Encode(keyValues);
-        var meta = MetaStore.Load(scope, schema.Table, key);
+        Span<byte> stackKey = stackalloc byte[128];
+        byte[]? heapKey = null;
+        var key = PrimaryKeyCodec.TryEncode(keyValues, stackKey, out var keyLength)
+            ? (ReadOnlySpan<byte>)stackKey[..keyLength]
+            : (heapKey = PrimaryKeyCodec.Encode(keyValues));
+        var meta = MetaStore.Load(scope, schema, key, heapKey);
         if (scope.Failed || mutation.CausalLength < meta.CausalLength)
         {
             return;
@@ -693,7 +1034,7 @@ internal static class CrdtApplier
             values.Clear();
         }
 
-        MetaStore.Save(scope, schema.Table, key, next);
+        MetaStore.Save(scope, schema, key, next, heapKey);
         MetaStore.Raise(tables, schema.Table, tableHlc);
     }
 

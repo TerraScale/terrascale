@@ -39,8 +39,10 @@ internal readonly union StreamLeaseOutcome(StreamLease, QuicFault);
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
-internal sealed class UnaryStreamSlot(PeerSlot slot, QuicConnection connection, QuicStream stream)
+internal sealed class UnaryStreamSlot(PeerSlot slot, QuicConnection connection, QuicStream stream, TimeProvider timeProvider, CancellationToken shutdownToken)
 {
+    private ReusableCallScope _callScope = ReusableCallScope.Create(timeProvider, shutdownToken);
+
     public PeerSlot Slot { get; } = slot;
 
     public QuicConnection Connection { get; } = connection;
@@ -53,8 +55,14 @@ internal sealed class UnaryStreamSlot(PeerSlot slot, QuicConnection connection, 
 
     public bool IsHealthy => !Stream.WritesClosed.IsCompleted && !Stream.ReadsClosed.IsCompleted;
 
+    public CallScope BeginCall(TimeSpan timeout, TimeProvider clock, CancellationToken caller) =>
+        _callScope.Begin(timeout, clock, caller);
+
+    public void EndCall(TimeProvider clock) => _callScope.End(clock);
+
     public void CloseAndDispose(QuicMeshMetrics metrics, bool abort)
     {
+        _callScope.Dispose();
         Reader.Dispose();
         if (abort)
         {
@@ -82,13 +90,15 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
     private static readonly TimeSpan UnaryStreamIdleTimeout = TimeSpan.FromSeconds(45);
 
     private readonly Lock _gate = new();
+    private readonly Lock _unaryPoolGate = new();
     private readonly ConcurrentDictionary<string, OrderedPushChannel> _channels = new(StringComparer.Ordinal);
-    private readonly ConcurrentStack<UnaryStreamSlot> _idleUnaryStreams = new();
+    private readonly UnaryStreamSlot?[] _idleUnaryStreams = new UnaryStreamSlot?[MaxIdleUnaryStreams];
     private QuicPeer _peer = peer;
     private ActiveConnection? _active;
     private ActiveConnection? _currentActive;
+    private OrderedPushChannel? _lastChannel;
     private Task<QuicConnectionOpenOutcome>? _connecting;
-    private int _idleUnaryCount;
+    private int _idleUnaryTop;
     private int _uses;
     private long _idleSince;
     private long _lastConnectFailureTimestamp;
@@ -131,9 +141,25 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 
     public UnaryStreamSlot? TryRentUnaryStream(QuicConnection connection, QuicMeshMetrics metrics)
     {
-        while (_idleUnaryStreams.TryPop(out var candidate))
+        while (true)
         {
-            Interlocked.Decrement(ref _idleUnaryCount);
+            UnaryStreamSlot? candidate;
+            lock (_unaryPoolGate)
+            {
+                if (_idleUnaryTop == 0)
+                {
+                    return null;
+                }
+
+                candidate = _idleUnaryStreams[--_idleUnaryTop];
+                _idleUnaryStreams[_idleUnaryTop] = null;
+            }
+
+            if (candidate is null)
+            {
+                continue;
+            }
+
             if (ReferenceEquals(candidate.Connection, connection)
                 && candidate.IsHealthy
                 && timeProvider.GetElapsedTime(candidate.LastUsedTicks) < UnaryStreamIdleTimeout)
@@ -143,8 +169,6 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 
             candidate.CloseAndDispose(metrics, abort: false);
         }
-
-        return null;
     }
 
     public bool TryReturnUnaryStream(UnaryStreamSlot unarySlot, QuicMeshMetrics metrics)
@@ -153,10 +177,19 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             && ReferenceEquals(Current(), unarySlot.Connection)
             && unarySlot.IsHealthy)
         {
-            if (Interlocked.Increment(ref _idleUnaryCount) <= MaxIdleUnaryStreams)
+            unarySlot.LastUsedTicks = timeProvider.GetTimestamp();
+            var stored = false;
+            lock (_unaryPoolGate)
             {
-                unarySlot.LastUsedTicks = timeProvider.GetTimestamp();
-                _idleUnaryStreams.Push(unarySlot);
+                if (_idleUnaryTop < MaxIdleUnaryStreams)
+                {
+                    _idleUnaryStreams[_idleUnaryTop++] = unarySlot;
+                    stored = true;
+                }
+            }
+
+            if (stored)
+            {
                 if (Volatile.Read(ref _closed) != 0 || !ReferenceEquals(Current(), unarySlot.Connection))
                 {
                     DrainIdleUnaryStreams(metrics);
@@ -164,8 +197,6 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 
                 return true;
             }
-
-            Interlocked.Decrement(ref _idleUnaryCount);
         }
 
         unarySlot.CloseAndDispose(metrics, abort: false);
@@ -174,10 +205,21 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 
     public void DrainIdleUnaryStreams(QuicMeshMetrics metrics)
     {
-        while (_idleUnaryStreams.TryPop(out var slot))
+        while (true)
         {
-            Interlocked.Decrement(ref _idleUnaryCount);
-            slot.CloseAndDispose(metrics, abort: false);
+            UnaryStreamSlot? slot;
+            lock (_unaryPoolGate)
+            {
+                if (_idleUnaryTop == 0)
+                {
+                    return;
+                }
+
+                slot = _idleUnaryStreams[--_idleUnaryTop];
+                _idleUnaryStreams[_idleUnaryTop] = null;
+            }
+
+            slot?.CloseAndDispose(metrics, abort: false);
         }
     }
 
@@ -359,9 +401,21 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 
     public OrderedPushChannel? GetOrAddChannel(string key, QuicConnectionPool pool)
     {
-        if (Volatile.Read(ref _closed) == 0 && _channels.TryGetValue(key, out var cached))
+        if (Volatile.Read(ref _closed) == 0)
         {
-            return cached;
+            var last = Volatile.Read(ref _lastChannel);
+            if (last is not null
+                && (ReferenceEquals(last.Key, key) || string.Equals(last.Key, key, StringComparison.Ordinal))
+                && !last.IsEvicted)
+            {
+                return last;
+            }
+
+            if (_channels.TryGetValue(key, out var cached))
+            {
+                Volatile.Write(ref _lastChannel, cached);
+                return cached;
+            }
         }
 
         lock (_gate)
@@ -377,6 +431,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
                 _channels[key] = channel;
             }
 
+            Volatile.Write(ref _lastChannel, channel);
             return channel;
         }
     }
@@ -388,6 +443,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             if (_channels.TryGetValue(key, out var existing) && ReferenceEquals(existing, channel) && channel.TryCompleteIdle())
             {
                 _ = _channels.TryRemove(key, out _);
+                _ = Interlocked.CompareExchange(ref _lastChannel, null, channel);
             }
         }
     }
@@ -406,6 +462,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
         {
             Volatile.Write(ref _closed, 1);
             Volatile.Write(ref _currentActive, null);
+            Volatile.Write(ref _lastChannel, null);
             OrderedPushChannel[] detached = [.. _channels.Values];
             _channels.Clear();
             return detached;
@@ -663,7 +720,7 @@ internal sealed class QuicConnectionPool
         if (supportsPersistent)
         {
             Metrics.StreamOpened(QuicSide.Client);
-            return new UnaryStreamSlot(slot, connection, stream);
+            return new UnaryStreamSlot(slot, connection, stream, TimeProvider, ShutdownToken);
         }
 
         return new StreamLease(slot, connection, stream);

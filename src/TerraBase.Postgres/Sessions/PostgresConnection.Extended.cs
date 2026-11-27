@@ -39,29 +39,34 @@ internal sealed partial class PostgresConnection
             return new PgError("42P05", $"prepared statement \"{message.Name}\" already exists");
         }
 
-        if (message.Name.Length > 0 && session.Statements.Count >= PostgresLimits.MaxPreparedStatements)
+        if (message.Name.Length > 0 && session.StatementCount >= PostgresLimits.MaxPreparedStatements)
         {
             return new PgError("54000", $"at most {PostgresLimits.MaxPreparedStatements.ToString(CultureInfo.InvariantCulture)} prepared statements per session");
         }
 
         session.ObserveCurrentSchemaEpoch();
         PgCommand command;
-        if (session.TryGetCachedParse(message.Sql, out var cached))
+        var entry = message.CachedEntry is { } preResolved && preResolved.CacheGeneration == session.CacheGeneration
+            ? preResolved
+            : session.TryGetCachedParseEntry(message.Sql, out var cachedEntry)
+                ? cachedEntry
+                : null;
+        if (entry is not null)
         {
-            if (cached.Count != 1)
+            if (entry.Commands.Count != 1)
             {
                 return PgError.Syntax("cannot insert multiple commands into a prepared statement");
             }
 
-            command = cached[0];
+            command = entry.Commands[0];
         }
         else
         {
-            (PgCommand? Command, PgError? Error) parsed = PgCommandParser.Parse(message.Sql, session.RewriteContext) switch
+            (PgCommand? Command, CachedParseEntry? Entry, PgError? Error) parsed = PgCommandParser.Parse(message.Sql, session.RewriteContext) switch
             {
                 IReadOnlyList<PgCommand> and [var single] => CacheSingle(message.Sql, single),
-                IReadOnlyList<PgCommand> => ((PgCommand?)null, PgError.Syntax("cannot insert multiple commands into a prepared statement")),
-                PgError error => (null, error),
+                IReadOnlyList<PgCommand> => ((PgCommand?)null, (CachedParseEntry?)null, PgError.Syntax("cannot insert multiple commands into a prepared statement")),
+                PgError error => (null, null, error),
             };
             if (parsed.Command is not { } resolved)
             {
@@ -69,6 +74,7 @@ internal sealed partial class PostgresConnection
             }
 
             command = resolved;
+            entry = parsed.Entry;
         }
 
         var count = Math.Max(message.ParameterOids.Length, command is PgSqlCommand sql ? sql.Rewrite.ParameterCount : 0);
@@ -80,6 +86,10 @@ internal sealed partial class PostgresConnection
         else if (message.ParameterOids.Length == count && Array.IndexOf(message.ParameterOids, 0) < 0)
         {
             oids = message.ParameterOids;
+        }
+        else if (AllZero(message.ParameterOids) && entry is { InferredOids: { } reusableOids } && reusableOids.Length == count)
+        {
+            oids = reusableOids;
         }
         else
         {
@@ -97,7 +107,12 @@ internal sealed partial class PostgresConnection
 
                 if (Array.IndexOf(oids, 0) >= 0 && typed.Rewrite.ParameterColumns.Count > 0)
                 {
-                    if (session.TryGetCachedInferredOids(message.Sql, out var cachedOids) && cachedOids.Length >= count)
+                    int[]? cachedOids = entry?.InferredOids is { } fromEntry && fromEntry.Length >= count
+                        ? fromEntry
+                        : session.TryGetCachedInferredOids(message.Sql, out var fromCache) && fromCache.Length >= count
+                            ? fromCache
+                            : null;
+                    if (cachedOids is not null)
                     {
                         for (var index = 0; index < count; index++)
                         {
@@ -114,24 +129,48 @@ internal sealed partial class PostgresConnection
                             return inferenceError;
                         }
 
-                        if (session.Transaction is null && (message.ParameterOids.Length == 0 || Array.TrueForAll(message.ParameterOids, static oid => oid == 0)))
+                        if (session.Transaction is null && AllZero(message.ParameterOids))
                         {
-                            session.CacheInferredOids(message.Sql, [.. oids]);
+                            if (entry is not null)
+                            {
+                                entry.InferredOids = oids;
+                            }
+                            else
+                            {
+                                session.CacheInferredOids(message.Sql, oids);
+                            }
                         }
                     }
+                }
+                else if (session.Transaction is null && AllZero(message.ParameterOids) && entry is not null)
+                {
+                    entry.InferredOids = oids;
                 }
             }
         }
 
-        session.Statements[message.Name] = new PgPreparedStatement(message.Name, command, oids);
+        session.SetStatement(message.Name, command, oids, entry);
         Writer.Empty('1');
         return null;
     }
 
-    private (PgCommand?, PgError?) CacheSingle(string sql, PgCommand command)
+    private static bool AllZero(int[] oids)
     {
-        session.CacheParse(sql, [command]);
-        return (command, null);
+        for (var index = 0; index < oids.Length; index++)
+        {
+            if (oids[index] != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private (PgCommand?, CachedParseEntry?, PgError?) CacheSingle(string sql, PgCommand command)
+    {
+        var entry = session.CacheParse(sql, [command]);
+        return (command, entry, null);
     }
 
     private async ValueTask<PgError?> InferParameterTypesAsync(PgSqlCommand command, int[] oids)
@@ -217,7 +256,7 @@ internal sealed partial class PostgresConnection
 
     private PgError? Bind(PgBindMessage message)
     {
-        if (!session.Statements.TryGetValue(message.Statement, out var statement))
+        if (!session.TryGetStatement(message.Statement, out var statement))
         {
             return new PgError("26000", $"prepared statement \"{message.Statement}\" does not exist");
         }
@@ -233,9 +272,23 @@ internal sealed partial class PostgresConnection
             return new PgError("08P01", "bind message has an invalid number of parameter formats");
         }
 
+        if (message.Portal.Length > 0 && session.Portals.ContainsKey(message.Portal))
+        {
+            return new PgError("42P03", $"cursor \"{message.Portal}\" already exists");
+        }
+
+        if (message.Portal.Length > 0 && session.PortalCount >= PostgresLimits.MaxPortals)
+        {
+            return new PgError("54000", $"at most {PostgresLimits.MaxPortals.ToString(CultureInfo.InvariantCulture)} portals per session");
+        }
+
         var budget = PostgresLimits.MaxPortalBytes - session.PortalBytes(except: message.Portal);
         var bytes = PgValueCodec.Footprint(message.ResultFormats);
-        var values = message.ParameterCount == 0 ? [] : new SqlValue[message.ParameterCount];
+        SqlValue[] values = message.ParameterCount == 0
+            ? []
+            : message.Portal.Length == 0
+                ? session.RentUnnamedParameters(message.ParameterCount)
+                : new SqlValue[message.ParameterCount];
         for (var index = 0; index < values.Length; index++)
         {
             var format = message.ParameterFormats.Length == 0 ? (short)0 : message.ParameterFormats[Math.Min(index, message.ParameterFormats.Length - 1)];
@@ -263,17 +316,7 @@ internal sealed partial class PostgresConnection
             return PgErrors.PortalMemory;
         }
 
-        if (message.Portal.Length > 0 && session.Portals.ContainsKey(message.Portal))
-        {
-            return new PgError("42P03", $"cursor \"{message.Portal}\" already exists");
-        }
-
-        if (message.Portal.Length > 0 && session.Portals.Count >= PostgresLimits.MaxPortals)
-        {
-            return new PgError("54000", $"at most {PostgresLimits.MaxPortals.ToString(CultureInfo.InvariantCulture)} portals per session");
-        }
-
-        session.Portals[message.Portal] = new PgPortal(statement, values, bytes, message.ResultFormats) { Columns = statement.Described ? statement.Columns : null };
+        session.SetPortal(message.Portal, statement, values, bytes, message.ResultFormats, statement.Described ? statement.Columns : null);
         Writer.Empty('2');
         return null;
     }
@@ -282,14 +325,14 @@ internal sealed partial class PostgresConnection
     {
         if (message.Target == 'S')
         {
-            if (!session.Statements.TryGetValue(message.Name, out var statement))
+            if (!session.TryGetStatement(message.Name, out var statement))
             {
                 return new PgError("26000", $"prepared statement \"{message.Name}\" does not exist");
             }
 
             if (!statement.Described)
             {
-                var columnsOutcome = await DescribeColumnsAsync(statement.Command, [.. statement.ParameterOids.Select(static _ => SqlValue.Null)]);
+                var columnsOutcome = await DescribeColumnsAsync(statement.Command, [.. statement.ParameterOids.Select(static _ => SqlValue.Null)], statement.CacheEntry);
                 (IReadOnlyList<PgColumn>? Columns, PgError? Error) described = columnsOutcome switch
                 {
                     PgDescription description => (description.Columns, (PgError?)null),
@@ -304,12 +347,15 @@ internal sealed partial class PostgresConnection
                 statement.Described = true;
             }
 
-            Writer.ParameterDescription([.. statement.ParameterOids.Select(static oid => oid == 0 ? PgOid.Text : oid)]);
+            int[] parameterOids = Array.IndexOf(statement.ParameterOids, 0) < 0
+                ? statement.ParameterOids
+                : [.. statement.ParameterOids.Select(static oid => oid == 0 ? PgOid.Text : oid)];
+            Writer.ParameterDescription(parameterOids);
             WriteDescription(statement.Columns, []);
             return null;
         }
 
-        if (!session.Portals.TryGetValue(message.Name, out var portal))
+        if (!session.TryGetPortal(message.Name, out var portal))
         {
             return new PgError("34000", $"portal \"{message.Name}\" does not exist");
         }
@@ -318,7 +364,7 @@ internal sealed partial class PostgresConnection
         {
             if (portal.Statement.Command is PgSqlCommand { Access: SqlAccess.Read } or PgShowCommand or PgCannedCommand && portal.Result is null)
             {
-                var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, null);
+                var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, null, portal.Statement.CacheEntry);
                 (PgResult? Result, PgError? Error) executed = outcome switch
                 {
                     PgResult value => (value, (PgError?)null),
@@ -331,7 +377,7 @@ internal sealed partial class PostgresConnection
 
                 if (executed.Result is { } result && !session.TryHold(message.Name, portal, result))
                 {
-                    session.Portals.Remove(message.Name);
+                    session.RemovePortal(message.Name);
                     return PgErrors.PortalMemory;
                 }
 
@@ -339,7 +385,7 @@ internal sealed partial class PostgresConnection
             }
             else
             {
-                var columnsOutcome = await DescribeColumnsAsync(portal.Statement.Command, portal.Parameters);
+                var columnsOutcome = await DescribeColumnsAsync(portal.Statement.Command, portal.Parameters, portal.Statement.CacheEntry);
                 (IReadOnlyList<PgColumn>? Columns, PgError? Error) described = columnsOutcome switch
                 {
                     PgDescription description => (description.Columns, (PgError?)null),
@@ -371,7 +417,7 @@ internal sealed partial class PostgresConnection
 
     private async ValueTask<PgError?> ExecuteAsync(PgExecuteMessage message)
     {
-        if (!session.Portals.TryGetValue(message.Portal, out var portal))
+        if (!session.TryGetPortal(message.Portal, out var portal))
         {
             return new PgError("34000", $"portal \"{message.Portal}\" does not exist");
         }
@@ -392,7 +438,7 @@ internal sealed partial class PostgresConnection
                 session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
             }
 
-            var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, portal.Columns ?? portal.Statement.Columns);
+            var outcome = await GuardAsync(portal.Statement.Command, portal.Parameters, portal.Columns ?? portal.Statement.Columns, portal.Statement.CacheEntry);
             (PgResult? Result, PgError? Error) executed = outcome switch
             {
                 PgResult value => (value, (PgError?)null),
@@ -410,7 +456,7 @@ internal sealed partial class PostgresConnection
         {
             if (await CommitDeferredAsync(deferredCommit) is { } emptyCommitError)
             {
-                session.Portals.Remove(message.Portal);
+                session.RemovePortal(message.Portal);
                 return emptyCommitError;
             }
 
@@ -424,21 +470,22 @@ internal sealed partial class PostgresConnection
         var end = message.MaxRows > 0 ? Math.Min(current.Rows.Count, portal.Position + message.MaxRows) : current.Rows.Count;
         if (end < current.Rows.Count && !ReferenceEquals(portal.Result, current) && !session.TryHold(message.Portal, portal, current))
         {
-            session.Portals.Remove(message.Portal);
+            session.RemovePortal(message.Portal);
             return PgErrors.PortalMemory;
         }
 
         var unsent = Writer.Buffer.Length;
-        for (var index = portal.Position; index < end; index++)
+        var cursor = portal.Position;
+        while (cursor < end)
         {
-            if (Writer.DataRow(current.Rows[index], shape, portal.ResultFormats) is { } encodeError)
+            if (Writer.WriteRows(current.Rows, cursor, end, shape, portal.ResultFormats, stopWhenFull: !deferredCommit, out cursor) is { } encodeError)
             {
                 if (deferredCommit)
                 {
                     Writer.Buffer.Truncate(unsent);
                 }
 
-                session.Portals.Remove(message.Portal);
+                session.RemovePortal(message.Portal);
                 return encodeError;
             }
 
@@ -451,7 +498,7 @@ internal sealed partial class PostgresConnection
         if (await CommitDeferredAsync(deferredCommit) is { } commitError)
         {
             Writer.Buffer.Truncate(unsent);
-            session.Portals.Remove(message.Portal);
+            session.RemovePortal(message.Portal);
             return commitError;
         }
 
@@ -479,11 +526,11 @@ internal sealed partial class PostgresConnection
     {
         if (message.Target == 'S')
         {
-            session.Statements.Remove(message.Name);
+            session.RemoveStatement(message.Name);
         }
         else
         {
-            session.Portals.Remove(message.Name);
+            session.RemovePortal(message.Name);
         }
 
         Writer.Empty('3');

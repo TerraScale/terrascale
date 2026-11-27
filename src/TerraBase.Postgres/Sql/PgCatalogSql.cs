@@ -202,17 +202,29 @@ internal static class PgCatalogSql
         return lookup.ContainsKey(lowered);
     }
 
-    public static bool TryGetRelation(string schema, string name, PgRewriteContext context, out string sql)
+    public static bool TryGetRelation(string schema, string name, PgRewriteContext context, out string sql, out bool dependsOnIdentity)
     {
         sql = string.Empty;
+        dependsOnIdentity = false;
         if (schema != "pg_catalog" || PgCatalogRelation(name, context) is not { } template)
         {
             return false;
         }
 
-        sql = template
-            .Replace(DatabaseToken, PgRewriteContext.Literal(context.DatabaseName), StringComparison.Ordinal)
-            .Replace(UserToken, PgRewriteContext.Literal(context.UserName), StringComparison.Ordinal);
+        var hasDatabase = template.Contains(DatabaseToken, StringComparison.Ordinal);
+        var hasUser = template.Contains(UserToken, StringComparison.Ordinal);
+        dependsOnIdentity = hasDatabase || hasUser;
+        sql = template;
+        if (hasDatabase)
+        {
+            sql = sql.Replace(DatabaseToken, PgRewriteContext.Literal(context.DatabaseName), StringComparison.Ordinal);
+        }
+
+        if (hasUser)
+        {
+            sql = sql.Replace(UserToken, PgRewriteContext.Literal(context.UserName), StringComparison.Ordinal);
+        }
+
         return true;
     }
 

@@ -229,10 +229,12 @@ internal ref partial struct PostgresSqlRewriter
             || raw.Equals("session_user", StringComparison.OrdinalIgnoreCase)
             || raw.Equals("current_role", StringComparison.OrdinalIgnoreCase))
         {
+            _dependsOnSessionIdentity = true;
             replacement = PgRewriteContext.Literal(_context.UserName);
         }
         else if (raw.Equals("current_catalog", StringComparison.OrdinalIgnoreCase))
         {
+            _dependsOnSessionIdentity = true;
             replacement = PgRewriteContext.Literal(_context.DatabaseName);
         }
         else if (raw.Equals("localtimestamp", StringComparison.OrdinalIgnoreCase))
@@ -261,18 +263,22 @@ internal ref partial struct PostgresSqlRewriter
                 ReplaceCall(index, open, close, "'{public}'");
                 break;
             case PgFuncKind.CurrentDatabase:
+                _dependsOnSessionIdentity = true;
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(_context.DatabaseName));
                 break;
             case PgFuncKind.Version:
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(PgRewriteContext.Version));
                 break;
             case PgFuncKind.CurrentUser:
+                _dependsOnSessionIdentity = true;
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(_context.UserName));
                 break;
             case PgFuncKind.PgGetUserById:
+                _dependsOnSessionIdentity = true;
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(_context.UserName));
                 break;
             case PgFuncKind.PgBackendPid:
+                _dependsOnSessionIdentity = true;
                 ReplaceCall(index, open, close, _context.ProcessId.ToString(CultureInfo.InvariantCulture));
                 break;
             case PgFuncKind.AlwaysFalse:

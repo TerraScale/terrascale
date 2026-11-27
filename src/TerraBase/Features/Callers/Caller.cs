@@ -24,7 +24,10 @@ public sealed record AnonymousCaller : Caller
     public static AnonymousCaller Instance { get; } = new();
 }
 
-public sealed record PeerCaller : Caller;
+public sealed record PeerCaller : Caller
+{
+    public static PeerCaller Instance { get; } = new();
+}
 
 public sealed record ServiceCaller(string Name, FrozenSet<string> Grants) : Caller;
 
@@ -46,9 +49,9 @@ internal static class CallerContext
 {
     extension(HttpContext context)
     {
-        public Caller Caller => context.Features.Get<CallerFeature>()?.Caller ?? AnonymousCaller.Instance;
+        public Caller Caller => context.Features.Get<Caller>() ?? AnonymousCaller.Instance;
 
-        public void SetCaller(Caller caller) => context.Features.Set(new CallerFeature(caller));
+        public void SetCaller(Caller caller) => context.Features.Set<Caller>(caller);
     }
 
     public static string Actor(Caller caller) => caller switch
@@ -61,6 +64,4 @@ internal static class CallerContext
         ProjectCaller project => project.UserId,
         EndUserCaller endUser => endUser.Auth.Uid,
     };
-
-    private sealed record CallerFeature(Caller Caller);
 }

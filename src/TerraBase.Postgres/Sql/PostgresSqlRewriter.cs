@@ -81,6 +81,7 @@ internal ref partial struct PostgresSqlRewriter
     private int _parameterCount;
     private bool _usesCatalog;
     private bool _dependsOnSettings;
+    private bool _dependsOnSessionIdentity;
 
     private PostgresSqlRewriter(PgTokenEditor tokens, PgRewriteContext context)
     {
@@ -106,9 +107,6 @@ internal ref partial struct PostgresSqlRewriter
             return literalError;
         }
 
-        IReadOnlyList<PgParameterColumn> parameterColumns = _tokens.HasFlag(PgSyntaxFlags.Parameter) ? CollectParameterColumns() : [];
-        IReadOnlyList<string> referenced = parameterColumns.Count > 0 ? ReferencedNames(parameterColumns) : [];
-
         if (_tokens.HasFlag(PgSyntaxFlags.Period | PgSyntaxFlags.PgPrefixWord) && RewriteQualifiedNames() is { } qualifiedError)
         {
             return qualifiedError;
@@ -132,6 +130,14 @@ internal ref partial struct PostgresSqlRewriter
         if (_tokens.HasFlag(PgSyntaxFlags.DoubleColon) && RewriteCasts() is { } castError)
         {
             return castError;
+        }
+
+        IReadOnlyList<PgParameterColumn> parameterColumns = [];
+        IReadOnlyList<string> referenced = [];
+        if (_parameterCount > 0 && HasUntypedParameters())
+        {
+            parameterColumns = CollectParameterColumns();
+            referenced = parameterColumns.Count > 0 ? ReferencedNames(parameterColumns) : [];
         }
 
         if (_tokens.HasFlag(PgSyntaxFlags.ArrayComparisonWord))
@@ -184,8 +190,11 @@ internal ref partial struct PostgresSqlRewriter
             referenced,
             _usesCatalog,
             boundLiterals,
-            _dependsOnSettings);
+            _dependsOnSettings,
+            _dependsOnSessionIdentity);
     }
+
+    private bool HasUntypedParameters() => (_overflowParamTypes?.Count ?? _inlineParamTypeCount) < _parameterCount;
 
     private IReadOnlyDictionary<int, int> BuildParameterTypes()
     {
@@ -578,13 +587,14 @@ internal ref partial struct PostgresSqlRewriter
                     if (_tokens.Kind(index + 3) != PgTokenKind.LeftParen)
                     {
                         var name = _tokens.Identifier(index + 2);
-                        if (PgCatalogSql.TryGetRelation("pg_catalog", name, _context, out var relation))
+                        if (PgCatalogSql.TryGetRelation("pg_catalog", name, _context, out var relation, out var dependsOnIdentity))
                         {
                             if (name == "pg_settings")
                             {
                                 _dependsOnSettings = true;
                             }
 
+                            _dependsOnSessionIdentity |= dependsOnIdentity;
                             ReplaceRelation(index + 2, name, relation);
                         }
                     }
@@ -606,13 +616,14 @@ internal ref partial struct PostgresSqlRewriter
                 && _tokens.Kind(index - 1) != PgTokenKind.Period)
             {
                 var name = _tokens.Identifier(index);
-                if (PgCatalogSql.TryGetRelation("pg_catalog", name, _context, out var bare))
+                if (PgCatalogSql.TryGetRelation("pg_catalog", name, _context, out var bare, out var dependsOnIdentity))
                 {
                     if (name == "pg_settings")
                     {
                         _dependsOnSettings = true;
                     }
 
+                    _dependsOnSessionIdentity |= dependsOnIdentity;
                     ReplaceRelation(index, name, bare);
                 }
             }
@@ -678,8 +689,9 @@ internal ref partial struct PostgresSqlRewriter
         foreach (var (qualifier, onlyNamespace) in qualifiers)
         {
             if (onlyNamespace && !declared.Contains(qualifier) && !_catalogRelations.Exists(relation => relation.Alias == qualifier)
-                && PgCatalogSql.TryGetRelation("pg_catalog", "pg_namespace", _context, out var relation))
+                && PgCatalogSql.TryGetRelation("pg_catalog", "pg_namespace", _context, out var relation, out var dependsOnIdentity))
             {
+                _dependsOnSessionIdentity |= dependsOnIdentity;
                 var quoted = "\"" + qualifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
                 var source = "\"" + owner.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
                 _tokens.Append(pgClass.Token, $" LEFT JOIN ({relation}) AS {quoted} ON {quoted}.oid = {source}.relnamespace");

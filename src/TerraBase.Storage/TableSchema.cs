@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace TerraBase.Storage;
 
 internal sealed record TableColumn(string Name, int Index, string? DeclaredType, bool NotNull, int PrimaryKeyOrdinal, bool Generated, bool IsDeltaCounter)
@@ -21,6 +23,7 @@ internal sealed class TableSchema
         string? primaryKeyIndex)
     {
         Table = table;
+        TableUtf8 = Encoding.UTF8.GetBytes(table);
         Columns = columns;
         StorageColumnCount = storageColumnCount;
         IsVirtual = isVirtual;
@@ -74,6 +77,8 @@ internal sealed class TableSchema
     }
 
     public string Table { get; }
+
+    public byte[] TableUtf8 { get; }
 
     public IReadOnlyList<TableColumn> Columns { get; }
 

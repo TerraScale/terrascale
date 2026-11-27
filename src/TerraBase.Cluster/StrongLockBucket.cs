@@ -1,9 +1,119 @@
+using System.Collections;
 using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace TerraBase.Cluster;
+
+internal sealed class SingleItemSet<T>(T item, IEqualityComparer<T>? comparer = null) : IReadOnlySet<T>
+{
+    private readonly IEqualityComparer<T> _comparer = comparer ?? EqualityComparer<T>.Default;
+
+    public T Item { get; } = item;
+
+    public int Count => 1;
+
+    public bool Contains(T item) => _comparer.Equals(Item, item);
+
+    public bool IsProperSubsetOf(IEnumerable<T> other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        var found = false;
+        var hasOther = false;
+        foreach (var element in other)
+        {
+            if (_comparer.Equals(Item, element))
+            {
+                found = true;
+            }
+            else
+            {
+                hasOther = true;
+            }
+
+            if (found && hasOther)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public bool IsProperSupersetOf(IEnumerable<T> other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        using var enumerator = other.GetEnumerator();
+        return !enumerator.MoveNext();
+    }
+
+    public bool IsSubsetOf(IEnumerable<T> other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        foreach (var element in other)
+        {
+            if (_comparer.Equals(Item, element))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public bool IsSupersetOf(IEnumerable<T> other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        foreach (var element in other)
+        {
+            if (!_comparer.Equals(Item, element))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public bool Overlaps(IEnumerable<T> other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        foreach (var element in other)
+        {
+            if (_comparer.Equals(Item, element))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public bool SetEquals(IEnumerable<T> other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        var found = false;
+        foreach (var element in other)
+        {
+            if (!_comparer.Equals(Item, element))
+            {
+                return false;
+            }
+
+            found = true;
+        }
+
+        return found;
+    }
+
+    public IEnumerator<T> GetEnumerator()
+    {
+        yield return Item;
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
 
 internal struct HolderSlot
 {
@@ -166,6 +276,18 @@ internal sealed class DatabaseLockBucket
 
     public List<StrongLockHolder> Holders => _holders;
 
+    public void Clear()
+    {
+        _indexByTxId.Clear();
+        _holders.Clear();
+        _schemaHolders.Clear();
+        _writeKeys.Clear();
+        _readKeys.Clear();
+        _writeTables.Clear();
+        _scannedTables.Clear();
+        NextExpiryTimestamp = long.MaxValue;
+    }
+
     public bool TryGet(Ulid txId, [NotNullWhen(true)] out StrongLockHolder? holder)
     {
         if (_indexByTxId.TryGetValue(txId, out var index))
@@ -307,6 +429,13 @@ internal sealed class DatabaseLockBucket
             return;
         }
 
+        if (keys is SingleItemSet<T> single)
+        {
+            ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(map, single.Item, out _);
+            slot.Add(holder);
+            return;
+        }
+
         if (keys is HashSet<T> hashSet)
         {
             foreach (var key in hashSet)
@@ -342,6 +471,12 @@ internal sealed class DatabaseLockBucket
     {
         if (keys.Count == 0 || map.Count == 0)
         {
+            return;
+        }
+
+        if (keys is SingleItemSet<T> single)
+        {
+            RemoveFromSlot(map, single.Item, holder);
             return;
         }
 
@@ -385,6 +520,17 @@ internal sealed class DatabaseLockBucket
     private static void LookupSet<T>(Dictionary<T, HolderSlot> map, IReadOnlySet<T> keys, ref ConflictCollector collector)
         where T : notnull
     {
+        if (keys is SingleItemSet<T> single)
+        {
+            ref var slot = ref CollectionsMarshal.GetValueRefOrNullRef(map, single.Item);
+            if (!Unsafe.IsNullRef(ref slot))
+            {
+                collector.AddSlot(in slot);
+            }
+
+            return;
+        }
+
         if (keys is HashSet<T> hashSet)
         {
             foreach (var key in hashSet)

@@ -14,8 +14,10 @@ internal sealed class SocketInput(TimeProvider time)
     private static readonly TimeSpan ProtocolErrorDrainTimeout = TimeSpan.FromMilliseconds(250);
 
     private readonly Lock _gate = new();
-    private readonly Queue<Message> _messages = new();
-    private Message? _current;
+    private MessageEntry[] _entries = new MessageEntry[8];
+    private int _head;
+    private int _count;
+    private int _currentIndex = -1;
     private int _header;
     private int _extended;
     private ulong _remaining;
@@ -36,9 +38,13 @@ internal sealed class SocketInput(TimeProvider time)
             lock (_gate)
             {
                 field = value;
-                if (_messages.TryPeek(out var first) && first.Completed is null)
+                if (_count > 0)
                 {
-                    field?.Invoke(first.Started, first.Received, first.Sequence);
+                    ref readonly var first = ref _entries[_head];
+                    if (!first.IsCompleted)
+                    {
+                        field?.Invoke(first.Started, first.Received, first.Sequence);
+                    }
                 }
             }
         }
@@ -47,6 +53,12 @@ internal sealed class SocketInput(TimeProvider time)
     public static void Wrap(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+        var method = context.Request.Method;
+        if (!HttpMethods.IsGet(method) && !HttpMethods.IsConnect(method))
+        {
+            return;
+        }
+
         var upgrade = context.Features.Get<IHttpUpgradeFeature>();
         var connect = context.Features.Get<IHttpExtendedConnectFeature>();
         if (upgrade is not { IsUpgradableRequest: true } && connect is not { IsExtendedConnect: true })
@@ -75,17 +87,30 @@ internal sealed class SocketInput(TimeProvider time)
     {
         lock (_gate)
         {
-            if (!_messages.TryDequeue(out var message))
+            if (_count == 0)
             {
                 return null;
             }
 
-            if (_messages.TryPeek(out var next) && next.Completed is null)
+            var message = _entries[_head];
+            if (_currentIndex == _head)
             {
-                Progress?.Invoke(next.Started, next.Received, next.Sequence);
+                _currentIndex = -1;
             }
 
-            return new ArrivedMessage(message.Started, message.Completed ?? time.GetTimestamp(), message.Sequence);
+            _head = (_head + 1) & (_entries.Length - 1);
+            _count--;
+
+            if (_count > 0)
+            {
+                ref readonly var next = ref _entries[_head];
+                if (!next.IsCompleted)
+                {
+                    Progress?.Invoke(next.Started, next.Received, next.Sequence);
+                }
+            }
+
+            return new ArrivedMessage(message.Started, message.IsCompleted ? message.Completed : time.GetTimestamp(), message.Sequence);
         }
     }
 
@@ -111,14 +136,21 @@ internal sealed class SocketInput(TimeProvider time)
                 _final = (bytes[0] & 128) != 0;
                 if (!_control && !_message)
                 {
-                    if (_messages.Count >= MaxQueuedMessages)
+                    if (_count >= MaxQueuedMessages)
                     {
                         _invalid = true;
                         return;
                     }
 
-                    _current = new Message(_arrivedAt, ++_sequence);
-                    _messages.Enqueue(_current);
+                    if (_count == _entries.Length)
+                    {
+                        GrowEntries();
+                    }
+
+                    var tail = (_head + _count) & (_entries.Length - 1);
+                    _entries[tail] = new MessageEntry(_arrivedAt, ++_sequence);
+                    _currentIndex = tail;
+                    _count++;
                     _message = true;
                 }
 
@@ -166,9 +198,9 @@ internal sealed class SocketInput(TimeProvider time)
                 {
                     var mask = Math.Min(count, _maskBytes);
                     _maskBytes -= mask;
-                    if (_current is { } current)
+                    if (_currentIndex >= 0)
                     {
-                        current.Received += count - mask;
+                        _entries[_currentIndex].Received += count - mask;
                     }
 
                     progressed = true;
@@ -190,10 +222,28 @@ internal sealed class SocketInput(TimeProvider time)
             }
         }
 
-        if (progressed && !_invalid && _messages.TryPeek(out var head) && head.Completed is null)
+        if (progressed && !_invalid && _count > 0)
         {
-            Progress?.Invoke(head.Started, head.Received, head.Sequence);
+            ref readonly var head = ref _entries[_head];
+            if (!head.IsCompleted)
+            {
+                Progress?.Invoke(head.Started, head.Received, head.Sequence);
+            }
         }
+    }
+
+    private void GrowEntries()
+    {
+        var next = new MessageEntry[_entries.Length * 2];
+        var tailLength = _entries.Length - _head;
+        _entries.AsSpan(_head, tailLength).CopyTo(next);
+        if (_head > 0)
+        {
+            _entries.AsSpan(0, _head).CopyTo(next.AsSpan(tailLength));
+        }
+
+        _head = 0;
+        _entries = next;
     }
 
     private void Finish()
@@ -201,21 +251,25 @@ internal sealed class SocketInput(TimeProvider time)
         _header = 0;
         if (!_control && _final)
         {
-            _current?.Completed = _arrivedAt;
+            if (_currentIndex >= 0)
+            {
+                ref var current = ref _entries[_currentIndex];
+                current.Completed = _arrivedAt;
+                current.IsCompleted = true;
+                _currentIndex = -1;
+            }
+
             _message = false;
-            _current = null;
         }
     }
 
-    private sealed class Message(long started, long sequence)
+    private struct MessageEntry(long started, long sequence)
     {
-        public long Started { get; } = started;
-
-        public long Sequence { get; } = sequence;
-
-        public int Received { get; set; }
-
-        public long? Completed { get; set; }
+        public long Started = started;
+        public long Sequence = sequence;
+        public int Received;
+        public long Completed;
+        public bool IsCompleted;
     }
 
     private sealed class Upgrade(IHttpUpgradeFeature inner, SocketInput input) : IHttpUpgradeFeature
@@ -305,7 +359,57 @@ internal sealed class SocketInput(TimeProvider time)
 
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
-        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return ValueTask.FromCanceled(cancellationToken);
+            }
+
+            if (_writes.Wait(0, CancellationToken.None))
+            {
+                return WriteAcquiredAsync(buffer, cancellationToken);
+            }
+
+            return WriteContendedAsync(buffer, cancellationToken);
+        }
+
+        private ValueTask WriteAcquiredAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+        {
+            var handedOff = false;
+            try
+            {
+                var write = inner.WriteAsync(buffer, cancellationToken);
+                if (write.IsCompletedSuccessfully)
+                {
+                    return ValueTask.CompletedTask;
+                }
+
+                handedOff = true;
+                return FinishWriteAsync(write);
+            }
+            finally
+            {
+                if (!handedOff)
+                {
+                    _writes.Release();
+                }
+            }
+        }
+
+        private async ValueTask FinishWriteAsync(ValueTask write)
+        {
+            try
+            {
+                await write;
+            }
+            finally
+            {
+                _writes.Release();
+            }
+        }
+
+        private async ValueTask WriteContendedAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
         {
             await _writes.WaitAsync(cancellationToken);
             try

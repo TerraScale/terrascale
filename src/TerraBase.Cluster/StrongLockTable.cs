@@ -26,19 +26,41 @@ public sealed record StrongLockHolder(
             writeKeys = FrozenSet<RowKey>.Empty;
             writeTables = FrozenSet<string>.Empty;
         }
+        else if (payload.WriteKeys.Count == 1)
+        {
+            var only = payload.WriteKeys[0];
+            writeKeys = new SingleItemSet<RowKey>(only);
+            writeTables = new SingleItemSet<string>(only.Table, StringComparer.OrdinalIgnoreCase);
+        }
         else
         {
-            var keys = new HashSet<RowKey>(payload.WriteKeys.Count);
-            var tables = new HashSet<string>(payload.WriteKeys.Count, StringComparer.OrdinalIgnoreCase);
-            for (var index = 0; index < payload.WriteKeys.Count; index++)
+            var first = payload.WriteKeys[0];
+            HashSet<RowKey>? multiKeys = null;
+            HashSet<string>? multiTables = null;
+            for (var index = 1; index < payload.WriteKeys.Count; index++)
             {
                 var key = payload.WriteKeys[index];
-                _ = keys.Add(key);
-                _ = tables.Add(key.Table);
+                if (multiKeys is not null)
+                {
+                    _ = multiKeys.Add(key);
+                }
+                else if (!EqualityComparer<RowKey>.Default.Equals(first, key))
+                {
+                    multiKeys = new HashSet<RowKey>(payload.WriteKeys.Count) { first, key };
+                }
+
+                if (multiTables is not null)
+                {
+                    _ = multiTables.Add(key.Table);
+                }
+                else if (!string.Equals(first.Table, key.Table, StringComparison.OrdinalIgnoreCase))
+                {
+                    multiTables = new HashSet<string>(payload.WriteKeys.Count, StringComparer.OrdinalIgnoreCase) { first.Table, key.Table };
+                }
             }
 
-            writeKeys = keys;
-            writeTables = tables;
+            writeKeys = multiKeys is not null ? multiKeys : new SingleItemSet<RowKey>(first);
+            writeTables = multiTables is not null ? multiTables : new SingleItemSet<string>(first.Table, StringComparer.OrdinalIgnoreCase);
         }
 
         IReadOnlySet<RowKey> readKeys;
@@ -46,15 +68,28 @@ public sealed record StrongLockHolder(
         {
             readKeys = FrozenSet<RowKey>.Empty;
         }
+        else if (payload.ReadSet.Count == 1)
+        {
+            readKeys = new SingleItemSet<RowKey>(payload.ReadSet[0].Key);
+        }
         else
         {
-            var keys = new HashSet<RowKey>(payload.ReadSet.Count);
-            for (var index = 0; index < payload.ReadSet.Count; index++)
+            var first = payload.ReadSet[0].Key;
+            HashSet<RowKey>? multi = null;
+            for (var index = 1; index < payload.ReadSet.Count; index++)
             {
-                _ = keys.Add(payload.ReadSet[index].Key);
+                var key = payload.ReadSet[index].Key;
+                if (multi is not null)
+                {
+                    _ = multi.Add(key);
+                }
+                else if (!EqualityComparer<RowKey>.Default.Equals(first, key))
+                {
+                    multi = new HashSet<RowKey>(payload.ReadSet.Count) { first, key };
+                }
             }
 
-            readKeys = keys;
+            readKeys = multi is not null ? multi : new SingleItemSet<RowKey>(first);
         }
 
         IReadOnlySet<string> scannedTables;
@@ -62,15 +97,28 @@ public sealed record StrongLockHolder(
         {
             scannedTables = FrozenSet<string>.Empty;
         }
+        else if (payload.ScannedTables.Count == 1)
+        {
+            scannedTables = new SingleItemSet<string>(payload.ScannedTables[0], StringComparer.OrdinalIgnoreCase);
+        }
         else
         {
-            var tables = new HashSet<string>(payload.ScannedTables.Count, StringComparer.OrdinalIgnoreCase);
-            for (var index = 0; index < payload.ScannedTables.Count; index++)
+            var first = payload.ScannedTables[0];
+            HashSet<string>? multi = null;
+            for (var index = 1; index < payload.ScannedTables.Count; index++)
             {
-                _ = tables.Add(payload.ScannedTables[index]);
+                var table = payload.ScannedTables[index];
+                if (multi is not null)
+                {
+                    _ = multi.Add(table);
+                }
+                else if (!string.Equals(first, table, StringComparison.OrdinalIgnoreCase))
+                {
+                    multi = new HashSet<string>(payload.ScannedTables.Count, StringComparer.OrdinalIgnoreCase) { first, table };
+                }
             }
 
-            scannedTables = tables;
+            scannedTables = multi is not null ? multi : new SingleItemSet<string>(first, StringComparer.OrdinalIgnoreCase);
         }
 
         return new StrongLockHolder(
@@ -106,6 +154,11 @@ public sealed record StrongLockHolder(
         }
 
         var (smaller, larger) = left.Count <= right.Count ? (left, right) : (right, left);
+        if (smaller is SingleItemSet<T> single)
+        {
+            return larger.Contains(single.Item);
+        }
+
         if (smaller is HashSet<T> hashSet)
         {
             foreach (var item in hashSet)
@@ -148,9 +201,11 @@ public readonly union LockAttempt(LockGranted, LockDenied, LockWoundRequired);
 public sealed class StrongLockTable(TimeProvider timeProvider)
 {
     private const int FinalizedCapacity = 65536;
+    private const int MaxPooledBuckets = 64;
 
     private readonly Lock _gate = new();
     private readonly Dictionary<Ulid, DatabaseLockBucket> _databases = [];
+    private readonly Stack<DatabaseLockBucket> _bucketPool = new(MaxPooledBuckets);
     private readonly HashSet<Ulid> _activeTxIds = [];
     private readonly Dictionary<Ulid, TaskCompletionSource> _released = [];
     private readonly HashSet<Ulid> _finalized = [];
@@ -182,7 +237,7 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
             ref var bucketRef = ref CollectionsMarshal.GetValueRefOrAddDefault(_databases, candidate.DatabaseId, out var exists);
             if (!exists || bucketRef is null)
             {
-                bucketRef = new DatabaseLockBucket();
+                bucketRef = _bucketPool.TryPop(out var pooled) ? pooled : new DatabaseLockBucket();
             }
 
             var bucket = bucketRef;
@@ -304,6 +359,11 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
         if (bucket.Count == 0)
         {
             _ = _databases.Remove(databaseId);
+            if (_bucketPool.Count < MaxPooledBuckets)
+            {
+                bucket.Clear();
+                _bucketPool.Push(bucket);
+            }
         }
 
         return true;
@@ -370,16 +430,76 @@ internal enum StrongTransactionState
 
 internal sealed class StrongTransactionHandle(StrongPreparePayload payload)
 {
+    private readonly Lock _gate = new();
     private int _state;
-
-    private readonly ConcurrentDictionary<string, byte> _participants = new(StringComparer.Ordinal);
+    private string? _first;
+    private List<string>? _more;
 
     public Ulid TxId => payload.TxId;
 
-    public void DispatchTo(string nodeId) => _ = _participants.TryAdd(nodeId, 0);
+    public void DispatchTo(string nodeId)
+    {
+        lock (_gate)
+        {
+            if (_first is null)
+            {
+                _first = nodeId;
+                return;
+            }
 
-    public bool CanWound(StrongWoundPayload wound, string nodeId) =>
-        wound.DatabaseId == payload.DatabaseId && wound.WinnerPriority < payload.Priority && _participants.ContainsKey(nodeId);
+            if (string.Equals(_first, nodeId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (_more is null)
+            {
+                _more = [nodeId];
+                return;
+            }
+
+            for (var index = 0; index < _more.Count; index++)
+            {
+                if (string.Equals(_more[index], nodeId, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            _more.Add(nodeId);
+        }
+    }
+
+    public bool CanWound(StrongWoundPayload wound, string nodeId)
+    {
+        if (wound.DatabaseId != payload.DatabaseId || wound.WinnerPriority >= payload.Priority)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            if (string.Equals(_first, nodeId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (_more is null)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < _more.Count; index++)
+            {
+                if (string.Equals(_more[index], nodeId, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
 
     public StrongTransactionState State => (StrongTransactionState)Volatile.Read(ref _state);
 

@@ -32,6 +32,6 @@ internal sealed class SqlEndpoint(SqlFlow flow)
             return SqlRefusal.RequestTooLarge();
         }
 
-        return SqlRoute.V2(await flow.ExecuteAsync(HttpContext, request.Project, request.Database, request.Statements, cancellationToken));
+        return SqlRoute.V2(await flow.ExecuteAsync(HttpContext, request, cancellationToken));
     }
 }

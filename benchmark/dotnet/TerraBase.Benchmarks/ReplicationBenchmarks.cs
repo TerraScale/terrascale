@@ -26,18 +26,59 @@ public static class ReplicationBenchmarks
     public static async Task RunAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ctx);
+        if (!ctx.HasMatchingBenchmark(
+            Suite,
+            "repl_single_commit_e2e_lag",
+            "repl_stream_1000_commits_throughput",
+            "repl_fanout_3node_throughput",
+            "repl_catchup_5000_rows",
+            "repl_concurrent_32_writers_replicated",
+            "repl_concurrent_32_writers_replicated_durable",
+            "repl_strong_3region_quorum_write"))
+        {
+            return;
+        }
+
         QuicPlatform.EnsureInitialized();
         if (!QuicPlatform.IsSupported)
         {
             throw new PlatformNotSupportedException("System.Net.Quic is required for replication benchmarks.");
         }
 
-        await RunSingleCommitE2ELagAsync(ctx, cancellationToken);
-        await RunStream1000CommitsThroughputAsync(ctx, cancellationToken);
-        await RunFanout3NodeThroughputAsync(ctx, cancellationToken);
-        await RunCatchup5000RowsAsync(ctx, cancellationToken);
-        await RunConcurrent32WritersReplicatedAsync(ctx, fsyncCommitLog: false, cancellationToken);
-        await RunConcurrent32WritersReplicatedAsync(ctx, fsyncCommitLog: true, cancellationToken);
+        if (ctx.ShouldRunBenchmark(Suite, "repl_single_commit_e2e_lag"))
+        {
+            await RunSingleCommitE2ELagAsync(ctx, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "repl_stream_1000_commits_throughput"))
+        {
+            await RunStream1000CommitsThroughputAsync(ctx, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "repl_fanout_3node_throughput"))
+        {
+            await RunFanout3NodeThroughputAsync(ctx, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "repl_catchup_5000_rows"))
+        {
+            await RunCatchup5000RowsAsync(ctx, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "repl_concurrent_32_writers_replicated"))
+        {
+            await RunConcurrent32WritersReplicatedAsync(ctx, fsyncCommitLog: false, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "repl_concurrent_32_writers_replicated_durable"))
+        {
+            await RunConcurrent32WritersReplicatedAsync(ctx, fsyncCommitLog: true, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "repl_strong_3region_quorum_write"))
+        {
+            await RunStrong3RegionQuorumWriteAsync(ctx, cancellationToken);
+        }
     }
 
     private static async Task RunSingleCommitE2ELagAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
@@ -518,6 +559,93 @@ public static class ReplicationBenchmarks
             $"  -> {benchmarkId} ({modeLabel}): {effectiveTps:F1} replicated tx/s ({vsReferenceRatio:F2}x 9,500 TPS reference)"));
     }
 
+    private static async Task RunStrong3RegionQuorumWriteAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
+    {
+        var databaseId = Ulid.NewUlid();
+        var rawKey = RandomNumberGenerator.GetBytes(DatabaseOpenRequest.RawKeyLength);
+
+        await using var cluster = await ReplCluster.StartAsync(
+            ctx,
+            "repl-strong-3region",
+            [("gru-1", "gru", 1), ("fra-1", "fra", 2), ("sjc-1", "sjc", 3)],
+            [databaseId],
+            rawKey,
+            fsyncCommitLog: true,
+            cancellationToken);
+
+        var primary = cluster.Nodes[0];
+        var followerFra = cluster.Nodes[1];
+        var followerSjc = cluster.Nodes[2];
+        var primarySession = primary.Sessions[databaseId];
+        var fraSession = followerFra.Sessions[databaseId];
+        var sjcSession = followerSjc.Sessions[databaseId];
+
+        await BootstrapTableAsync(
+            primary,
+            [followerFra, followerSjc],
+            databaseId,
+            "CREATE TABLE strong_items (id INTEGER PRIMARY KEY, val INTEGER NOT NULL, payload TEXT NOT NULL);",
+            cancellationToken);
+
+        var rowId = 0L;
+        var lastBookmark = CausalBookmark.Empty;
+        var totalPayloadBytes = 0L;
+        var measuredCommits = 0L;
+
+        var metrics = await ctx.MeasureAsync(
+            Suite,
+            "repl_strong_3region_quorum_write",
+            warmup: 5,
+            iterations: 50,
+            async _ =>
+            {
+                var id = ++rowId;
+                var written = RequireClusterWrite(await primary.Coordinator.ExecuteWriteAsync(
+                    primarySession,
+                    new SqlStatementRequest(
+                        databaseId,
+                        [new SqlStatement(
+                            "INSERT INTO strong_items (id, val, payload) VALUES (?, ?, ?);",
+                            [SqlValue.FromIntegral(id), SqlValue.FromIntegral(id * 7L), SqlValue.FromText(SamplePayload)],
+                            NoNamedParams)],
+                        SqlAccess.Write,
+                        ConsistencyMode.Strong,
+                        CausalBookmark.Empty),
+                    cancellationToken));
+                BenchRunnerContext.AssertCondition(
+                    written.Commit.Mode == ConsistencyMode.Strong
+                    && written.Commit.Sequence > 0
+                    && written.ResultSets[0].RowsAffected == 1,
+                    "repl_strong_3region_quorum_write did not produce a durable Strong commit");
+                lastBookmark = written.Commit.Bookmark;
+                totalPayloadBytes += written.Commit.DeltaPayload.Length;
+                measuredCommits++;
+            },
+            unitsPerOp: 1,
+            unitLabel: "commits",
+            diskBytes: () => measuredCommits > 0 ? totalPayloadBytes / measuredCommits : 0L,
+            note: "3-region (gru-1/fra-1/sjc-1) Strong 2-of-3 quorum write; ConsistencyMode.Strong, FsyncCommitLog=true, loopback",
+            cancellationToken: cancellationToken);
+
+        await WaitFollowersAsync([fraSession, sjcSession], lastBookmark, TimeSpan.FromSeconds(20), cancellationToken);
+        VerifyRowCount(
+            RequireRead(await fraSession.ExecuteReadAsync(
+                CountStatement(databaseId, "SELECT COUNT(*) FROM strong_items;", lastBookmark),
+                cancellationToken)),
+            rowId,
+            "repl_strong_3region_quorum_write fra count");
+        VerifyRowCount(
+            RequireRead(await sjcSession.ExecuteReadAsync(
+                CountStatement(databaseId, "SELECT COUNT(*) FROM strong_items;", lastBookmark),
+                cancellationToken)),
+            rowId,
+            "repl_strong_3region_quorum_write sjc count");
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"  -> repl_strong_3region_quorum_write (ConsistencyMode.Strong, FsyncCommitLog=true, loopback): {metrics.OpsPerSec:F1} strong commits/s | p50={metrics.P50Us:F1}us p99={metrics.P99Us:F1}us"));
+    }
+
     private static async Task<SqlWriteResult> ExecuteReplicatedWriteTaskAsync(
         ClusterCoordinator coordinator,
         ISqlDatabaseSession session,
@@ -846,6 +974,7 @@ public static class ReplicationBenchmarks
                 replicator.Map(host);
                 participant.Map(host);
                 antiEntropy.Map(host);
+                health.Map(host);
                 raft.Map(host);
 
                 var bound = RequireHostStarted(await host.StartAsync(cancellationToken));
@@ -862,6 +991,7 @@ public static class ReplicationBenchmarks
                     replicator,
                     raft,
                     coordinator,
+                    health,
                     bound);
             }
 
@@ -872,6 +1002,7 @@ public static class ReplicationBenchmarks
                     if (i != j)
                     {
                         nodes[i].Client.UpsertPeer(new QuicPeer(nodes[j].NodeId, nodes[j].Region, nodes[j].BoundEndPoint));
+                        nodes[i].Health.ObserveReachable(nodes[j].NodeId);
                     }
                 }
             }
@@ -927,6 +1058,7 @@ public static class ReplicationBenchmarks
         DeltaReplicator Replicator,
         InRegionRaftRouter Raft,
         ClusterCoordinator Coordinator,
+        PeerHealthMonitor Health,
         IPEndPoint BoundEndPoint);
 
     private sealed class BenchMeterFactory : IMeterFactory

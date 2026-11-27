@@ -19,6 +19,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     private const int MaxFrameBytes = QuicProtocol.MaxPayloadBytes - 4096;
     private const int MaxInboundQueuedBatches = 256;
     private const int MaxInboundBatchesPerLease = 16;
+    private const int MaxRetainedInboxes = 256;
     private const int MaxCachedChannelKeys = 4096;
 
     private static readonly QuicSent Sent = new();
@@ -234,6 +235,11 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (Volatile.Read(ref _activeDrains) > 0)
         {
             await _drainsComplete.Task;
+        }
+
+        foreach (var (databaseId, mailbox) in _inboxes)
+        {
+            ReleaseMailboxOnStop(databaseId, mailbox);
         }
 
         _shutdown.Dispose();
@@ -558,7 +564,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             return;
         }
 
-        _ = RunInboundDrainBoundaryAsync(databaseId, mailbox);
+        _ = DrainInboundMailboxAsync(databaseId, mailbox, _shutdown.Token);
     }
 
     private void EndInboundDrain()
@@ -566,27 +572,6 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (Interlocked.Decrement(ref _activeDrains) == 0 && Volatile.Read(ref _disposed) != 0)
         {
             _ = _drainsComplete.TrySetResult();
-        }
-    }
-
-    private async Task RunInboundDrainBoundaryAsync(Ulid databaseId, InboundMailbox mailbox)
-    {
-        try
-        {
-            await DrainInboundMailboxAsync(databaseId, mailbox, _shutdown.Token);
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-        {
-            ReleaseMailboxOnStop(databaseId, mailbox);
-        }
-        catch (Exception exception)
-        {
-            ReleaseMailboxOnStop(databaseId, mailbox);
-            ClusterLog.LoopFailed(logger, string.Concat("apply:", databaseId.ToString()), TimeSpan.Zero, exception);
-        }
-        finally
-        {
-            EndInboundDrain();
         }
     }
 
@@ -598,6 +583,8 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         {
             mailbox.Draining = false;
             mailbox.Removed = true;
+            mailbox.Combined = null;
+            mailbox.AckPeers = null;
             waiters = mailbox.Waiters;
             mailbox.Waiters = null;
             flushWaiters = mailbox.FlushWaiters;
@@ -749,63 +736,95 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
     private async Task DrainInboundMailboxAsync(Ulid databaseId, InboundMailbox mailbox, CancellationToken cancellationToken)
     {
-        List<CommitMetadata>? combined = null;
-        List<string>? ackPeers = null;
-
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            if (!TryDequeueInboundBatch(databaseId, mailbox, ref combined, ref ackPeers, out var batch, out var singleSender, out var singleAck, out var batchEnd))
+            while (!cancellationToken.IsCancellationRequested)
             {
-                return;
-            }
-
-            var resolved = await databases.ResolveAsync(databaseId, cancellationToken);
-            var (session, resolveFailure) = UnpackResolved(resolved);
-            if (session is null)
-            {
-                CompleteInboundBatch(mailbox, batchEnd);
-                ClusterLog.RemoteApplyDeferred(logger, databaseId, singleSender, resolveFailure);
-                _ = databases.RequestCatchUp(databaseId, FrontierOf(batch));
-                combined?.Clear();
-                ackPeers?.Clear();
-                continue;
-            }
-
-            await using (session)
-            {
-                var leasesUsed = 0;
-                while (true)
+                if (!TryDequeueInboundBatch(databaseId, mailbox, out var batch, out var singleSender, out var singleAck, out var batchEnd))
                 {
-                    var applied = await ApplyToSessionAsync(session, batch, requestCatchUpOnBuffered: true, cancellationToken);
+                    return;
+                }
+
+                var resolved = await databases.ResolveAsync(databaseId, cancellationToken);
+                var (session, resolveFailure) = UnpackResolved(resolved);
+                if (session is null)
+                {
                     CompleteInboundBatch(mailbox, batchEnd);
-                    var bookmark = UnpackAppliedBookmark(applied);
-                    if (bookmark is null)
-                    {
-                        ClusterLog.RemoteApplyDeferred(logger, databaseId, singleSender, Describe(applied));
-                        _ = databases.RequestCatchUp(databaseId, FrontierOf(batch));
-                    }
-                    else
-                    {
-                        EnqueueInboundAcks(databaseId, bookmark, singleSender, singleAck, ackPeers);
-                    }
+                    ClusterLog.RemoteApplyDeferred(logger, databaseId, singleSender, resolveFailure);
+                    _ = databases.RequestCatchUp(databaseId, FrontierOf(batch));
+                    ClearReusableLists(mailbox);
+                    continue;
+                }
 
-                    combined?.Clear();
-                    ackPeers?.Clear();
-                    leasesUsed++;
-                    if (cancellationToken.IsCancellationRequested || leasesUsed >= MaxInboundBatchesPerLease)
+                await using (session)
+                {
+                    var leasesUsed = 0;
+                    while (true)
                     {
-                        break;
-                    }
+                        var applied = await ApplyToSessionAsync(session, batch, requestCatchUpOnBuffered: true, cancellationToken);
+                        CompleteInboundBatch(mailbox, batchEnd);
+                        var bookmark = UnpackAppliedBookmark(applied);
+                        if (bookmark is null)
+                        {
+                            ClusterLog.RemoteApplyDeferred(logger, databaseId, singleSender, Describe(applied));
+                            _ = databases.RequestCatchUp(databaseId, FrontierOf(batch));
+                        }
+                        else
+                        {
+                            EnqueueInboundAcks(databaseId, bookmark, singleSender, singleAck, mailbox.AckPeers);
+                        }
 
-                    if (!TryDequeueInboundBatch(databaseId, mailbox, ref combined, ref ackPeers, out batch, out singleSender, out singleAck, out batchEnd))
-                    {
-                        return;
+                        ClearReusableLists(mailbox);
+                        leasesUsed++;
+                        if (cancellationToken.IsCancellationRequested || leasesUsed >= MaxInboundBatchesPerLease)
+                        {
+                            break;
+                        }
+
+                        if (!TryDequeueInboundBatch(databaseId, mailbox, out batch, out singleSender, out singleAck, out batchEnd))
+                        {
+                            return;
+                        }
                     }
                 }
             }
+
+            ReleaseMailboxOnStop(databaseId, mailbox);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            ReleaseMailboxOnStop(databaseId, mailbox);
+        }
+        catch (Exception exception)
+        {
+            ReleaseMailboxOnStop(databaseId, mailbox);
+            ClusterLog.LoopFailed(logger, string.Concat("apply:", databaseId.ToString()), TimeSpan.Zero, exception);
+        }
+        finally
+        {
+            EndInboundDrain();
+        }
+    }
+
+    private static void ClearReusableLists(InboundMailbox mailbox)
+    {
+        if (mailbox.Combined is { } combined)
+        {
+            combined.Clear();
+            if (combined.Capacity > MaxCoalescedCommits * 2)
+            {
+                combined.Capacity = MaxCoalescedCommits;
+            }
         }
 
-        ReleaseMailboxOnStop(databaseId, mailbox);
+        if (mailbox.AckPeers is { } ackPeers)
+        {
+            ackPeers.Clear();
+            if (ackPeers.Capacity > MaxCoalescedCommits * 2)
+            {
+                ackPeers.Capacity = 8;
+            }
+        }
     }
 
     private static (ISqlDatabaseSession? Session, string Failure) UnpackResolved(DatabaseResolveOutcome resolved) => resolved switch
@@ -824,8 +843,6 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     private bool TryDequeueInboundBatch(
         Ulid databaseId,
         InboundMailbox mailbox,
-        ref List<CommitMetadata>? combined,
-        ref List<string>? ackPeers,
         out IReadOnlyList<CommitMetadata> batch,
         out string primarySender,
         out bool singleAck,
@@ -843,9 +860,15 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             if (mailbox.Queue.Count == 0)
             {
                 mailbox.Draining = false;
-                mailbox.Removed = true;
                 mailbox.AppliedCount = mailbox.EnqueuedCount;
-                _ = _inboxes.TryRemove(KeyValuePair.Create(databaseId, mailbox));
+                if (Volatile.Read(ref _disposed) != 0 || _inboxes.Count > MaxRetainedInboxes)
+                {
+                    mailbox.Removed = true;
+                    mailbox.Combined = null;
+                    mailbox.AckPeers = null;
+                    _ = _inboxes.TryRemove(KeyValuePair.Create(databaseId, mailbox));
+                }
+
                 drainWaiters = mailbox.Waiters;
                 mailbox.Waiters = null;
                 flushWaiters = mailbox.FlushWaiters;
@@ -872,13 +895,28 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                 }
                 else
                 {
-                    combined ??= new List<CommitMetadata>(MaxCoalescedCommits);
-                    combined.Clear();
+                    var combined = mailbox.Combined;
+                    if (combined is null)
+                    {
+                        combined = new List<CommitMetadata>(MaxCoalescedCommits);
+                        mailbox.Combined = combined;
+                    }
+                    else
+                    {
+                        combined.Clear();
+                    }
+
                     var batchBytes = AppendCommits(combined, first.Commits, ref outOfOrder);
+                    var ackPeers = mailbox.AckPeers;
+                    ackPeers?.Clear();
                     if (singleAck)
                     {
-                        ackPeers ??= [];
-                        ackPeers.Clear();
+                        if (ackPeers is null)
+                        {
+                            ackPeers = [];
+                            mailbox.AckPeers = ackPeers;
+                        }
+
                         ackPeers.Add(first.SenderNodeId);
                     }
 
@@ -895,7 +933,12 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                         batchBytes += AppendCommits(combined, next.Commits, ref outOfOrder);
                         if (next.AckRequested)
                         {
-                            ackPeers ??= [];
+                            if (ackPeers is null)
+                            {
+                                ackPeers = [];
+                                mailbox.AckPeers = ackPeers;
+                            }
+
                             AddDistinctPeer(ackPeers, next.SenderNodeId);
                         }
                     }
@@ -917,9 +960,9 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
         WakeWaiters(mailbox, singleWaiter, multiWaiters);
 
-        if (outOfOrder && combined is not null)
+        if (outOfOrder && mailbox.Combined is { } toSort)
         {
-            combined.Sort(CommitOrderComparison);
+            toSort.Sort(CommitOrderComparison);
         }
 
         return true;
@@ -1357,7 +1400,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                             deltaBatch.Sort(CommitOrderComparison);
                         }
 
-                        var push = new DeltaPushMessage(item.DatabaseId, localNodeId, deltaBatch, ackRequested);
+                        var push = new DeltaPushMessage(item.DatabaseId, localNodeId, deltaBatch, ackRequested, estimatedFrameBytes);
                         await SendPushAsync(nodeId, item.DatabaseId, channel, QuicMessageType.DeltaPush, push, cancellationToken);
                         deltaBatch.Clear();
                         sent = true;
@@ -1488,6 +1531,10 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         public Lock Gate { get; } = new();
 
         public Queue<InboundItem> Queue { get; } = new();
+
+        public List<CommitMetadata>? Combined { get; set; }
+
+        public List<string>? AckPeers { get; set; }
 
         public Queue<TaskCompletionSource>? Waiters { get; set; }
 

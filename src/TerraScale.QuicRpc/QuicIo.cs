@@ -34,7 +34,7 @@ internal readonly union StreamFrameStatus(FrameReady, StreamEnded, QuicFault);
 [SupportedOSPlatform("windows")]
 internal sealed class QuicFrameReader(int initialBufferCapacity = QuicFrameReader.DefaultBufferCapacity) : IDisposable
 {
-    public const int DefaultBufferCapacity = 32 * 1024;
+    public const int DefaultBufferCapacity = 64 * 1024;
     public const int UnaryBufferCapacity = 4 * 1024;
     private const int DirectRentThreshold = 256 * 1024;
     private static readonly FrameReady Ready = new();
@@ -50,6 +50,62 @@ internal sealed class QuicFrameReader(int initialBufferCapacity = QuicFrameReade
     public ReadOnlyMemory<byte> CurrentPayload { get; private set; }
 
     public int CurrentTotalLength => QuicProtocol.FrameHeaderSize + CurrentHeader.PayloadLength;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryReadBuffered(out StreamFrameStatus status)
+    {
+        if (_count < QuicProtocol.FrameHeaderSize)
+        {
+            status = Ended;
+            return false;
+        }
+
+        if (!FrameHeader.TryRead(_buffer.AsSpan(_offset, QuicProtocol.FrameHeaderSize), out var parsed))
+        {
+            ReleaseLargePayload();
+            CurrentPayload = ReadOnlyMemory<byte>.Empty;
+            status = new ProtocolFault("The peer sent a truncated or invalid frame header.");
+            return true;
+        }
+
+        var payloadLength = parsed.PayloadLength;
+        if (payloadLength == 0)
+        {
+            ReleaseLargePayload();
+            _offset += QuicProtocol.FrameHeaderSize;
+            _count -= QuicProtocol.FrameHeaderSize;
+            if (_count == 0)
+            {
+                _offset = 0;
+            }
+
+            CurrentHeader = parsed;
+            CurrentPayload = ReadOnlyMemory<byte>.Empty;
+            status = Ready;
+            return true;
+        }
+
+        var totalLength = QuicProtocol.FrameHeaderSize + payloadLength;
+        if (payloadLength <= _buffer.Length && _count >= totalLength)
+        {
+            ReleaseLargePayload();
+            var payloadStart = _offset + QuicProtocol.FrameHeaderSize;
+            _offset += totalLength;
+            _count -= totalLength;
+            if (_count == 0)
+            {
+                _offset = 0;
+            }
+
+            CurrentHeader = parsed;
+            CurrentPayload = _buffer.AsMemory(payloadStart, payloadLength);
+            status = Ready;
+            return true;
+        }
+
+        status = Ended;
+        return false;
+    }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<StreamFrameStatus>))]
     public async ValueTask<StreamFrameStatus> ReadNextAsync(QuicStream stream, CallScope scope)

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using TerraBase.Cluster;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
@@ -39,6 +40,8 @@ internal sealed class DatabaseAccess(
 
     private static readonly CallerForbidden ServiceDenied = new("the caller holds no grant for this project", "forbidden_caller");
 
+    private static readonly Completed Authorized = new();
+
     public ValueTask<DatabaseResolution> DataAsync(
         Caller caller, string? projectReference, string? databaseReference, CancellationToken cancellationToken)
     {
@@ -52,7 +55,14 @@ internal sealed class DatabaseAccess(
             return ValueTask.FromResult<DatabaseResolution>(new InvalidInput("project must be a canonical uppercase ULID", "invalid_project"));
         }
 
-        if (databaseReference is null || (!DatabaseNames.IsValid(databaseReference) && !IsId(databaseReference)))
+        if (databaseReference is null)
+        {
+            return ValueTask.FromResult<DatabaseResolution>(new InvalidInput("database must be a canonical uppercase ULID or a lowercase name of at most 63 characters", "invalid_database"));
+        }
+
+        Ulid databaseId = default;
+        var isDatabaseId = databaseReference.Length == 26 && Ulid.TryParse(databaseReference, out databaseId);
+        if (!isDatabaseId && !DatabaseNames.IsValid(databaseReference))
         {
             return ValueTask.FromResult<DatabaseResolution>(new InvalidInput("database must be a canonical uppercase ULID or a lowercase name of at most 63 characters", "invalid_database"));
         }
@@ -73,7 +83,7 @@ internal sealed class DatabaseAccess(
         }
 
         if (catalog.TryGetProject(projectId, out var project)
-            && catalog.TryFindDatabase(project.Id, databaseReference, out var database))
+            && TryFindCachedDatabase(project.Id, isDatabaseId, databaseId, databaseReference, out var database))
         {
             if (!Reaches(caller, database))
             {
@@ -314,15 +324,15 @@ internal sealed class DatabaseAccess(
         return caller switch
         {
             AnonymousCaller => ValueTask.FromResult<ProjectAuthorization>(UnknownProject),
-            PeerCaller => ValueTask.FromResult<ProjectAuthorization>(new Completed()),
+            PeerCaller => ValueTask.FromResult<ProjectAuthorization>(Authorized),
             ServiceCaller service => ValueTask.FromResult(Service(service, project, scope)),
             ApiKeyCaller key when !key.Key.Reaches(project, database) => ValueTask.FromResult<ProjectAuthorization>(UnknownProject),
-            ApiKeyCaller key => ValueTask.FromResult<ProjectAuthorization>(key.Key.Grants(scope) ? new Completed() : MissingScope(scope)),
+            ApiKeyCaller key => ValueTask.FromResult<ProjectAuthorization>(key.Key.Grants(scope) ? Authorized : MissingScope(scope)),
             UserCaller user => AuthorizeUserAsync(user, project.OrganizationId, cancellationToken),
             ProjectCaller token when token.ProjectId != project.Id || (token.OrganizationId is { } org && org != project.OrganizationId) => ValueTask.FromResult<ProjectAuthorization>(UnknownProject),
-            ProjectCaller token => ValueTask.FromResult<ProjectAuthorization>(token.Scopes.Contains(scope) ? new Completed() : MissingScope(scope)),
+            ProjectCaller token => ValueTask.FromResult<ProjectAuthorization>(token.Scopes.Contains(scope) ? Authorized : MissingScope(scope)),
             EndUserCaller endUser when endUser.ProjectId != project.Id => ValueTask.FromResult<ProjectAuthorization>(UnknownProject),
-            EndUserCaller => ValueTask.FromResult<ProjectAuthorization>(scope is Scopes.SqlRead or Scopes.SqlWrite ? new Completed() : MissingScope(scope)),
+            EndUserCaller => ValueTask.FromResult<ProjectAuthorization>(scope is Scopes.SqlRead or Scopes.SqlWrite ? Authorized : MissingScope(scope)),
         };
     }
 
@@ -333,17 +343,17 @@ internal sealed class DatabaseAccess(
             : caller switch
             {
                 AnonymousCaller => UnknownProject,
-                PeerCaller => new Completed(),
+                PeerCaller => Authorized,
                 ServiceCaller service => Service(service, project, scope),
                 ApiKeyCaller key when !key.Key.Reaches(project, database) => UnknownProject,
-                ApiKeyCaller key => key.Key.Grants(scope) ? new Completed() : MissingScope(scope),
+                ApiKeyCaller key => key.Key.Grants(scope) ? Authorized : MissingScope(scope),
                 UserCaller user => catalog.TryGetOrganization(project.OrganizationId, out var organization)
-                    ? (ProjectAuthorization?)(string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) ? new Completed() : UnknownProject)
+                    ? (ProjectAuthorization?)(string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) ? Authorized : UnknownProject)
                     : null,
                 ProjectCaller token when token.ProjectId != project.Id || (token.OrganizationId is { } org && org != project.OrganizationId) => UnknownProject,
-                ProjectCaller token => token.Scopes.Contains(scope) ? new Completed() : MissingScope(scope),
+                ProjectCaller token => token.Scopes.Contains(scope) ? Authorized : MissingScope(scope),
                 EndUserCaller endUser when endUser.ProjectId != project.Id => UnknownProject,
-                EndUserCaller => scope is Scopes.SqlRead or Scopes.SqlWrite ? new Completed() : MissingScope(scope),
+                EndUserCaller => scope is Scopes.SqlRead or Scopes.SqlWrite ? Authorized : MissingScope(scope),
             };
 
     private ValueTask<ProjectAuthorization> AuthorizeUserAsync(UserCaller user, Ulid organizationId, CancellationToken cancellationToken)
@@ -351,7 +361,7 @@ internal sealed class DatabaseAccess(
         if (catalog.TryGetOrganization(organizationId, out var organization))
         {
             return ValueTask.FromResult<ProjectAuthorization>(
-                string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) ? new Completed() : UnknownProject);
+                string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) ? Authorized : UnknownProject);
         }
 
         return AuthorizeUserSlowAsync(user, organizationId, cancellationToken);
@@ -362,7 +372,7 @@ internal sealed class DatabaseAccess(
         var outcome = await catalog.GetOrganizationAsync(organizationId, cancellationToken);
         return outcome switch
         {
-            OrganizationRecord organization when string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) => new Completed(),
+            OrganizationRecord organization when string.Equals(organization.CreatedBy, user.UserId, StringComparison.Ordinal) => Authorized,
             OrganizationRecord or ResourceNotFound => UnknownProject,
             BackendUnavailable unavailable => unavailable,
         };
@@ -429,8 +439,14 @@ internal sealed class DatabaseAccess(
         AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => true,
     };
 
+    private bool TryFindCachedDatabase(
+        Ulid projectId, bool isDatabaseId, Ulid databaseId, string databaseReference, [NotNullWhen(true)] out DatabaseRecord? database) =>
+        isDatabaseId
+            ? catalog.TryFindDatabaseById(projectId, databaseId, out database)
+            : catalog.TryFindDatabaseByName(projectId, databaseReference, out database);
+
     private static bool Matches(string narrowed, DatabaseRecord database) =>
-        IsId(narrowed) ? Ulid.Parse(narrowed) == database.Id : string.Equals(narrowed, database.Name, StringComparison.Ordinal);
+        narrowed.Length == 26 && Ulid.TryParse(narrowed, out var id) ? id == database.Id : string.Equals(narrowed, database.Name, StringComparison.Ordinal);
 
     private static bool IsCustomer(Caller caller) => caller switch
     {
@@ -458,7 +474,7 @@ internal sealed class DatabaseAccess(
     };
 
     private static ProjectAuthorization Service(ServiceCaller service, ProjectRecord project, string scope) =>
-        ServiceAllows(service, project.Id, scope) ? new Completed() : ServiceDenied;
+        ServiceAllows(service, project.Id, scope) ? Authorized : ServiceDenied;
 
     private static bool ServiceAllows(ServiceCaller service, Ulid projectId, string scope)
     {
