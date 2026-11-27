@@ -5,6 +5,9 @@
 @inject AssetUrls Assets
 @(await RenderPartialAsync<DatabaseDetailSection, DatabaseDetailPage>(Model))
 
+@if(Model.Tab == "tables"){
+<script type="module" src="@Assets.Url("js/table-studio.js")" nonce="@Model.Shell.Nonce"></script>
+}
 @if(Model.Tab == "tables" && Model.Context.CanWriteProjectData){
 <script type="module" src="@Assets.Url("js/code-editor.js")" nonce="@Model.Shell.Nonce"></script>
 <script type="module" src="@Assets.Url("js/create-table.js")" nonce="@Model.Shell.Nonce"></script>

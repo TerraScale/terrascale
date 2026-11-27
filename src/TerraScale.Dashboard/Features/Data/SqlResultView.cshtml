@@ -1,22 +1,21 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
 @using System.Text.Json
 @using System.Globalization
+@using TerraScale.Dashboard.Features.Databases
 @{ var result = Model.SqlResult!; var shown = result.Rows.Take(200).ToArray(); }
 <section class="ts-card ts-card-flush" id="sql-result" aria-labelledby="sql-result-title" data-sql-result data-run-url="@Model.RunUrl">
-<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-result-title">Query result</h2></div></header>
+<header class="ts-card-head ts-studio-result-head"><div class="ts-studio-result-meta"><h2 class="ts-card-title" id="sql-result-title">Query result</h2>@if(result.Columns.Count > 0){<span class="ts-meta" role="status" aria-live="polite" aria-atomic="true" data-sql-range>Rows @(shown.Length == 0 ? 0 : 1)–@shown.Length.ToString("N0", CultureInfo.InvariantCulture) of @result.Rows.Count.ToString("N0", CultureInfo.InvariantCulture)</span>}</div>@if(result.Columns.Count > 0){<div class="ts-studio-result-actions" data-sql-exports hidden><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-export="csv">Download CSV</button><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-export="json">Download JSON</button><button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-export="copy">Copy JSON</button></div>}</header>
 <div class="ts-card-body ts-stack-sm">
 @if(result.Columns.Count == 0){<p class="ts-meta" role="status" aria-live="polite">@ValueFormat.Plural(result.RowsAffected, "row") affected@(result.LastInsertRowId is { } id && result.RowsAffected > 0 ? " · last insert rowid " + id : "")</p>}
 else{
-<p class="ts-meta">@ValueFormat.Plural(result.Rows.Count, "row")</p>
-<p role="status" aria-live="polite" aria-atomic="true" data-sql-range>Rows @(shown.Length == 0 ? 0 : 1)–@shown.Length.ToString("N0", CultureInfo.InvariantCulture) of @result.Rows.Count.ToString("N0", CultureInfo.InvariantCulture)</p>
 @if(shown.Length == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No rows matched.</p></div>}
-else{<div class="ts-table-wrap ts-data-result-wrap" role="region" tabindex="0" aria-labelledby="sql-result-title"><table class="ts-table ts-data-result"><thead><tr>@foreach(var column in result.Columns){<th scope="col" title="@column.Decltype">@column.Name</th>}</tr></thead><tbody>@foreach(var row in shown){<tr>@foreach(var cell in row){<td class="@(cell.ValueKind == JsonValueKind.Number ? "ts-num" : null)" data-kind="@(cell.ValueKind == JsonValueKind.Null ? "null" : cell.ValueKind == JsonValueKind.Number ? "number" : "string")">@(cell.ValueKind == JsonValueKind.String ? cell.GetString() : cell.GetRawText())</td>}</tr>}</tbody></table></div>}
+else{
+bool[] numbers = [.. result.Columns.Select((column, index) => DatabaseTables.NumericType(column.Decltype) || shown.All(row => row[index].ValueKind is JsonValueKind.Number or JsonValueKind.Null) && shown.Any(row => row[index].ValueKind == JsonValueKind.Number))];
+<div class="ts-table-wrap ts-data-result-wrap" role="region" tabindex="0" aria-labelledby="sql-result-title"><table class="ts-table ts-data-result ts-studio-grid"><thead><tr>@for(var index = 0; index < result.Columns.Count; index++){<th scope="col" class="@(numbers[index] ? "ts-num" : null)" title="@result.Columns[index].Decltype">@result.Columns[index].Name</th>}</tr></thead><tbody>@foreach(var row in shown){<tr>@for(var index = 0; index < row.Count; index++){var cell = row[index];<td class="@(numbers[index] || cell.ValueKind == JsonValueKind.Number ? "ts-num" : null)" data-kind="@(cell.ValueKind == JsonValueKind.Null ? "null" : cell.ValueKind == JsonValueKind.Number ? "number" : cell.ValueKind == JsonValueKind.Object ? "object" : cell.ValueKind == JsonValueKind.Array ? "array" : "string")">@(cell.ValueKind == JsonValueKind.Null ? "NULL" : cell.ValueKind == JsonValueKind.String ? cell.GetString() : cell.GetRawText())</td>}</tr>}</tbody></table></div>}
 <nav class="ts-pager" aria-label="SQL result pages" aria-keyshortcuts="ArrowLeft ArrowRight Home End" tabindex="0" data-sql-pages hidden><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-page="-1">Previous rows</button><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-page="1">Next rows</button></nav>
-<div class="ts-toolbar" data-sql-exports hidden><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-export="csv">Download CSV</button><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-export="json">Download JSON</button><button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-export="copy">Copy JSON</button></div>
 <p class="ts-meta" data-sql-fallback>Showing at most 200 rows.</p>
-<p role="status" aria-live="polite" data-sql-feedback></p>
+<p class="ts-meta" role="status" aria-live="polite" data-sql-feedback></p>
 }
 </div>
-@* Cells travel as raw JSON strings so JSON.parse never rounds an int64. Default escaping also keeps script end tags inert. *@
 <script type="application/json" data-sql-result-data nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(new { columns = result.Columns.Select(column => new { name = column.Name, decltype = column.Decltype }), rows = result.Rows.Select(row => row.Select(cell => cell.GetRawText())) })))</script>
 </section>

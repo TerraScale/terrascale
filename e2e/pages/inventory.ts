@@ -110,8 +110,8 @@ const databaseTabs: [string, string, Identity][] = [
 const tabStates: Record<string, PagePattern['query']> = {
   functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new)?$/, trigger: /^(http|cron)?$/, status: /^(ok|error)?$/, window: /^(1h|24h|7d)?$/, deployed: /^1?$/, secret: /^(saved|deleted)?$/ },
   rules: { compare: optionalId, restored: /^1?$/ },
-  sql: { result: optionalId, savedQueryId: optionalId, created: /^.{0,128}$/ },
-  tables: { table: /^[A-Za-z0-9_]*$/, created: /^.{0,128}$/ },
+  sql: { result: optionalId, savedQueryId: optionalId, created: /^.{0,128}$/, queryTable: /^[A-Za-z0-9_-]{0,128}$/, column: /^[A-Za-z0-9_-]{0,128}$/ },
+  tables: { table: /^[A-Za-z0-9_-]*$/, created: /^.{0,128}$/, dialog: /^(create-table)?$/ },
 };
 
 const authSections: [string, string][] = [

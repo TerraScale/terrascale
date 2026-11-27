@@ -2,42 +2,75 @@
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using System.Text.Json
 @using TerraScale.Dashboard.Features.Data
+@using TerraScale.Dashboard.Features.Databases
 @inject AssetUrls Assets
 <main class="ts-page" data-database-id="@Model.Database.Id">
     @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "sql", Databases: Model.Context.Project?.Databases.Values)))
     <h1 class="ts-sr-only">SQL editor</h1>
     @{
         var catalog = Model.Catalog ?? SqlCatalog.Empty;
+        var selectedTable = HttpContext?.Request.Query["queryTable"].ToString() ?? "";
+        var tablesPath = DatabaseService.Path(Model.Database.Id, "tables");
     }
-    <div class="ts-data-sql" data-sql-catalog="sql-catalog" data-sql-diagnostics="sql-diagnostics" data-sql-check="/api/v1/dashboard/data/sql/check">
+    <div class="ts-data-sql ts-studio ts-studio-sql" data-sql-catalog="sql-catalog" data-sql-diagnostics="sql-diagnostics" data-sql-check="/api/v1/dashboard/data/sql/check">
         <script type="application/json" id="sql-catalog" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(catalog, new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
         <script type="application/json" id="sql-diagnostics" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(new { sql = Model.Sql, diagnostics = Model.Sql.Trim().Length == 0 ? [] : SqlValidation.Diagnostics(Model.Sql) }, new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
-        <div class="ts-columns">
-            <div class="ts-columns-main">
-                <section class="ts-card ts-card-boxed" id="sql-editor" aria-labelledby="sql-editor-title">
-                    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-editor-title">Query</h2></div></header>
-                    <div class="ts-card-body">
-                        <form id="sql-query-form" method="post" action="/api/v1/dashboard/data/sql" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})">
-                            <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-                            <input type="hidden" name="databaseId" value="@Model.Database.Id" />
-                            <label class="ts-sr-only" for="sql">SQL</label>
-                            <ts-code-editor class="ts-code-editor" data-language="sql"><textarea class="ts-input ts-mono" id="sql" name="sql" rows="8" spellcheck="false" autocapitalize="off" autocomplete="off" required data-max-bytes="16384">@Model.Sql</textarea></ts-code-editor>
-                        </form>
-                    </div>
-                    <footer class="ts-card-foot ts-data-sql-toolbar">
-                        @(await RenderPartialAsync<SqlHistoryView, DataPage>(Model))
-                        <button class="ts-btn ts-btn-ghost" type="button" form="sql-query-form" data-sql-format hidden>@Icons.Render("Wand2", 16)<span>Format</span></button>
-                        <button class="ts-btn ts-btn-primary" type="submit" form="sql-query-form" aria-keyshortcuts="Control+Enter Meta+Enter">@Icons.Render("Play", 16)<span>Run query</span><kbd class="ts-kbd" aria-hidden="true">⌘↵</kbd></button>
-                    </footer>
-                </section>
-                @(await RenderPartialAsync<SqlOutputView, DataPage>(Model))
-            </div>
-            <div class="ts-columns-side">@(await RenderPartialAsync<SavedQueriesView, DataPage>(Model))</div>
+        <aside class="ts-studio-rail" aria-label="Database explorer">
+            <section class="ts-studio-rail-section" aria-labelledby="sql-tables-title">
+                <div class="ts-studio-rail-head"><h2 class="ts-studio-rail-title" id="sql-tables-title">Tables</h2>@if (Model.Context.CanWriteProjectData){<a class="ts-icon-btn ts-studio-rail-add" href="@(tablesPath + "?dialog=create-table")" aria-label="New table" title="New table">@Icons.Render("Plus", 14)</a>}</div>
+                @if (Model.CatalogError.Length > 0)
+                {
+                    <p class="ts-studio-rail-empty" role="status">@Model.CatalogError</p>
+                }
+                else if (catalog.Tables.Count == 0)
+                {
+                    <p class="ts-studio-rail-empty" role="status">No tables yet.</p>
+                }
+                else
+                {
+                    <ul class="ts-studio-rail-list">
+                        @foreach (var table in catalog.Tables)
+                        {
+                            var expanded = selectedTable.Length > 0 ? table.Name == selectedTable : ReferenceEquals(table, catalog.Tables[0]);
+                            <li class="ts-studio-tree-item"><details class="ts-studio-tree" open="@expanded"><summary class="ts-studio-rail-link"><span class="ts-studio-tree-chevron" aria-hidden="true">@Icons.Render("ChevronRight", 12)</span><span class="ts-studio-rail-icon" aria-hidden="true">@Icons.Render("Table", 14)</span><span class="ts-truncate ts-mono">@table.Name</span></summary><ul class="ts-studio-rail-columns">@foreach (var field in table.Fields){<li><button class="ts-studio-column" type="button" data-sql-insert="@field.Path" title="@("Insert " + field.Path)"><span class="ts-truncate">@field.Path</span>@if (field.PrimaryKey > 0){<span class="ts-studio-column-key" aria-hidden="true">@Icons.Render("KeyRound", 12)</span><span class="ts-sr-only">, primary key</span>}<span class="ts-studio-column-type" title="@field.Type">@DatabaseTables.CompactType(field.Type)</span></button></li>}</ul></details><span class="ts-studio-tree-actions"><button class="ts-icon-btn ts-studio-tree-action" type="button" data-sql-table="@table.Name" aria-label="@("Query " + table.Name)" title="@("Query " + table.Name)">@Icons.Render("Play", 14)</button><a class="ts-icon-btn ts-studio-tree-action" href="@(tablesPath + "?table=" + Uri.EscapeDataString(table.Name))" aria-label="@("Open " + table.Name + " in Tables")" title="@("Open " + table.Name + " in Tables")">@Icons.Render("ArrowUpRight", 14)</a></span></li>
+                        }
+                    </ul>
+                }
+                @if (catalog.Truncated)
+                {
+                    <p class="ts-meta" role="status">Showing the first 100 tables.</p>
+                }
+            </section>
+            @(await RenderPartialAsync<SavedQueriesView, DataPage>(Model))
+        </aside>
+        <div class="ts-studio-main">
+            <section class="ts-studio-editor" id="sql-editor" aria-labelledby="sql-editor-title">
+                <header class="ts-studio-sheet-head"><h2 class="ts-sr-only" id="sql-editor-title">Query</h2><div class="ts-studio-tabs" id="sql-tabs" role="group" aria-label="Worksheets"><span class="ts-studio-tab-item"><button class="ts-studio-tab" type="button" aria-current="true"><span class="ts-studio-tab-icon ts-studio-tab-icon-sql" aria-hidden="true">@Icons.Render("Terminal", 14)</span><span class="ts-truncate">Query 1</span></button></span><button class="ts-studio-tab-add" type="button" data-new-sheet aria-label="New worksheet" title="New worksheet">@Icons.Render("Plus", 14)</button></div></header>
+                <div class="ts-studio-editor-body">
+                    <form id="sql-query-form" method="post" action="/api/v1/dashboard/data/sql" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})">
+                        <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                        <input type="hidden" name="databaseId" value="@Model.Database.Id" />
+                        <label class="ts-sr-only" for="sql">SQL</label>
+                        <ts-code-editor class="ts-code-editor" data-language="sql"><textarea class="ts-input ts-mono" id="sql" name="sql" rows="8" spellcheck="false" autocapitalize="off" autocomplete="off" required data-max-bytes="16384">@Model.Sql</textarea></ts-code-editor>
+                    </form>
+                </div>
+                <footer class="ts-studio-toolbar ts-data-sql-toolbar">
+                    @(await RenderPartialAsync<SqlHistoryView, DataPage>(Model))
+                    <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" form="sql-query-form" data-sql-format hidden>@Icons.Render("Wand2", 14)<span>Format</span></button>
+                    @if (Model.Context.CanWriteProjectData)
+                    {
+                        <button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">@Icons.Render("Save", 14)<span>Save query</span></button>
+                    }
+                    <button class="ts-btn ts-btn-primary ts-btn-sm" type="submit" form="sql-query-form" aria-keyshortcuts="Control+Enter Meta+Enter">@Icons.Render("Play", 14)<span>Run query</span><kbd class="ts-kbd" aria-hidden="true">⌘↵</kbd></button>
+                </footer>
+            </section>
+            @(await RenderPartialAsync<SqlOutputView, DataPage>(Model))
         </div>
     </div>
 </main>
 <script type="module" src="@Assets.Url("js/code-editor.js")" nonce="@Model.Shell.Nonce"></script>
 <script type="module" src="@Assets.Url("js/sql-results.js")" nonce="@Model.Shell.Nonce"></script>
+<script type="module" src="@Assets.Url("js/sql-studio.js")" nonce="@Model.Shell.Nonce"></script>
 @functions {
     public ShellModel LayoutModel => Model.Shell;
 }

@@ -316,6 +316,10 @@ public static class DatabaseEndpoints
         }
         var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;
         var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
+        var savedQueriesRead = tab == "tables"
+            ? OptionalPanel.LoadAsync(http, "saved-queries",
+                () => http.RequestServices.GetRequiredService<SavedQueryService>().ListAsync(context, database.Id, http.RequestAborted), () => [])
+            : null;
         if (tab == "replication" || tab == "overview" && database.AllRegions)
         {
             try { choices = await backend.RegionsAsync(http.RequestAborted); }
@@ -340,8 +344,10 @@ public static class DatabaseEndpoints
         var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
         var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
         IReadOnlyList<string>? tableHistory = null;
+        IReadOnlyList<SavedQuery>? savedQueries = null;
         if (tab == "tables")
         {
+            savedQueries = savedQueriesRead is null ? [] : await savedQueriesRead;
             try
             {
                 if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadWorkspaceAsync(context, database.Id, http.RequestAborted) is { } workspace)
@@ -370,7 +376,8 @@ public static class DatabaseEndpoints
             TableDraft = tableDraft,
             ShowCreateTable = openCreateTable || http.Request.Query["dialog"] == "create-table",
             CreatedTable = createdTable.Length > 0 ? createdTable : http.Request.Query["created"].ToString() is { Length: > 0 and <= 128 } requested && !requested.Any(char.IsControl) ? requested : "",
-            SqlHistory = tableHistory
+            SqlHistory = tableHistory,
+            SavedQueries = savedQueries
         };
         if (tab == "replication" && HttpMethods.IsGet(http.Request.Method) && http.Request.IsDatastarRequest)
         {

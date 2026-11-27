@@ -1,8 +1,12 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Databases
 {
-    public sealed record DatabaseTableSummary(string Name, IReadOnlyList<DatabaseSqlColumn> Columns, long Rows);
+    public sealed record DatabaseTableSummary(string Name, IReadOnlyList<DatabaseSqlColumn> Columns, long Rows, IReadOnlyList<DatabaseTableColumn>? ColumnDetails = null)
+    {
+        public IReadOnlyList<DatabaseTableColumn> Schema => ColumnDetails ?? [.. Columns.Select(column => new DatabaseTableColumn(column.Name, column.Decltype))];
+    }
 
     public sealed record DatabaseTables(IReadOnlyList<DatabaseTableSummary> Tables, bool Truncated)
     {
@@ -29,15 +33,67 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
             }
 
-            return new([.. catalog.Tables.Select(table => new DatabaseTableSummary(table.Name, table.Columns, counts.GetValueOrDefault(table.Name)))], catalog.Truncated);
+            return new([.. catalog.Tables.Select(table => new DatabaseTableSummary(table.Name, table.Columns, counts.GetValueOrDefault(table.Name), table.ColumnDetails))], catalog.Truncated);
+        }
+
+        public static async Task<long> CountAsync(IDatabaseBackend backend, DatabaseScope scope, DatabaseRegion home, string databaseId, string table, CancellationToken cancellationToken)
+        {
+            var result = await backend.SqlAsync(scope, home, databaseId, "SELECT count(*) FROM " + Identifier(table), false, cancellationToken);
+            return result.Rows is [[{ ValueKind: JsonValueKind.Number } count]] && count.TryGetInt64(out var rows)
+                ? rows : throw new HttpRequestException("TerraBase returned an invalid row count.");
         }
 
         public static Task<DatabaseSqlResult> PreviewAsync(IDatabaseBackend backend, DatabaseScope scope, DatabaseRegion home, string databaseId, string table, CancellationToken cancellationToken)
         {
-            return backend.SqlAsync(scope, home, databaseId, "SELECT * FROM " + Identifier(table) + " LIMIT " + PreviewRows.ToString(System.Globalization.CultureInfo.InvariantCulture), false, cancellationToken);
+            return backend.SqlAsync(scope, home, databaseId, "SELECT * FROM " + Identifier(table) + " LIMIT " + PreviewRows.ToString(CultureInfo.InvariantCulture), false, cancellationToken);
         }
 
-        private static string Identifier(string name)
+        public static string CompactType(string? decltype)
+        {
+            if (string.IsNullOrWhiteSpace(decltype) || decltype == "No declared type")
+            {
+                return "—";
+            }
+
+            var type = decltype.Trim().ToUpperInvariant();
+            var paren = type.IndexOf('(', StringComparison.Ordinal);
+            var name = (paren < 0 ? type : type[..paren]).Trim();
+            return name switch
+            {
+                "INTEGER" or "INT" or "BIGINT" or "SMALLINT" or "TINYINT" or "MEDIUMINT" or "INT2" or "INT8" or "UNSIGNED BIG INT" => "INT",
+                "BOOLEAN" or "BOOL" => "BOOL",
+                "CHARACTER VARYING" or "VARCHAR" or "VARYING CHARACTER" or "NVARCHAR" or "NCHAR" or "NATIVE CHARACTER" or "CHARACTER" or "CHAR" or "CLOB" or "TEXT" => "TEXT",
+                "DOUBLE PRECISION" or "DOUBLE" or "FLOAT" or "REAL" => "REAL",
+                "DECIMAL" or "NUMERIC" => "NUM",
+                "DATETIME" or "TIMESTAMP" => "TIME",
+                _ => name,
+            };
+        }
+
+        public static bool NumericType(string? decltype)
+        {
+            if (decltype is not { Length: > 0 } type)
+            {
+                return false;
+            }
+
+            if (type.Contains("INT", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (type.Contains("CHAR", StringComparison.OrdinalIgnoreCase) || type.Contains("CLOB", StringComparison.OrdinalIgnoreCase) ||
+                type.Contains("TEXT", StringComparison.OrdinalIgnoreCase) || type.Contains("BLOB", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return type.Contains("REAL", StringComparison.OrdinalIgnoreCase) || type.Contains("FLOA", StringComparison.OrdinalIgnoreCase) ||
+                type.Contains("DOUB", StringComparison.OrdinalIgnoreCase) || type.Contains("NUMERIC", StringComparison.OrdinalIgnoreCase) ||
+                type.Contains("DECIMAL", StringComparison.OrdinalIgnoreCase) || type.Contains("BOOL", StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static string Identifier(string name)
         {
             return "\"" + name.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
         }

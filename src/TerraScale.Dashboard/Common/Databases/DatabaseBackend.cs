@@ -40,9 +40,17 @@ namespace TerraScale.Dashboard.Common.Databases
     }
     public sealed record DatabaseSqlRow(string Id, JsonElement Value);
     public sealed record DatabaseSqlCatalog(IReadOnlyList<DatabaseSqlTable> Tables, bool Truncated);
-    public sealed record DatabaseSqlTable(string Name, IReadOnlyList<DatabaseSqlColumn> Columns);
+    public sealed record DatabaseSqlTable(string Name, IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<DatabaseTableColumn>? ColumnDetails = null)
+    {
+        public IReadOnlyList<DatabaseTableColumn> Schema => ColumnDetails ?? [.. Columns.Select(column => new DatabaseTableColumn(column.Name, column.Decltype))];
+    }
     public sealed record DatabaseSqlColumn(string Name, string? Decltype);
+    public sealed record DatabaseTableColumn(string Name, string? Decltype, bool NotNull = false, string? DefaultValue = null, int PrimaryKey = 0);
     public sealed record DatabaseSqlResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows, long RowsAffected, long? LastInsertRowId);
+    public sealed record DatabaseBackendFailure(int Status, string Message);
+    public readonly union DatabaseRegionsOutcome(IReadOnlyList<DatabaseRegion>, DatabaseBackendFailure);
+    public readonly union DatabaseSqlCatalogOutcome(DatabaseSqlCatalog, DatabaseBackendFailure);
+    public readonly union DatabaseSqlBatchOutcome(IReadOnlyList<DatabaseSqlResult>, DatabaseBackendFailure);
     public sealed record ProjectCredential(string Id, string ProjectId, string Name, IReadOnlyList<string> Scopes, string? DatabaseId, string LastFour, DateTimeOffset CreatedAt)
     {
         public string CreatedByUserId { get; init; } = "";
@@ -79,6 +87,9 @@ namespace TerraScale.Dashboard.Common.Databases
         Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken);
+        Task<DatabaseRegionsOutcome> TryRegionsAsync(CancellationToken cancellationToken);
+        Task<DatabaseSqlCatalogOutcome> TrySqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
+        Task<DatabaseSqlBatchOutcome> TrySqlBatchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> statements, bool write, CancellationToken cancellationToken);
     }
 
     public sealed class DatabaseBackend(TerraBaseHttpClient terraBase, IProjectAccessTokens tokens) : IDatabaseBackend
@@ -269,6 +280,73 @@ namespace TerraScale.Dashboard.Common.Databases
             return new(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid);
         }
 
+        public async Task<DatabaseRegionsOutcome> TryRegionsAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await RegionsAsync(cancellationToken);
+            }
+            catch (HttpRequestException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (JsonException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+            {
+                return BackendFailure(error);
+            }
+        }
+
+        public async Task<DatabaseSqlCatalogOutcome> TrySqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await SqlTablesAsync(scope, home, databaseId, cancellationToken);
+            }
+            catch (HttpRequestException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (JsonException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+            {
+                return BackendFailure(error);
+            }
+        }
+
+        public async Task<DatabaseSqlBatchOutcome> TrySqlBatchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId,
+            IReadOnlyList<string> statements, bool write, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var results = await SqlBatchAsync(scope, home, databaseId, [.. statements.Select(statement => new SqlExecuteStatement(statement))], write, cancellationToken);
+                return (IReadOnlyList<DatabaseSqlResult>)[.. results.Select(result => new DatabaseSqlResult(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid))];
+            }
+            catch (HttpRequestException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (JsonException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+            {
+                return BackendFailure(error);
+            }
+        }
+
+        private static DatabaseBackendFailure BackendFailure(Exception error)
+        {
+            return new DatabaseBackendFailure(DatabaseResults.Status(error), DatabaseResults.Message(error));
+        }
+
         private async Task<IReadOnlyList<SqlExecuteResult>> SqlBatchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId,
             IReadOnlyList<SqlExecuteStatement> statements, bool write, CancellationToken cancellationToken)
         {
@@ -342,8 +420,14 @@ namespace TerraScale.Dashboard.Common.Databases
 
             var columns = await SqlBatchAsync(scope, home, databaseId,
                 [.. names.Take(100).Select(name => new SqlExecuteStatement("PRAGMA table_info('" + name.Replace("'", "''", StringComparison.Ordinal) + "')"))], false, timeout.Token);
-            var tables = columns.Select((result, index) => new DatabaseSqlTable(names[index], [.. result.Rows.Select(row =>
-                new DatabaseSqlColumn(CatalogText(result, row, "name"), CatalogText(result, row, "type")))])).ToArray();
+            var tables = columns.Select((result, index) =>
+            {
+                DatabaseTableColumn[] details = [.. result.Rows.Select(row => new DatabaseTableColumn(CatalogText(result, row, "name"), CatalogText(result, row, "type"),
+                    CatalogValue(result, row, "notnull") is { ValueKind: JsonValueKind.Number } notNull && notNull.TryGetInt64(out var required) && required > 0,
+                    CatalogValue(result, row, "dflt_value") is { ValueKind: JsonValueKind.String } fallback ? fallback.GetString() : null,
+                    CatalogValue(result, row, "pk") is { ValueKind: JsonValueKind.Number } key && key.TryGetInt32(out var position) && position > 0 ? position : 0))];
+                return new DatabaseSqlTable(names[index], [.. details.Select(column => new DatabaseSqlColumn(column.Name, column.Decltype))], details);
+            }).ToArray();
             if (tables.Any(table => table.Columns.Count == 0 || table.Columns.Any(column => string.IsNullOrWhiteSpace(column.Name)) ||
                 table.Columns.Select(column => column.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != table.Columns.Count))
             {
@@ -356,8 +440,14 @@ namespace TerraScale.Dashboard.Common.Databases
         private static string CatalogText(SqlExecuteResult result, IReadOnlyList<JsonElement> row, string field)
         {
             var index = result.Columns.ToList().FindIndex(column => column.Name == field);
-            return index >= 0 && row[index].ValueKind == JsonValueKind.String ? row[index].GetString()!
+            return index >= 0 && index < row.Count && row[index].ValueKind == JsonValueKind.String && row[index].GetString() is { } text ? text
                 : throw new HttpRequestException("TerraBase returned invalid SQL metadata.");
+        }
+
+        private static JsonElement CatalogValue(SqlExecuteResult result, IReadOnlyList<JsonElement> row, string field)
+        {
+            var index = result.Columns.ToList().FindIndex(column => column.Name == field);
+            return index >= 0 && index < row.Count ? row[index] : default;
         }
 
         private async Task<ServiceCaller> ClientAsync(DatabaseScope scope, string permission, CancellationToken cancellationToken)
