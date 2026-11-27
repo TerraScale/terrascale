@@ -743,7 +743,7 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 	if err != nil {
 		return "", "", "", err
 	}
-	apiKey := "sk_" + keyID + "_" + secretSuffix
+	apiKey := keyID + "_" + secretSuffix
 	digest := sha256.Sum256([]byte(apiKey))
 	secretHash := hex.EncodeToString(digest[:])
 	now := time.Now().UTC().Format("2006-01-02 15:04:05.0000000")
@@ -755,6 +755,15 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 			Args: []any{
 				orgID,
 				"ts-bench",
+				ownerID,
+				now,
+				ulid.Make().String(),
+			},
+		},
+		{
+			SQL: "INSERT INTO memberships (organization_id, user_id, instance_id, role, joined_at, version) VALUES (?, ?, 'terrascale', 'owner', ?, ?)",
+			Args: []any{
+				orgID,
 				ownerID,
 				now,
 				ulid.Make().String(),
@@ -789,6 +798,10 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 		return "", "", "", fmt.Errorf("seed benchmark project and API key: %w", err)
 	}
 
+	if err := provisionOrganization(ctx, internalClient, tbInternalURL, peerSecret, orgID); err != nil {
+		return "", "", "", fmt.Errorf("provision benchmark organization in TerraBase: %w", err)
+	}
+
 	if err := enrollProject(ctx, internalClient, tbInternalURL, peerSecret, projectID, orgID); err != nil {
 		return "", "", "", fmt.Errorf("enroll benchmark project in TerraBase: %w", err)
 	}
@@ -798,6 +811,35 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 		return "", "", "", fmt.Errorf("verify bootstrapped API key exchange: %w", err)
 	}
 	return projectID, apiKey, accessToken, nil
+}
+
+func provisionOrganization(ctx context.Context, client *http.Client, tbInternalURL, peerSecret, orgID string) error {
+	payload, err := json.Marshal(struct {
+		Plan string `json:"plan"`
+	}{Plan: "enterprise"})
+	if err != nil {
+		return err
+	}
+	endpoint := tbInternalURL + "/admin/organizations/" + orgID + "/plan"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-TerraBase-Peer-Credential", peerSecret)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("organization plan status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 func enrollProject(ctx context.Context, client *http.Client, tbInternalURL, peerSecret, projectID, orgID string) error {
