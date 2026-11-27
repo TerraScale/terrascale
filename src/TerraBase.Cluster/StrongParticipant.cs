@@ -6,7 +6,7 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-public sealed class StrongParticipant(ClusterOptions options, ClusterTopology topology, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, DeltaReplicator replicator, AntiEntropyService antiEntropy, QuicRpcClient client, HlcClock clock, ILogger<StrongParticipant> logger)
+public sealed class StrongParticipant(ClusterOptions options, ClusterTopology topology, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, DeltaReplicator replicator, AntiEntropyService antiEntropy, QuicRpcClient client, HlcClock clock, TimeProvider timeProvider, ILogger<StrongParticipant> logger)
 {
     private const int MaxWoundRounds = 4;
 
@@ -25,18 +25,20 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
         var isRemoteCoordinator = !string.Equals(coordinatorNodeId, options.NodeId, StringComparison.Ordinal);
         if (!session.CurrentBookmark.Dominates(originBookmark))
         {
-            await replicator.FlushInboundAsync(payload.DatabaseId, cancellationToken);
-        }
-
-        if (!session.CurrentBookmark.Dominates(originBookmark))
-        {
-            var behind = isRemoteCoordinator
-                ? !await antiEntropy.PullUntilAsync(session, coordinatorNodeId, originBookmark, options.StrongPrepareTimeout / 2, cancellationToken)
-                : await WaitLocalCatchUpAsync(session, payload.DatabaseId, originBookmark, cancellationToken);
-            if (behind)
+            var budget = options.StrongPrepareTimeout / 2;
+            var started = timeProvider.GetTimestamp();
+            await replicator.FlushInboundAsync(payload.DatabaseId, budget, cancellationToken);
+            if (!session.CurrentBookmark.Dominates(originBookmark))
             {
-                _ = databases.RequestCatchUp(payload.DatabaseId, originBookmark);
-                return new ClusterUnavailable("participant has not applied the origin's causal history yet", "participant_behind");
+                var remaining = budget - timeProvider.GetElapsedTime(started);
+                var behind = remaining <= TimeSpan.Zero || (isRemoteCoordinator
+                    ? !await antiEntropy.PullUntilAsync(session, coordinatorNodeId, originBookmark, remaining, cancellationToken)
+                    : await WaitLocalCatchUpAsync(session, payload.DatabaseId, originBookmark, remaining, cancellationToken));
+                if (behind)
+                {
+                    _ = databases.RequestCatchUp(payload.DatabaseId, originBookmark);
+                    return new ClusterUnavailable("participant has not applied the origin's causal history yet", "participant_behind");
+                }
             }
         }
 
@@ -65,10 +67,10 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
         return Denied(payload, holder);
     }
 
-    private async ValueTask<bool> WaitLocalCatchUpAsync(ISqlDatabaseSession session, Ulid databaseId, CausalBookmark originBookmark, CancellationToken cancellationToken)
+    private async ValueTask<bool> WaitLocalCatchUpAsync(ISqlDatabaseSession session, Ulid databaseId, CausalBookmark originBookmark, TimeSpan timeout, CancellationToken cancellationToken)
     {
         _ = databases.RequestCatchUp(databaseId, originBookmark);
-        var caughtUp = await session.WaitForBookmarkAsync(originBookmark, options.StrongPrepareTimeout / 2, cancellationToken);
+        var caughtUp = await session.WaitForBookmarkAsync(originBookmark, timeout, cancellationToken);
         return caughtUp switch
         {
             BookmarkReached => false,

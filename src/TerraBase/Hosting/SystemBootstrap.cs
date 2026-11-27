@@ -71,13 +71,9 @@ internal sealed class SystemBootstrap(
             return;
         }
 
-        var warmAuth = WarmPlatformAuthAsync(cancellationToken);
-        if (cluster.Peers.Count > 0)
-        {
-            await SyncOnStartupAsync(cancellationToken);
-        }
-
-        await warmAuth;
+        await (cluster.Peers.Count > 0
+            ? Task.WhenAll(SyncOnStartupAsync(cancellationToken), tokens.WarmPlatformAsync(AuthWarmupBudget, cancellationToken))
+            : tokens.WarmPlatformAsync(AuthWarmupBudget, cancellationToken));
 
         var (node, region, bootstrap) = (cluster.NodeId, cluster.Region, cluster.IsBootstrapNode);
         logger.ZLogInformation($"System catalog open on {node}.{region} (bootstrap node: {bootstrap})");
@@ -91,19 +87,6 @@ internal sealed class SystemBootstrap(
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    private async Task WarmPlatformAuthAsync(CancellationToken cancellationToken)
-    {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(AuthWarmupBudget);
-        try
-        {
-            await tokens.WarmPlatformAsync(budget.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-        }
-    }
 
     private async ValueTask SyncSystemAsync(CancellationToken cancellationToken) =>
         _ = await antiEntropy.SyncAsync(SystemDatabase.Id, cancellationToken);

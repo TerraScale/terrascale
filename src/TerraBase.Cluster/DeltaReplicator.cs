@@ -47,14 +47,19 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
     public CausalBookmark Acknowledged(Ulid databaseId, string nodeId) => _acknowledged.GetValueOrDefault((databaseId, nodeId), CausalBookmark.Empty);
 
-    public ValueTask FlushInboundAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public ValueTask FlushInboundAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        FlushInboundAsync(databaseId, Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask FlushInboundAsync(Ulid databaseId, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        if (Volatile.Read(ref _disposed) != 0 || !_inboxes.TryGetValue(databaseId, out var mailbox))
+        if (Volatile.Read(ref _disposed) != 0
+            || (timeout != Timeout.InfiniteTimeSpan && timeout <= TimeSpan.Zero)
+            || !_inboxes.TryGetValue(databaseId, out var mailbox))
         {
             return ValueTask.CompletedTask;
         }
 
-        return FlushInboundCoreAsync(databaseId, mailbox, cancellationToken);
+        return FlushInboundCoreAsync(databaseId, mailbox, timeout, cancellationToken);
     }
 
     public void Map(QuicRpcHost host)
@@ -604,7 +609,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         SignalFlushWaiters(flushWaiters);
     }
 
-    private ValueTask FlushInboundCoreAsync(Ulid databaseId, InboundMailbox mailbox, CancellationToken cancellationToken)
+    private ValueTask FlushInboundCoreAsync(Ulid databaseId, InboundMailbox mailbox, TimeSpan timeout, CancellationToken cancellationToken)
     {
         while (Volatile.Read(ref _disposed) == 0)
         {
@@ -644,20 +649,31 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
             if (signal is not null)
             {
-                return WaitFlushAsync(mailbox, target, signal, cancellationToken);
+                return WaitFlushAsync(mailbox, target, signal, timeout, cancellationToken);
             }
         }
 
         return ValueTask.CompletedTask;
     }
 
-    private static async ValueTask WaitFlushAsync(InboundMailbox mailbox, long target, TaskCompletionSource signal, CancellationToken cancellationToken)
+    private async ValueTask WaitFlushAsync(InboundMailbox mailbox, long target, TaskCompletionSource signal, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var completed = false;
         try
         {
-            await signal.Task.WaitAsync(cancellationToken);
-            completed = true;
+            if (timeout == Timeout.InfiniteTimeSpan)
+            {
+                await signal.Task.WaitAsync(cancellationToken);
+                completed = true;
+            }
+            else
+            {
+                using var delay = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var winner = await Task.WhenAny(signal.Task, Task.Delay(timeout, timeProvider, delay.Token));
+                await delay.CancelAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+                completed = ReferenceEquals(winner, signal.Task);
+            }
         }
         finally
         {
