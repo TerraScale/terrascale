@@ -48,7 +48,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 
     private TaskCompletionSource _wake = NewWake();
 
-    private Task? _activeDrain;
+    private int _activeUsers;
 
     private bool _disposed;
 
@@ -84,28 +84,39 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     public bool HasGap(string? after) =>
         after is { Length: 26 } && Ulid.TryParse(after, out var cursor) && cursor.Time < time.GetUtcNow() - Retention;
 
-    public ValueTask FlushAsync(CancellationToken cancellationToken) =>
-        FlushCoreAsync(_shutdownDrain.Token, cancellationToken);
-
-    private async ValueTask FlushCoreAsync(CancellationToken drainToken, CancellationToken cancellationToken)
+    public async ValueTask FlushAsync(CancellationToken cancellationToken)
     {
-        await _writeGate.WaitAsync(cancellationToken);
-        Task? drain = null;
-        lock (_drainGate)
+        if (!TryAcquireUser(out var drainToken))
         {
-            if (_disposed)
-            {
-                return;
-            }
+            return;
+        }
 
+        Task? drain = null;
+        try
+        {
+            await _writeGate.WaitAsync(cancellationToken);
             if (!_queue.Reader.TryPeek(out _))
             {
                 _writeGate.Release();
                 return;
             }
 
+            lock (_drainGate)
+            {
+                if (_disposed)
+                {
+                    _writeGate.Release();
+                    return;
+                }
+
+                _activeUsers++;
+            }
+
             drain = DrainAndReleaseAsync(drainToken);
-            _activeDrain = drain;
+        }
+        finally
+        {
+            ReleaseUser();
         }
 
         await drain.WaitAsync(cancellationToken);
@@ -126,18 +137,35 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         }
         finally
         {
-            lock (_drainGate)
+            _writeGate.Release();
+            ReleaseUser();
+        }
+    }
+
+    private bool TryAcquireUser(out CancellationToken drainToken)
+    {
+        lock (_drainGate)
+        {
+            if (_disposed)
             {
-                _activeDrain = null;
-                if (_disposed)
-                {
-                    _writeGate.Dispose();
-                    _shutdownDrain.Dispose();
-                }
-                else
-                {
-                    _writeGate.Release();
-                }
+                drainToken = default;
+                return false;
+            }
+
+            _activeUsers++;
+            drainToken = _shutdownDrain.Token;
+            return true;
+        }
+    }
+
+    private void ReleaseUser()
+    {
+        lock (_drainGate)
+        {
+            if (--_activeUsers == 0 && _disposed)
+            {
+                _shutdownDrain.Dispose();
+                _writeGate.Dispose();
             }
         }
     }
@@ -179,36 +207,75 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         }, this);
         try
         {
-            await FlushCoreAsync(linked.Token, linked.Token);
+            await FlushAsync(linked.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+        }
+        finally
+        {
+            if (linked.IsCancellationRequested)
+            {
+                CancelShutdownDrain();
+            }
         }
     }
 
     private void CancelShutdownDrain()
     {
+        var cancel = false;
         lock (_drainGate)
         {
             if (!_disposed && !_shutdownDrain.IsCancellationRequested)
             {
+                _activeUsers++;
+                cancel = true;
+            }
+        }
+
+        if (cancel)
+        {
+            try
+            {
                 _shutdownDrain.Cancel();
+            }
+            finally
+            {
+                ReleaseUser();
             }
         }
     }
 
     public override void Dispose()
     {
+        var cancelDrain = false;
         lock (_drainGate)
         {
             if (!_disposed)
             {
                 _disposed = true;
-                if (_activeDrain is null)
+                if (_activeUsers == 0)
                 {
                     _shutdownDrain.Dispose();
                     _writeGate.Dispose();
                 }
+                else if (!_shutdownDrain.IsCancellationRequested)
+                {
+                    _activeUsers++;
+                    cancelDrain = true;
+                }
+            }
+        }
+
+        if (cancelDrain)
+        {
+            try
+            {
+                _shutdownDrain.Cancel();
+            }
+            finally
+            {
+                ReleaseUser();
             }
         }
 

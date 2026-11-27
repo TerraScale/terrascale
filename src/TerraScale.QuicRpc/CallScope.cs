@@ -46,30 +46,31 @@ internal readonly struct CallScope : IDisposable
 
     public static void ReArm(ref CallScope scope, TimeSpan timeout, TimeProvider timeProvider)
     {
-        if (scope.IsDeadlineExpired)
+        if (!scope.IsDeadlineExpired)
         {
-            var shutdown = scope._shutdown;
-            var caller = scope._caller;
-            scope.Dispose();
-            scope = Create(timeout, timeProvider, shutdown, caller);
-            return;
+            scope.ArmDeadline(timeout, timeProvider);
+            if (!scope.IsDeadlineExpired)
+            {
+                return;
+            }
         }
 
-        scope.ArmDeadline(timeout, timeProvider);
+        var shutdown = scope._shutdown;
+        var caller = scope._caller;
+        scope.Dispose();
+        scope = Create(timeout, timeProvider, shutdown, caller);
     }
 
     public static void Disarm(ref CallScope scope, TimeProvider timeProvider)
     {
+        scope.DisarmDeadline();
         if (scope.IsDeadlineExpired)
         {
             var shutdown = scope._shutdown;
             var caller = scope._caller;
             scope.Dispose();
             scope = CreateArmable(timeProvider, shutdown, caller);
-            return;
         }
-
-        scope.DisarmDeadline();
     }
 
     public QuicFault Interrupted() =>
@@ -105,7 +106,6 @@ internal sealed class CallScopeState : IDisposable
     private CancellationTokenRegistration _customDeadlineReg;
     private CancellationToken _shutdown;
     private CancellationToken _caller;
-    private bool _deadlineArmed;
     private int _returned;
 
     private CallScopeState()
@@ -115,9 +115,9 @@ internal sealed class CallScopeState : IDisposable
     public CancellationToken Token => _cts.Token;
 
     public bool IsDeadlineTriggered =>
-        _customDeadline is not null
-            ? _customDeadline.IsCancellationRequested
-            : _deadlineArmed && !_shutdown.IsCancellationRequested && !_caller.IsCancellationRequested && _cts.IsCancellationRequested;
+        (_customDeadline is { IsCancellationRequested: true } || _cts.IsCancellationRequested)
+        && !_shutdown.IsCancellationRequested
+        && !_caller.IsCancellationRequested;
 
     public static CallScopeState Rent(TimeSpan timeout, TimeProvider timeProvider, CancellationToken shutdown, CancellationToken caller)
     {
@@ -139,7 +139,6 @@ internal sealed class CallScopeState : IDisposable
         state._shutdown = shutdown;
         state._caller = caller;
         var hasTimeout = timeout != Timeout.InfiniteTimeSpan;
-        state._deadlineArmed = hasTimeout;
 
         if (hasTimeout)
         {
@@ -175,7 +174,6 @@ internal sealed class CallScopeState : IDisposable
             return;
         }
 
-        _deadlineArmed = false;
         if (_customDeadline is { } custom)
         {
             if (!custom.IsCancellationRequested)
@@ -202,7 +200,6 @@ internal sealed class CallScopeState : IDisposable
             return;
         }
 
-        _deadlineArmed = true;
         if (_customDeadline is { } custom)
         {
             if (!custom.IsCancellationRequested)
@@ -242,7 +239,6 @@ internal sealed class CallScopeState : IDisposable
 
         _shutdown = default;
         _caller = default;
-        _deadlineArmed = false;
 
         if (custom is not null || !_cts.TryReset())
         {
