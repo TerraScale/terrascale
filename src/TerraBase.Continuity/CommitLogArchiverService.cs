@@ -121,7 +121,7 @@ public sealed class CommitLogArchiverService(
     ILogger<CommitLogArchiverService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetentionSweepInterval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(1);
 
     private readonly ConcurrentDictionary<Ulid, ArchiveCheckState> _checks = new();
 
