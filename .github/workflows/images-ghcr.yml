@@ -45,9 +45,15 @@ jobs:
           domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
           client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
           client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          version: 1.3.6
       - id: cached
         name: Inspect the immutable target image
         if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci/inspect-app-image.sh dashboard
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
@@ -67,17 +73,13 @@ jobs:
           cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        if: steps.live.outputs.deploy == 'true'
-        with:
-          version: 1.3.6
       - id: image
         name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/reconcile-image.sh dashboard
       - id: provenance
         name: Attest build provenance of the linux/arm64 child
-        if: steps.live.outputs.deploy == 'true'
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-name: ${{ steps.image.outputs.name }}
@@ -91,27 +93,20 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/ci/publish-ocir.sh "$IMAGE" "${REVISION},main"
-          mkdir -p "$RUNNER_TEMP/attest-target"
-          cp "$PROVENANCE" "$RUNNER_TEMP/attest-target/provenance.json"
-          jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
-            '{service: "ts-dashboard", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
+          if [[ $IMAGE_CACHED == false ]]; then
+            mkdir -p "$RUNNER_TEMP/attest-target"
+            cp "$PROVENANCE" "$RUNNER_TEMP/attest-target/provenance.json"
+            jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
+              '{service: "ts-dashboard", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
+          fi
       - name: Deploy ts-dashboard through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-dashboard "$IMAGE"
       - name: Prove the live revision
         if: steps.live.outputs.deploy == 'true'
         run: node .github/scripts/ci/site-deploy-gate.mjs dashboard --prove
-      - name: Record the released source for the production journey
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: deploy-revision
-          overwrite: true
-          path: ${{ runner.temp }}/deploy-revision
-          if-no-files-found: error
-          retention-days: 1
       - name: Hand the published image to the attestation workflow
-        if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.mirror.outcome == 'success' && steps.cached.outputs.cached == 'false' }}
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

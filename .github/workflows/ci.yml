@@ -157,6 +157,10 @@ jobs:
             status:
               - sites/status/**/!(AGENTS.md)
               - .github/workflows/ci.yml
+            e2e:
+              - e2e/**/!(AGENTS.md)
+              - sdk/js/**/!(AGENTS.md)
+              - .github/workflows/ci.yml
             dashboard:
               - *shared
               - *dotnet-sdk
@@ -174,16 +178,102 @@ jobs:
         run: |
           case "$EVENT:$PR_GATE:$PUBLICATION" in
             pull_request:*) build=$CHANGES deploy='[]' ;;
-            workflow_dispatch:true:*) build='["libs","auth","terrabase","dashboard","aspire","docs","landing","status","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' deploy='[]' ;;
+            workflow_dispatch:true:*) build='["libs","auth","terrabase","dashboard","aspire","docs","landing","status","e2e","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' deploy='[]' ;;
             push:*) build='[]' deploy=$CHANGES ;;
             workflow_dispatch:false:release) build='[]' deploy='["terrabase","platform"]' ;;
             *) build='[]' deploy='[]' ;;
           esac
           {
-            echo "build=$(jq -c '[.[] | if . == "platform" then "terrabase" else . end | select(IN("libs", "auth", "terrabase", "dashboard", "aspire", "docs", "landing", "status"))] | unique' <<< "$build")"
+            echo "build=$(jq -c '[.[] | if . == "platform" then "terrabase" else . end | select(IN("libs", "auth", "terrabase", "dashboard", "aspire", "docs", "landing", "status", "e2e"))] | unique' <<< "$build")"
             echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$build")"
             echo "deploy=$(jq -c '[.[] | select(IN("terrabase", "platform", "auth"))]' <<< "$deploy")"
           } | tee -a "$GITHUB_OUTPUT"
+
+  checks:
+    if: ${{ github.event_name == 'pull_request' || inputs.pr_gate }}
+    services:
+      registry:
+        image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports: [5000:5000]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: workflow-linter
+        with:
+          path: ~/.cache/terrascale-ci/actionlint
+          key: actionlint-${{ runner.os }}-${{ runner.arch }}-644076a59742c2d1540ebd4686eab3c308f0e562-${{ hashFiles('sdk/go/.go-version') }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        if: steps.workflow-linter.outputs.cache-hit != 'true'
+        with:
+          go-version-file: sdk/go/.go-version
+          cache: false
+      - name: Build the workflow linter
+        if: steps.workflow-linter.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/archive/644076a59742c2d1540ebd4686eab3c308f0e562.tar.gz
+          sha256sum --check --strict <<EOF
+          747636d922cb81e66613ef80c5d08ff748de58d6d5250b9151853e8f680da3e1  $RUNNER_TEMP/actionlint.tar.gz
+          EOF
+          mkdir -p "$RUNNER_TEMP/actionlint-source" "$HOME/.cache/terrascale-ci/actionlint"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint-source" --strip-components=1
+          cd "$RUNNER_TEMP/actionlint-source"
+          CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=readonly -trimpath -ldflags="-s -w" -o "$HOME/.cache/terrascale-ci/actionlint/actionlint" ./cmd/actionlint
+      - name: Lint workflows
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          sha256sum --check --strict <<EOF
+          8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $RUNNER_TEMP/shellcheck.tar.xz
+          EOF
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 shellcheck-v0.11.0/shellcheck
+          "$HOME/.cache/terrascale-ci/actionlint/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck"
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        with:
+          version: 1.3.6
+      - name: Repository policy checks and legacy terms
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 .github/scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 &
+          scan_pid=$!
+          status=0
+          bash .github/scripts/ci/prove-image-transport.sh || status=1
+          added=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD) || status=1
+          if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)([Tt]ests?|[Tt]esting|__tests__|__mocks__|[^/]*-tests)/|\.(Test[^/]*|E2E)/|(^|/)(tests?|test_[^/]*|conftest)\.py$|(^|/)tests?\.rs$|_tests?\.(go|rs|py)$|\.(test|spec)\.[cm]?[jt]sx?$|([.-]t|T)ests?\.cs$|(^|/)test-[^/]*\.(sh|py|[cm]?js|ts)$|-tests?\.(sh|py|[cm]?js|ts)$|(^|/)(vitest|jest|playwright)[^/]*\.config\.[cm]?[jt]s$'; then
+            echo '::error::This pull request adds the test files above. The journey in e2e/ is the only test.'
+            status=1
+          fi
+          if grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"; then
+            echo '::error::Workflows name the retired hosting provider above.'
+            status=1
+          fi
+          bash .github/scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"} || status=1
+          scan_status=0
+          wait "$scan_pid" || scan_status=$?
+          case $scan_status in
+            0) rm -f legacy-hits.md ;;
+            1) echo '::error::Legacy terms found; see the legacy-hits artifact.'; status=1 ;;
+            *) echo "::error::Legacy scan errored (exit $scan_status); see legacy-scan.log."; cat legacy-scan.log >&2; status=1 ;;
+          esac
+          if [[ -s legacy-scan.log ]]; then head -1 legacy-scan.log; fi
+          exit "$status"
+      - name: Retain legacy hits
+        if: ${{ !cancelled() && hashFiles('legacy-hits.md') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: legacy-hits
+          path: |
+            legacy-hits.md
+            legacy-scan.log
 
   libs:
     needs: changes
@@ -222,10 +312,11 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ runner.arch }}-auth-${{ hashFiles('src/TerraScale.Authentication*/packages.lock.json') }}
           restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-auth-
-      - name: Release build
-        run: |
-          make auth-build CONFIGURATION=Release
-          .github/scripts/ci/release-only.sh
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+      - name: Release build with audit and OpenAPI checks
+        run: make auth-restore && make -o auth-restore auth-check CONFIGURATION=Release && .github/scripts/ci/release-only.sh
 
   terrabase:
     needs: changes
@@ -399,6 +490,22 @@ jobs:
           npm run check
           npm run build
 
+  e2e:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.build), 'e2e')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - *checkout
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Type-check the journey
+        working-directory: e2e
+        run: npm ci --no-audit --no-fund && npm run typecheck
+
   main:
     needs: changes
     if: github.ref == 'refs/heads/main' && contains(fromJSON(needs.changes.outputs.deploy), 'terrabase')
@@ -422,7 +529,6 @@ jobs:
         if: env.BUILD_ONLY == 'true'
         with:
           revision: ${{ github.sha }}
-          qualification: terrabase-maintenance
       - name: Authenticate to OCIR with GitHub OIDC
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
         with:
@@ -595,7 +701,6 @@ jobs:
       - uses: ./.github/actions/qualified-main
         with:
           revision: ${{ github.sha }}
-          qualification: terrabase-maintenance
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Authenticate to OCIR with GitHub OIDC
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@623419d401570afd0d8bc172dc6245760a78d058
@@ -662,9 +767,15 @@ jobs:
           domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
           client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
           client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: steps.live.outputs.deploy == 'true'
+        with:
+          version: 1.3.6
       - id: cached
         name: Inspect the immutable target image
         if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/ci/inspect-app-image.sh auth
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
@@ -678,17 +789,13 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-publish-auth-
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
-      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
-        if: steps.live.outputs.deploy == 'true'
-        with:
-          version: 1.3.6
       - id: image
         name: Build or reuse the target image
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/reconcile-image.sh auth
       - id: provenance
         name: Attest build provenance of the linux/arm64 child
-        if: steps.live.outputs.deploy == 'true'
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-name: ${{ steps.image.outputs.name }}
@@ -702,27 +809,20 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/ci/publish-ocir.sh "$IMAGE" "${REVISION},main"
-          mkdir -p "$RUNNER_TEMP/attest-target"
-          cp "$PROVENANCE" "$RUNNER_TEMP/attest-target/provenance.json"
-          jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
-            '{service: "ts-auth", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
+          if [[ $IMAGE_CACHED == false ]]; then
+            mkdir -p "$RUNNER_TEMP/attest-target"
+            cp "$PROVENANCE" "$RUNNER_TEMP/attest-target/provenance.json"
+            jq -n --arg image "${IMAGE%@*}" --arg arm64 "${IMAGE#*@}" --arg revision "$REVISION" \
+              '{service: "ts-auth", image: $image, arm64: $arm64, revision: $revision, tags: [$revision, "main"]}' > "$RUNNER_TEMP/attest-target/attest-target.json"
+          fi
       - name: Deploy ts-auth through ts-orch
         if: steps.live.outputs.deploy == 'true'
         run: bash .github/scripts/ci/deploy-v2.sh ts-auth "$IMAGE"
       - name: Prove the live revision
         if: steps.live.outputs.deploy == 'true'
         run: node .github/scripts/ci/site-deploy-gate.mjs auth --prove
-      - name: Record the released source for the production journey
-        if: steps.live.outputs.deploy == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: deploy-revision-auth
-          overwrite: true
-          path: ${{ runner.temp }}/deploy-revision
-          if-no-files-found: error
-          retention-days: 1
       - name: Hand the published image to the attestation workflow
-        if: ${{ !cancelled() && steps.mirror.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.mirror.outcome == 'success' && steps.cached.outputs.cached == 'false' }}
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -735,7 +835,7 @@ jobs:
   all-green:
     name: all-green
     if: always()
-    needs: [changes, libs, auth, terrabase, dashboard, aspire, sdk, docs, landing, status, main, main-platform, main-build-only, release-only, main-auth]
+    needs: [changes, checks, libs, auth, terrabase, dashboard, aspire, sdk, docs, landing, status, e2e, main, main-platform, main-build-only, release-only, main-auth]
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
