@@ -34,11 +34,17 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
             _buffer.Clear();
         }
 
-        using var deadline = new CancellationTokenSource(timeout < PostgresLimits.WriteTimeout ? timeout : PostgresLimits.WriteTimeout, timeProvider);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        try
+        var effectiveTimeout = timeout < PostgresLimits.WriteTimeout ? timeout : PostgresLimits.WriteTimeout;
+        if (effectiveTimeout <= TimeSpan.Zero)
         {
-            var flushed = await output.FlushAsync(linked.Token);
+            _aborted = true;
+            return false;
+        }
+
+        var flushTask = output.FlushAsync(cancellationToken);
+        if (flushTask.IsCompletedSuccessfully)
+        {
+            var flushed = await flushTask;
             if (flushed.IsCompleted || flushed.IsCanceled)
             {
                 _aborted = true;
@@ -47,7 +53,19 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
 
             return true;
         }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+
+        try
+        {
+            var flushed = await flushTask.AsTask().WaitAsync(effectiveTimeout, timeProvider, cancellationToken);
+            if (flushed.IsCompleted || flushed.IsCanceled)
+            {
+                _aborted = true;
+                return false;
+            }
+
+            return true;
+        }
+        catch (TimeoutException)
         {
             _aborted = true;
             return false;
@@ -149,15 +167,23 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
     public PgError? DataRow(IReadOnlyList<SqlValue> row, IReadOnlyList<PgColumn> columns, IReadOnlyList<short> formats)
     {
         var start = _buffer.Begin('D');
-        _buffer.WriteInt16((short)row.Count);
-        for (var index = 0; index < row.Count; index++)
+        var count = row.Count;
+        var columnCount = columns.Count;
+        _buffer.WriteInt16((short)count);
+        var formatCount = formats.Count;
+        var singleBinary = formatCount == 1 && formats[0] == 1;
+        for (var index = 0; index < count; index++)
         {
-            var oid = index < columns.Count ? columns[index].Oid : PgOid.Text;
-            var binary = PgValueCodec.ResultFormat(formats, index, oid) == 1;
+            var oid = index < columnCount ? columns[index].Oid : PgOid.Text;
+            var binary = formatCount == 0
+                ? false
+                : formatCount == 1
+                    ? singleBinary && PgValueCodec.SupportsBinary(oid)
+                    : PgValueCodec.ResultFormat(formats, index, oid) == 1;
             if (!PgValueCodec.TryWrite(_buffer, row[index], oid, binary))
             {
                 _buffer.Truncate(start);
-                var name = index < columns.Count ? columns[index].Name : (index + 1).ToString(CultureInfo.InvariantCulture);
+                var name = index < columnCount ? columns[index].Name : (index + 1).ToString(CultureInfo.InvariantCulture);
                 return new PgError(PgValueCodec.EncodeFailureState(row[index], oid), $"value of column \"{name}\" cannot be represented as {PgOid.FormatName(oid)}");
             }
         }

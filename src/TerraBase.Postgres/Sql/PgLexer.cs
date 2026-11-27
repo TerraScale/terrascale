@@ -1,9 +1,10 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using TerraBase.Postgres.Protocol;
 
 namespace TerraBase.Postgres.Sql;
 
-internal enum PgTokenKind
+internal enum PgTokenKind : byte
 {
     Whitespace,
     Word,
@@ -28,37 +29,165 @@ internal readonly record struct PgToken(PgTokenKind Kind, int Start, int Length)
 
 internal static class PgLexer
 {
-    private const string OperatorCharacters = "+-*/<>=~!@#%^&|`?";
-    private static readonly SearchValues<char> SpecialOperatorCharacters = SearchValues.Create("~!@#%^&|`?");
+    private const byte ClassWhitespace = 1 << 0;
+    private const byte ClassIdentStart = 1 << 1;
+    private const byte ClassIdentPart = 1 << 2;
+    private const byte ClassDigit = 1 << 3;
+    private const byte ClassOperator = 1 << 4;
+    private const byte ClassSpecialOperator = 1 << 5;
+
+    private static ReadOnlySpan<byte> AsciiClasses =>
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 48, 0, 48, 4, 48, 48, 0, 0, 0, 16, 16, 0, 16, 0, 16,
+        12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 0, 0, 16, 16, 16, 48,
+        48, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+        6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0, 0, 0, 48, 6,
+        48, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+        6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0, 48, 0, 48, 0,
+    ];
 
     public static PgTokenizeResult Tokenize(string sql)
     {
-        var tokens = new List<PgToken>((sql.Length / 4) + 4);
+        var estimated = (sql.Length >> 2) + 16;
+        if (estimated <= 128)
+        {
+            Span<PgToken> stackBuffer = stackalloc PgToken[estimated];
+            PgToken[]? rented = null;
+            try
+            {
+                if (TryTokenizeSpan(sql, stackBuffer, ref rented, out var count) is { } error)
+                {
+                    return error;
+                }
+
+                return (rented is not null ? rented.AsSpan(0, count) : stackBuffer[..count]).ToArray();
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    ArrayPool<PgToken>.Shared.Return(rented);
+                }
+            }
+        }
+
+        var buffer = ArrayPool<PgToken>.Shared.Rent(estimated);
+        try
+        {
+            if (TryTokenize(sql, ref buffer, out var count) is { } error)
+            {
+                return error;
+            }
+
+            return buffer.AsSpan(0, count).ToArray();
+        }
+        finally
+        {
+            ArrayPool<PgToken>.Shared.Return(buffer);
+        }
+    }
+
+    internal static PgError? TryTokenize(string sql, ref PgToken[] buffer, out int count)
+    {
+        PgToken[]? rented = buffer;
+        try
+        {
+            return TryTokenizeSpan(sql, buffer, ref rented, out count);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                buffer = rented;
+            }
+        }
+    }
+
+    private static PgError? TryTokenizeSpan(string sql, Span<PgToken> initial, ref PgToken[]? rented, out int count)
+    {
+        var span = sql.AsSpan();
+        var length = span.Length;
+        var classes = AsciiClasses;
+        var destination = rented is not null ? rented.AsSpan() : initial;
+        count = 0;
         var index = 0;
-        while (index < sql.Length)
+        while (index < length)
         {
             var start = index;
-            var current = sql[index];
-            var next = index + 1 < sql.Length ? sql[index + 1] : '\0';
+            var current = span[index];
+            var next = index + 1 < length ? span[index + 1] : '\0';
             PgTokenKind kind;
-            if (char.IsWhiteSpace(current))
+            var cls = current < 128 ? classes[current] : (byte)0;
+            if ((cls & ClassWhitespace) != 0 || (current >= 128 && char.IsWhiteSpace(current)))
             {
-                while (index < sql.Length && char.IsWhiteSpace(sql[index]))
+                index++;
+                while (index < length)
                 {
-                    index++;
+                    var ch = span[index];
+                    if (ch < 128 ? (classes[ch] & ClassWhitespace) != 0 : char.IsWhiteSpace(ch))
+                    {
+                        index++;
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
 
                 kind = PgTokenKind.Whitespace;
             }
+            else if ((cls & ClassIdentStart) != 0)
+            {
+                if (next == '\'' && current is 'E' or 'e')
+                {
+                    index++;
+                    if (!SkipQuoted(span, ref index, '\'', backslashEscapes: true))
+                    {
+                        return PgError.Syntax("unterminated quoted string");
+                    }
+
+                    kind = PgTokenKind.EscapeString;
+                }
+                else if (next == '\'' && current is 'X' or 'x' or 'B' or 'b')
+                {
+                    index++;
+                    if (!SkipQuoted(span, ref index, '\'', backslashEscapes: false))
+                    {
+                        return PgError.Syntax("unterminated bit string literal");
+                    }
+
+                    kind = PgTokenKind.String;
+                }
+                else
+                {
+                    index++;
+                    while (index < length)
+                    {
+                        var ch = span[index];
+                        if (ch < 128 ? (classes[ch] & ClassIdentPart) != 0 : char.IsLetter(ch))
+                        {
+                            index++;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    kind = PgTokenKind.Word;
+                }
+            }
             else if (current == '-' && next == '-')
             {
-                var end = sql.IndexOf('\n', index);
-                index = end < 0 ? sql.Length : end;
+                var end = span[index..].IndexOf('\n');
+                index = end < 0 ? length : index + end;
                 kind = PgTokenKind.Whitespace;
             }
             else if (current == '/' && next == '*')
             {
-                if (!SkipBlockComment(sql, ref index))
+                if (!SkipBlockComment(span, ref index))
                 {
                     return PgError.Syntax("unterminated /* comment");
                 }
@@ -67,36 +196,16 @@ internal static class PgLexer
             }
             else if (current == '\'')
             {
-                if (!SkipQuoted(sql, ref index, '\'', backslashEscapes: false))
+                if (!SkipQuoted(span, ref index, '\'', backslashEscapes: false))
                 {
                     return PgError.Syntax("unterminated quoted string");
-                }
-
-                kind = PgTokenKind.String;
-            }
-            else if (current is 'E' or 'e' && next == '\'')
-            {
-                index++;
-                if (!SkipQuoted(sql, ref index, '\'', backslashEscapes: true))
-                {
-                    return PgError.Syntax("unterminated quoted string");
-                }
-
-                kind = PgTokenKind.EscapeString;
-            }
-            else if (current is 'X' or 'x' or 'B' or 'b' && next == '\'')
-            {
-                index++;
-                if (!SkipQuoted(sql, ref index, '\'', backslashEscapes: false))
-                {
-                    return PgError.Syntax("unterminated bit string literal");
                 }
 
                 kind = PgTokenKind.String;
             }
             else if (current == '"')
             {
-                if (!SkipQuoted(sql, ref index, '"', backslashEscapes: false))
+                if (!SkipQuoted(span, ref index, '"', backslashEscapes: false))
                 {
                     return PgError.Syntax("unterminated quoted identifier");
                 }
@@ -105,17 +214,17 @@ internal static class PgLexer
             }
             else if (current == '$' && char.IsAsciiDigit(next))
             {
-                index++;
-                while (index < sql.Length && char.IsAsciiDigit(sql[index]))
+                index += 2;
+                while (index < length && char.IsAsciiDigit(span[index]))
                 {
                     index++;
                 }
 
                 kind = PgTokenKind.Parameter;
             }
-            else if (current == '$' && TryDollarTag(sql, index, out var tagLength))
+            else if (current == '$' && TryDollarTag(span, index, out var tagLength))
             {
-                var close = sql.AsSpan(index + tagLength).IndexOf(sql.AsSpan(index, tagLength), StringComparison.Ordinal);
+                var close = span[(index + tagLength)..].IndexOf(span.Slice(index, tagLength), StringComparison.Ordinal);
                 if (close < 0)
                 {
                     return PgError.Syntax("unterminated dollar-quoted string");
@@ -124,49 +233,100 @@ internal static class PgLexer
                 index += tagLength + close + tagLength;
                 kind = PgTokenKind.DollarString;
             }
-            else if (IsIdentifierStart(current))
+            else if ((cls & ClassDigit) != 0 || (current == '.' && char.IsAsciiDigit(next)))
+            {
+                ScanNumber(span, ref index);
+                kind = PgTokenKind.Number;
+            }
+            else if (current >= 128 && char.IsLetter(current))
             {
                 index++;
-                while (index < sql.Length && IsIdentifierPart(sql[index]))
+                while (index < length)
                 {
-                    index++;
+                    var ch = span[index];
+                    if (ch < 128 ? (classes[ch] & ClassIdentPart) != 0 : char.IsLetter(ch))
+                    {
+                        index++;
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
 
                 kind = PgTokenKind.Word;
             }
-            else if (char.IsAsciiDigit(current) || (current == '.' && char.IsAsciiDigit(next)))
-            {
-                ScanNumber(sql, ref index);
-                kind = PgTokenKind.Number;
-            }
             else
             {
-                (kind, index) = current switch
+                switch (current)
                 {
-                    '(' => (PgTokenKind.LeftParen, index + 1),
-                    ')' => (PgTokenKind.RightParen, index + 1),
-                    '[' => (PgTokenKind.LeftBracket, index + 1),
-                    ']' => (PgTokenKind.RightBracket, index + 1),
-                    ',' => (PgTokenKind.Comma, index + 1),
-                    ';' => (PgTokenKind.Semicolon, index + 1),
-                    '.' => (PgTokenKind.Period, index + 1),
-                    ':' when next == ':' => (PgTokenKind.DoubleColon, index + 2),
-                    _ when OperatorCharacters.Contains(current, StringComparison.Ordinal) => (PgTokenKind.Operator, ScanOperator(sql, index)),
-                    _ => (PgTokenKind.Operator, index + 1),
-                };
+                    case '(':
+                        kind = PgTokenKind.LeftParen;
+                        index++;
+                        break;
+                    case ')':
+                        kind = PgTokenKind.RightParen;
+                        index++;
+                        break;
+                    case '[':
+                        kind = PgTokenKind.LeftBracket;
+                        index++;
+                        break;
+                    case ']':
+                        kind = PgTokenKind.RightBracket;
+                        index++;
+                        break;
+                    case ',':
+                        kind = PgTokenKind.Comma;
+                        index++;
+                        break;
+                    case ';':
+                        kind = PgTokenKind.Semicolon;
+                        index++;
+                        break;
+                    case '.':
+                        kind = PgTokenKind.Period;
+                        index++;
+                        break;
+                    case ':' when next == ':':
+                        kind = PgTokenKind.DoubleColon;
+                        index += 2;
+                        break;
+                    default:
+                        kind = PgTokenKind.Operator;
+                        index = (cls & ClassOperator) != 0 ? ScanOperator(span, index, classes) : index + 1;
+                        break;
+                }
             }
 
-            tokens.Add(new PgToken(kind, start, index - start));
+            if (count == destination.Length)
+            {
+                var grown = ArrayPool<PgToken>.Shared.Rent(destination.Length * 2);
+                destination.CopyTo(grown);
+                var previous = rented;
+                rented = grown;
+                destination = grown;
+                if (previous is not null)
+                {
+                    ArrayPool<PgToken>.Shared.Return(previous);
+                }
+            }
+
+            destination[count++] = new PgToken(kind, start, index - start);
         }
 
-        return tokens.ToArray();
+        return null;
     }
 
-    public static bool IsIdentifierStart(char character) => char.IsAsciiLetter(character) || character == '_' || (character > 127 && char.IsLetter(character));
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsIdentifierStart(char character) =>
+        character < 128 ? (AsciiClasses[character] & ClassIdentStart) != 0 : char.IsLetter(character);
 
-    public static bool IsIdentifierPart(char character) => IsIdentifierStart(character) || char.IsAsciiDigit(character) || character == '$';
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsIdentifierPart(char character) =>
+        character < 128 ? (AsciiClasses[character] & ClassIdentPart) != 0 : char.IsLetter(character);
 
-    private static bool SkipBlockComment(string sql, ref int index)
+    private static bool SkipBlockComment(ReadOnlySpan<char> sql, ref int index)
     {
         var depth = 0;
         while (index < sql.Length)
@@ -194,13 +354,37 @@ internal static class PgLexer
         return false;
     }
 
-    private static bool SkipQuoted(string sql, ref int index, char quote, bool backslashEscapes)
+    private static bool SkipQuoted(ReadOnlySpan<char> sql, ref int index, char quote, bool backslashEscapes)
     {
         index++;
+        if (!backslashEscapes)
+        {
+            while (index < sql.Length)
+            {
+                var found = sql[index..].IndexOf(quote);
+                if (found < 0)
+                {
+                    index = sql.Length;
+                    return false;
+                }
+
+                index += found + 1;
+                if (index < sql.Length && sql[index] == quote)
+                {
+                    index++;
+                    continue;
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
         while (index < sql.Length)
         {
             var current = sql[index];
-            if (backslashEscapes && current == '\\')
+            if (current == '\\')
             {
                 index += 2;
                 continue;
@@ -224,7 +408,7 @@ internal static class PgLexer
         return false;
     }
 
-    private static bool TryDollarTag(string sql, int index, out int length)
+    private static bool TryDollarTag(ReadOnlySpan<char> sql, int index, out int length)
     {
         length = 0;
         var cursor = index + 1;
@@ -250,7 +434,7 @@ internal static class PgLexer
         return true;
     }
 
-    private static void ScanNumber(string sql, ref int index)
+    private static void ScanNumber(ReadOnlySpan<char> sql, ref int index)
     {
         while (index < sql.Length && (char.IsAsciiDigit(sql[index]) || sql[index] == '_'))
         {
@@ -285,21 +469,39 @@ internal static class PgLexer
         }
     }
 
-    private static int ScanOperator(string sql, int index)
+    private static int ScanOperator(ReadOnlySpan<char> sql, int index, ReadOnlySpan<byte> classes)
     {
         var start = index;
-        while (index < sql.Length && OperatorCharacters.Contains(sql[index], StringComparison.Ordinal))
+        var hasSpecial = false;
+        while (index < sql.Length)
         {
-            if (index > start && index + 1 < sql.Length && ((sql[index] == '-' && sql[index + 1] == '-') || (sql[index] == '/' && sql[index + 1] == '*')))
+            var ch = sql[index];
+            if (ch >= 128)
             {
                 break;
+            }
+
+            var cls = classes[ch];
+            if ((cls & ClassOperator) == 0)
+            {
+                break;
+            }
+
+            if (index > start && index + 1 < sql.Length && ((ch == '-' && sql[index + 1] == '-') || (ch == '/' && sql[index + 1] == '*')))
+            {
+                break;
+            }
+
+            if ((cls & ClassSpecialOperator) != 0)
+            {
+                hasSpecial = true;
             }
 
             index++;
         }
 
         var length = index - start;
-        if (length > 1 && sql.AsSpan(start, length).IndexOfAny(SpecialOperatorCharacters) < 0)
+        if (length > 1 && !hasSpecial)
         {
             while (length > 1 && sql[start + length - 1] is '+' or '-')
             {

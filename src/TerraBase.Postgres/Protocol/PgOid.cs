@@ -1,6 +1,5 @@
 using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
-using System.Text;
 
 namespace TerraBase.Postgres.Protocol;
 
@@ -80,7 +79,14 @@ internal static class PgOid
             return 0;
         }
 
-        var builder = new StringBuilder(declared.Length);
+        if (ByDeclaredName.TryGetValue(declared, out var direct))
+        {
+            return direct;
+        }
+
+        Span<char> stackBuffer = stackalloc char[64];
+        var destination = declared.Length <= stackBuffer.Length ? stackBuffer : new char[declared.Length];
+        var pos = 0;
         var depth = 0;
         var space = false;
         foreach (var character in declared)
@@ -104,19 +110,19 @@ internal static class PgOid
 
             if (char.IsWhiteSpace(character))
             {
-                space = builder.Length > 0;
+                space = pos > 0;
                 continue;
             }
 
             if (space)
             {
-                builder.Append(' ');
+                destination[pos++] = ' ';
                 space = false;
             }
 
-            builder.Append(char.ToUpperInvariant(character));
+            destination[pos++] = char.ToUpperInvariant(character);
         }
 
-        return ByDeclaredName.GetValueOrDefault(builder.ToString());
+        return ByDeclaredName.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(destination[..pos], out var oid) ? oid : 0;
     }
 }

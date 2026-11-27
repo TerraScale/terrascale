@@ -86,14 +86,14 @@ test.describe('teardown', () => {
       .poll(async () => (await stripeLog()).cancels.filter((cancel) => cancel.organization === current.organizationId).length, {
         message: 'subscriptions of the Pro organization the Stripe stand-in cancelled once the ts-auth deletion cleanup and the deletion reconciler ran',
         timeout: subscriptionCancelBound,
-        intervals: [500],
+        intervals: [100, 250],
       })
       .toBe(1);
     await expect
       .poll(failingDeletionEntries, {
         message: 'deletion cleanup entries the dashboard reports failing on /metrics once the subscription is cancelled',
         timeout: deletionCleanupSettledBound,
-        intervals: [500],
+        intervals: [100, 250],
       })
       .toBe(0);
     expect((await stripeLog()).unexpected, 'calls the Stripe stand-in refused').toEqual([]);

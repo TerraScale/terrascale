@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Quic;
 using System.Net.Security;
+using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging;
@@ -20,10 +21,16 @@ internal sealed class StreamLease(PeerSlot slot, QuicConnection connection, Quic
 
     public QuicStream Stream { get; } = stream;
 
-    public Task ReleaseAsync()
+    public ValueTask ReleaseAsync()
     {
         Slot.EndUse();
         return QuicIo.DisposeStreamAsync(Stream);
+    }
+
+    public void ReleaseFireAndForget()
+    {
+        Slot.EndUse();
+        QuicIo.DisposeStreamFireAndForget(Stream);
     }
 }
 
@@ -32,24 +39,62 @@ internal readonly union StreamLeaseOutcome(StreamLease, QuicFault);
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
-internal sealed record class ActiveConnection(QuicPeer Peer, QuicConnection Connection);
+internal sealed class UnaryStreamSlot(PeerSlot slot, QuicConnection connection, QuicStream stream)
+{
+    public PeerSlot Slot { get; } = slot;
+
+    public QuicConnection Connection { get; } = connection;
+
+    public QuicStream Stream { get; } = stream;
+
+    public QuicFrameReader Reader { get; } = new(QuicFrameReader.UnaryBufferCapacity);
+
+    public long LastUsedTicks { get; set; }
+
+    public bool IsHealthy => !Stream.WritesClosed.IsCompleted && !Stream.ReadsClosed.IsCompleted;
+
+    public void CloseAndDispose(QuicMeshMetrics metrics, bool abort)
+    {
+        Reader.Dispose();
+        if (abort)
+        {
+            Stream.Abort(QuicAbortDirection.Both, QuicProtocol.StreamErrorCode);
+        }
+
+        QuicIo.DisposeStreamFireAndForget(Stream);
+        metrics.StreamClosed(QuicSide.Client);
+    }
+}
+
+internal readonly union UnaryStreamOutcome(UnaryStreamSlot, StreamLease, QuicFault);
+
+[SupportedOSPlatform("linux")]
+[SupportedOSPlatform("macos")]
+[SupportedOSPlatform("windows")]
+internal sealed record class ActiveConnection(QuicPeer Peer, QuicConnection Connection, bool SupportsPersistentUnary);
 
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 [SupportedOSPlatform("windows")]
 internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 {
+    private const int MaxIdleUnaryStreams = 32;
+    private static readonly TimeSpan UnaryStreamIdleTimeout = TimeSpan.FromSeconds(45);
+
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, OrderedPushChannel> _channels = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, OrderedPushChannel> _channels = new(StringComparer.Ordinal);
+    private readonly ConcurrentStack<UnaryStreamSlot> _idleUnaryStreams = new();
     private QuicPeer _peer = peer;
     private ActiveConnection? _active;
+    private ActiveConnection? _currentActive;
     private Task<QuicConnectionOpenOutcome>? _connecting;
+    private int _idleUnaryCount;
     private int _uses;
     private long _idleSince;
     private long _lastConnectFailureTimestamp;
     private QuicFault? _lastConnectFault;
     private bool _everConnected;
-    private bool _closed;
+    private int _closed;
 
     public QuicPeer Peer
     {
@@ -62,16 +107,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
         }
     }
 
-    public bool IsClosed
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _closed;
-            }
-        }
-    }
+    public bool IsClosed => Volatile.Read(ref _closed) != 0;
 
     public void Observe(QuicPeer latest)
     {
@@ -82,15 +118,66 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
                 _peer = latest;
                 _lastConnectFailureTimestamp = 0;
                 _lastConnectFault = null;
+                Volatile.Write(ref _currentActive, null);
             }
         }
     }
 
-    public QuicConnection? Current()
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public QuicConnection? Current() => Volatile.Read(ref _currentActive)?.Connection;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ActiveConnection? CurrentActive() => Volatile.Read(ref _currentActive);
+
+    public UnaryStreamSlot? TryRentUnaryStream(QuicConnection connection, QuicMeshMetrics metrics)
     {
-        lock (_gate)
+        while (_idleUnaryStreams.TryPop(out var candidate))
         {
-            return !_closed && _active is { } active && active.Peer == _peer ? active.Connection : null;
+            Interlocked.Decrement(ref _idleUnaryCount);
+            if (ReferenceEquals(candidate.Connection, connection)
+                && candidate.IsHealthy
+                && timeProvider.GetElapsedTime(candidate.LastUsedTicks) < UnaryStreamIdleTimeout)
+            {
+                return candidate;
+            }
+
+            candidate.CloseAndDispose(metrics, abort: false);
+        }
+
+        return null;
+    }
+
+    public bool TryReturnUnaryStream(UnaryStreamSlot unarySlot, QuicMeshMetrics metrics)
+    {
+        if (Volatile.Read(ref _closed) == 0
+            && ReferenceEquals(Current(), unarySlot.Connection)
+            && unarySlot.IsHealthy)
+        {
+            if (Interlocked.Increment(ref _idleUnaryCount) <= MaxIdleUnaryStreams)
+            {
+                unarySlot.LastUsedTicks = timeProvider.GetTimestamp();
+                _idleUnaryStreams.Push(unarySlot);
+                if (Volatile.Read(ref _closed) != 0 || !ReferenceEquals(Current(), unarySlot.Connection))
+                {
+                    DrainIdleUnaryStreams(metrics);
+                }
+
+                return true;
+            }
+
+            Interlocked.Decrement(ref _idleUnaryCount);
+        }
+
+        unarySlot.CloseAndDispose(metrics, abort: false);
+        return false;
+    }
+
+    public void DrainIdleUnaryStreams(QuicMeshMetrics metrics)
+    {
+        while (_idleUnaryStreams.TryPop(out var slot))
+        {
+            Interlocked.Decrement(ref _idleUnaryCount);
+            slot.CloseAndDispose(metrics, abort: false);
         }
     }
 
@@ -104,6 +191,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             }
 
             _active = null;
+            Volatile.Write(ref _currentActive, null);
             return active;
         }
     }
@@ -113,13 +201,14 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
         lock (_gate)
         {
             reconnect = _everConnected;
-            if (_closed)
+            if (_closed != 0)
             {
                 return false;
             }
 
             _active = active;
-            _idleSince = timeProvider.GetTimestamp();
+            Volatile.Write(ref _currentActive, active.Peer == _peer ? active : null);
+            Volatile.Write(ref _idleSince, timeProvider.GetTimestamp());
             _everConnected = true;
             _lastConnectFailureTimestamp = 0;
             _lastConnectFault = null;
@@ -137,6 +226,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             }
 
             _active = null;
+            Volatile.Write(ref _currentActive, null);
             return true;
         }
     }
@@ -147,29 +237,22 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
         {
             var active = _active;
             _active = null;
+            Volatile.Write(ref _currentActive, null);
             _lastConnectFailureTimestamp = 0;
             _lastConnectFault = null;
             return active;
         }
     }
 
-    public void BeginUse()
-    {
-        lock (_gate)
-        {
-            _uses++;
-        }
-    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void BeginUse() => Interlocked.Increment(ref _uses);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void EndUse()
     {
-        lock (_gate)
+        if (Interlocked.Decrement(ref _uses) == 0)
         {
-            _uses--;
-            if (_uses == 0)
-            {
-                _idleSince = timeProvider.GetTimestamp();
-            }
+            Volatile.Write(ref _idleSince, timeProvider.GetTimestamp());
         }
     }
 
@@ -177,9 +260,21 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
     {
         lock (_gate)
         {
-            if (_closed || _uses != 0 || _active is not { } active
-                || timeProvider.GetElapsedTime(_idleSince) < QuicMeshLimits.PooledConnectionIdleTimeout)
+            if (_closed != 0 || Volatile.Read(ref _uses) != 0 || _active is not { } active
+                || timeProvider.GetElapsedTime(Volatile.Read(ref _idleSince)) < QuicMeshLimits.PooledConnectionIdleTimeout)
             {
+                return null;
+            }
+
+            Volatile.Write(ref _currentActive, null);
+            Interlocked.MemoryBarrier();
+            if (Volatile.Read(ref _uses) != 0)
+            {
+                if (active.Peer == _peer)
+                {
+                    Volatile.Write(ref _currentActive, active);
+                }
+
                 return null;
             }
 
@@ -202,7 +297,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             inFlight = null;
             immediateFault = null;
             leader = null;
-            if (_closed)
+            if (_closed != 0)
             {
                 immediateFault = new TransportShutdown("The peer was removed from the QUIC client.");
                 return false;
@@ -264,9 +359,14 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
 
     public OrderedPushChannel? GetOrAddChannel(string key, QuicConnectionPool pool)
     {
+        if (Volatile.Read(ref _closed) == 0 && _channels.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
         lock (_gate)
         {
-            if (_closed)
+            if (_closed != 0)
             {
                 return null;
             }
@@ -274,7 +374,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
             if (!_channels.TryGetValue(key, out var channel))
             {
                 channel = new OrderedPushChannel(pool, this, key);
-                _channels.Add(key, channel);
+                _channels[key] = channel;
             }
 
             return channel;
@@ -287,7 +387,7 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
         {
             if (_channels.TryGetValue(key, out var existing) && ReferenceEquals(existing, channel) && channel.TryCompleteIdle())
             {
-                _ = _channels.Remove(key);
+                _ = _channels.TryRemove(key, out _);
             }
         }
     }
@@ -304,7 +404,8 @@ internal sealed class PeerSlot(QuicPeer peer, TimeProvider timeProvider)
     {
         lock (_gate)
         {
-            _closed = true;
+            Volatile.Write(ref _closed, 1);
+            Volatile.Write(ref _currentActive, null);
             OrderedPushChannel[] detached = [.. _channels.Values];
             _channels.Clear();
             return detached;
@@ -366,10 +467,14 @@ internal sealed class QuicConnectionPool
 
     public void Reset(string nodeId)
     {
-        if (_slots.TryGetValue(nodeId, out var slot) && slot.Take() is { } active)
+        if (_slots.TryGetValue(nodeId, out var slot))
         {
-            Metrics.ConnectionClosed(QuicSide.Client);
-            _ = QuicIo.DisposeConnectionAsync(active.Connection);
+            slot.DrainIdleUnaryStreams(Metrics);
+            if (slot.Take() is { } active)
+            {
+                Metrics.ConnectionClosed(QuicSide.Client);
+                _ = QuicIo.DisposeConnectionAsync(active.Connection);
+            }
         }
     }
 
@@ -380,6 +485,7 @@ internal sealed class QuicConnectionPool
         List<Task> pumps = [];
         foreach (var slot in _slots.Values)
         {
+            slot.DrainIdleUnaryStreams(Metrics);
             foreach (var channel in slot.Channels())
             {
                 channel.Complete();
@@ -390,24 +496,148 @@ internal sealed class QuicConnectionPool
         return Task.WhenAll(pumps);
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<UnaryStreamOutcome>))]
+    public async ValueTask<UnaryStreamOutcome> AcquireUnaryStreamAsync(PeerSlot slot, CallScope scope, bool preferPooled)
+    {
+        slot.BeginUse();
+        var leased = false;
+        try
+        {
+            var active = slot.CurrentActive();
+            if (active is not null)
+            {
+                if (preferPooled && active.SupportsPersistentUnary && slot.TryRentUnaryStream(active.Connection, Metrics) is { } rented)
+                {
+                    leased = true;
+                    return rented;
+                }
+
+                var opened = await QuicIo.OpenStreamAsync(active.Connection, QuicStreamType.Bidirectional, scope);
+                var result = opened switch
+                {
+                    QuicStream stream => WrapUnary(slot, active.Connection, active.SupportsPersistentUnary, stream),
+                    QuicFault fault when QuicFaults.IsDeadConnection(fault) => await ReopenUnaryAsync(slot, active.Connection, scope),
+                    QuicFault fault => (UnaryStreamOutcome)fault,
+                };
+                leased = result switch
+                {
+                    UnaryStreamSlot => true,
+                    StreamLease => true,
+                    QuicFault => false,
+                };
+                return result;
+            }
+
+            var connectOutcome = await GetConnectionAsync(slot, scope);
+            var (connected, connectFault) = connectOutcome switch
+            {
+                QuicConnection resolved => (resolved, (QuicFault?)null),
+                QuicFault fault => ((QuicConnection?)null, fault),
+            };
+            if (connectFault is not null)
+            {
+                return connectFault;
+            }
+
+            if (connected is null)
+            {
+                return new TransportShutdown("The QUIC client connect did not complete.");
+            }
+
+            var supportsPersistent = QuicStorageHandshake.SupportsPersistentUnary(connected.NegotiatedApplicationProtocol);
+            if (preferPooled && supportsPersistent && slot.TryRentUnaryStream(connected, Metrics) is { } pooled)
+            {
+                leased = true;
+                return pooled;
+            }
+
+            var firstOpen = await QuicIo.OpenStreamAsync(connected, QuicStreamType.Bidirectional, scope);
+            var firstResult = firstOpen switch
+            {
+                QuicStream stream => WrapUnary(slot, connected, supportsPersistent, stream),
+                QuicFault fault => (UnaryStreamOutcome)fault,
+            };
+            leased = firstResult switch
+            {
+                UnaryStreamSlot => true,
+                StreamLease => true,
+                QuicFault => false,
+            };
+            return firstResult;
+        }
+        finally
+        {
+            if (!leased)
+            {
+                slot.EndUse();
+            }
+        }
+    }
+
+    public void ReturnUnaryStream(UnaryStreamSlot unarySlot, bool healthy)
+    {
+        if (healthy)
+        {
+            _ = unarySlot.Slot.TryReturnUnaryStream(unarySlot, Metrics);
+        }
+        else
+        {
+            unarySlot.CloseAndDispose(Metrics, abort: true);
+        }
+
+        unarySlot.Slot.EndUse();
+    }
+
+    public void InvalidateIfDead(PeerSlot slot, QuicConnection connection, QuicFault fault)
+    {
+        if (QuicFaults.IsDeadConnection(fault))
+        {
+            Invalidate(slot, connection);
+        }
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<StreamLeaseOutcome>))]
     public async ValueTask<StreamLeaseOutcome> OpenStreamAsync(PeerSlot slot, QuicStreamType type, CallScope scope)
     {
         slot.BeginUse();
-        StreamLease? opened = null;
+        var leased = false;
         try
         {
-            var outcome = await GetConnectionAsync(slot, scope);
-            StreamLeaseOutcome result = outcome switch
+            var connection = slot.Current();
+            if (connection is null)
             {
-                QuicConnection connection => await OpenOnAsync(slot, connection, type, true, scope),
+                var connectOutcome = await GetConnectionAsync(slot, scope);
+                var (connected, connectFault) = connectOutcome switch
+                {
+                    QuicConnection resolved => (resolved, (QuicFault?)null),
+                    QuicFault fault => ((QuicConnection?)null, fault),
+                };
+                if (connectFault is not null)
+                {
+                    return connectFault;
+                }
+
+                if (connected is null)
+                {
+                    return new TransportShutdown("The QUIC client connect did not complete.");
+                }
+
+                connection = connected;
+            }
+
+            var opened = await QuicIo.OpenStreamAsync(connection, type, scope);
+            StreamLeaseOutcome result = opened switch
+            {
+                QuicStream stream => new StreamLease(slot, connection, stream),
+                QuicFault fault when QuicFaults.IsDeadConnection(fault) => await ReopenAsync(slot, connection, type, scope),
                 QuicFault fault => fault,
             };
-            opened = result switch { StreamLease lease => lease, QuicFault => null };
+            leased = result switch { StreamLease => true, QuicFault => false };
             return result;
         }
         finally
         {
-            if (opened is null)
+            if (!leased)
             {
                 slot.EndUse();
             }
@@ -428,25 +658,63 @@ internal sealed class QuicConnectionPool
         await Task.WhenAll(_slots.Values.Select(slot => CloseSlotAsync(slot).AsTask()));
     }
 
+    private UnaryStreamOutcome WrapUnary(PeerSlot slot, QuicConnection connection, bool supportsPersistent, QuicStream stream)
+    {
+        if (supportsPersistent)
+        {
+            Metrics.StreamOpened(QuicSide.Client);
+            return new UnaryStreamSlot(slot, connection, stream);
+        }
+
+        return new StreamLease(slot, connection, stream);
+    }
+
+    private async ValueTask<UnaryStreamOutcome> ReopenUnaryAsync(PeerSlot slot, QuicConnection dead, CallScope scope)
+    {
+        Invalidate(slot, dead);
+        var outcome = await GetConnectionAsync(slot, scope);
+        var (connection, connectFault) = outcome switch
+        {
+            QuicConnection connected => (connected, (QuicFault?)null),
+            QuicFault fault => ((QuicConnection?)null, fault),
+        };
+        if (connectFault is not null)
+        {
+            return connectFault;
+        }
+
+        if (connection is null)
+        {
+            return new TransportShutdown("The QUIC client connect did not complete.");
+        }
+
+        var opened = await QuicIo.OpenStreamAsync(connection, QuicStreamType.Bidirectional, scope);
+        return opened switch
+        {
+            QuicStream stream => WrapUnary(slot, connection, QuicStorageHandshake.SupportsPersistentUnary(connection.NegotiatedApplicationProtocol), stream),
+            QuicFault fault => fault,
+        };
+    }
+
     private void EvictIdleConnections(object? state)
     {
         foreach (var slot in _slots.Values)
         {
             if (slot.TakeIdle() is { } idle)
             {
+                slot.DrainIdleUnaryStreams(Metrics);
                 Metrics.ConnectionClosed(QuicSide.Client);
                 _ = QuicIo.DisposeConnectionAsync(idle.Connection);
             }
         }
     }
 
-    private async ValueTask<StreamLeaseOutcome> OpenOnAsync(PeerSlot slot, QuicConnection connection, QuicStreamType type, bool reconnectIfDead, CallScope scope)
+    private static async ValueTask<StreamLeaseOutcome> OpenOnAsync(PeerSlot slot, QuicConnection connection, QuicStreamType type, CallScope scope)
     {
         var outcome = await QuicIo.OpenStreamAsync(connection, type, scope);
         return outcome switch
         {
             QuicStream stream => new StreamLease(slot, connection, stream),
-            QuicFault fault when reconnectIfDead && QuicFaults.IsDeadConnection(fault) => await ReopenAsync(slot, connection, type, scope),
             QuicFault fault => fault,
         };
     }
@@ -457,7 +725,7 @@ internal sealed class QuicConnectionPool
         var outcome = await GetConnectionAsync(slot, scope);
         return outcome switch
         {
-            QuicConnection connection => await OpenOnAsync(slot, connection, type, false, scope),
+            QuicConnection connection => await OpenOnAsync(slot, connection, type, scope),
             QuicFault fault => fault,
         };
     }
@@ -466,6 +734,7 @@ internal sealed class QuicConnectionPool
     {
         if (slot.Clear(connection))
         {
+            slot.DrainIdleUnaryStreams(Metrics);
             Metrics.ConnectionClosed(QuicSide.Client);
             _ = QuicIo.DisposeConnectionAsync(connection);
         }
@@ -490,10 +759,20 @@ internal sealed class QuicConnectionPool
                 return immediateFault;
             }
 
-            return await WaitForConnectAsync(inFlight!, scope);
+            if (inFlight is not null)
+            {
+                return await WaitForConnectAsync(inFlight, scope);
+            }
+
+            return new TransportShutdown("The QUIC client connect did not start.");
         }
 
-        var shared = ConnectAsLeaderAsync(slot, leader!);
+        if (leader is null)
+        {
+            return new TransportShutdown("The QUIC client connect did not start.");
+        }
+
+        var shared = ConnectAsLeaderAsync(slot, leader);
         return await WaitForConnectAsync(shared, scope);
     }
 
@@ -506,12 +785,13 @@ internal sealed class QuicConnectionPool
         {
             if (slot.TakeStale() is { } stale)
             {
+                slot.DrainIdleUnaryStreams(Metrics);
                 Metrics.ConnectionClosed(QuicSide.Client);
                 await QuicIo.DisposeConnectionAsync(stale.Connection);
             }
 
             peer = slot.Peer;
-            using var dialScope = new CallScope(QuicMeshLimits.HandshakeTimeout, TimeProvider, ShutdownToken, CancellationToken.None);
+            using var dialScope = CallScope.Create(QuicMeshLimits.HandshakeTimeout, TimeProvider, ShutdownToken, CancellationToken.None);
             var outcome = await QuicIo.ConnectAsync(ConnectionOptions(peer), dialScope);
             result = outcome switch
             {
@@ -550,7 +830,8 @@ internal sealed class QuicConnectionPool
 
     private async ValueTask<QuicConnectionOpenOutcome> NegotiateAndActivateAsync(PeerSlot slot, QuicPeer peer, QuicConnection connection, CallScope scope)
     {
-        if (_options.StorageFormatId is { } localFormat && connection.NegotiatedApplicationProtocol == QuicStorageHandshake.Protocol
+        if (_options.StorageFormatId is { } localFormat
+            && QuicStorageHandshake.RequiresStorageHandshake(connection.NegotiatedApplicationProtocol)
             && await QuicStorageHandshake.OfferAsync(connection, localFormat, scope) is { } fault)
         {
             await QuicIo.DisposeConnectionAsync(connection);
@@ -562,7 +843,8 @@ internal sealed class QuicConnectionPool
 
     private async ValueTask<QuicConnectionOpenOutcome> ActivateAsync(PeerSlot slot, QuicPeer peer, QuicConnection connection)
     {
-        if (!slot.TryActivate(new ActiveConnection(peer, connection), out var reconnect))
+        var supportsPersistent = QuicStorageHandshake.SupportsPersistentUnary(connection.NegotiatedApplicationProtocol);
+        if (!slot.TryActivate(new ActiveConnection(peer, connection, supportsPersistent), out var reconnect))
         {
             await QuicIo.DisposeConnectionAsync(connection);
             return new TransportShutdown("The peer was removed from the QUIC client.");
@@ -599,6 +881,7 @@ internal sealed class QuicConnectionPool
     private async ValueTask CloseSlotAsync(PeerSlot slot)
     {
         await Task.WhenAll(slot.Close().Select(static channel => channel.DisposeAsync().AsTask()));
+        slot.DrainIdleUnaryStreams(Metrics);
         if (slot.Take() is { } active)
         {
             var closeTask = QuicIo.CloseAsync(active.Connection, QuicProtocol.CloseErrorCode).AsTask();

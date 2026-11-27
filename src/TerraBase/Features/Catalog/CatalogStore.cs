@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
@@ -61,9 +63,34 @@ internal sealed class CatalogStore(SystemDatabase system)
     private const string DatabaseColumns =
         "id, project_id, name, regions, all_regions, default_consistency, strict, state, key_id, branched_from, previous_name, created_at, expires_at, version, storage_limit";
 
+    private const string SelectDatabaseByProjectAndIdSql =
+        "SELECT " + DatabaseColumns + " FROM databases WHERE project_id = ? AND id = ? AND state <> 'deleted'";
+
+    private const string SelectDatabaseByProjectAndNameSql =
+        "SELECT " + DatabaseColumns + " FROM databases WHERE project_id = ? AND name = ? AND state <> 'deleted'";
+
+    private const string SelectDatabaseByIdSql =
+        "SELECT " + DatabaseColumns + " FROM databases WHERE id = ? AND state <> 'deleted'";
+
     private const int CleanupChunk = 256;
 
+    private const int MaxCacheEntries = 4096;
+
+    private static readonly ResourceNotFound UnknownOrganization = new("the organization does not exist", "unknown_organization");
+
+    private static readonly ResourceNotFound UnknownProject = new("the project does not exist", "unknown_project");
+
+    private static readonly ResourceNotFound UnknownDatabase = new("the database does not exist", "unknown_database");
+
     public static readonly TimeSpan TombstoneRetention = TimeSpan.FromDays(7);
+
+    private readonly GenerationCache<Ulid, OrganizationRecord> _organizations = new(MaxCacheEntries);
+
+    private readonly GenerationCache<Ulid, ProjectRecord> _projects = new(MaxCacheEntries);
+
+    private readonly GenerationCache<Ulid, DatabaseRecord> _databasesById = new(MaxCacheEntries);
+
+    private readonly GenerationCache<DatabaseNameKey, DatabaseRecord> _databasesByName = new(MaxCacheEntries, DatabaseNameKeyComparer.Instance);
 
     public async ValueTask<OrganizationCreateOutcome> CreateOrganizationAsync(OrganizationRecord organization, CancellationToken cancellationToken) =>
         await system.WriteAsync(SqlBuild.Statement(
@@ -76,15 +103,39 @@ internal sealed class CatalogStore(SystemDatabase system)
             BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<OrganizationLookup> GetOrganizationAsync(Ulid id, CancellationToken cancellationToken)
+    public bool TryGetOrganization(Ulid id, [NotNullWhen(true)] out OrganizationRecord? organization) =>
+        _organizations.TryGet(system.CatalogGeneration, id, out organization);
+
+    public ValueTask<OrganizationLookup> GetOrganizationAsync(Ulid id, CancellationToken cancellationToken)
+    {
+        var generation = system.CatalogGeneration;
+        if (_organizations.TryGet(generation, id, out var cached))
+        {
+            return ValueTask.FromResult<OrganizationLookup>(cached);
+        }
+
+        return GetOrganizationSlowAsync(id, generation, cancellationToken);
+    }
+
+    private async ValueTask<OrganizationLookup> GetOrganizationSlowAsync(Ulid id, long generation, CancellationToken cancellationToken)
     {
         var outcome = await system.QueryAsync(SqlBuild.Statement("SELECT id, name, created_by, created_at, plan, suspended FROM organizations WHERE id = ?", SqlBuild.Id(id)), cancellationToken);
         return outcome switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => Organization(found[0]),
-            IReadOnlyList<IReadOnlyList<SqlValue>> => new ResourceNotFound("the organization does not exist", "unknown_organization"),
+            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => CacheOrganization(id, Organization(found[0]), generation),
+            IReadOnlyList<IReadOnlyList<SqlValue>> => UnknownOrganization,
             BackendUnavailable unavailable => unavailable,
         };
+    }
+
+    private OrganizationLookup CacheOrganization(Ulid id, OrganizationRecord record, long generation)
+    {
+        if (generation > 0 && system.CatalogGeneration == generation)
+        {
+            _organizations.Set(generation, id, record);
+        }
+
+        return record;
     }
 
     public async ValueTask<OrganizationPageOutcome> ListOrganizationsAsync(string createdBy, string? after, int limit, CancellationToken cancellationToken) =>
@@ -212,15 +263,39 @@ internal sealed class CatalogStore(SystemDatabase system)
         };
     }
 
-    public async ValueTask<ProjectLookup> GetProjectAsync(Ulid id, CancellationToken cancellationToken)
+    public bool TryGetProject(Ulid id, [NotNullWhen(true)] out ProjectRecord? project) =>
+        _projects.TryGet(system.CatalogGeneration, id, out project);
+
+    public ValueTask<ProjectLookup> GetProjectAsync(Ulid id, CancellationToken cancellationToken)
+    {
+        var generation = system.CatalogGeneration;
+        if (_projects.TryGet(generation, id, out var cached))
+        {
+            return ValueTask.FromResult<ProjectLookup>(cached);
+        }
+
+        return GetProjectSlowAsync(id, generation, cancellationToken);
+    }
+
+    private async ValueTask<ProjectLookup> GetProjectSlowAsync(Ulid id, long generation, CancellationToken cancellationToken)
     {
         var outcome = await system.QueryAsync(SqlBuild.Statement("SELECT id, organization_id, name, created_at, plan FROM projects WHERE id = ?", SqlBuild.Id(id)), cancellationToken);
         return outcome switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => Project(found[0]),
-            IReadOnlyList<IReadOnlyList<SqlValue>> => new ResourceNotFound("the project does not exist", "unknown_project"),
+            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => CacheProject(id, Project(found[0]), generation),
+            IReadOnlyList<IReadOnlyList<SqlValue>> => UnknownProject,
             BackendUnavailable unavailable => unavailable,
         };
+    }
+
+    private ProjectLookup CacheProject(Ulid id, ProjectRecord record, long generation)
+    {
+        if (generation > 0 && system.CatalogGeneration == generation)
+        {
+            _projects.Set(generation, id, record);
+        }
+
+        return record;
     }
 
     public async ValueTask<ProjectPageOutcome> ListProjectsAsync(Ulid organizationId, string? after, int limit, CancellationToken cancellationToken) =>
@@ -246,29 +321,98 @@ internal sealed class CatalogStore(SystemDatabase system)
             BackendUnavailable unavailable => unavailable,
         };
 
-    public async ValueTask<DatabaseLookup> FindDatabaseAsync(Ulid projectId, string reference, CancellationToken cancellationToken)
+    public bool TryFindDatabase(Ulid projectId, string reference, [NotNullWhen(true)] out DatabaseRecord? database)
     {
-        var statement = Ulid.TryParse(reference, out var id) && reference.Length == 26
-            ? SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ? AND id = ? AND state <> 'deleted'"), SqlBuild.Id(projectId), SqlBuild.Id(id))
-            : SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE project_id = ? AND name = ? AND state <> 'deleted'"), SqlBuild.Id(projectId), SqlBuild.Text(reference));
-        var outcome = await system.QueryAsync(statement, cancellationToken);
+        var generation = system.CatalogGeneration;
+        if (reference.Length == 26 && Ulid.TryParse(reference, out var id))
+        {
+            if (_databasesById.TryGet(generation, id, out var cachedById) && cachedById.ProjectId == projectId)
+            {
+                database = cachedById;
+                return true;
+            }
+
+            database = null;
+            return false;
+        }
+
+        return _databasesByName.TryGet(generation, new DatabaseNameKey(projectId, reference), out database);
+    }
+
+    public ValueTask<DatabaseLookup> FindDatabaseAsync(Ulid projectId, string reference, CancellationToken cancellationToken)
+    {
+        var generation = system.CatalogGeneration;
+        if (reference.Length == 26 && Ulid.TryParse(reference, out var id))
+        {
+            if (_databasesById.TryGet(generation, id, out var cachedById))
+            {
+                return ValueTask.FromResult<DatabaseLookup>(cachedById.ProjectId == projectId ? cachedById : UnknownDatabase);
+            }
+
+            return FindDatabaseByIdSlowAsync(projectId, id, generation, cancellationToken);
+        }
+
+        if (_databasesByName.TryGet(generation, new DatabaseNameKey(projectId, reference), out var cachedByName))
+        {
+            return ValueTask.FromResult<DatabaseLookup>(cachedByName);
+        }
+
+        return FindDatabaseByNameSlowAsync(projectId, reference, generation, cancellationToken);
+    }
+
+    private async ValueTask<DatabaseLookup> FindDatabaseByIdSlowAsync(Ulid projectId, Ulid id, long generation, CancellationToken cancellationToken)
+    {
+        var outcome = await system.QueryAsync(SqlBuild.Statement(SelectDatabaseByProjectAndIdSql, SqlBuild.Id(projectId), SqlBuild.Id(id)), cancellationToken);
         return outcome switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => Database(found[0]),
-            IReadOnlyList<IReadOnlyList<SqlValue>> => new ResourceNotFound("the database does not exist", "unknown_database"),
+            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => CacheDatabase(Database(found[0]), generation),
+            IReadOnlyList<IReadOnlyList<SqlValue>> => UnknownDatabase,
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    public async ValueTask<DatabaseLookup> GetDatabaseAsync(Ulid id, CancellationToken cancellationToken)
+    private async ValueTask<DatabaseLookup> FindDatabaseByNameSlowAsync(Ulid projectId, string name, long generation, CancellationToken cancellationToken)
     {
-        var outcome = await system.QueryAsync(SqlBuild.Statement(string.Concat("SELECT ", DatabaseColumns, " FROM databases WHERE id = ? AND state <> 'deleted'"), SqlBuild.Id(id)), cancellationToken);
+        var outcome = await system.QueryAsync(SqlBuild.Statement(SelectDatabaseByProjectAndNameSql, SqlBuild.Id(projectId), SqlBuild.Text(name)), cancellationToken);
         return outcome switch
         {
-            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => Database(found[0]),
-            IReadOnlyList<IReadOnlyList<SqlValue>> => new ResourceNotFound("the database does not exist", "unknown_database"),
+            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => CacheDatabase(Database(found[0]), generation),
+            IReadOnlyList<IReadOnlyList<SqlValue>> => UnknownDatabase,
             BackendUnavailable unavailable => unavailable,
         };
+    }
+
+    public ValueTask<DatabaseLookup> GetDatabaseAsync(Ulid id, CancellationToken cancellationToken)
+    {
+        var generation = system.CatalogGeneration;
+        if (_databasesById.TryGet(generation, id, out var cached))
+        {
+            return ValueTask.FromResult<DatabaseLookup>(cached);
+        }
+
+        return GetDatabaseSlowAsync(id, generation, cancellationToken);
+    }
+
+    private async ValueTask<DatabaseLookup> GetDatabaseSlowAsync(Ulid id, long generation, CancellationToken cancellationToken)
+    {
+        var outcome = await system.QueryAsync(SqlBuild.Statement(SelectDatabaseByIdSql, SqlBuild.Id(id)), cancellationToken);
+        return outcome switch
+        {
+            IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } found => CacheDatabase(Database(found[0]), generation),
+            IReadOnlyList<IReadOnlyList<SqlValue>> => UnknownDatabase,
+            BackendUnavailable unavailable => unavailable,
+        };
+    }
+
+    private DatabaseLookup CacheDatabase(DatabaseRecord record, long generation)
+    {
+        if (generation > 0 && system.CatalogGeneration == generation)
+        {
+            _databasesById.Set(generation, record.Id, record);
+            _databasesByName.Set(generation, new DatabaseNameKey(record.ProjectId, record.Name), record);
+        }
+
+        return record;
     }
 
     public async ValueTask<DatabasePageOutcome> ListDatabasesAsync(Ulid projectId, string? after, int limit, CancellationToken cancellationToken) =>
@@ -575,7 +719,7 @@ internal sealed class CatalogStore(SystemDatabase system)
             statements.Add(SqlBuild.Statement("DELETE FROM usage_counters WHERE scope = ?", SqlBuild.Text(UsageMeter.DatabaseScope(id))));
         }
 
-        var outcome = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
+        var outcome = await system.WriteTelemetryAsync(statements, ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {
             SqlWriteResult => new Completed(),
@@ -628,5 +772,80 @@ internal sealed class CatalogStore(SystemDatabase system)
     {
         List<T> items = [.. rows.Take(limit).Select(read)];
         return new CatalogPage<T>(items, rows.Count > limit && items.Count > 0 ? cursor(items[^1]) : null);
+    }
+
+    private readonly record struct DatabaseNameKey(Ulid ProjectId, string Name);
+
+    private sealed class DatabaseNameKeyComparer : IEqualityComparer<DatabaseNameKey>
+    {
+        public static DatabaseNameKeyComparer Instance { get; } = new();
+
+        public bool Equals(DatabaseNameKey x, DatabaseNameKey y) =>
+            x.ProjectId == y.ProjectId && string.Equals(x.Name, y.Name, StringComparison.Ordinal);
+
+        public int GetHashCode(DatabaseNameKey obj) =>
+            HashCode.Combine(obj.ProjectId, StringComparer.Ordinal.GetHashCode(obj.Name));
+    }
+
+    private sealed class GenerationCache<TKey, TValue>(int maxEntries, IEqualityComparer<TKey>? comparer = null)
+        where TKey : notnull
+        where TValue : class
+    {
+        private readonly Lock _swapGate = new();
+        private volatile Bucket _current = new(0, comparer);
+
+        public bool TryGet(long generation, TKey key, [NotNullWhen(true)] out TValue? value)
+        {
+            if (generation > 0)
+            {
+                var bucket = _current;
+                if (bucket.Generation == generation && bucket.Entries.TryGetValue(key, out value))
+                {
+                    return true;
+                }
+            }
+
+            value = null;
+            return false;
+        }
+
+        public void Set(long generation, TKey key, TValue value)
+        {
+            if (generation <= 0)
+            {
+                return;
+            }
+
+            var bucket = _current;
+            if (bucket.Generation != generation)
+            {
+                lock (_swapGate)
+                {
+                    bucket = _current;
+                    if (generation < bucket.Generation)
+                    {
+                        return;
+                    }
+
+                    if (bucket.Generation != generation)
+                    {
+                        bucket = new Bucket(generation, comparer);
+                        _current = bucket;
+                    }
+                }
+            }
+
+            if (Volatile.Read(ref bucket.Count) < maxEntries && bucket.Entries.TryAdd(key, value))
+            {
+                _ = Interlocked.Increment(ref bucket.Count);
+            }
+        }
+
+        private sealed class Bucket(long generation, IEqualityComparer<TKey>? comparer)
+        {
+            public long Generation { get; } = generation;
+            public ConcurrentDictionary<TKey, TValue> Entries { get; } = comparer is null ? new() : new(comparer);
+            public int Count;
+        }
     }
 }

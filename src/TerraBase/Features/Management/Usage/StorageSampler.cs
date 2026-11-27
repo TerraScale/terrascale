@@ -145,7 +145,7 @@ internal sealed class StorageLedger(SystemDatabase system)
             .. stored.Select(item => Once(UsageMeter.StorageScope(item.ProjectId), month, UsageMeter.StorageMetric(item.DatabaseId, hour), item.Bytes)),
             .. missing.Select(item => Once(string.Concat(MissingPrefix, item.ProjectId.ToString()), month, UsageMeter.StorageMetric(item.DatabaseId, hour), 1)),
         ];
-        var outcome = await system.WriteAsync(statements, ConsistencyMode.Fast, cancellationToken);
+        var outcome = await system.WriteTelemetryAsync(statements, ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {
             SqlWriteResult written => Recorded(written, stored),
@@ -156,7 +156,7 @@ internal sealed class StorageLedger(SystemDatabase system)
 
     public async ValueTask<StorageCoverOutcome> CoverAsync(string region, long hour, string month, CancellationToken cancellationToken)
     {
-        var outcome = await system.WriteAsync(
+        var outcome = await system.WriteTelemetryAsync(
             Once(string.Concat(CoverPrefix, region), month, hour.ToString("D10", CultureInfo.InvariantCulture), 1), ConsistencyMode.Fast, cancellationToken);
         return outcome switch
         {

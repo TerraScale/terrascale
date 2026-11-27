@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading.Channels;
 
 namespace TerraBase.Continuity;
@@ -630,11 +631,11 @@ public sealed class BackupContinuityService(
     {
         var checkedAt = timeProvider.GetUtcNow();
         var current = session.CurrentBookmark;
-        var archivedThrough = manifest.ArchivedThrough(ArchiveRetention.SnapshotFloor(manifest));
+        var snapshotFloor = ArchiveRetention.SnapshotFloor(manifest);
         var pending = 0;
         foreach (var (origin, _) in current.Entries)
         {
-            var listed = await session.ListSealedSegmentsAsync(origin, archivedThrough.GetValueOrDefault(origin), cancellationToken);
+            var listed = await session.ListSealedSegmentsAsync(origin, manifest.ArchivedThrough(origin, snapshotFloor), cancellationToken);
             var (count, busy) = Pending(listed);
             if (busy is not null)
             {
@@ -655,25 +656,96 @@ public sealed class BackupContinuityService(
 
     private static BackupStatusOutcome Status(ArchiveManifest manifest, int pendingSegments, ArchiveProof? proof)
     {
-        var snapshots = ManifestCodec.Snapshots(manifest);
-        if (snapshots.Count == 0 || !Ulid.TryParse(manifest.DatabaseId, out var databaseId))
+        ArchivedSnapshot? latestArchived = null;
+        CausalBookmark? latestBookmark = null;
+        var earliestPoint = DateTimeOffset.MaxValue;
+        var totalBytes = 0L;
+        for (var index = 0; index < manifest.Snapshots.Count; index++)
+        {
+            var snapshot = manifest.Snapshots[index];
+            totalBytes += snapshot.SizeBytes;
+            if (!CausalBookmark.TryDecode(snapshot.Bookmark, out var decodedBookmark))
+            {
+                continue;
+            }
+
+            if (snapshot.TakenAtUtc < earliestPoint)
+            {
+                earliestPoint = snapshot.TakenAtUtc;
+            }
+
+            if (latestArchived is null || snapshot.TakenAtUtc > latestArchived.TakenAtUtc)
+            {
+                latestArchived = snapshot;
+                latestBookmark = decodedBookmark;
+            }
+        }
+
+        if (latestArchived is null || latestBookmark is null || !Ulid.TryParse(manifest.DatabaseId, out var databaseId))
         {
             return new ContinuityNotFound("no restore point has been archived for this database yet", "backup_pending");
         }
 
-        var latest = snapshots.MaxBy(static snapshot => snapshot.Archived.TakenAtUtc) ?? throw new UnreachableException();
-        Dictionary<string, long> through = new(StringComparer.Ordinal);
-        foreach (var (origin, sequence) in latest.Bookmark.Entries)
+        string? singleOrigin = null;
+        var singleSequence = 0L;
+        var bookmarkUnchanged = true;
+        Dictionary<string, long>? through = null;
+        if (latestBookmark.Entries.Count == 1)
         {
-            through[origin] = sequence;
+            var entry = latestBookmark.Entries[0];
+            singleOrigin = entry.Key;
+            singleSequence = entry.Value;
+        }
+        else if (latestBookmark.Entries.Count > 1)
+        {
+            through = new Dictionary<string, long>(latestBookmark.Entries.Count, StringComparer.Ordinal);
+            foreach (var (origin, sequence) in latestBookmark.Entries)
+            {
+                through[origin] = sequence;
+            }
         }
 
-        var latestPoint = latest.Archived.TakenAtUtc;
-        foreach (var segment in manifest.Segments)
+        var latestPoint = latestArchived.TakenAtUtc;
+        for (var index = 0; index < manifest.Segments.Count; index++)
         {
-            if (segment.LastSequence > through.GetValueOrDefault(segment.Origin))
+            var segment = manifest.Segments[index];
+            totalBytes += segment.SizeBytes;
+            if (through is null)
             {
-                through[segment.Origin] = segment.LastSequence;
+                if (singleOrigin is null)
+                {
+                    if (segment.LastSequence > 0)
+                    {
+                        singleOrigin = segment.Origin;
+                        singleSequence = segment.LastSequence;
+                        bookmarkUnchanged = false;
+                    }
+                }
+                else if (string.Equals(singleOrigin, segment.Origin, StringComparison.Ordinal))
+                {
+                    if (segment.LastSequence > singleSequence)
+                    {
+                        singleSequence = segment.LastSequence;
+                        bookmarkUnchanged = false;
+                    }
+                }
+                else if (segment.LastSequence > 0)
+                {
+                    through = new Dictionary<string, long>(2, StringComparer.Ordinal)
+                    {
+                        [singleOrigin] = singleSequence,
+                        [segment.Origin] = segment.LastSequence,
+                    };
+                    bookmarkUnchanged = false;
+                }
+            }
+            else
+            {
+                ref var current = ref CollectionsMarshal.GetValueRefOrAddDefault(through, segment.Origin, out _);
+                if (segment.LastSequence > current)
+                {
+                    current = segment.LastSequence;
+                }
             }
 
             if (segment.LastCommittedAtUtc > latestPoint)
@@ -682,7 +754,13 @@ public sealed class BackupContinuityService(
             }
         }
 
-        var archivedThrough = CausalBookmark.Create(through);
+        var archivedThrough = through is not null
+            ? CausalBookmark.Create(through)
+            : bookmarkUnchanged
+                ? latestBookmark
+                : singleOrigin is not null
+                    ? CausalBookmark.ForRegion(singleOrigin, singleSequence)
+                    : CausalBookmark.Empty;
         if (proof is { } proven && proven.CheckedAtUtc > latestPoint && archivedThrough.Dominates(proven.Bookmark))
         {
             latestPoint = proven.CheckedAtUtc;
@@ -691,10 +769,10 @@ public sealed class BackupContinuityService(
         return new BackupStatus(
             databaseId,
             archivedThrough,
-            snapshots.Min(static snapshot => snapshot.Archived.TakenAtUtc),
+            earliestPoint,
             latestPoint,
-            latest.Archived.TakenAtUtc,
-            manifest.Snapshots.Sum(static snapshot => snapshot.SizeBytes) + manifest.Segments.Sum(static segment => segment.SizeBytes),
+            latestArchived.TakenAtUtc,
+            totalBytes,
             pendingSegments);
     }
 

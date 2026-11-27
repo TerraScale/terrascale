@@ -2,9 +2,182 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace TerraBase.Storage;
+
+internal ref struct PooledBufferWriter : IDisposable
+{
+    private byte[] _buffer;
+    private int _written;
+
+    public PooledBufferWriter(int initialCapacity)
+    {
+        _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(initialCapacity, 64));
+        _written = 0;
+    }
+
+    public readonly ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, _written);
+
+    public readonly int WrittenCount => _written;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Byte(byte value)
+    {
+        Ensure(1);
+        _buffer[_written++] = value;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void VarUInt(ulong value)
+    {
+        if (value < 0x80)
+        {
+            Ensure(1);
+            _buffer[_written++] = (byte)value;
+            return;
+        }
+
+        Ensure(10);
+        var written = _written;
+        var buffer = _buffer;
+        while (value >= 0x80)
+        {
+            buffer[written++] = (byte)(value | 0x80);
+            value >>= 7;
+        }
+
+        buffer[written++] = (byte)value;
+        _written = written;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void VarInt(long value) =>
+        VarUInt((ulong)((value << 1) ^ (value >> 63)));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void UInt16(ushort value)
+    {
+        Ensure(2);
+        BinaryPrimitives.WriteUInt16LittleEndian(_buffer.AsSpan(_written), value);
+        _written += 2;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Double(double value)
+    {
+        Ensure(8);
+        BinaryPrimitives.WriteDoubleLittleEndian(_buffer.AsSpan(_written), value);
+        _written += 8;
+    }
+
+    public void Bytes(ReadOnlySpan<byte> bytes)
+    {
+        VarUInt((ulong)bytes.Length);
+        if (bytes.IsEmpty)
+        {
+            return;
+        }
+
+        Ensure(bytes.Length);
+        bytes.CopyTo(_buffer.AsSpan(_written));
+        _written += bytes.Length;
+    }
+
+    public void String(string value)
+    {
+        var length = value.Length;
+        if (length == 0)
+        {
+            Byte(0);
+            return;
+        }
+
+        if (length < 0x80)
+        {
+            Ensure(1 + length);
+            var written = _written;
+            if (Ascii.FromUtf16(value, _buffer.AsSpan(written + 1, length), out _) == OperationStatus.Done)
+            {
+                _buffer[written] = (byte)length;
+                _written = written + 1 + length;
+                return;
+            }
+        }
+
+        var count = Encoding.UTF8.GetByteCount(value);
+        VarUInt((ulong)count);
+        Ensure(count);
+        _written += Encoding.UTF8.GetBytes(value, _buffer.AsSpan(_written, count));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Hlc(HlcTimestamp hlc)
+    {
+        Ensure(HlcTimestamp.EncodedSize);
+        HlcCodec.Write(_buffer.AsSpan(_written, HlcTimestamp.EncodedSize), hlc);
+        _written += HlcTimestamp.EncodedSize;
+    }
+
+    public void Value(SqlValue value)
+    {
+        Byte((byte)value.Kind);
+        switch (value.Kind)
+        {
+            case SqlValueKind.Null:
+                break;
+            case SqlValueKind.Integral:
+                _ = value.TryGetIntegral(out var integral);
+                VarInt(integral);
+                break;
+            case SqlValueKind.Real:
+                _ = value.TryGetReal(out var real);
+                Double(real);
+                break;
+            case SqlValueKind.Text:
+                _ = value.TryGetText(out var text);
+                String(text ?? throw new UnreachableException());
+                break;
+            case SqlValueKind.Blob:
+                _ = value.TryGetBlob(out var blob);
+                Bytes(blob.Span);
+                break;
+            default:
+                throw new UnreachableException();
+        }
+    }
+
+    public readonly byte[] ToArray() => _written == 0 ? [] : _buffer.AsSpan(0, _written).ToArray();
+
+    public void Dispose()
+    {
+        var buffer = _buffer;
+        if (buffer.Length > 0)
+        {
+            _buffer = [];
+            _written = 0;
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void Ensure(int sizeHint)
+    {
+        if (_buffer.Length - _written < sizeHint)
+        {
+            Grow(sizeHint);
+        }
+    }
+
+    private void Grow(int sizeHint)
+    {
+        var next = ArrayPool<byte>.Shared.Rent(Math.Max(_buffer.Length * 2, _written + sizeHint));
+        _buffer.AsSpan(0, _written).CopyTo(next);
+        ArrayPool<byte>.Shared.Return(_buffer);
+        _buffer = next;
+    }
+}
 
 internal static class WireWriter
 {
@@ -17,15 +190,7 @@ internal static class WireWriter
     public static void VarUInt(IBufferWriter<byte> writer, ulong value)
     {
         var span = writer.GetSpan(10);
-        var index = 0;
-        while (value >= 0x80)
-        {
-            span[index++] = (byte)(value | 0x80);
-            value >>= 7;
-        }
-
-        span[index++] = (byte)value;
-        writer.Advance(index);
+        writer.Advance(WriteVarUInt(span, value));
     }
 
     public static void VarInt(IBufferWriter<byte> writer, long value) =>
@@ -51,13 +216,14 @@ internal static class WireWriter
 
     public static void String(IBufferWriter<byte> writer, string value)
     {
-        var count = Encoding.UTF8.GetByteCount(value);
-        VarUInt(writer, (ulong)count);
-        if (count == 0)
+        if (value.Length == 0)
         {
+            Byte(writer, 0);
             return;
         }
 
+        var count = Encoding.UTF8.GetByteCount(value);
+        VarUInt(writer, (ulong)count);
         writer.Advance(Encoding.UTF8.GetBytes(value, writer.GetSpan(count)));
     }
 
@@ -94,40 +260,90 @@ internal static class WireWriter
                 throw new UnreachableException();
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int WriteVarUInt(Span<byte> destination, ulong value)
+    {
+        if (value < 0x80)
+        {
+            destination[0] = (byte)value;
+            return 1;
+        }
+
+        var index = 0;
+        while (value >= 0x80)
+        {
+            destination[index++] = (byte)(value | 0x80);
+            value >>= 7;
+        }
+
+        destination[index++] = (byte)value;
+        return index;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int WriteVarInt(Span<byte> destination, long value) =>
+        WriteVarUInt(destination, (ulong)((value << 1) ^ (value >> 63)));
 }
 
 internal ref struct WireReader(ReadOnlySpan<byte> source)
 {
-    private ReadOnlySpan<byte> _source = source;
+    private readonly ReadOnlySpan<byte> _source = source;
+    private int _offset;
 
     public bool Failed { get; private set; }
 
-    public readonly bool End => _source.IsEmpty;
+    public readonly bool End => !Failed && _offset == _source.Length;
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public byte Byte()
     {
-        if (Failed || _source.IsEmpty)
+        var offset = _offset;
+        var source = _source;
+        if ((uint)offset >= (uint)source.Length)
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
-        var value = _source[0];
-        _source = _source[1..];
-        return value;
+        _offset = offset + 1;
+        return source[offset];
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ulong VarUInt()
     {
-        ulong result = 0;
-        for (var index = 0; index < 10 && !Failed; index++)
+        var offset = _offset;
+        var source = _source;
+        if ((uint)offset < (uint)source.Length)
         {
-            if (index >= _source.Length)
+            var first = source[offset];
+            if (first < 0x80)
             {
-                break;
+                _offset = offset + 1;
+                return first;
             }
+        }
 
-            var current = _source[index];
+        return VarUIntMultiByte();
+    }
+
+    private ulong VarUIntMultiByte()
+    {
+        var offset = _offset;
+        var source = _source;
+        if ((uint)offset >= (uint)source.Length)
+        {
+            Fail();
+            return 0;
+        }
+
+        var remaining = source.Length - offset;
+        var limit = remaining < 10 ? remaining : 10;
+        ulong result = 0;
+        for (var index = 0; index < limit; index++)
+        {
+            var current = source[offset + index];
             if (index == 9 && current > 1)
             {
                 break;
@@ -136,90 +352,111 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
             result |= (ulong)(current & 0x7F) << (7 * index);
             if (current < 0x80)
             {
-                _source = _source[(index + 1)..];
+                _offset = offset + index + 1;
                 return result;
             }
         }
 
-        Failed = true;
+        Fail();
         return 0;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public long VarInt()
     {
         var raw = VarUInt();
         return (long)(raw >> 1) ^ -(long)(raw & 1);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int Count()
     {
         var raw = VarUInt();
-        if (raw > (ulong)_source.Length)
+        var offset = _offset;
+        if (offset < 0 || raw > (ulong)(_source.Length - offset))
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
         return (int)raw;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ushort UInt16()
     {
-        if (Failed || _source.Length < 2)
+        var offset = _offset;
+        var source = _source;
+        if (offset < 0 || source.Length - offset < 2)
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
-        var value = BinaryPrimitives.ReadUInt16LittleEndian(_source);
-        _source = _source[2..];
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(source[offset..]);
+        _offset = offset + 2;
         return value;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public double Double()
     {
-        if (Failed || _source.Length < 8)
+        var offset = _offset;
+        var source = _source;
+        if (offset < 0 || source.Length - offset < 8)
         {
-            Failed = true;
+            Fail();
             return 0;
         }
 
-        var value = BinaryPrimitives.ReadDoubleLittleEndian(_source);
-        _source = _source[8..];
+        var value = BinaryPrimitives.ReadDoubleLittleEndian(source[offset..]);
+        _offset = offset + 8;
         return value;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<byte> Bytes()
     {
         var length = Count();
         return Take(length);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlySpan<byte> Take(int length)
     {
-        if (Failed || length < 0 || length > _source.Length)
+        var offset = _offset;
+        var source = _source;
+        if (length < 0 || offset < 0 || length > source.Length - offset)
         {
-            Failed = true;
+            Fail();
             return [];
         }
 
-        var bytes = _source[..length];
-        _source = _source[length..];
+        var bytes = source.Slice(offset, length);
+        _offset = offset + length;
         return bytes;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public string String()
     {
         var bytes = Bytes();
-        return Failed ? string.Empty : Encoding.UTF8.GetString(bytes);
+        if (Failed || bytes.IsEmpty)
+        {
+            return string.Empty;
+        }
+
+        return Ascii.IsValid(bytes) ? Encoding.ASCII.GetString(bytes) : Encoding.UTF8.GetString(bytes);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public HlcTimestamp Hlc()
     {
         var bytes = Take(HlcTimestamp.EncodedSize);
         return Failed ? HlcTimestamp.Zero : HlcCodec.Read(bytes);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public SqlValue Value()
     {
         var kind = Byte();
@@ -233,7 +470,7 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
                 var real = Double();
                 if (!double.IsFinite(real))
                 {
-                    Failed = true;
+                    Fail();
                     return SqlValue.Null;
                 }
 
@@ -241,11 +478,19 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
             case (byte)SqlValueKind.Text:
                 return SqlValue.FromText(String());
             case (byte)SqlValueKind.Blob:
-                return SqlValue.FromBlob(Bytes().ToArray());
+                var bytes = Bytes();
+                return SqlValue.FromBlob(bytes.IsEmpty ? ReadOnlyMemory<byte>.Empty : bytes.ToArray());
             default:
-                Failed = true;
+                Fail();
                 return SqlValue.Null;
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Fail()
+    {
+        Failed = true;
+        _offset = -1;
     }
 }
 
@@ -253,6 +498,7 @@ internal static class HlcCodec
 {
     public const long MaxWallMs = (1L << 48) - 1;
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write(Span<byte> destination, HlcTimestamp hlc)
     {
         var wall = (ulong)Math.Clamp(hlc.WallMs, 0, MaxWallMs);
@@ -266,6 +512,7 @@ internal static class HlcCodec
         BinaryPrimitives.WriteUInt16BigEndian(destination[8..], hlc.NodeId);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static HlcTimestamp Read(ReadOnlySpan<byte> source)
     {
         var wall = ((long)source[0] << 40)
@@ -277,21 +524,121 @@ internal static class HlcCodec
         return new HlcTimestamp(wall, BinaryPrimitives.ReadUInt16BigEndian(source[6..]), BinaryPrimitives.ReadUInt16BigEndian(source[8..]));
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static HlcTimestamp Max(HlcTimestamp left, HlcTimestamp right) => left >= right ? left : right;
 }
 
 internal static class PrimaryKeyCodec
 {
-    public static byte[] Encode(ReadOnlySpan<SqlValue> values)
+    public static bool TryEncode(ReadOnlySpan<SqlValue> values, Span<byte> destination, out int written)
     {
-        var writer = new ArrayBufferWriter<byte>(16 + (values.Length * 12));
-        WireWriter.VarUInt(writer, (ulong)values.Length);
-        foreach (var value in values)
+        if (destination.Length < 10)
         {
-            WireWriter.Value(writer, value);
+            written = 0;
+            return false;
         }
 
-        return writer.WrittenSpan.ToArray();
+        var offset = WireWriter.WriteVarUInt(destination, (ulong)values.Length);
+        foreach (var value in values)
+        {
+            if (offset >= destination.Length)
+            {
+                written = 0;
+                return false;
+            }
+
+            destination[offset++] = (byte)value.Kind;
+            switch (value.Kind)
+            {
+                case SqlValueKind.Null:
+                    break;
+                case SqlValueKind.Integral:
+                    if (destination.Length - offset < 10)
+                    {
+                        written = 0;
+                        return false;
+                    }
+
+                    _ = value.TryGetIntegral(out var integral);
+                    offset += WireWriter.WriteVarInt(destination[offset..], integral);
+                    break;
+                case SqlValueKind.Real:
+                    if (destination.Length - offset < 8)
+                    {
+                        written = 0;
+                        return false;
+                    }
+
+                    _ = value.TryGetReal(out var real);
+                    BinaryPrimitives.WriteDoubleLittleEndian(destination[offset..], real);
+                    offset += 8;
+                    break;
+                case SqlValueKind.Text:
+                    _ = value.TryGetText(out var text);
+                    var resolved = text ?? throw new UnreachableException();
+                    var utf8Length = resolved.Length == 0 ? 0 : Encoding.UTF8.GetByteCount(resolved);
+                    if (destination.Length - offset < 10 + utf8Length)
+                    {
+                        written = 0;
+                        return false;
+                    }
+
+                    offset += WireWriter.WriteVarUInt(destination[offset..], (ulong)utf8Length);
+                    if (utf8Length > 0)
+                    {
+                        offset += Encoding.UTF8.GetBytes(resolved, destination.Slice(offset, utf8Length));
+                    }
+
+                    break;
+                case SqlValueKind.Blob:
+                    _ = value.TryGetBlob(out var blob);
+                    var span = blob.Span;
+                    if (destination.Length - offset < 10 + span.Length)
+                    {
+                        written = 0;
+                        return false;
+                    }
+
+                    offset += WireWriter.WriteVarUInt(destination[offset..], (ulong)span.Length);
+                    if (!span.IsEmpty)
+                    {
+                        span.CopyTo(destination[offset..]);
+                        offset += span.Length;
+                    }
+
+                    break;
+                default:
+                    throw new UnreachableException();
+            }
+        }
+
+        written = offset;
+        return true;
+    }
+
+    public static byte[] Encode(ReadOnlySpan<SqlValue> values)
+    {
+        Span<byte> stack = stackalloc byte[128];
+        if (TryEncode(values, stack, out var written))
+        {
+            return stack[..written].ToArray();
+        }
+
+        var writer = new PooledBufferWriter(128 + (values.Length * 16));
+        try
+        {
+            writer.VarUInt((ulong)values.Length);
+            foreach (var value in values)
+            {
+                writer.Value(value);
+            }
+
+            return writer.ToArray();
+        }
+        finally
+        {
+            writer.Dispose();
+        }
     }
 
     public static string ToKeyString(ReadOnlySpan<byte> encoded) => Base64Url.EncodeToString(encoded);
@@ -304,13 +651,33 @@ internal static class PrimaryKeyCodec
             return false;
         }
 
-        var buffer = new byte[Base64Url.GetMaxDecodedLength(key.Length)];
-        if (Base64Url.DecodeFromChars(key, buffer, out _, out var written) != OperationStatus.Done)
+        var maxLength = Base64Url.GetMaxDecodedLength(key.Length);
+        if (maxLength <= 256)
         {
-            return false;
+            Span<byte> stack = stackalloc byte[256];
+            if (Base64Url.DecodeFromChars(key, stack, out _, out var written) != OperationStatus.Done)
+            {
+                return false;
+            }
+
+            encoded = stack[..written].ToArray();
+            return true;
         }
 
-        encoded = buffer[..written];
-        return true;
+        var rented = ArrayPool<byte>.Shared.Rent(maxLength);
+        try
+        {
+            if (Base64Url.DecodeFromChars(key, rented, out _, out var written) != OperationStatus.Done)
+            {
+                return false;
+            }
+
+            encoded = rented.AsSpan(0, written).ToArray();
+            return true;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 }

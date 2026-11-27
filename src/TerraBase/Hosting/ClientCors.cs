@@ -42,22 +42,77 @@ internal static class ClientCors
                     })
                     .UseCors(ProbePolicy));
             app.UseWhen(
-                context => Listeners.ArrivedOn(context) == TerraBaseListener.Client && IsDataPath(context.Request.Path),
+                context => context.Request.Headers.ContainsKey(HeaderNames.Origin)
+                    && Listeners.ArrivedOn(context) == TerraBaseListener.Client
+                    && IsDataPath(context.Request.Path.Value.AsSpan()),
                 branch => branch.UseCors(Policy));
             return app;
         }
     }
 
-    private static bool IsDataPath(PathString path)
+    private static bool IsDataPath(ReadOnlySpan<char> path)
     {
-        var segments = path.Value?.Split('/');
-        return segments is { Length: >= 7 } && segments[0].Length == 0
-            && segments[3].Length > 0 && segments[5].Length > 0
-            && string.Equals(segments[1], "v1", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(segments[2], "projects", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(segments[4], "databases", StringComparison.OrdinalIgnoreCase)
-            && (string.Equals(segments[6], "sql", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "tables", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "rows:batch", StringComparison.OrdinalIgnoreCase));
+        if (path.IsEmpty || path[0] != '/')
+        {
+            return false;
+        }
+
+        var rest = path[1..];
+        if (!NextSegment(ref rest, out var s1) || !s1.Equals("v1", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!NextSegment(ref rest, out var s2) || !s2.Equals("projects", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!NextSegment(ref rest, out var s3) || s3.IsEmpty)
+        {
+            return false;
+        }
+
+        if (!NextSegment(ref rest, out var s4) || !s4.Equals("databases", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!NextSegment(ref rest, out var s5) || s5.IsEmpty)
+        {
+            return false;
+        }
+
+        if (!NextSegment(ref rest, out var s6))
+        {
+            return false;
+        }
+
+        return s6.Equals("sql", StringComparison.OrdinalIgnoreCase)
+            || s6.Equals("tables", StringComparison.OrdinalIgnoreCase)
+            || s6.Equals("rows:batch", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool NextSegment(ref ReadOnlySpan<char> remaining, out ReadOnlySpan<char> segment)
+    {
+        if (remaining.IsEmpty)
+        {
+            segment = default;
+            return false;
+        }
+
+        var slash = remaining.IndexOf('/');
+        if (slash < 0)
+        {
+            segment = remaining;
+            remaining = default;
+        }
+        else
+        {
+            segment = remaining[..slash];
+            remaining = remaining[(slash + 1)..];
+        }
+
+        return true;
     }
 }

@@ -19,11 +19,21 @@ internal sealed record StorageHello(string StorageFormatId) : IBinaryMessage<Sto
 internal static class QuicStorageHandshake
 {
     private static readonly SslApplicationProtocol LegacyProtocol = new(QuicProtocol.ApplicationProtocol);
+    private static readonly SslApplicationProtocol MuxProtocol = new("tb/2-mux");
+    private static readonly SslApplicationProtocol StorageMuxProtocol = new("tb/2-storage-mux");
 
     public static SslApplicationProtocol Protocol { get; } = new("tb/2-storage");
 
     public static List<SslApplicationProtocol> Protocols(string? storageFormatId) =>
-        storageFormatId is null ? [LegacyProtocol] : [Protocol, LegacyProtocol];
+        storageFormatId is null
+            ? [MuxProtocol, LegacyProtocol]
+            : [StorageMuxProtocol, Protocol, LegacyProtocol];
+
+    public static bool RequiresStorageHandshake(SslApplicationProtocol negotiated) =>
+        negotiated == StorageMuxProtocol || negotiated == Protocol;
+
+    public static bool SupportsPersistentUnary(SslApplicationProtocol negotiated) =>
+        negotiated == StorageMuxProtocol || negotiated == MuxProtocol;
 
     public static async ValueTask<QuicFault?> OfferAsync(QuicConnection connection, string localFormat, CallScope scope)
     {
@@ -65,7 +75,7 @@ internal static class QuicStorageHandshake
 
     private static async ValueTask<QuicFault?> ReceiveReplyAsync(QuicStream stream, string localFormat, CallScope scope)
     {
-        var read = await QuicIo.ReadFrameAsync(stream, scope);
+        var read = await QuicIo.ReadSingleFrameAsync(stream, scope);
         return read switch
         {
             PooledFrame frame => CheckReply(frame, localFormat),
@@ -91,7 +101,7 @@ internal static class QuicStorageHandshake
     {
         try
         {
-            var read = await QuicIo.ReadFrameAsync(stream, scope);
+            var read = await QuicIo.ReadSingleFrameAsync(stream, scope);
             return read switch
             {
                 PooledFrame frame => await ReplyToHelloAsync(stream, frame, localFormat, scope),

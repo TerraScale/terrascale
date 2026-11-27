@@ -6,24 +6,22 @@ internal sealed class InFlightTracker
     private int _count;
     private TaskCompletionSource? _drained;
 
-    public void Enter()
-    {
-        lock (_gate)
-        {
-            _count++;
-        }
-    }
+    public void Enter() => Interlocked.Increment(ref _count);
 
     public void Exit()
     {
+        if (Interlocked.Decrement(ref _count) != 0 || Volatile.Read(ref _drained) is null)
+        {
+            return;
+        }
+
         TaskCompletionSource? drained = null;
         lock (_gate)
         {
-            _count--;
-            if (_count == 0)
+            if (Volatile.Read(ref _count) == 0)
             {
                 drained = _drained;
-                _drained = null;
+                Volatile.Write(ref _drained, null);
             }
         }
 
@@ -34,13 +32,21 @@ internal sealed class InFlightTracker
     {
         lock (_gate)
         {
-            if (_count == 0)
+            if (Volatile.Read(ref _count) == 0)
             {
                 return Task.CompletedTask;
             }
 
-            _drained ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            return _drained.Task;
+            var tcs = _drained ?? new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _drained, tcs);
+            Interlocked.MemoryBarrier();
+            if (Volatile.Read(ref _count) == 0)
+            {
+                Volatile.Write(ref _drained, null);
+                return Task.CompletedTask;
+            }
+
+            return tcs.Task;
         }
     }
 

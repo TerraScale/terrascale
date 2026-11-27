@@ -4,9 +4,9 @@ namespace TerraBase.Storage;
 
 public sealed record StorageEngineOptions(string RootDirectory, string Region, ushort NodeId, byte SnowflakeWorkerId, DeltaColumnRegistry DeltaColumns)
 {
-    public int ReaderCount { get; init; } = 4;
+    public int ReaderCount { get; init; } = 16;
 
-    public int MaxBatchSize { get; init; } = 64;
+    public int MaxBatchSize { get; init; } = 128;
 
     public int QueueCapacity { get; init; } = 4096;
 
@@ -61,6 +61,10 @@ internal sealed class VersionVector
     private readonly Lock _gate = new();
     private readonly Dictionary<string, long> _watermarks = new(StringComparer.Ordinal);
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private CausalBookmark _snapshot = CausalBookmark.Empty;
+    private long _generation;
+
+    public long Generation => Volatile.Read(ref _generation);
 
     public long Get(string origin)
     {
@@ -75,12 +79,27 @@ internal sealed class VersionVector
         TaskCompletionSource signal;
         lock (_gate)
         {
+            var updated = 0;
+            string? singleOrigin = null;
+            var singleSequence = 0L;
             foreach (var (origin, sequence) in watermarks)
             {
                 if (sequence > _watermarks.GetValueOrDefault(origin))
                 {
                     _watermarks[origin] = sequence;
+                    singleOrigin = origin;
+                    singleSequence = sequence;
+                    updated++;
                 }
+            }
+
+            if (updated > 0)
+            {
+                var nextSnapshot = updated == 1 && singleOrigin is not null
+                    ? _snapshot.With(singleOrigin, singleSequence)
+                    : CausalBookmark.Create(_watermarks);
+                Volatile.Write(ref _snapshot, nextSnapshot);
+                _ = Interlocked.Increment(ref _generation);
             }
 
             signal = _changed;
@@ -98,29 +117,10 @@ internal sealed class VersionVector
         }
     }
 
-    public CausalBookmark Snapshot()
-    {
-        lock (_gate)
-        {
-            return CausalBookmark.Create(_watermarks);
-        }
-    }
+    public CausalBookmark Snapshot() => Volatile.Read(ref _snapshot);
 
-    public bool Satisfies(CausalBookmark bookmark)
-    {
-        lock (_gate)
-        {
-            foreach (var (origin, sequence) in bookmark.Entries)
-            {
-                if (_watermarks.GetValueOrDefault(origin) < sequence)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-    }
+    public bool Satisfies(CausalBookmark bookmark) =>
+        bookmark.IsEmpty || Volatile.Read(ref _snapshot).Dominates(bookmark);
 
     public Task WhenChanged()
     {

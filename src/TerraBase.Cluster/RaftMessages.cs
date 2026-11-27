@@ -124,10 +124,11 @@ internal sealed record RaftAppendMessage(
         writer.WriteInt64(PrevLogTerm);
         writer.WriteInt64(CommitIndex);
         writer.WriteInt32(StateVersion);
-        writer.WriteVarUInt64((ulong)Entries.Count);
-        foreach (var entry in Entries)
+        var count = Entries.Count;
+        writer.WriteVarUInt64((ulong)count);
+        for (var index = 0; index < count; index++)
         {
-            RaftCodec.WriteEntry(writer, entry);
+            RaftCodec.WriteEntry(writer, Entries[index]);
         }
     }
 
@@ -142,10 +143,21 @@ internal sealed record RaftAppendMessage(
         var commitIndex = reader.ReadInt64();
         var stateVersion = reader.ReadInt32();
         var count = reader.ReadLength();
-        var entries = new List<RaftWireEntry>(count);
-        for (var index = 0; index < count && !reader.IsFaulted; index++)
+        IReadOnlyList<RaftWireEntry> entries;
+        if (count == 0)
         {
-            entries.Add(RaftCodec.ReadEntry(ref reader));
+            entries = [];
+        }
+        else
+        {
+            var array = new RaftWireEntry[count];
+            var read = 0;
+            for (; read < count && !reader.IsFaulted; read++)
+            {
+                array[read] = RaftCodec.ReadEntry(ref reader);
+            }
+
+            entries = read == count ? array : array[..read];
         }
 
         return new RaftAppendMessage(shard, kind, sender, term, prevLogIndex, prevLogTerm, commitIndex, stateVersion, entries);

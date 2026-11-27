@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
@@ -34,6 +36,10 @@ internal static class RulesCompiler
 {
     public const int MaxCondition = 4096;
 
+    private const int MaxCacheEntries = 4096;
+
+    private const string ClaimPrefix = "auth.claims.";
+
     private static readonly FrozenSet<string> Operators = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
         "AND", "OR", "NOT", "IS", "NULL", "IN", "BETWEEN", "LIKE", "GLOB", "ESCAPE", "CASE", "WHEN", "THEN", "ELSE", "END", "COLLATE", "CAST", "AS", "TRUE", "FALSE");
 
@@ -45,15 +51,38 @@ internal static class RulesCompiler
         "abs", "coalesce", "ifnull", "nullif", "iif", "length", "lower", "upper", "ltrim", "rtrim", "trim", "substr", "substring", "instr", "replace", "round",
         "typeof", "hex", "like", "glob");
 
+    private static readonly ConcurrentDictionary<(string Condition, RulesOperation Operation), CachedCondition> Cache = new();
+
+    private static int _cacheCount;
+
     public static ConditionCompilation Compile(string condition, IReadOnlyList<string>? columns, RulesOperation operation)
     {
+        if (condition.Length <= MaxCondition && Cache.TryGetValue((condition, operation), out var cached))
+        {
+            if (columns is not null)
+            {
+                var referenced = cached.ReferencedColumns;
+                for (var i = 0; i < referenced.Length; i++)
+                {
+                    if (!ContainsIgnoreCase(columns, referenced[i].Column))
+                    {
+                        return new InvalidInput(string.Concat(referenced[i].Reference, ": the table has no column ", referenced[i].Column), "unknown_column");
+                    }
+                }
+            }
+
+            return cached.Compiled;
+        }
+
         if (condition.Length > MaxCondition || !SqlText.TryTokenize(condition, out var tokens) || tokens.Count == 0)
         {
             return Refused(string.Concat("a condition is a complete expression of at most ", MaxCondition.ToString(CultureInfo.InvariantCulture), " characters"));
         }
 
-        List<ConditionPart> parts = [new ConditionPart("((")];
+        List<ConditionPart> parts = new((tokens.Count * 2) + 2) { new ConditionPart("((") };
         List<bool> lists = [];
+        List<(string Reference, string Column)>? referencedColumns = null;
+        var usesNew = false;
         for (var index = 0; index < tokens.Count; index++)
         {
             var token = tokens[index];
@@ -61,7 +90,7 @@ internal static class RulesCompiler
             var opens = index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Open;
             if (token.Kind == SqlTokenKind.Word && index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Dot)
             {
-                var failure = Reference(tokens, ref index, columns, operation, previous.Is("IN"), lists.Contains(true)) switch
+                var failure = Reference(tokens, ref index, columns, operation, previous.Is("IN"), HasTrue(lists), ref referencedColumns, ref usesNew) switch
                 {
                     ConditionPart part => Append(parts, part),
                     InvalidInput refused => refused,
@@ -124,13 +153,87 @@ internal static class RulesCompiler
             parts.Add(new ConditionPart(piece));
         }
 
-        parts.Add(new ConditionPart(") IS TRUE)"));
-        var usesNew = parts.Any(static part => part switch
+        if (lists.Count != 0)
         {
-            string text => text.StartsWith("new.", StringComparison.Ordinal),
-            ConditionParameter => false,
-        });
-        return lists.Count == 0 ? new CompiledCondition(parts, usesNew) : Refused("the condition has unbalanced parentheses");
+            return Refused("the condition has unbalanced parentheses");
+        }
+
+        parts.Add(new ConditionPart(") IS TRUE)"));
+        var compacted = Compact(parts);
+        var compiled = new CompiledCondition(compacted, usesNew);
+        var entry = new CachedCondition(compiled, referencedColumns is null ? [] : [.. referencedColumns]);
+        Store((condition, operation), entry);
+        return compiled;
+    }
+
+    private static ConditionPart[] Compact(List<ConditionPart> parts)
+    {
+        List<ConditionPart> compacted = new(parts.Count);
+        StringBuilder? pending = null;
+        string? pendingSingle = null;
+        for (var i = 0; i < parts.Count; i++)
+        {
+            var part = parts[i];
+            var plain = part switch
+            {
+                string literal when !literal.StartsWith("row.", StringComparison.Ordinal) && !literal.StartsWith("new.", StringComparison.Ordinal) => literal,
+                string or ConditionParameter => null,
+            };
+            if (plain is not null)
+            {
+                if (pending is not null)
+                {
+                    pending.Append(plain);
+                }
+                else if (pendingSingle is not null)
+                {
+                    pending = new StringBuilder(pendingSingle.Length + plain.Length + 16);
+                    pending.Append(pendingSingle);
+                    pending.Append(plain);
+                    pendingSingle = null;
+                }
+                else
+                {
+                    pendingSingle = plain;
+                }
+
+                continue;
+            }
+
+            FlushPending(compacted, ref pending, ref pendingSingle);
+            compacted.Add(part);
+        }
+
+        FlushPending(compacted, ref pending, ref pendingSingle);
+        return [.. compacted];
+    }
+
+    private static void FlushPending(List<ConditionPart> compacted, ref StringBuilder? pending, ref string? pendingSingle)
+    {
+        if (pending is not null)
+        {
+            compacted.Add(new ConditionPart(pending.ToString()));
+            pending = null;
+        }
+        else if (pendingSingle is not null)
+        {
+            compacted.Add(new ConditionPart(pendingSingle));
+            pendingSingle = null;
+        }
+    }
+
+    private static void Store((string Condition, RulesOperation Operation) key, CachedCondition entry)
+    {
+        if (Volatile.Read(ref _cacheCount) >= MaxCacheEntries)
+        {
+            Cache.Clear();
+            Volatile.Write(ref _cacheCount, 0);
+        }
+
+        if (Cache.TryAdd(key, entry))
+        {
+            Interlocked.Increment(ref _cacheCount);
+        }
     }
 
     private static InvalidInput? Append(List<ConditionPart> parts, ConditionPart part)
@@ -142,20 +245,185 @@ internal static class RulesCompiler
 
     public static string Render(CompiledCondition condition, RulesAuth auth, long? requestTime, string? newPrefix = null, string? rowPrefix = null)
     {
-        var text = new StringBuilder();
-        foreach (var part in condition.Parts)
+        Span<char> initial = stackalloc char[512];
+        var builder = new CharBuffer(initial);
+        try
         {
-            text.Append(part switch
+            if (condition.Parts is ConditionPart[] array)
             {
-                string literal when newPrefix is not null && literal.StartsWith("new.", StringComparison.Ordinal) => string.Concat(newPrefix, literal[4..]),
-                string literal when literal.StartsWith("new.", StringComparison.Ordinal) => literal[4..],
-                string literal when literal.StartsWith("row.", StringComparison.Ordinal) => rowPrefix is null ? literal[4..] : string.Concat(rowPrefix, literal[4..]),
-                string literal => literal,
-                ConditionParameter parameter => Literal(parameter, auth, requestTime),
-            });
+                for (var i = 0; i < array.Length; i++)
+                {
+                    AppendPart(ref builder, array[i], auth, requestTime, newPrefix, rowPrefix);
+                }
+            }
+            else
+            {
+                var count = condition.Parts.Count;
+                for (var i = 0; i < count; i++)
+                {
+                    AppendPart(ref builder, condition.Parts[i], auth, requestTime, newPrefix, rowPrefix);
+                }
+            }
+
+            return builder.BuildString();
+        }
+        finally
+        {
+            builder.Dispose();
+        }
+    }
+
+    private static void AppendPart(ref CharBuffer builder, ConditionPart part, RulesAuth auth, long? requestTime, string? newPrefix, string? rowPrefix)
+    {
+        _ = part switch
+        {
+            string literal when literal.StartsWith("new.", StringComparison.Ordinal) => AppendPrefixed(ref builder, newPrefix, literal.AsSpan(4)),
+            string literal when literal.StartsWith("row.", StringComparison.Ordinal) => AppendPrefixed(ref builder, rowPrefix, literal.AsSpan(4)),
+            string literal => AppendSpan(ref builder, literal),
+            ConditionParameter parameter => AppendParameter(ref builder, parameter, auth, requestTime),
+        };
+    }
+
+    private static bool AppendPrefixed(ref CharBuffer builder, string? prefix, ReadOnlySpan<char> value)
+    {
+        if (prefix is not null)
+        {
+            builder.Append(prefix);
         }
 
-        return text.ToString();
+        builder.Append(value);
+        return true;
+    }
+
+    private static bool AppendSpan(ref CharBuffer builder, ReadOnlySpan<char> value)
+    {
+        builder.Append(value);
+        return true;
+    }
+
+    private static bool AppendParameter(ref CharBuffer builder, ConditionParameter parameter, RulesAuth auth, long? requestTime)
+    {
+        switch (parameter.Source)
+        {
+            case ConditionSource.Uid:
+                AppendLiteral(ref builder, auth.Uid);
+                break;
+            case ConditionSource.OrgId:
+                AppendLiteral(ref builder, auth.OrgId);
+                break;
+            case ConditionSource.OrgRole:
+                AppendLiteral(ref builder, auth.OrgRole);
+                break;
+            case ConditionSource.IsAnonymous:
+                builder.Append(auth.IsAnonymous ? '1' : '0');
+                break;
+            case ConditionSource.RequestTime:
+                if (requestTime is { } milliseconds)
+                {
+                    AppendInt64(ref builder, milliseconds);
+                }
+                else
+                {
+                    builder.Append("NULL");
+                }
+
+                break;
+            case ConditionSource.Claim:
+                if (parameter.Key is { } key && auth.Claims.TryGetValue(key, out var claim))
+                {
+                    AppendClaim(ref builder, claim);
+                }
+                else
+                {
+                    builder.Append("NULL");
+                }
+
+                break;
+            case ConditionSource.ClaimList:
+                if (parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list) && list is IReadOnlyList<RulesScalar>)
+                {
+                    builder.Append("(SELECT value FROM json_each(");
+                    AppendLiteral(ref builder, ClaimJson(list));
+                    builder.Append("))");
+                }
+                else
+                {
+                    builder.Append("(SELECT NULL)");
+                }
+
+                break;
+            default:
+                throw new UnreachableException();
+        }
+
+        return true;
+    }
+
+    private static void AppendClaim(ref CharBuffer builder, RulesClaim claim)
+    {
+        _ = claim switch
+        {
+            string text => AppendLiteralValue(ref builder, text),
+            long integer => AppendInt64Value(ref builder, integer),
+            double real => AppendSpan(ref builder, real.ToString("R", CultureInfo.InvariantCulture)),
+            IReadOnlyList<RulesScalar> => AppendLiteralValue(ref builder, ClaimJson(claim)),
+        };
+    }
+
+    private static bool AppendLiteralValue(ref CharBuffer builder, string? text)
+    {
+        AppendLiteral(ref builder, text);
+        return true;
+    }
+
+    private static bool AppendInt64Value(ref CharBuffer builder, long value)
+    {
+        AppendInt64(ref builder, value);
+        return true;
+    }
+
+    private static void AppendInt64(ref CharBuffer builder, long value)
+    {
+        Span<char> scratch = stackalloc char[24];
+        if (value.TryFormat(scratch, out var written, default, CultureInfo.InvariantCulture))
+        {
+            builder.Append(scratch[..written]);
+        }
+        else
+        {
+            builder.Append(value.ToString(CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static void AppendLiteral(ref CharBuffer builder, string? text)
+    {
+        if (text is null)
+        {
+            builder.Append("NULL");
+            return;
+        }
+
+        builder.Append('\'');
+        var span = text.AsSpan();
+        var quote = span.IndexOf('\'');
+        if (quote < 0)
+        {
+            builder.Append(span);
+        }
+        else
+        {
+            while (quote >= 0)
+            {
+                builder.Append(span[..quote]);
+                builder.Append("''");
+                span = span[(quote + 1)..];
+                quote = span.IndexOf('\'');
+            }
+
+            builder.Append(span);
+        }
+
+        builder.Append('\'');
     }
 
     public static string Quote(string identifier) => string.Concat("\"", identifier.Replace("\"", "\"\"", StringComparison.Ordinal), "\"");
@@ -165,7 +433,7 @@ internal static class RulesCompiler
     public static bool IsSetValue(string value)
     {
         if (value is "auth.uid" or "auth.org_id" or "auth.org_role" or "auth.is_anonymous" or "request.time" or "request.ulid"
-            || (value.StartsWith(ClaimPrefix, StringComparison.Ordinal) && IsClaimName(value[ClaimPrefix.Length..])))
+            || (value.StartsWith(ClaimPrefix, StringComparison.Ordinal) && IsClaimName(value.AsSpan(ClaimPrefix.Length))))
         {
             return true;
         }
@@ -192,8 +460,6 @@ internal static class RulesCompiler
             auth.Claims.TryGetValue(expression[ClaimPrefix.Length..], out var claim) ? ClaimValue(claim) : SqlValue.Null,
         _ => LiteralValue(expression),
     };
-
-    private const string ClaimPrefix = "auth.claims.";
 
     private static SqlValue ClaimValue(RulesClaim claim) => claim switch
     {
@@ -222,42 +488,54 @@ internal static class RulesCompiler
         };
     }
 
-    private static bool IsHex(string text) => text.Length % 2 == 0 && text.All(char.IsAsciiHexDigit);
+    private static bool IsHex(string text)
+    {
+        if (text.Length % 2 != 0)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (!char.IsAsciiHexDigit(text[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static SqlValue Number(string text, bool negative) =>
         long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var integer) ? SqlValue.FromIntegral(negative ? -integer : integer)
         : double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var real) ? SqlValue.FromReal(negative ? -real : real)
         : SqlValue.Null;
 
-    private static string Literal(ConditionParameter parameter, RulesAuth auth, long? requestTime) => parameter.Source switch
-    {
-        ConditionSource.Uid => Literal(auth.Uid),
-        ConditionSource.OrgId => Literal(auth.OrgId),
-        ConditionSource.OrgRole => Literal(auth.OrgRole),
-        ConditionSource.IsAnonymous => auth.IsAnonymous ? "1" : "0",
-        ConditionSource.RequestTime => requestTime is { } milliseconds ? milliseconds.ToString(CultureInfo.InvariantCulture) : "NULL",
-        ConditionSource.Claim => parameter.Key is { } key && auth.Claims.TryGetValue(key, out var claim) ? Claim(claim) : "NULL",
-        ConditionSource.ClaimList => parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list) && list is IReadOnlyList<RulesScalar>
-            ? string.Concat("(SELECT value FROM json_each(", Literal(ClaimJson(list)), "))")
-            : "(SELECT NULL)",
-        _ => throw new UnreachableException(),
-    };
-
-    private static string Claim(RulesClaim claim) => claim switch
-    {
-        string text => Literal(text),
-        long integer => integer.ToString(CultureInfo.InvariantCulture),
-        double real => real.ToString("R", CultureInfo.InvariantCulture),
-        IReadOnlyList<RulesScalar> => Literal(ClaimJson(claim)),
-    };
-
     private static string ClaimJson(RulesClaim claim) => claim switch
     {
-        IReadOnlyList<RulesScalar> items => string.Concat("[", string.Join(',', items.Select(Scalar)), "]"),
+        IReadOnlyList<RulesScalar> items => JoinScalars(items),
         string text => string.Concat("[", Scalar((RulesScalar)text), "]"),
         long integer => string.Concat("[", integer.ToString(CultureInfo.InvariantCulture), "]"),
         double real => string.Concat("[", real.ToString("R", CultureInfo.InvariantCulture), "]"),
     };
+
+    private static string JoinScalars(IReadOnlyList<RulesScalar> items)
+    {
+        var sb = new StringBuilder();
+        sb.Append('[');
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(',');
+            }
+
+            sb.Append(Scalar(items[i]));
+        }
+
+        sb.Append(']');
+        return sb.ToString();
+    }
 
     private static string Scalar(RulesScalar scalar) => scalar switch
     {
@@ -267,7 +545,14 @@ internal static class RulesCompiler
     };
 
     private static ConditionPartCompilation Reference(
-        List<SqlToken> tokens, ref int index, IReadOnlyList<string>? columns, RulesOperation operation, bool listPosition, bool inList)
+        List<SqlToken> tokens,
+        ref int index,
+        IReadOnlyList<string>? columns,
+        RulesOperation operation,
+        bool listPosition,
+        bool inList,
+        ref List<(string Reference, string Column)>? referencedColumns,
+        ref bool usesNew)
     {
         var head = tokens[index].Value;
         List<SqlToken> path = [];
@@ -284,9 +569,9 @@ internal static class RulesCompiler
         }
 
         index = at;
-        var name = string.Join('.', path.Select(static token => token.Value));
+        var name = path.Count == 1 ? path[0].Value : JoinPath(path);
         var reference = string.Concat(head, ".", name);
-        var isClaim = head == "auth" && path is [{ Kind: SqlTokenKind.Word, Value: "claims" }, { Kind: SqlTokenKind.Word } claim] && IsClaimName(claim.Value);
+        var isClaim = head == "auth" && path is [{ Kind: SqlTokenKind.Word, Value: "claims" }, { Kind: SqlTokenKind.Word } claim] && IsClaimName(claim.Value.AsSpan());
         if ((listPosition && !isClaim) || (inList && isClaim))
         {
             return Refused(listPosition ? "IN takes a parenthesized list or one auth.claims list" : string.Concat(reference, " is a list only as the whole right side of IN"));
@@ -295,7 +580,7 @@ internal static class RulesCompiler
         switch (head)
         {
             case "row" or "new" when path.Count == 1:
-                if (columns is not null && !columns.Contains(path[0].Value, StringComparer.OrdinalIgnoreCase))
+                if (columns is not null && !ContainsIgnoreCase(columns, path[0].Value))
                 {
                     return new InvalidInput(string.Concat(reference, ": the table has no column ", path[0].Value), "unknown_column");
                 }
@@ -303,9 +588,20 @@ internal static class RulesCompiler
                 var allowed = head == "row"
                     ? operation is RulesOperation.Read or RulesOperation.Update or RulesOperation.Delete
                     : operation is RulesOperation.Create or RulesOperation.Update or RulesOperation.Validate;
-                return allowed
-                    ? new ConditionPart(string.Concat(head == "new" ? "new." : "row.", Quote(path[0].Value)))
-                    : new InvalidInput(string.Concat(head, ".* is not allowed in ", Name(operation)), "reference_not_allowed");
+                if (!allowed)
+                {
+                    return new InvalidInput(string.Concat(head, ".* is not allowed in ", Name(operation)), "reference_not_allowed");
+                }
+
+                referencedColumns ??= [];
+                referencedColumns.Add((reference, path[0].Value));
+                if (head == "new")
+                {
+                    usesNew = true;
+                    return new ConditionPart(string.Concat("new.", Quote(path[0].Value)));
+                }
+
+                return new ConditionPart(string.Concat("row.", Quote(path[0].Value)));
             case "auth" when path is [{ Kind: SqlTokenKind.Word } field]:
                 return field.Value switch
                 {
@@ -330,6 +626,48 @@ internal static class RulesCompiler
         }
     }
 
+    private static string JoinPath(List<SqlToken> path)
+    {
+        var sb = new StringBuilder();
+        for (var i = 0; i < path.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append('.');
+            }
+
+            sb.Append(path[i].Value);
+        }
+
+        return sb.ToString();
+    }
+
+    private static bool ContainsIgnoreCase(IReadOnlyList<string> columns, string value)
+    {
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (string.Equals(columns[i], value, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasTrue(List<bool> list)
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (list[i])
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static string Name(RulesOperation operation) => operation switch
     {
         RulesOperation.Read => "read",
@@ -340,10 +678,84 @@ internal static class RulesCompiler
         _ => throw new UnreachableException(),
     };
 
-    private static bool IsClaimName(string name) => name is { Length: >= 1 and <= 63 } && name[0] is >= 'a' and <= 'z'
-        && name.All(static character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
+    private static bool IsClaimName(ReadOnlySpan<char> name)
+    {
+        if (name.Length is < 1 or > 63 || name[0] is not (>= 'a' and <= 'z'))
+        {
+            return false;
+        }
+
+        for (var i = 1; i < name.Length; i++)
+        {
+            if (name[i] is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '_'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static InvalidInput Refused(string message) => new(message, "unsafe_where");
+
+    private sealed record CachedCondition(CompiledCondition Compiled, (string Reference, string Column)[] ReferencedColumns);
+
+    private ref struct CharBuffer(Span<char> initial)
+    {
+        private Span<char> _buffer = initial;
+        private char[]? _rented;
+        private int _length;
+
+        public void Append(char value)
+        {
+            EnsureCapacity(1);
+            _buffer[_length++] = value;
+        }
+
+        public void Append(string value) => Append(value.AsSpan());
+
+        public void Append(scoped ReadOnlySpan<char> value)
+        {
+            if (value.IsEmpty)
+            {
+                return;
+            }
+
+            EnsureCapacity(value.Length);
+            value.CopyTo(_buffer[_length..]);
+            _length += value.Length;
+        }
+
+        public readonly string BuildString() => new(_buffer[.._length]);
+
+        public void Dispose()
+        {
+            if (_rented is { } rented)
+            {
+                _rented = null;
+                ArrayPool<char>.Shared.Return(rented);
+            }
+        }
+
+        private void EnsureCapacity(int additional)
+        {
+            if (_length + additional <= _buffer.Length)
+            {
+                return;
+            }
+
+            var nextSize = Math.Max(_buffer.Length * 2, _length + additional);
+            var next = ArrayPool<char>.Shared.Rent(nextSize);
+            _buffer[.._length].CopyTo(next);
+            if (_rented is { } previous)
+            {
+                ArrayPool<char>.Shared.Return(previous);
+            }
+
+            _rented = next;
+            _buffer = next;
+        }
+    }
 }
 
 [JsonSerializable(typeof(string))]

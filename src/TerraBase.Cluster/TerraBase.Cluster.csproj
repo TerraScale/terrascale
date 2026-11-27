@@ -17,4 +17,7 @@
     <Using Include="TerraScale.Contracts.Storage" />
     <Using Include="TerraScale.Contracts.Cluster" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TerraBase.Benchmarks" />
+  </ItemGroup>
 </Project>

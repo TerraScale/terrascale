@@ -26,14 +26,65 @@ prepare() {
     echo "missing ${missing[*]}: nix shell nixpkgs#nss.tools nixpkgs#postgresql -c bash e2e/env/local.sh" >&2
     exit 1
   fi
-  mkdir -p "$E2E_STATE"
+  mkdir -p "$E2E_STATE" "$E2E_BUILD" "$E2E_SDK_BUILD"
   chmod 700 "$E2E_STATE"
-  bash "$here/tools.sh"
-  for service in terrabase ts-platform ts-auth dashboard; do bash "$here/build.sh" "$repo" "$E2E_BUILD" "$service"; done
-  for sdk in dotnet go rust python js; do bash "$e2e/sdk/build.sh" "$sdk"; done
-  npm ci --prefix "$e2e" --no-audit --no-fund
-  (cd "$e2e" && npx playwright install chromium)
-  bash "$here/pki.sh"
+  local pids=() pid failed=0
+  (
+    unset DOTNET_PROCESSOR_COUNT
+    dotnet restore "$repo/TerraScale.slnx" --locked-mode
+    export E2E_SLN_RESTORED=1
+    for service in terrabase ts-platform ts-auth dashboard; do
+      bash "$here/build.sh" "$repo" "$E2E_BUILD" "$service"
+    done
+    bash "$e2e/sdk/build.sh" dotnet
+  ) &
+  pids+=($!)
+  (
+    bash "$here/tools.sh"
+    bash "$e2e/sdk/build.sh" python
+  ) &
+  pids+=($!)
+  bash "$e2e/sdk/build.sh" go &
+  pids+=($!)
+  bash "$e2e/sdk/build.sh" rust &
+  pids+=($!)
+  (
+    bash "$e2e/sdk/build.sh" js
+    e2e_lock=$(sha256sum "$e2e/package-lock.json" | cut -d' ' -f1)
+    if [ ! -d "$e2e/node_modules/@playwright/test" ] \
+      || [ ! -f "$e2e/node_modules/.e2e-lock.sha256" ] \
+      || [ "$(cat "$e2e/node_modules/.e2e-lock.sha256")" != "$e2e_lock" ]; then
+      npm ci --prefix "$e2e" --no-audit --no-fund
+      printf '%s\n' "$e2e_lock" > "$e2e/node_modules/.e2e-lock.sha256"
+    fi
+    pw_ver=$(node -e 'process.stdout.write(require(process.argv[1] + "/node_modules/@playwright/test/package.json").version)' "$e2e")
+    pw_exe=$(node -e 'process.stdout.write(require(process.argv[1] + "/node_modules/@playwright/test").chromium.executablePath() || "")' "$e2e")
+    if [ ! -f "$E2E_STATE/.playwright-chromium.version" ] \
+      || [ "$(cat "$E2E_STATE/.playwright-chromium.version")" != "$pw_ver" ] \
+      || [ -z "$pw_exe" ] \
+      || [ ! -x "$pw_exe" ]; then
+      (cd "$e2e" && npx playwright install chromium)
+      printf '%s\n' "$pw_ver" > "$E2E_STATE/.playwright-chromium.version"
+    fi
+    status_lock=$(sha256sum "$repo/sites/status/package-lock.json" | cut -d' ' -f1)
+    if [ ! -x "$repo/sites/status/node_modules/.bin/wrangler" ] \
+      || [ ! -f "$repo/sites/status/node_modules/.status-lock.sha256" ] \
+      || [ "$(cat "$repo/sites/status/node_modules/.status-lock.sha256")" != "$status_lock" ]; then
+      npm ci --prefix "$repo/sites/status" --no-audit --no-fund
+      printf '%s\n' "$status_lock" > "$repo/sites/status/node_modules/.status-lock.sha256"
+    fi
+  ) &
+  pids+=($!)
+  bash "$here/pki.sh" &
+  pids+=($!)
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+      failed=1
+    fi
+  done
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
 }
 start() {
   printf '%s\n' "${E2E_REGIONS:-1}" > "$E2E_STATE/regions"
@@ -43,7 +94,7 @@ start() {
   echo $! > "$holder"
   until [ -f "$E2E_STATE/namespace/ready" ]; do
     kill -0 "$(cat "$holder")" 2> /dev/null || { cat "$E2E_STATE/namespace.log" >&2; exit 1; }
-    sleep 0.1
+    sleep 0.05
   done
   pgrep -P "$(cat "$holder")" > "$init"
 }
@@ -55,7 +106,7 @@ ended_within() {
   local deadline=$((SECONDS + $1))
   while kill -0 "$(cat "$holder")" 2> /dev/null; do
     [ "$SECONDS" -lt "$deadline" ] || return 1
-    sleep 0.1
+    sleep 0.05
   done
 }
 stop() {

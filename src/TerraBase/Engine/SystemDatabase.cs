@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 using TerraBase.Storage;
@@ -21,6 +22,8 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
 
     private static readonly TimeSpan SingleRegionBootstrapGrace = TimeSpan.FromSeconds(10);
 
+    private static readonly FrozenSet<string> TelemetryTables = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "usage_counters", "request_logs");
+
     private static readonly (string Table, string Sql)[] Tables =
     [
         ("organizations", "CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, plan TEXT NOT NULL, suspended INTEGER NOT NULL DEFAULT 0)"),
@@ -37,13 +40,25 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         ("backup_policies", "CREATE TABLE backup_policies (database_id TEXT PRIMARY KEY, retention_days INTEGER NOT NULL, full_backup_cron TEXT, updated_at INTEGER NOT NULL)"),
     ];
 
-    private ISqlDatabaseSession? _session;
+    private readonly Lock _stateGate = new();
+
+    private long _nextEpoch = 1;
+
+    private SessionState? _state;
 
     public static BackendUnavailable Opening { get; } = new("the system database is opening; retry", "system_opening");
 
-    public ISqlDatabaseSession Session => Volatile.Read(ref _session) ?? throw new InvalidOperationException("the system database is not open");
+    public ISqlDatabaseSession Session => Volatile.Read(ref _state)?.Session ?? throw new InvalidOperationException("the system database is not open");
 
-    public bool IsOpen => Volatile.Read(ref _session) is not null;
+    public bool IsOpen => Volatile.Read(ref _state) is not null;
+
+    public long ChangeGeneration => Volatile.Read(ref _state) is { Session.IsUsable: true } state
+        ? state.Offset + state.Session.ChangeGeneration
+        : 0;
+
+    public long CatalogGeneration => Volatile.Read(ref _state) is { Session.IsUsable: true } state
+        ? state.Offset + state.Session.FilteredChangeGeneration
+        : 0;
 
     public string KeyId => FileText.Read(Path.Combine(options.DataDirectory, KeyIdFile))?.Trim() ?? keyring.ActiveKeyId;
 
@@ -88,7 +103,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         Func<CancellationToken, ValueTask>? sync,
         CancellationToken cancellationToken)
     {
-        _session = session;
+        _ = Adopt(session);
         if (WriteKeyId(keyFile, keyId) is { } unwritable)
         {
             return unwritable;
@@ -127,42 +142,80 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, mode, CausalBookmark.Empty);
         var session = await UsableSessionAsync(cancellationToken);
         var outcome = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
-        return outcome switch
-        {
-            SqlWriteResult written => written,
-            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
-            SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
-            SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
-            SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
-            ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
-            ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
-            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
-        };
+        return MapWriteOutcome(outcome);
     }
 
     public ValueTask<SystemWriteOutcome> WriteAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
         WriteAsync([statement], mode, cancellationToken);
 
-    public async ValueTask<ISqlDatabaseSession> UsableSessionAsync(CancellationToken cancellationToken)
-    {
-        if (Session is { IsUsable: true } current)
-        {
-            return current;
-        }
+    public ValueTask<SystemWriteOutcome> WriteTelemetryAsync(
+        IReadOnlyList<SqlStatement> statements, ConsistencyMode mode, CancellationToken cancellationToken) =>
+        WriteAsync(statements, mode, cancellationToken);
 
+    public ValueTask<SystemWriteOutcome> WriteTelemetryAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
+        WriteAsync([statement], mode, cancellationToken);
+
+    public async ValueTask<SqlWriteOutcome> WriteLocalTelemetryAsync(
+        IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
+    {
+        var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, ConsistencyMode.Fast, CausalBookmark.Empty);
+        var session = await UsableSessionAsync(cancellationToken);
+        return await session.ExecuteWriteAsync(request, cancellationToken);
+    }
+
+    public ValueTask<ISqlDatabaseSession> UsableSessionAsync(CancellationToken cancellationToken) =>
+        Volatile.Read(ref _state) is { Session: { IsUsable: true } current }
+            ? ValueTask.FromResult(current)
+            : ReopenSessionAsync(cancellationToken);
+
+    private async ValueTask<ISqlDatabaseSession> ReopenSessionAsync(CancellationToken cancellationToken)
+    {
         var reopened = await databases.OpenAsync(Id, KeyId, cancellationToken);
         return reopened switch
         {
             ISqlDatabaseSession session => Adopt(session),
-            ResourceNotFound or BackendUnavailable => Session,
+            ResourceNotFound or BackendUnavailable => Volatile.Read(ref _state)?.Session ?? throw new InvalidOperationException("the system database is not open"),
         };
     }
 
     private ISqlDatabaseSession Adopt(ISqlDatabaseSession session)
     {
-        Volatile.Write(ref _session, session);
-        return session;
+        lock (_stateGate)
+        {
+            if (_state is { } current)
+            {
+                if (ReferenceEquals(current.Session, session))
+                {
+                    return current.Session;
+                }
+
+                var previousMax = Math.Max(current.Offset + current.Session.ChangeGeneration, current.Offset + current.Session.FilteredChangeGeneration);
+                if (previousMax >= _nextEpoch)
+                {
+                    _nextEpoch = previousMax + 1;
+                }
+            }
+
+            session.ConfigureFilteredChangeTables(TelemetryTables);
+            var next = new SessionState(session, _nextEpoch);
+            Volatile.Write(ref _state, next);
+            return next.Session;
+        }
     }
+
+    private static SystemWriteOutcome MapWriteOutcome(ClusterWriteOutcome outcome) => outcome switch
+    {
+        SqlWriteResult written => written,
+        SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
+        SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
+        SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
+        SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
+        ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
+        ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
+        StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
+    };
+
+    private sealed record SessionState(ISqlDatabaseSession Session, long Offset);
 
     private static SystemQueryOutcome Rows(IReadOnlyList<SqlResultSet> sets) =>
         sets.Count == 0 ? new([]) : new(sets[^1].Rows);
@@ -262,17 +315,8 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, ConsistencyMode.Strong, CausalBookmark.Empty);
-        var outcome = await coordinator.ExecuteLocalBootstrapWriteAsync(await UsableSessionAsync(cancellationToken), request, cancellationToken);
-        return outcome switch
-        {
-            SqlWriteResult written => written,
-            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
-            SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
-            SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
-            SchemaMismatch => new BackendUnavailable("the system catalog schema is changing; retry", "system_catalog_busy"),
-            ClusterUnavailable unavailable => new BackendUnavailable(unavailable.Message, unavailable.Code),
-            ClusterTimeout timeout => new BackendUnavailable(timeout.Message, "system_catalog_timeout"),
-            StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
-        };
+        var session = await UsableSessionAsync(cancellationToken);
+        var outcome = await coordinator.ExecuteLocalBootstrapWriteAsync(session, request, cancellationToken);
+        return MapWriteOutcome(outcome);
     }
 }

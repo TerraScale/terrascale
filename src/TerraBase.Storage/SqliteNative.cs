@@ -50,6 +50,8 @@ internal static unsafe partial class SqliteNative
 
     public const uint PreparePersistent = 0x01;
 
+    internal const int StmtStatusReprepare = 5;
+
     public const int TypeInteger = 1;
     public const int TypeFloat = 2;
     public const int TypeText = 3;
@@ -171,12 +173,19 @@ internal static unsafe partial class SqliteNative
     public static partial int Finalize(nint statement);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_stmt_readonly")]
+    [SuppressGCTransition]
     public static partial int StatementReadOnly(nint statement);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_stmt_isexplain")]
+    [SuppressGCTransition]
     public static partial int StatementIsExplain(nint statement);
 
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_stmt_status")]
+    [SuppressGCTransition]
+    internal static partial int StmtStatus(nint statement, int op, int resetFlag);
+
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_bind_parameter_count")]
+    [SuppressGCTransition]
     public static partial int BindParameterCount(nint statement);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_bind_parameter_index")]
@@ -201,6 +210,7 @@ internal static unsafe partial class SqliteNative
     public static partial int BindZeroBlob(nint statement, int index, int byteCount);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_column_count")]
+    [SuppressGCTransition]
     public static partial int ColumnCount(nint statement);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_column_name")]
@@ -210,12 +220,15 @@ internal static unsafe partial class SqliteNative
     public static partial byte* ColumnDeclType(nint statement, int index);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_column_type")]
+    [SuppressGCTransition]
     public static partial int ColumnType(nint statement, int index);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_column_int64")]
+    [SuppressGCTransition]
     public static partial long ColumnInt64(nint statement, int index);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_column_double")]
+    [SuppressGCTransition]
     public static partial double ColumnDouble(nint statement, int index);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_column_text")]
@@ -228,12 +241,15 @@ internal static unsafe partial class SqliteNative
     public static partial int ColumnBytes(nint statement, int index);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_changes64")]
+    [SuppressGCTransition]
     public static partial long Changes64(nint db);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_last_insert_rowid")]
+    [SuppressGCTransition]
     public static partial long LastInsertRowId(nint db);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_get_autocommit")]
+    [SuppressGCTransition]
     public static partial int GetAutocommit(nint db);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_preupdate_hook")]
@@ -249,18 +265,23 @@ internal static unsafe partial class SqliteNative
     public static partial int PreupdateNew(nint db, int index, nint* value);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_preupdate_count")]
+    [SuppressGCTransition]
     public static partial int PreupdateCount(nint db);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_preupdate_depth")]
+    [SuppressGCTransition]
     public static partial int PreupdateDepth(nint db);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_value_type")]
+    [SuppressGCTransition]
     public static partial int ValueType(nint value);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_value_int64")]
+    [SuppressGCTransition]
     public static partial long ValueInt64(nint value);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_value_double")]
+    [SuppressGCTransition]
     public static partial double ValueDouble(nint value);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_value_text")]
@@ -357,7 +378,17 @@ internal static unsafe partial class SqliteNative
 
     private static SqliteStatus Text(byte* text, int length, out SqlValue result)
     {
-        var bytes = text is null || length == 0 ? [] : new ReadOnlySpan<byte>(text, length);
+        if (text is null || length == 0)
+        {
+            return Read(SqlValue.FromText(string.Empty), out result);
+        }
+
+        var bytes = new ReadOnlySpan<byte>(text, length);
+        if (Ascii.IsValid(bytes))
+        {
+            return Read(SqlValue.FromText(Encoding.ASCII.GetString(bytes)), out result);
+        }
+
         if (!Utf8Text.IsValid(bytes))
         {
             result = SqlValue.Null;

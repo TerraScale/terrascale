@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
@@ -6,6 +7,9 @@ namespace TerraBase.Storage;
 
 internal static partial class FileIo
 {
+    private const int Eintr = 4;
+    private const int ShredBufferSize = 64 * 1024;
+
     public static void SyncDirectory(string? directory) => _ = SyncDirectoryError(directory);
 
     private static string? SyncDirectoryError(string? directory)
@@ -23,7 +27,19 @@ internal static partial class FileIo
 
         try
         {
-            return Fsync(fd) == 0 ? null : Marshal.GetLastPInvokeErrorMessage();
+            while (true)
+            {
+                if (Fsync(fd) == 0)
+                {
+                    return null;
+                }
+
+                var error = Marshal.GetLastPInvokeError();
+                if (error != Eintr)
+                {
+                    return Marshal.GetPInvokeErrorMessage(error);
+                }
+            }
         }
         finally
         {
@@ -37,19 +53,71 @@ internal static partial class FileIo
     [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
     private static partial int Fsync(int fd);
 
+    [LibraryImport("libc", EntryPoint = "fdatasync", SetLastError = true)]
+    private static partial int Fdatasync(int fd);
+
     [LibraryImport("libc", EntryPoint = "close")]
     private static partial int CloseFd(int fd);
+
+    public static string? FlushData(SafeFileHandle handle)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return Flush(handle);
+        }
+
+        var addedRef = false;
+        try
+        {
+            handle.DangerousAddRef(ref addedRef);
+            var fd = (int)handle.DangerousGetHandle();
+            while (true)
+            {
+                if (Fdatasync(fd) == 0)
+                {
+                    return null;
+                }
+
+                var error = Marshal.GetLastPInvokeError();
+                if (error != Eintr)
+                {
+                    return Marshal.GetPInvokeErrorMessage(error);
+                }
+            }
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                handle.DangerousRelease();
+            }
+        }
+    }
+
+    public static string? SyncFile(string path)
+    {
+        try
+        {
+            var access = OperatingSystem.IsLinux() ? FileAccess.Read : FileAccess.ReadWrite;
+            using var handle = File.OpenHandle(path, FileMode.Open, access, FileShare.ReadWrite | FileShare.Delete);
+            return FlushData(handle);
+        }
+        catch (IOException exception)
+        {
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return exception.Message;
+        }
+    }
+
     public static string? Write(SafeFileHandle handle, ReadOnlySpan<byte> bytes, long offset, bool fsync)
     {
         try
         {
             RandomAccess.Write(handle, bytes, offset);
-            if (fsync)
-            {
-                RandomAccess.FlushToDisk(handle);
-            }
-
-            return null;
+            return fsync ? FlushData(handle) : null;
         }
         catch (IOException exception)
         {
@@ -121,8 +189,7 @@ internal static partial class FileIo
         try
         {
             RandomAccess.SetLength(handle, length);
-            RandomAccess.FlushToDisk(handle);
-            return null;
+            return FlushData(handle);
         }
         catch (IOException exception)
         {
@@ -207,14 +274,25 @@ internal static partial class FileIo
             var length = new FileInfo(path).Length;
             using (var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
             {
-                var buffer = new byte[64 * 1024];
-                for (long offset = 0; offset < length; offset += buffer.Length)
+                var buffer = ArrayPool<byte>.Shared.Rent(ShredBufferSize);
+                try
                 {
-                    RandomNumberGenerator.Fill(buffer);
-                    RandomAccess.Write(handle, buffer.AsSpan(0, (int)Math.Min(buffer.Length, length - offset)), offset);
+                    for (long offset = 0; offset < length; offset += ShredBufferSize)
+                    {
+                        var slice = buffer.AsSpan(0, (int)Math.Min(ShredBufferSize, length - offset));
+                        RandomNumberGenerator.Fill(slice);
+                        RandomAccess.Write(handle, slice, offset);
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
                 }
 
-                RandomAccess.FlushToDisk(handle);
+                if (FlushData(handle) is { } flushError)
+                {
+                    return flushError;
+                }
             }
 
             File.Delete(path);

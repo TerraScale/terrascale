@@ -7,14 +7,38 @@ using TerraBase.Postgres.Hosting;
 
 namespace TerraBase.Postgres.Protocol;
 
-internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
+internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider) : IDisposable
 {
     public const int ProtocolVersion3 = 196608;
     private const int CancelCode = 80877102;
     private const int SslCode = 80877103;
     private const int GssCode = 80877104;
+    private const int InitialParameterBufferBytes = 256;
+    private const int MaxRetainedParameterBytes = 65536;
+    private const int InitialParameterSlices = 16;
+    private const int MaxRetainedParameterSlices = 256;
+
+    private static readonly short[] FormatZero = [0];
+    private static readonly short[] FormatOne = [1];
+
+    private long? _interruptedStart;
+    private long _interruptedSeen;
+    private CancellationTokenSource? _readCts;
+    private CancellationToken _registeredToken;
+    private CancellationTokenRegistration _closedRegistration;
+    private byte[] _parameterBuffer = new byte[InitialParameterBufferBytes];
+    private PgParameterSlice[] _parameterSlices = new PgParameterSlice[InitialParameterSlices];
+
+    public long LastMessageStarted { get; private set; }
 
     public void Interrupt() => input.CancelPendingRead();
+
+    public void Dispose()
+    {
+        _closedRegistration.Dispose();
+        _readCts?.Dispose();
+        _readCts = null;
+    }
 
     public async ValueTask<PgStartupRead> ReadStartupAsync(TimeSpan timeout)
     {
@@ -44,7 +68,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
                 if (buffer.Length >= length)
                 {
-                    var packet = Parse(buffer.Slice(4, length - 4), static body => ParseStartup(body));
+                    var packet = ParseStartupSequence(buffer.Slice(4, length - 4));
                     input.AdvanceTo(buffer.GetPosition(length));
                     return timeProvider.GetElapsedTime(called) >= timeout ? new PgIdleExpired() : packet;
                 }
@@ -60,12 +84,54 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         }
     }
 
-    private long? _interruptedStart;
-    private long _interruptedSeen;
+    public ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, PgReadDeadline? ceiling, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.IsCancellationRequested && _interruptedStart is null && input.TryRead(out var syncRead))
+        {
+            var buffer = syncRead.Buffer;
+            if (buffer.Length >= 5)
+            {
+                var type = (char)buffer.FirstSpan[0];
+                var length = ReadInt32(buffer.Slice(1));
+                if (length < 4)
+                {
+                    input.AdvanceTo(buffer.End);
+                    return ValueTask.FromResult<PgMessageRead>(PgError.ProtocolViolation($"message length {length} is out of bounds"));
+                }
 
-    public long LastMessageStarted { get; private set; }
+                if (length <= PostgresLimits.MaxMessageBytes && buffer.Length > length)
+                {
+                    var message = ParseMessageSequence(type, buffer.Slice(5, length - 4));
+                    input.AdvanceTo(buffer.GetPosition(length + 1));
+                    LastMessageStarted = timeProvider.GetTimestamp();
+                    if (ceiling is { } limit && limit.Limit + limit.Grace <= TimeSpan.Zero)
+                    {
+                        return ValueTask.FromResult<PgMessageRead>(new PgIncompleteExpired());
+                    }
 
-    public async ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, PgReadDeadline? ceiling, CancellationToken cancellationToken)
+                    return ValueTask.FromResult(message);
+                }
+            }
+
+            if (syncRead.IsCanceled)
+            {
+                input.AdvanceTo(buffer.Start, buffer.End);
+                return ValueTask.FromResult<PgMessageRead>(new PgReadInterrupted());
+            }
+
+            if (syncRead.IsCompleted && buffer.IsEmpty)
+            {
+                input.AdvanceTo(buffer.End);
+                return ValueTask.FromResult<PgMessageRead>(new PgPeerClosed());
+            }
+
+            input.AdvanceTo(buffer.Start);
+        }
+
+        return ReadMessageSlowAsync(timeout, ceiling, cancellationToken);
+    }
+
+    private async ValueTask<PgMessageRead> ReadMessageSlowAsync(TimeSpan timeout, PgReadDeadline? ceiling, CancellationToken cancellationToken)
     {
         var called = timeProvider.GetTimestamp();
         var started = _interruptedStart;
@@ -73,85 +139,134 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         _interruptedStart = null;
         _interruptedSeen = 0;
         var initial = started is { } resumed ? Remaining(resumed, seen, ceiling, called) : timeout;
-        using var deadline = new CancellationTokenSource(initial > TimeSpan.Zero ? initial : TimeSpan.Zero, timeProvider);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var cts = PrepareReadCts(cancellationToken);
+        cts.CancelAfter(initial > TimeSpan.Zero ? initial : TimeSpan.Zero);
         var oversized = 0L;
         var discarded = 0L;
-        while (true)
+        try
         {
-            ReadResult read;
-            try
+            while (true)
             {
-                read = await input.ReadAsync(linked.Token);
-            }
-            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-            {
-                return started is null ? new PgIdleExpired() : new PgIncompleteExpired();
-            }
+                ReadResult read;
+                try
+                {
+                    read = await input.ReadAsync(cts.Token);
+                }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    return started is null ? new PgIdleExpired() : new PgIncompleteExpired();
+                }
 
-            var buffer = read.Buffer;
-            if (discarded + buffer.Length > seen)
-            {
-                var first = started ??= timeProvider.GetTimestamp();
-                seen = discarded + buffer.Length;
-                var remaining = Remaining(first, seen, ceiling, called);
-                deadline.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
-            }
+                var buffer = read.Buffer;
+                if (discarded + buffer.Length > seen)
+                {
+                    var first = started ??= timeProvider.GetTimestamp();
+                    seen = discarded + buffer.Length;
+                    var remaining = Remaining(first, seen, ceiling, called);
+                    cts.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+                }
 
-            if (oversized == 0 && buffer.Length >= 5)
-            {
-                var type = (char)buffer.FirstSpan[0];
-                var length = ReadInt32(buffer.Slice(1));
-                if (length < 4)
+                if (oversized == 0 && buffer.Length >= 5)
+                {
+                    var type = (char)buffer.FirstSpan[0];
+                    var length = ReadInt32(buffer.Slice(1));
+                    if (length < 4)
+                    {
+                        input.AdvanceTo(buffer.End);
+                        return PgError.ProtocolViolation($"message length {length} is out of bounds");
+                    }
+
+                    if (length > PostgresLimits.MaxMessageBytes)
+                    {
+                        oversized = length + 1L;
+                    }
+                    else if (buffer.Length > length)
+                    {
+                        var message = ParseMessageSequence(type, buffer.Slice(5, length - 4));
+                        input.AdvanceTo(buffer.GetPosition(length + 1));
+                        LastMessageStarted = started ?? timeProvider.GetTimestamp();
+                        var late = timeProvider.GetElapsedTime(LastMessageStarted) >= PostgresLimits.MessageBudget(seen)
+                            || (ceiling is { } limit && timeProvider.GetElapsedTime(called) >= Bound(limit, called, LastMessageStarted));
+                        return late ? new PgIncompleteExpired() : message;
+                    }
+                }
+
+                if (oversized > 0)
+                {
+                    var skipped = Math.Min(buffer.Length, oversized - discarded);
+                    discarded += skipped;
+                    input.AdvanceTo(buffer.GetPosition(skipped));
+                    if (discarded == oversized || read.IsCompleted || read.IsCanceled)
+                    {
+                        return PgError.ProtocolViolation($"message length {oversized - 1} exceeds the limit of {PostgresLimits.MaxMessageBytes} bytes");
+                    }
+
+                    continue;
+                }
+
+                if (read.IsCanceled)
+                {
+                    input.AdvanceTo(buffer.Start, buffer.End);
+                    _interruptedStart = buffer.IsEmpty ? null : started;
+                    _interruptedSeen = buffer.IsEmpty ? 0 : seen;
+                    return new PgReadInterrupted();
+                }
+
+                if (read.IsCompleted)
                 {
                     input.AdvanceTo(buffer.End);
-                    return PgError.ProtocolViolation($"message length {length} is out of bounds");
+                    return new PgPeerClosed();
                 }
 
-                if (length > PostgresLimits.MaxMessageBytes)
-                {
-                    oversized = length + 1L;
-                }
-                else if (buffer.Length > length)
-                {
-                    var message = Parse(buffer.Slice(5, length - 4), body => ParseMessage(type, body));
-                    input.AdvanceTo(buffer.GetPosition(length + 1));
-                    LastMessageStarted = started ?? timeProvider.GetTimestamp();
-                    var late = timeProvider.GetElapsedTime(LastMessageStarted) >= PostgresLimits.MessageBudget(seen)
-                        || (ceiling is { } limit && timeProvider.GetElapsedTime(called) >= Bound(limit, called, LastMessageStarted));
-                    return late ? new PgIncompleteExpired() : message;
-                }
-            }
-
-            if (oversized > 0)
-            {
-                var skipped = Math.Min(buffer.Length, oversized - discarded);
-                discarded += skipped;
-                input.AdvanceTo(buffer.GetPosition(skipped));
-                if (discarded == oversized || read.IsCompleted || read.IsCanceled)
-                {
-                    return PgError.ProtocolViolation($"message length {oversized - 1} exceeds the limit of {PostgresLimits.MaxMessageBytes} bytes");
-                }
-
-                continue;
-            }
-
-            if (read.IsCanceled)
-            {
                 input.AdvanceTo(buffer.Start, buffer.End);
-                _interruptedStart = buffer.IsEmpty ? null : started;
-                _interruptedSeen = buffer.IsEmpty ? 0 : seen;
-                return new PgReadInterrupted();
             }
-
-            if (read.IsCompleted)
-            {
-                input.AdvanceTo(buffer.End);
-                return new PgPeerClosed();
-            }
-
-            input.AdvanceTo(buffer.Start, buffer.End);
         }
+        finally
+        {
+            if (!cts.IsCancellationRequested)
+            {
+                cts.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
+        }
+    }
+
+    private CancellationTokenSource PrepareReadCts(CancellationToken cancellationToken)
+    {
+        if (_readCts is { } existing && existing.TryReset())
+        {
+            if (cancellationToken != _registeredToken)
+            {
+                _closedRegistration.Dispose();
+                _registeredToken = cancellationToken;
+                _closedRegistration = cancellationToken.CanBeCanceled
+                    ? cancellationToken.UnsafeRegister(static state =>
+                    {
+                        if (state is CancellationTokenSource target)
+                        {
+                            target.Cancel();
+                        }
+                    }, existing)
+                    : default;
+            }
+
+            return existing;
+        }
+
+        _closedRegistration.Dispose();
+        _readCts?.Dispose();
+        var created = new CancellationTokenSource(Timeout.InfiniteTimeSpan, timeProvider);
+        _readCts = created;
+        _registeredToken = cancellationToken;
+        _closedRegistration = cancellationToken.CanBeCanceled
+            ? cancellationToken.UnsafeRegister(static state =>
+            {
+                if (state is CancellationTokenSource target)
+                {
+                    target.Cancel();
+                }
+            }, created)
+            : default;
+        return created;
     }
 
     private TimeSpan Remaining(long first, long seen, PgReadDeadline? ceiling, long called)
@@ -163,20 +278,37 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
     private TimeSpan Bound(PgReadDeadline ceiling, long called, long started) =>
         timeProvider.GetElapsedTime(called, started) < ceiling.Limit ? ceiling.Limit + ceiling.Grace : ceiling.Limit;
 
-    private delegate TResult SpanParser<out TResult>(ReadOnlySpan<byte> body);
-
-    private static TResult Parse<TResult>(ReadOnlySequence<byte> body, SpanParser<TResult> parser)
+    private static PgStartupRead ParseStartupSequence(ReadOnlySequence<byte> body)
     {
         if (body.IsSingleSegment)
         {
-            return parser(body.FirstSpan);
+            return ParseStartup(body.FirstSpan);
         }
 
         var rented = ArrayPool<byte>.Shared.Rent((int)body.Length);
         try
         {
             body.CopyTo(rented);
-            return parser(rented.AsSpan(0, (int)body.Length));
+            return ParseStartup(rented.AsSpan(0, (int)body.Length));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private PgMessageRead ParseMessageSequence(char type, ReadOnlySequence<byte> body)
+    {
+        if (body.IsSingleSegment)
+        {
+            return ParseMessage(type, body.FirstSpan);
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent((int)body.Length);
+        try
+        {
+            body.CopyTo(rented);
+            return ParseMessage(type, rented.AsSpan(0, (int)body.Length));
         }
         finally
         {
@@ -186,6 +318,11 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
     private static int ReadInt32(ReadOnlySequence<byte> buffer)
     {
+        if (buffer.FirstSpan.Length >= 4)
+        {
+            return BinaryPrimitives.ReadInt32BigEndian(buffer.FirstSpan);
+        }
+
         Span<byte> header = stackalloc byte[4];
         buffer.Slice(0, 4).CopyTo(header);
         return BinaryPrimitives.ReadInt32BigEndian(header);
@@ -238,7 +375,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         }
     }
 
-    private static PgMessageRead ParseMessage(char type, ReadOnlySpan<byte> body)
+    private PgMessageRead ParseMessage(char type, ReadOnlySpan<byte> body)
     {
         var reader = new PgSpanReader(body);
         PgFrontendMessage? message = type switch
@@ -254,13 +391,13 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             'C' => reader.TryByte(out var closeTarget) && reader.TryCString(out var closeName) && closeTarget is (byte)'S' or (byte)'P'
                 ? new PgCloseMessage((char)closeTarget, closeName)
                 : null,
-            'S' => new PgSyncMessage(),
-            'H' => new PgFlushMessage(),
-            'X' => new PgTerminateMessage(),
+            'S' => PgSyncMessage.Instance,
+            'H' => PgFlushMessage.Instance,
+            'X' => PgTerminateMessage.Instance,
             'd' => new PgCopyDataMessage(body.ToArray()),
-            'c' => new PgCopyDoneMessage(),
+            'c' => PgCopyDoneMessage.Instance,
             'f' => reader.TryCString(out var reason) ? new PgCopyFailMessage(reason) : null,
-            'F' => new PgFunctionCallMessage(),
+            'F' => PgFunctionCallMessage.Instance,
             _ => new PgUnknownMessage(type),
         };
         return message is null ? PgError.ProtocolViolation($"invalid message format for message type '{type}'") : message;
@@ -276,6 +413,11 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             return null;
         }
 
+        if (count == 0)
+        {
+            return new PgParseMessage(name, sql, []);
+        }
+
         var oids = new int[count];
         for (var index = 0; index < count; index++)
         {
@@ -288,63 +430,115 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         return new PgParseMessage(name, sql, oids);
     }
 
-    private static PgBindMessage? ParseBind(ref PgSpanReader reader)
+    private PgBindMessage? ParseBind(ref PgSpanReader reader)
     {
-        if (!reader.TryCString(out var portal) || !reader.TryCString(out var statement) || !reader.TryInt16(out var formatCount) || formatCount < 0)
+        try
         {
-            return null;
+            if (!reader.TryCString(out var portal) || !reader.TryCString(out var statement) || !reader.TryInt16(out var formatCount) || formatCount < 0)
+            {
+                return null;
+            }
+
+            if (!TryReadFormats(ref reader, formatCount, out var formats))
+            {
+                return null;
+            }
+
+            if (!reader.TryInt16(out var parameterCount) || parameterCount < 0)
+            {
+                return null;
+            }
+
+            if (parameterCount > _parameterSlices.Length)
+            {
+                _parameterSlices = new PgParameterSlice[Math.Max(_parameterSlices.Length * 2, parameterCount)];
+            }
+
+            var bufferPos = 0;
+            for (var index = 0; index < parameterCount; index++)
+            {
+                if (!reader.TryInt32(out var length) || length < -1)
+                {
+                    return null;
+                }
+
+                if (length == -1)
+                {
+                    _parameterSlices[index] = new PgParameterSlice(0, -1);
+                    continue;
+                }
+
+                if (!reader.TrySlice(length, out var slice))
+                {
+                    return null;
+                }
+
+                if (bufferPos + length > _parameterBuffer.Length)
+                {
+                    Array.Resize(ref _parameterBuffer, Math.Max(_parameterBuffer.Length * 2, bufferPos + length));
+                }
+
+                slice.CopyTo(_parameterBuffer.AsSpan(bufferPos));
+                _parameterSlices[index] = new PgParameterSlice(bufferPos, length);
+                bufferPos += length;
+            }
+
+            if (!reader.TryInt16(out var resultCount) || resultCount < 0)
+            {
+                return null;
+            }
+
+            if (!TryReadFormats(ref reader, resultCount, out var results))
+            {
+                return null;
+            }
+
+            return new PgBindMessage(portal, statement, formats, _parameterBuffer, _parameterSlices, parameterCount, results);
+        }
+        finally
+        {
+            if (_parameterBuffer.Length > MaxRetainedParameterBytes)
+            {
+                _parameterBuffer = new byte[InitialParameterBufferBytes];
+            }
+
+            if (_parameterSlices.Length > MaxRetainedParameterSlices)
+            {
+                _parameterSlices = new PgParameterSlice[InitialParameterSlices];
+            }
+        }
+    }
+
+    private static bool TryReadFormats(ref PgSpanReader reader, short count, out short[] formats)
+    {
+        if (count == 0)
+        {
+            formats = [];
+            return true;
         }
 
-        var formats = new short[formatCount];
-        for (var index = 0; index < formatCount; index++)
+        if (count == 1)
+        {
+            if (!reader.TryInt16(out var single) || single is not (0 or 1))
+            {
+                formats = [];
+                return false;
+            }
+
+            formats = single == 0 ? FormatZero : FormatOne;
+            return true;
+        }
+
+        formats = new short[count];
+        for (var index = 0; index < count; index++)
         {
             if (!reader.TryInt16(out formats[index]) || formats[index] is not (0 or 1))
             {
-                return null;
+                return false;
             }
         }
 
-        if (!reader.TryInt16(out var parameterCount) || parameterCount < 0)
-        {
-            return null;
-        }
-
-        var parameters = new byte[]?[parameterCount];
-        for (var index = 0; index < parameterCount; index++)
-        {
-            if (!reader.TryInt32(out var length) || length < -1)
-            {
-                return null;
-            }
-
-            if (length == -1)
-            {
-                continue;
-            }
-
-            if (!reader.TryBytes(length, out var value))
-            {
-                return null;
-            }
-
-            parameters[index] = value;
-        }
-
-        if (!reader.TryInt16(out var resultCount) || resultCount < 0)
-        {
-            return null;
-        }
-
-        var results = new short[resultCount];
-        for (var index = 0; index < resultCount; index++)
-        {
-            if (!reader.TryInt16(out results[index]) || results[index] is not (0 or 1))
-            {
-                return null;
-            }
-        }
-
-        return new PgBindMessage(portal, statement, formats, parameters, results);
+        return true;
     }
 
     private ref struct PgSpanReader(ReadOnlySpan<byte> data)
@@ -390,15 +584,15 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             return true;
         }
 
-        public bool TryBytes(int count, out byte[] value)
+        public bool TrySlice(int count, out ReadOnlySpan<byte> value)
         {
-            value = [];
             if (count > _data.Length)
             {
+                value = [];
                 return false;
             }
 
-            value = _data[..count].ToArray();
+            value = _data[..count];
             _data = _data[count..];
             return true;
         }
@@ -407,12 +601,24 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         {
             value = string.Empty;
             var end = _data.IndexOf((byte)0);
-            if (end < 0 || !Utf8.IsValid(_data[..end]))
+            if (end < 0)
             {
                 return false;
             }
 
-            value = Encoding.UTF8.GetString(_data[..end]);
+            if (end == 0)
+            {
+                _data = _data[1..];
+                return true;
+            }
+
+            var slice = _data[..end];
+            if (!Utf8.IsValid(slice))
+            {
+                return false;
+            }
+
+            value = Encoding.UTF8.GetString(slice);
             _data = _data[(end + 1)..];
             return true;
         }

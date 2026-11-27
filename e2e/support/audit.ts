@@ -159,7 +159,7 @@ export class Audit {
         return pending.filter((request) => request !== undefined);
       }, {
         message: 'requests still in flight',
-        intervals: [100],
+        intervals: production ? [100] : [25, 50],
       })
       .toEqual([]);
   }
@@ -190,15 +190,20 @@ export class Audit {
     );
     const found: string[] = [];
     if (/\}\s*else if\(Model\.|@\(await |Model\.Tab/.test(await page.locator('main').innerText())) found.push('Razor source leaked into rendered main text');
-    const broken = await page.evaluate(() =>
-      [...document.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src),
-    );
-    found.push(...broken.map((source) => `broken image: ${source}`));
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    if (overflow > 0) found.push(`horizontal overflow: ${overflow}px wider than the ${page.viewportSize()?.width}px viewport`);
+    const dom = await page.evaluate((): { broken: string[]; overflow: number; links: Link[] } => {
+      const broken = [...document.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src);
+      const overflow = document.documentElement.scrollWidth - document.documentElement.clientWidth;
+      const anchors = [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].map((anchor) => ({ kind: 'link', url: anchor.href }));
+      const forms = [...document.querySelectorAll<HTMLFormElement>('form')]
+        .filter((form) => (form.getAttribute('method') ?? 'get').toLowerCase() === 'get')
+        .map((form) => ({ kind: 'form', url: new URL(form.getAttribute('action') ?? '', form.baseURI).href }));
+      return { broken, overflow, links: [...anchors, ...forms] };
+    });
+    found.push(...dom.broken.map((source) => `broken image: ${source}`));
+    if (dom.overflow > 0) found.push(`horizontal overflow: ${dom.overflow}px wider than the ${page.viewportSize()?.width}px viewport`);
     const axe = await new AxeBuilder({ page }).withTags(wcag).analyze();
     found.push(...axe.violations.map((violation) => `axe ${violation.id}: ${violation.help} (${violation.nodes.map((node) => node.target.join(' ')).join(', ')})`));
-    found.push(...checkLinks(await links(page), page.url()));
+    found.push(...checkLinks(dom.links, page.url()));
     if (!production) {
       await this.info.attach(`${name}.png`, {
         body: await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide', mask: [page.locator(secrets)] }),
@@ -232,7 +237,7 @@ export class Audit {
       if (!stable || this.failed.length > 0) return false;
       verdict = [...this.problems.splice(0), ...this.probeProblems(), ...requestProblems];
       return true;
-    }, { message: 'browser audit events still pending', intervals: [100] }).toBe(true);
+    }, { message: 'browser audit events still pending', intervals: production ? [100] : [25, 50] }).toBe(true);
     return verdict;
   }
 
@@ -271,16 +276,6 @@ export class Audit {
     }
     this.problems.push(`HTTP ${response.status()}: ${response.request().method()} ${response.url()}`);
   }
-}
-
-async function links(page: Page): Promise<Link[]> {
-  return page.evaluate(() => {
-    const anchors = [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].map((anchor) => ({ kind: 'link', url: anchor.href }));
-    const forms = [...document.querySelectorAll<HTMLFormElement>('form')]
-      .filter((form) => (form.getAttribute('method') ?? 'get').toLowerCase() === 'get')
-      .map((form) => ({ kind: 'form', url: new URL(form.getAttribute('action') ?? '', form.baseURI).href }));
-    return [...anchors, ...forms];
-  });
 }
 
 async function guard(context: BrowserContext): Promise<void> {

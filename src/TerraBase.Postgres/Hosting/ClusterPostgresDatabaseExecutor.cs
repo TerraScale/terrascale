@@ -8,6 +8,8 @@ public sealed class ClusterPostgresDatabaseExecutor(ISqlDatabaseSession session,
 {
     public Ulid DatabaseId => session.DatabaseId;
 
+    public ulong? SchemaEpoch => session.SchemaEpoch;
+
     public CausalBookmark CurrentBookmark => coordinator.CurrentBookmark(session.DatabaseId).Merge(session.CurrentBookmark);
 
     public ValueTask<SqlReadOutcome> ReadAsync(

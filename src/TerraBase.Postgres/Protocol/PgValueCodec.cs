@@ -18,11 +18,37 @@ internal static class PgValueCodec
     private const int ObjectOverhead = 24;
     private static ReadOnlySpan<byte> HexDigits => "0123456789abcdef"u8;
 
+    private static ReadOnlySpan<sbyte> HexNibbles =>
+    [
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, -1, -1, -1,
+        -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    ];
+
     public static bool SupportsBinary(int oid) => PgOid.IsKnown(oid) && oid != PgOid.Unknown;
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static short ResultFormat(IReadOnlyList<short> formats, int index, int oid)
     {
-        var requested = formats.Count == 0 ? (short)TextFormatCode : formats[Math.Min(index, formats.Count - 1)];
+        if (formats.Count == 0)
+        {
+            return TextFormatCode;
+        }
+
+        var requested = formats.Count == 1 ? formats[0] : formats[Math.Min(index, formats.Count - 1)];
         return requested == BinaryFormatCode && SupportsBinary(oid) ? (short)BinaryFormatCode : (short)TextFormatCode;
     }
 
@@ -32,6 +58,66 @@ internal static class PgValueCodec
         {
             output.WriteInt32(-1);
             return true;
+        }
+
+        if (binary)
+        {
+            if (value.Kind == SqlValueKind.Integral && value.TryGetIntegral(out var integral))
+            {
+                switch (oid)
+                {
+                    case PgOid.Bool:
+                        var boolSpan = output.GetSpan(5);
+                        BinaryPrimitives.WriteInt32BigEndian(boolSpan, 1);
+                        boolSpan[4] = integral != 0 ? (byte)1 : (byte)0;
+                        output.Advance(5);
+                        return true;
+                    case PgOid.Int2:
+                        if (integral is < short.MinValue or > short.MaxValue)
+                        {
+                            return false;
+                        }
+
+                        var int2Span = output.GetSpan(6);
+                        BinaryPrimitives.WriteInt32BigEndian(int2Span, 2);
+                        BinaryPrimitives.WriteInt16BigEndian(int2Span[4..], (short)integral);
+                        output.Advance(6);
+                        return true;
+                    case PgOid.Int4:
+                        if (integral is < int.MinValue or > int.MaxValue)
+                        {
+                            return false;
+                        }
+
+                        var int4Span = output.GetSpan(8);
+                        BinaryPrimitives.WriteInt32BigEndian(int4Span, 4);
+                        BinaryPrimitives.WriteInt32BigEndian(int4Span[4..], (int)integral);
+                        output.Advance(8);
+                        return true;
+                    case PgOid.Int8:
+                        var int8Span = output.GetSpan(12);
+                        BinaryPrimitives.WriteInt32BigEndian(int8Span, 8);
+                        BinaryPrimitives.WriteInt64BigEndian(int8Span[4..], integral);
+                        output.Advance(12);
+                        return true;
+                }
+            }
+            else if (oid == PgOid.Float8 && value.Kind == SqlValueKind.Real && value.TryGetReal(out var real))
+            {
+                var float8Span = output.GetSpan(12);
+                BinaryPrimitives.WriteInt32BigEndian(float8Span, 8);
+                BinaryPrimitives.WriteDoubleBigEndian(float8Span[4..], real);
+                output.Advance(12);
+                return true;
+            }
+            else if (oid == PgOid.Bytea && value.Kind == SqlValueKind.Blob && value.TryGetBlob(out var blob))
+            {
+                var blobSpan = output.GetSpan(4 + blob.Length);
+                BinaryPrimitives.WriteInt32BigEndian(blobSpan, blob.Length);
+                blob.Span.CopyTo(blobSpan[4..]);
+                output.Advance(4 + blob.Length);
+                return true;
+            }
         }
 
         var lengthAt = output.ReserveInt32();
@@ -75,7 +161,7 @@ internal static class PgValueCodec
                 output.Advance(integralLength);
                 return true;
             case SqlValueKind.Real when value.TryGetReal(out var real):
-                output.WriteUtf8(FormatReal(real, oid));
+                WriteRealUtf8(output, real, oid);
                 return true;
             case SqlValueKind.Text when value.TryGetText(out var text):
                 return TryWriteTextValue(output, text, oid);
@@ -97,18 +183,15 @@ internal static class PgValueCodec
             return true;
         }
 
-        if (format == BinaryFormatCode)
-        {
-            return TryDecodeBinary(oid, raw, out value);
-        }
-
-        if (!Utf8.IsValid(raw))
-        {
-            return false;
-        }
-
-        return TryDecodeText(oid, Encoding.UTF8.GetString(raw), out value);
+        return format == BinaryFormatCode
+            ? TryDecodeBinary(oid, raw, raw, out value)
+            : TryDecodeTextUtf8(oid, raw, out value);
     }
+
+    public static bool TryDecode(int oid, short format, ReadOnlySpan<byte> raw, out SqlValue value) =>
+        format == BinaryFormatCode
+            ? TryDecodeBinary(oid, raw, ownedRaw: null, out value)
+            : TryDecodeTextUtf8(oid, raw, out value);
 
     public static bool TryDecodeText(int oid, string text, out SqlValue value)
     {
@@ -150,8 +233,13 @@ internal static class PgValueCodec
                 value = SqlValue.FromReal(real);
                 return true;
             case PgOid.Numeric:
+                if (!PgNumeric.IsDecimalText(text))
+                {
+                    return false;
+                }
+
                 value = NumericValue(text);
-                return PgNumeric.IsDecimalText(text);
+                return true;
             case PgOid.Bytea:
                 return TryDecodeHexBytea(text, out value);
             case PgOid.Uuid:
@@ -228,26 +316,406 @@ internal static class PgValueCodec
     public static bool TryParseBool(ReadOnlySpan<char> text, out bool value)
     {
         var trimmed = text.Trim();
-        foreach (var accepted in (ReadOnlySpan<string>)["t", "true", "y", "yes", "on", "1"])
+        switch (trimmed.Length)
         {
-            if (trimmed.Equals(accepted, StringComparison.OrdinalIgnoreCase))
-            {
-                value = true;
-                return true;
-            }
-        }
+            case 1:
+                switch (trimmed[0])
+                {
+                    case 't' or 'T' or 'y' or 'Y' or '1':
+                        value = true;
+                        return true;
+                    case 'f' or 'F' or 'n' or 'N' or '0':
+                        value = false;
+                        return true;
+                }
 
-        foreach (var accepted in (ReadOnlySpan<string>)["f", "false", "n", "no", "off", "0"])
-        {
-            if (trimmed.Equals(accepted, StringComparison.OrdinalIgnoreCase))
-            {
-                value = false;
-                return true;
-            }
+                break;
+            case 2:
+                if (trimmed.Equals("on", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = true;
+                    return true;
+                }
+
+                if (trimmed.Equals("no", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = false;
+                    return true;
+                }
+
+                break;
+            case 3:
+                if (trimmed.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = true;
+                    return true;
+                }
+
+                if (trimmed.Equals("off", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = false;
+                    return true;
+                }
+
+                break;
+            case 4:
+                if (trimmed.Equals("true", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = true;
+                    return true;
+                }
+
+                break;
+            case 5:
+                if (trimmed.Equals("false", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = false;
+                    return true;
+                }
+
+                break;
         }
 
         value = false;
         return false;
+    }
+
+    private static bool TryDecodeTextUtf8(int oid, ReadOnlySpan<byte> raw, out SqlValue value)
+    {
+        value = SqlValue.Null;
+        switch (oid)
+        {
+            case PgOid.Bool:
+                if (!TryParseBoolUtf8(raw, out var flag))
+                {
+                    return false;
+                }
+
+                value = SqlValue.FromIntegral(flag ? 1 : 0);
+                return true;
+            case PgOid.Int2 or PgOid.Int4 or PgOid.Int8 or PgOid.Oid:
+                if (!TryParseInt64Utf8(raw, out var integral))
+                {
+                    return false;
+                }
+
+                value = SqlValue.FromIntegral(integral);
+                return true;
+            case PgOid.Float4 or PgOid.Float8:
+                var floatSpan = TrimAsciiWhitespace(raw);
+                if (!Utf8Parser.TryParse(floatSpan, out double real, out var floatConsumed) || floatConsumed != floatSpan.Length || !double.IsFinite(real))
+                {
+                    return false;
+                }
+
+                value = SqlValue.FromReal(real);
+                return true;
+            case PgOid.Numeric:
+                if (!PgNumeric.IsDecimalUtf8(raw))
+                {
+                    return false;
+                }
+
+                if (raw.IndexOf((byte)'.') < 0 && TryParseInt64Utf8(raw, out var whole))
+                {
+                    value = SqlValue.FromIntegral(whole);
+                    return true;
+                }
+
+                value = SqlValue.FromText(Encoding.ASCII.GetString(raw));
+                return true;
+            case PgOid.Bytea:
+                return TryDecodeHexByteaUtf8(raw, out value);
+            case PgOid.Uuid:
+                return TryDecodeUuidUtf8(raw, out value);
+            case PgOid.Timestamptz when PgTemporal.IsCanonicalTimestamptzUtf8(raw):
+                value = SqlValue.FromText(Encoding.ASCII.GetString(raw));
+                return true;
+            case PgOid.Date or PgOid.Time or PgOid.Timestamp or PgOid.Timestamptz:
+                if (!PgTemporal.TryParseUtf8(oid, raw, out var instant))
+                {
+                    return false;
+                }
+
+                value = SqlValue.FromText(PgTemporal.Format(oid, instant));
+                return true;
+            case 0 or PgOid.Unknown:
+                if (raw.IndexOf((byte)0) >= 0 || !TryDecodeUtf8String(raw, out var untyped))
+                {
+                    return false;
+                }
+
+                value = UntypedValue(untyped);
+                return true;
+            case PgOid.Text or PgOid.Varchar or PgOid.Bpchar or PgOid.Json or PgOid.Jsonb:
+                if (raw.IndexOf((byte)0) >= 0 || !TryDecodeUtf8String(raw, out var decodedText))
+                {
+                    return false;
+                }
+
+                value = SqlValue.FromText(decodedText);
+                return true;
+            default:
+                if (raw.IndexOf((byte)0) >= 0 || !TryDecodeUtf8String(raw, out var fallbackText))
+                {
+                    return false;
+                }
+
+                if (PgOid.TryGetArrayElement(oid, out var element))
+                {
+                    return TryDecodeTextArray(element, fallbackText, out value);
+                }
+
+                value = SqlValue.FromText(fallbackText);
+                return true;
+        }
+    }
+
+    private static bool TryParseInt64Utf8(ReadOnlySpan<byte> raw, out long value)
+    {
+        var span = TrimAsciiWhitespace(raw);
+        var length = span.Length;
+        if (length == 0)
+        {
+            value = 0;
+            return false;
+        }
+
+        var index = 0;
+        var negative = false;
+        var first = span[0];
+        if (first is (byte)'-' or (byte)'+')
+        {
+            negative = first == (byte)'-';
+            index = 1;
+            if (length == 1)
+            {
+                value = 0;
+                return false;
+            }
+        }
+
+        if (length - index <= 18)
+        {
+            long acc = 0;
+            for (; index < length; index++)
+            {
+                var digit = span[index] - '0';
+                if ((uint)digit > 9u)
+                {
+                    value = 0;
+                    return false;
+                }
+
+                acc = (acc * 10) + digit;
+            }
+
+            value = negative ? -acc : acc;
+            return true;
+        }
+
+        return Utf8Parser.TryParse(span, out value, out var consumed) && consumed == length;
+    }
+
+    private static bool TryDecodeUtf8String(ReadOnlySpan<byte> raw, out string text)
+    {
+        if (raw.IsEmpty)
+        {
+            text = string.Empty;
+            return true;
+        }
+
+        if (Ascii.IsValid(raw))
+        {
+            text = Encoding.ASCII.GetString(raw);
+            return true;
+        }
+
+        if (!Utf8.IsValid(raw))
+        {
+            text = string.Empty;
+            return false;
+        }
+
+        text = Encoding.UTF8.GetString(raw);
+        return true;
+    }
+
+    private static bool TryParseBoolUtf8(ReadOnlySpan<byte> raw, out bool value)
+    {
+        var trimmed = TrimAsciiWhitespace(raw);
+        switch (trimmed.Length)
+        {
+            case 1:
+                switch (trimmed[0])
+                {
+                    case (byte)'t' or (byte)'T' or (byte)'y' or (byte)'Y' or (byte)'1':
+                        value = true;
+                        return true;
+                    case (byte)'f' or (byte)'F' or (byte)'n' or (byte)'N' or (byte)'0':
+                        value = false;
+                        return true;
+                }
+
+                break;
+            case 2:
+                if ((trimmed[0] | 0x20) == 'o' && (trimmed[1] | 0x20) == 'n')
+                {
+                    value = true;
+                    return true;
+                }
+
+                if ((trimmed[0] | 0x20) == 'n' && (trimmed[1] | 0x20) == 'o')
+                {
+                    value = false;
+                    return true;
+                }
+
+                break;
+            case 3:
+                if ((trimmed[0] | 0x20) == 'y' && (trimmed[1] | 0x20) == 'e' && (trimmed[2] | 0x20) == 's')
+                {
+                    value = true;
+                    return true;
+                }
+
+                if ((trimmed[0] | 0x20) == 'o' && (trimmed[1] | 0x20) == 'f' && (trimmed[2] | 0x20) == 'f')
+                {
+                    value = false;
+                    return true;
+                }
+
+                break;
+            case 4:
+                if ((trimmed[0] | 0x20) == 't' && (trimmed[1] | 0x20) == 'r' && (trimmed[2] | 0x20) == 'u' && (trimmed[3] | 0x20) == 'e')
+                {
+                    value = true;
+                    return true;
+                }
+
+                break;
+            case 5:
+                if ((trimmed[0] | 0x20) == 'f' && (trimmed[1] | 0x20) == 'a' && (trimmed[2] | 0x20) == 'l' && (trimmed[3] | 0x20) == 's' && (trimmed[4] | 0x20) == 'e')
+                {
+                    value = false;
+                    return true;
+                }
+
+                break;
+        }
+
+        value = false;
+        return false;
+    }
+
+    private static bool TryDecodeHexByteaUtf8(ReadOnlySpan<byte> raw, out SqlValue value)
+    {
+        value = SqlValue.Null;
+        if (raw.Length < 2 || raw[0] != (byte)'\\' || raw[1] != (byte)'x' || (raw.Length & 1) != 0)
+        {
+            if (raw.IndexOf((byte)0) >= 0 || !Utf8.IsValid(raw))
+            {
+                return false;
+            }
+
+            value = SqlValue.FromBlob(raw.ToArray());
+            return true;
+        }
+
+        var hex = raw[2..];
+        var bytes = new byte[hex.Length >> 1];
+        var nibbles = HexNibbles;
+        for (var index = 0; index < bytes.Length; index++)
+        {
+            int hi = nibbles[hex[index << 1]];
+            int lo = nibbles[hex[(index << 1) + 1]];
+            if ((hi | lo) < 0)
+            {
+                return false;
+            }
+
+            bytes[index] = (byte)((hi << 4) | lo);
+        }
+
+        value = SqlValue.FromBlob(bytes);
+        return true;
+    }
+
+    private static bool TryDecodeUuidUtf8(ReadOnlySpan<byte> raw, out SqlValue value)
+    {
+        value = SqlValue.Null;
+        var trimmed = TrimAsciiWhitespace(raw);
+        if (trimmed.Length == 36 && trimmed[8] == (byte)'-' && trimmed[13] == (byte)'-' && trimmed[18] == (byte)'-' && trimmed[23] == (byte)'-')
+        {
+            var nibbles = HexNibbles;
+            var hasUpper = false;
+            var valid = true;
+            for (var index = 0; index < 36; index++)
+            {
+                if (index is 8 or 13 or 18 or 23)
+                {
+                    continue;
+                }
+
+                var current = trimmed[index];
+                if (nibbles[current] < 0)
+                {
+                    valid = false;
+                    break;
+                }
+
+                if (current is >= (byte)'A' and <= (byte)'F')
+                {
+                    hasUpper = true;
+                }
+            }
+
+            if (valid)
+            {
+                if (!hasUpper)
+                {
+                    value = SqlValue.FromText(Encoding.ASCII.GetString(trimmed));
+                    return true;
+                }
+
+                Span<char> lowered = stackalloc char[36];
+                for (var index = 0; index < 36; index++)
+                {
+                    var current = trimmed[index];
+                    lowered[index] = (char)(current is >= (byte)'A' and <= (byte)'F' ? current | 0x20 : current);
+                }
+
+                value = SqlValue.FromText(new string(lowered));
+                return true;
+            }
+        }
+
+        if (!Utf8.IsValid(trimmed) || !Guid.TryParse(Encoding.UTF8.GetString(trimmed), out var uuid))
+        {
+            return false;
+        }
+
+        Span<char> formatted = stackalloc char[36];
+        uuid.TryFormat(formatted, out _, "D");
+        value = SqlValue.FromText(new string(formatted));
+        return true;
+    }
+
+    private static ReadOnlySpan<byte> TrimAsciiWhitespace(ReadOnlySpan<byte> raw)
+    {
+        var start = 0;
+        var end = raw.Length;
+        while (start < end && raw[start] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or (byte)'\f' or (byte)'\v')
+        {
+            start++;
+        }
+
+        while (end > start && raw[end - 1] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or (byte)'\f' or (byte)'\v')
+        {
+            end--;
+        }
+
+        return raw[start..end];
     }
 
     private static bool TryWriteTextValue(PgMessageBuffer output, string text, int oid)
@@ -257,8 +725,11 @@ internal static class PgValueCodec
             case PgOid.Bool when TryParseBool(text, out var flag):
                 output.WriteByte(flag ? (byte)'t' : (byte)'f');
                 return true;
+            case PgOid.Timestamptz when PgTemporal.IsCanonicalTimestamptz(text):
+                output.WriteUtf8(text);
+                return true;
             case PgOid.Date or PgOid.Time or PgOid.Timestamp or PgOid.Timestamptz when PgTemporal.TryParse(oid, text, out var instant):
-                output.WriteUtf8(PgTemporal.Format(oid, instant));
+                PgTemporal.WriteText(oid, instant, output);
                 return true;
             default:
                 output.WriteUtf8(text);
@@ -342,7 +813,7 @@ internal static class PgValueCodec
                 output.Advance(8);
                 return true;
             case PgOid.Numeric:
-                return NumericText(value) is { } numeric && PgNumeric.TryEncode(numeric, output);
+                return TryWriteNumericBinary(output, value);
             case PgOid.Uuid:
                 return TryWriteUuid(output, value);
             case PgOid.Date or PgOid.Time or PgOid.Timestamp or PgOid.Timestamptz:
@@ -358,14 +829,30 @@ internal static class PgValueCodec
         }
     }
 
-    private static bool TryDecodeBinary(int oid, byte[] raw, out SqlValue value)
+    private static bool TryWriteNumericBinary(PgMessageBuffer output, SqlValue value)
     {
-        value = SqlValue.Null;
-        if (PgOid.TryGetArrayElement(oid, out var element))
+        if (value.TryGetText(out var text))
         {
-            return TryDecodeBinaryArray(element, raw, out value);
+            return PgNumeric.TryEncode(text, output);
         }
 
+        if (value.TryGetIntegral(out var integral))
+        {
+            Span<char> chars = stackalloc char[24];
+            return integral.TryFormat(chars, out var written, provider: CultureInfo.InvariantCulture) && PgNumeric.TryEncode(chars[..written], output);
+        }
+
+        if (value.TryGetReal(out var real))
+        {
+            return DecimalText(real) is { } numeric && PgNumeric.TryEncode(numeric, output);
+        }
+
+        return false;
+    }
+
+    private static bool TryDecodeBinary(int oid, ReadOnlySpan<byte> raw, byte[]? ownedRaw, out SqlValue value)
+    {
+        value = SqlValue.Null;
         switch (oid, raw.Length)
         {
             case (PgOid.Bool, 1):
@@ -388,7 +875,7 @@ internal static class PgValueCodec
             case (PgOid.Float8, 8):
                 return TryReal(BinaryPrimitives.ReadDoubleBigEndian(raw), out value);
             case (PgOid.Uuid, 16):
-                value = SqlValue.FromText(new Guid(raw, bigEndian: true).ToString("D", CultureInfo.InvariantCulture));
+                value = SqlValue.FromText(FormatUuidBigEndian(raw));
                 return true;
             case (PgOid.Numeric, _):
                 if (!PgNumeric.TryDecode(raw, out var numeric))
@@ -407,23 +894,42 @@ internal static class PgValueCodec
                 value = SqlValue.FromText(temporal);
                 return true;
             case (PgOid.Bytea, _):
-                value = SqlValue.FromBlob(raw);
+                value = SqlValue.FromBlob(ownedRaw ?? raw.ToArray());
                 return true;
-            case (PgOid.Jsonb, > 0) when raw[0] == 1 && Utf8.IsValid(raw.AsSpan(1)):
-                value = SqlValue.FromText(Encoding.UTF8.GetString(raw.AsSpan(1)));
+            case (PgOid.Jsonb, > 0) when raw[0] == 1 && TryDecodeUtf8String(raw[1..], out var jsonbText):
+                value = SqlValue.FromText(jsonbText);
                 return true;
-            case (0 or PgOid.Text or PgOid.Varchar or PgOid.Bpchar or PgOid.Json or PgOid.Unknown, _) when Utf8.IsValid(raw):
-                value = SqlValue.FromText(Encoding.UTF8.GetString(raw));
+            case (0 or PgOid.Text or PgOid.Varchar or PgOid.Bpchar or PgOid.Json or PgOid.Unknown, _) when TryDecodeUtf8String(raw, out var textValue):
+                value = SqlValue.FromText(textValue);
                 return true;
             default:
-                return false;
+                return PgOid.TryGetArrayElement(oid, out var element) && TryDecodeBinaryArray(element, raw, out value);
         }
     }
 
-    private static bool TryDecodeBinaryArray(int element, byte[] raw, out SqlValue value)
+    private static string FormatUuidBigEndian(ReadOnlySpan<byte> bytes)
+    {
+        Span<char> chars = stackalloc char[36];
+        var hex = HexDigits;
+        var pos = 0;
+        for (var index = 0; index < 16; index++)
+        {
+            if (index is 4 or 6 or 8 or 10)
+            {
+                chars[pos++] = '-';
+            }
+
+            var current = bytes[index];
+            chars[pos++] = (char)hex[current >> 4];
+            chars[pos++] = (char)hex[current & 0xF];
+        }
+
+        return new string(chars);
+    }
+
+    private static bool TryDecodeBinaryArray(int element, ReadOnlySpan<byte> span, out SqlValue value)
     {
         value = SqlValue.Null;
-        ReadOnlySpan<byte> span = raw;
         if (span.Length < 12)
         {
             return false;
@@ -467,7 +973,7 @@ internal static class PgValueCodec
                     continue;
                 }
 
-                if (length > span.Length || !TryDecodeBinary(element, span[..length].ToArray(), out var item))
+                if (length > span.Length || !TryDecodeBinary(element, span[..length], ownedRaw: null, out var item))
                 {
                     return false;
                 }
@@ -593,18 +1099,24 @@ internal static class PgValueCodec
 
     private static SqlValue UntypedValue(string text)
     {
-        if (long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var integral)
-            && integral.ToString(CultureInfo.InvariantCulture) == text)
+        if (long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var integral))
         {
-            return SqlValue.FromIntegral(integral);
+            Span<char> roundTrip = stackalloc char[24];
+            if (integral.TryFormat(roundTrip, out var written, provider: CultureInfo.InvariantCulture) && roundTrip[..written].SequenceEqual(text))
+            {
+                return SqlValue.FromIntegral(integral);
+            }
         }
 
         if (text.Contains('.', StringComparison.Ordinal)
             && double.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var real)
-            && double.IsFinite(real)
-            && real.ToString("R", CultureInfo.InvariantCulture) == text)
+            && double.IsFinite(real))
         {
-            return SqlValue.FromReal(real);
+            Span<char> roundTrip = stackalloc char[32];
+            if (real.TryFormat(roundTrip, out var written, "R", CultureInfo.InvariantCulture) && roundTrip[..written].SequenceEqual(text))
+            {
+                return SqlValue.FromReal(real);
+            }
         }
 
         return SqlValue.FromText(text);
@@ -634,19 +1146,43 @@ internal static class PgValueCodec
         return true;
     }
 
-    private static string FormatReal(double real, int oid)
+    private static void WriteRealUtf8(PgMessageBuffer output, double real, int oid)
     {
-        if (oid == PgOid.Numeric && DecimalText(real) is { } numeric)
-        {
-            return numeric;
-        }
-
+        var span = output.GetSpan(32);
+        int written;
         if (oid == PgOid.Float4)
         {
-            return ((float)real).ToString("R", CultureInfo.InvariantCulture).Replace("E", "e", StringComparison.Ordinal);
+            ((float)real).TryFormat(span, out written, "R", CultureInfo.InvariantCulture);
+            LowercaseExponent(span[..written]);
+            output.Advance(written);
+            return;
         }
 
-        return real.ToString("R", CultureInfo.InvariantCulture).Replace("E", "e", StringComparison.Ordinal);
+        real.TryFormat(span, out written, "R", CultureInfo.InvariantCulture);
+        var formatted = span[..written];
+        var expIndex = formatted.IndexOf((byte)'E');
+        if (expIndex >= 0)
+        {
+            if (oid == PgOid.Numeric && Utf8Parser.TryParse(formatted, out decimal exact, out var consumed) && consumed == written
+                && exact.TryFormat(span, out var decimalWritten, default, CultureInfo.InvariantCulture))
+            {
+                output.Advance(decimalWritten);
+                return;
+            }
+
+            formatted[expIndex] = (byte)'e';
+        }
+
+        output.Advance(written);
+    }
+
+    private static void LowercaseExponent(Span<byte> span)
+    {
+        var index = span.IndexOf((byte)'E');
+        if (index >= 0)
+        {
+            span[index] = (byte)'e';
+        }
     }
 
     private static string? NumericText(SqlValue value)
@@ -683,7 +1219,52 @@ internal static class PgValueCodec
             return true;
         }
 
-        if (!value.TryGetText(out var text) || !Guid.TryParse(text, out var uuid))
+        if (!value.TryGetText(out var text))
+        {
+            return false;
+        }
+
+        var span = text.AsSpan();
+        if (span.Length == 36 && span[8] == '-' && span[13] == '-' && span[18] == '-' && span[23] == '-')
+        {
+            var dest = output.GetSpan(16);
+            var nibbles = HexNibbles;
+            var src = 0;
+            var valid = true;
+            for (var index = 0; index < 16; index++)
+            {
+                if (index is 4 or 6 or 8 or 10)
+                {
+                    src++;
+                }
+
+                var c0 = span[src++];
+                var c1 = span[src++];
+                if (c0 >= 128 || c1 >= 128)
+                {
+                    valid = false;
+                    break;
+                }
+
+                int hi = nibbles[c0];
+                int lo = nibbles[c1];
+                if ((hi | lo) < 0)
+                {
+                    valid = false;
+                    break;
+                }
+
+                dest[index] = (byte)((hi << 4) | lo);
+            }
+
+            if (valid)
+            {
+                output.Advance(16);
+                return true;
+            }
+        }
+
+        if (!Guid.TryParse(span, out var uuid))
         {
             return false;
         }
@@ -765,10 +1346,12 @@ internal static class PgValueCodec
     private static void WriteHex(PgMessageBuffer output, ReadOnlySpan<byte> bytes)
     {
         var span = output.GetSpan(bytes.Length * 2);
+        var hex = HexDigits;
         for (var index = 0; index < bytes.Length; index++)
         {
-            span[2 * index] = HexDigits[bytes[index] >> 4];
-            span[(2 * index) + 1] = HexDigits[bytes[index] & 0xF];
+            var current = bytes[index];
+            span[index << 1] = hex[current >> 4];
+            span[(index << 1) + 1] = hex[current & 0xF];
         }
 
         output.Advance(bytes.Length * 2);

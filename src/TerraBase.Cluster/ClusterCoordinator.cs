@@ -1,10 +1,13 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace TerraBase.Cluster;
 
 public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabases databases, CommitFinalizer finalizer, StrongCoordinator strong, PeerHealthMonitor health) : IClusterCoordinator
 {
     public const string StrongRequiredCode = "strong_required";
+
+    private readonly bool _isLocalOnlyStrong = topology.RegionPeers.Count == 0 && topology.Regions.Count == 1;
 
     public string LocalRegion => topology.LocalRegion;
 
@@ -18,6 +21,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
 
     public CausalBookmark CurrentBookmark(Ulid databaseId) => databases.Current(databaseId);
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<ClusterWaitBookmarkOutcome>))]
     public async ValueTask<ClusterWaitBookmarkOutcome> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bookmark);
@@ -30,6 +34,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         };
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<ClusterWriteOutcome>))]
     public async ValueTask<ClusterWriteOutcome> ExecuteWriteAsync(
         ISqlDatabaseSession session,
         SqlStatementRequest request,
@@ -40,7 +45,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         databases.Track(session.DatabaseId);
         if (request.Mode == ConsistencyMode.Strong)
         {
-            return IsLocalOnlyStrong(session.DatabaseId)
+            return _isLocalOnlyStrong
                 ? await ExecuteLocalStrongAsync(session, request, cancellationToken)
                 : await strong.ExecuteAsync(session, request, cancellationToken);
         }
@@ -49,7 +54,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         return local switch
         {
             SqlWriteResult written => Durable(written, await finalizer.FinalizeFastAsync(session.DatabaseId, written.Commit, cancellationToken)),
-            StrongRequired => IsLocalOnlyStrong(session.DatabaseId)
+            StrongRequired => _isLocalOnlyStrong
                 ? await ExecuteLocalStrongAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken)
                 : await strong.ExecuteAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken),
             SqlError error => error,
@@ -79,6 +84,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         };
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<ClusterCommitTransactionOutcome>))]
     public async ValueTask<ClusterCommitTransactionOutcome> CommitTransactionAsync(
         ISqlDatabaseSession session,
         ISqlTransaction transaction,
@@ -89,7 +95,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         databases.Track(session.DatabaseId);
         if (transaction.Options.Mode == ConsistencyMode.Strong)
         {
-            return IsLocalOnlyStrong(session.DatabaseId)
+            return _isLocalOnlyStrong
                 ? await CommitLocalStrongAsync(session, transaction, cancellationToken)
                 : await strong.CommitTransactionAsync(session, transaction, cancellationToken);
         }
@@ -121,6 +127,7 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         static ClusterBeginTransactionOutcome Upgrading(ISqlTransaction transaction) => new(transaction);
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<ClusterWaitBookmarkOutcome>))]
     private static async ValueTask<ClusterWaitBookmarkOutcome> WaitLeasedAsync(ClusterDatabases databases, ISqlDatabaseSession session, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken)
     {
         await using (session)
@@ -138,9 +145,6 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
             };
         }
     }
-
-    private bool IsLocalOnlyStrong(Ulid databaseId) =>
-        topology.RegionPeers.Count == 0 && topology.StrongParticipants(databaseId) is [{ IsLocal: true }];
 
     private async ValueTask<ClusterWriteOutcome> ExecuteLocalStrongAsync(
         ISqlDatabaseSession session,

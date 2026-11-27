@@ -129,7 +129,10 @@ internal sealed class RaftShard(RaftMemberConfiguration configuration, RaftShard
     }
 }
 
-internal sealed class RaftShardStateMachine(IStateMachine snapshots, Func<ReplicatedCommit, CancellationToken, ValueTask> apply) : IStateMachine
+internal sealed class RaftShardStateMachine(
+    IStateMachine snapshots,
+    byte[] localOriginUtf8,
+    Func<ReplicatedCommit, CancellationToken, ValueTask> apply) : IStateMachine
 {
     public ISnapshot? Snapshot => snapshots.Snapshot;
 
@@ -139,7 +142,7 @@ internal sealed class RaftShardStateMachine(IStateMachine snapshots, Func<Replic
 
     public async ValueTask<long> ApplyAsync(LogEntry entry, CancellationToken token)
     {
-        if (!entry.IsConfiguration && !entry.IsSnapshot && ReplicatedCommit.Decode(Payload(entry)) is { } commit)
+        if (!entry.IsConfiguration && !entry.IsSnapshot && TryDecodeRemoteCommit(entry, localOriginUtf8) is { } commit)
         {
             await apply(commit, token);
         }
@@ -147,11 +150,26 @@ internal sealed class RaftShardStateMachine(IStateMachine snapshots, Func<Replic
         return await snapshots.ApplyAsync(entry, token);
     }
 
-    private static ReadOnlySpan<byte> Payload(LogEntry entry)
+    private static ReplicatedCommit? TryDecodeRemoteCommit(LogEntry entry, ReadOnlySpan<byte> localOriginUtf8)
     {
         if (entry.TryGetPayload(out var sequence))
         {
-            return sequence.IsSingleSegment ? sequence.FirstSpan : sequence.ToArray();
+            if (sequence.IsSingleSegment)
+            {
+                return DecodeIfRemote(sequence.FirstSpan, localOriginUtf8);
+            }
+
+            var length = checked((int)sequence.Length);
+            var rented = ArrayPool<byte>.Shared.Rent(length);
+            try
+            {
+                sequence.CopyTo(rented);
+                return DecodeIfRemote(rented.AsSpan(0, length), localOriginUtf8);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
 
         var buffer = new ArrayBufferWriter<byte>();
@@ -160,6 +178,16 @@ internal sealed class RaftShardStateMachine(IStateMachine snapshots, Func<Replic
             buffer.Write(segment.Span);
         }
 
-        return buffer.WrittenSpan;
+        return DecodeIfRemote(buffer.WrittenSpan, localOriginUtf8);
+    }
+
+    private static ReplicatedCommit? DecodeIfRemote(ReadOnlySpan<byte> span, ReadOnlySpan<byte> localOriginUtf8)
+    {
+        if (span.IsEmpty || (ReplicatedCommit.TryPeekHeader(span, out _, out var originUtf8) && originUtf8.SequenceEqual(localOriginUtf8)))
+        {
+            return null;
+        }
+
+        return ReplicatedCommit.Decode(span);
     }
 }
