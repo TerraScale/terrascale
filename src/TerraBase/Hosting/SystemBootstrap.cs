@@ -5,6 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Health;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
+using TerraBase.Features.UserAuth;
 using TerraBase.Storage;
 using ZLogger;
 
@@ -20,12 +21,14 @@ internal sealed class SystemBootstrap(
     StorageEngineOptions storage,
     AntiEntropyService antiEntropy,
     IContinuityDatabaseCatalog catalog,
+    TokenVerifier tokens,
     NodeReadiness readiness,
     IHostApplicationLifetime lifetime,
     ILogger<SystemBootstrap> logger)
     : IHostedService
 {
     private static readonly TimeSpan StartupSyncBudget = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan AuthWarmupBudget = TimeSpan.FromSeconds(3);
 
     public ConfigurationError? Failure { get; private set; }
 
@@ -68,10 +71,13 @@ internal sealed class SystemBootstrap(
             return;
         }
 
+        var warmAuth = WarmPlatformAuthAsync(cancellationToken);
         if (cluster.Peers.Count > 0)
         {
             await SyncOnStartupAsync(cancellationToken);
         }
+
+        await warmAuth;
 
         var (node, region, bootstrap) = (cluster.NodeId, cluster.Region, cluster.IsBootstrapNode);
         logger.ZLogInformation($"System catalog open on {node}.{region} (bootstrap node: {bootstrap})");
@@ -85,6 +91,19 @@ internal sealed class SystemBootstrap(
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private async Task WarmPlatformAuthAsync(CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(AuthWarmupBudget);
+        try
+        {
+            await tokens.WarmPlatformAsync(budget.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
 
     private async ValueTask SyncSystemAsync(CancellationToken cancellationToken) =>
         _ = await antiEntropy.SyncAsync(SystemDatabase.Id, cancellationToken);

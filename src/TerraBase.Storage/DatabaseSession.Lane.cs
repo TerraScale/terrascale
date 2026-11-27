@@ -13,7 +13,8 @@ internal sealed partial class DatabaseSession
     private const string ItemSavepoint = "SAVEPOINT _tb_item;";
     private const string ReleaseItem = "RELEASE _tb_item;";
     private const string RollbackToItem = "ROLLBACK TO _tb_item;";
-    private const int CheckpointRowThreshold = 500;
+    private const int CheckpointRowThreshold = 2000;
+    private static readonly TimeSpan CheckpointMinInterval = TimeSpan.FromSeconds(10);
 
     private readonly MetaCache _metaCache = new();
     private readonly List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> _laneCompleted = [];
@@ -26,6 +27,7 @@ internal sealed partial class DatabaseSession
     private readonly KeyValuePair<string, long>[] _laneVersionUpdate = new KeyValuePair<string, long>[1];
     private WriteScope? _laneScope;
     private int _rowsSinceCheckpoint;
+    private long _lastCheckpointTimestamp;
 
     private closed record class LaneRequest;
 
@@ -337,7 +339,9 @@ internal sealed partial class DatabaseSession
             }
 
             Volatile.Write(ref _inFlight, []);
-            if (_rowsSinceCheckpoint >= CheckpointRowThreshold && reader.Count == 0)
+            if (_rowsSinceCheckpoint >= CheckpointRowThreshold
+                && reader.Count == 0
+                && _context.Time.GetElapsedTime(_lastCheckpointTimestamp) >= CheckpointMinInterval)
             {
                 MaybeCheckpointIdle();
             }
@@ -354,16 +358,13 @@ internal sealed partial class DatabaseSession
     private void MaybeCheckpointIdle()
     {
         _rowsSinceCheckpoint = 0;
+        _lastCheckpointTimestamp = _context.Time.GetTimestamp();
         if (_writer.InTransaction)
         {
             return;
         }
 
         _ = _writer.Exec("PRAGMA wal_checkpoint(PASSIVE);");
-        if (!HasActiveReaders())
-        {
-            _ = _writer.Exec("PRAGMA wal_checkpoint(TRUNCATE);");
-        }
     }
 
     private static bool IsGroupable(LaneRequest request) => request switch

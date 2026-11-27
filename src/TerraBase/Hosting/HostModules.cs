@@ -30,7 +30,7 @@ internal static class HostModules
                 workerId,
                 deltaColumns)
             {
-                ReaderCount = Math.Clamp(options.StorageThreads, 1, 64),
+                ReaderCount = Math.Clamp(options.StorageThreads, 2, 64),
                 BookmarkWaitTimeout = options.QueryBudget,
                 StatementTimeout = options.QueryBudget,
             };

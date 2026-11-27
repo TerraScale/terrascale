@@ -6,7 +6,7 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-public sealed class StrongParticipant(ClusterOptions options, ClusterTopology topology, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, AntiEntropyService antiEntropy, QuicRpcClient client, HlcClock clock, ILogger<StrongParticipant> logger)
+public sealed class StrongParticipant(ClusterOptions options, ClusterTopology topology, ClusterDatabases databases, StrongLockTable locks, StrongTransactionRegistry registry, DeltaReplicator replicator, AntiEntropyService antiEntropy, QuicRpcClient client, HlcClock clock, ILogger<StrongParticipant> logger)
 {
     private const int MaxWoundRounds = 4;
 
@@ -23,6 +23,11 @@ public sealed class StrongParticipant(ClusterOptions options, ClusterTopology to
         ArgumentNullException.ThrowIfNull(payload);
         ArgumentNullException.ThrowIfNull(originBookmark);
         var isRemoteCoordinator = !string.Equals(coordinatorNodeId, options.NodeId, StringComparison.Ordinal);
+        if (!session.CurrentBookmark.Dominates(originBookmark))
+        {
+            await replicator.FlushInboundAsync(payload.DatabaseId, cancellationToken);
+        }
+
         if (!session.CurrentBookmark.Dominates(originBookmark))
         {
             var behind = isRemoteCoordinator

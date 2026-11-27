@@ -837,7 +837,7 @@ public static class ReplicationBenchmarks
                 var raft = new InRegionRaftRouter(options, topology, client, replicator, NullLoggerFactory.Instance);
                 var finalizer = new CommitFinalizer(raft, replicator, databases, emptyChangefeed, locks, NullLogger<CommitFinalizer>.Instance);
                 var antiEntropy = new AntiEntropyService(options, topology, databases, noArchive, replicator, client, health, TimeProvider.System, NullLogger<AntiEntropyService>.Instance);
-                var participant = new StrongParticipant(options, topology, databases, locks, registry, antiEntropy, client, engine.Clock, NullLogger<StrongParticipant>.Instance);
+                var participant = new StrongParticipant(options, topology, databases, locks, registry, replicator, antiEntropy, client, engine.Clock, NullLogger<StrongParticipant>.Instance);
                 var votes = new StrongVoteCollector(options, topology, health, participant, client, TimeProvider.System);
                 var recovery = new StrongCommitRecovery(TimeProvider.System, NullLogger<StrongCommitRecovery>.Instance);
                 var strong = new StrongCoordinator(topology, databases, votes, registry, finalizer, antiEntropy, recovery, engine.Clock, TimeProvider.System, NullLogger<StrongCoordinator>.Instance);

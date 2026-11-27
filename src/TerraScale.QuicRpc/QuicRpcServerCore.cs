@@ -623,6 +623,7 @@ internal sealed class QuicRpcServerCore(
 
                 if (Volatile.Read(ref _draining) != 0)
                 {
+                    stream.Abort(QuicAbortDirection.Both, QuicProtocol.PeerClosedErrorCode);
                     return;
                 }
 
@@ -641,8 +642,15 @@ internal sealed class QuicRpcServerCore(
                     continue;
                 }
 
-                if (nextEnded || Volatile.Read(ref _draining) != 0 || nextFault is DeadlineExceeded or TransportShutdown)
+                if (nextEnded)
                 {
+                    stream.CompleteWrites();
+                    return;
+                }
+
+                if (Volatile.Read(ref _draining) != 0 || nextFault is DeadlineExceeded or TransportShutdown)
+                {
+                    stream.Abort(QuicAbortDirection.Both, QuicProtocol.PeerClosedErrorCode);
                     return;
                 }
 

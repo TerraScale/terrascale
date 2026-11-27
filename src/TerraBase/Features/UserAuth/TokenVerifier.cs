@@ -79,6 +79,9 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         return TryGetCachedToken(TokenDigest.HashUtf8(token), out caller);
     }
 
+    public Task WarmPlatformAsync(CancellationToken cancellationToken) =>
+        _platform is { } entry ? CurrentConfigurationAsync(entry, cancellationToken) : Task.CompletedTask;
+
     public ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
     {
         if (_platform is null || _platformIssuer is not { } platformIssuer)
