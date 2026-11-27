@@ -324,10 +324,27 @@ public static class TableRowMutations
         {
             JsonValueKind.String => value.GetString() is { } text && !text.Contains('\0', StringComparison.Ordinal)
                 ? "'" + text.Replace("'", "''", StringComparison.Ordinal) + "'" : null,
-            JsonValueKind.Number => CanonicalNumber(value) is { } number ? number.Sql : null,
+            JsonValueKind.Number => LiteralNumber(value),
             JsonValueKind.Null => allowNull ? "NULL" : null,
             JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Undefined => null,
             _ => throw new UnreachableException(),
         };
+    }
+
+    private static string? LiteralNumber(JsonElement value)
+    {
+        if (value.TryGetInt64(out var integer))
+        {
+            return integer.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (!value.TryGetDouble(out var real) || !double.IsFinite(real))
+        {
+            return null;
+        }
+
+        var formatted = (real == 0 ? 0d : real).ToString("R", CultureInfo.InvariantCulture);
+        return formatted.Contains('.', StringComparison.Ordinal) || formatted.Contains('E', StringComparison.OrdinalIgnoreCase)
+            ? formatted : formatted + ".0";
     }
 }
