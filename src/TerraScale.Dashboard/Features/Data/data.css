@@ -72,6 +72,7 @@
   bottom: auto;
   left: auto;
   right: 0;
+  width: max-content;
   max-width: 12rem;
   transform: none;
   white-space: normal;
@@ -558,8 +559,11 @@ ul.ts-studio-rail-columns {
 #table-rows td[data-dirty] {
   background: var(--ts-accent-soft);
   color: var(--ts-ink);
-  font-style: normal;
   box-shadow: inset 0 0 0 1px var(--ts-accent);
+}
+
+#table-rows td[data-dirty]:not([data-kind="null"]) {
+  font-style: normal;
 }
 
 #table-rows td[data-editing] {

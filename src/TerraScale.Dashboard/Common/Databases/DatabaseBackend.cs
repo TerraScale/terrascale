@@ -286,9 +286,17 @@ namespace TerraScale.Dashboard.Common.Databases
             {
                 return await RegionsAsync(cancellationToken);
             }
-            catch (Exception error) when (ExternalFailure(error, cancellationToken))
+            catch (HttpRequestException error)
             {
-                return new DatabaseBackendFailure(DatabaseResults.Status(error), DatabaseResults.Message(error));
+                return BackendFailure(error);
+            }
+            catch (JsonException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+            {
+                return BackendFailure(error);
             }
         }
 
@@ -298,9 +306,17 @@ namespace TerraScale.Dashboard.Common.Databases
             {
                 return await SqlTablesAsync(scope, home, databaseId, cancellationToken);
             }
-            catch (Exception error) when (ExternalFailure(error, cancellationToken))
+            catch (HttpRequestException error)
             {
-                return new DatabaseBackendFailure(DatabaseResults.Status(error), DatabaseResults.Message(error));
+                return BackendFailure(error);
+            }
+            catch (JsonException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+            {
+                return BackendFailure(error);
             }
         }
 
@@ -312,16 +328,23 @@ namespace TerraScale.Dashboard.Common.Databases
                 var results = await SqlBatchAsync(scope, home, databaseId, [.. statements.Select(statement => new SqlExecuteStatement(statement))], write, cancellationToken);
                 return (IReadOnlyList<DatabaseSqlResult>)[.. results.Select(result => new DatabaseSqlResult(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid))];
             }
-            catch (Exception error) when (ExternalFailure(error, cancellationToken))
+            catch (HttpRequestException error)
             {
-                return new DatabaseBackendFailure(DatabaseResults.Status(error), DatabaseResults.Message(error));
+                return BackendFailure(error);
+            }
+            catch (JsonException error)
+            {
+                return BackendFailure(error);
+            }
+            catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+            {
+                return BackendFailure(error);
             }
         }
 
-        private static bool ExternalFailure(Exception error, CancellationToken cancellationToken)
+        private static DatabaseBackendFailure BackendFailure(Exception error)
         {
-            return error is HttpRequestException or TerraBaseException or DatabaseProviderException or TerraScale.Dashboard.Platform.TsAuth.TsAuthException
-                || error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
+            return new DatabaseBackendFailure(DatabaseResults.Status(error), DatabaseResults.Message(error));
         }
 
         private async Task<IReadOnlyList<SqlExecuteResult>> SqlBatchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId,

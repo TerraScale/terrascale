@@ -48,7 +48,7 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("The change is too large. Send at most " + MaxEdits + " edits at a time.");
         }
 
-        using var document = Parse(payload);
+        using var document = FormRequests.TryParseJson(payload, Options);
         if (document is not { RootElement.ValueKind: JsonValueKind.Object })
         {
             return new TableRowPayloadInvalid("The change payload must be a JSON object.");
@@ -84,21 +84,9 @@ public static class TableRowMutations
     private static TableRowMutated Summarize(TableRowBatch batch, IReadOnlyList<DatabaseSqlResult> results)
     {
         var total = results.Aggregate(0L, (sum, item) => checked(sum + item.RowsAffected));
-        var matched = results.Count(item => item.RowsAffected > 0);
+        var matched = results.Count(item => item.RowsAffected == 1);
         var lastInsert = results.Count == 1 ? results[0].LastInsertRowId : null;
         return new TableRowMutated(new DatabaseSqlResult([], [], total, lastInsert), batch.DisplaySql, total, batch.ExpectedRows, matched);
-    }
-
-    private static JsonDocument? Parse(string payload)
-    {
-        try
-        {
-            return JsonDocument.Parse(payload, Options);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 
     private static TableRowPlan Update(DatabaseSqlTable table, JsonElement root)
@@ -109,6 +97,7 @@ public static class TableRowMutations
         }
 
         var rows = new OrderedDictionary<string, OrderedDictionary<string, string>>(StringComparer.Ordinal);
+        var editsKey = false;
         foreach (var edit in edits.EnumerateArray())
         {
             if (edit.ValueKind != JsonValueKind.Object || !edit.TryGetProperty("keys", out var keys) ||
@@ -128,6 +117,11 @@ public static class TableRowMutations
                 return new TableRowColumnUnknown(table.Name, name);
             }
 
+            if (column.PrimaryKey > 0)
+            {
+                editsKey = true;
+            }
+
             if (Literal(value, true) is not { } literal)
             {
                 return new TableRowPayloadInvalid("The value for " + column.Name + " must be text, a number or null.");
@@ -140,6 +134,11 @@ public static class TableRowMutations
             }
 
             sets[column.Name] = literal;
+        }
+
+        if (editsKey && rows.Count > 1)
+        {
+            return new TableRowPayloadInvalid("Edit primary key values one row at a time.");
         }
 
         var target = DatabaseTables.Identifier(table.Name);

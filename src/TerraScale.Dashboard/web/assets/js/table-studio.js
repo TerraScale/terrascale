@@ -333,10 +333,12 @@ const discard = () => {
   flush();
 };
 
-const parseResponse = text => JSON.parse(text, (_, value, context) => typeof value === 'number' ? { number: context?.source ?? String(value) } : value);
+const parseResponse = text => JSON.parse(text);
 
-const isNumber = value => typeof value === 'object' && value !== null && typeof value.number === 'string';
-const numberValue = (value, fallback) => isNumber(value) ? Number(value.number) : typeof value === 'number' ? value : fallback;
+const numberValue = (value, fallback) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+const rawIsText = raw => typeof raw === 'string' && raw.startsWith('"');
+const rawIsNumber = raw => typeof raw === 'string' && numeric.test(raw);
+const rawIsEditableKey = raw => rawIsText(raw) || rawIsNumber(raw);
 
 const send = async body => {
   try {
@@ -410,27 +412,27 @@ const updateCount = (rows, count, shown) => {
   rail.replaceChildren(document.createTextNode(compactCount(count)), unit);
 };
 
-const cellFor = (value, number, focusable) => {
+const cellFor = (raw, number, focusable) => {
   const td = document.createElement('td');
   if (number) td.className = 'ts-num';
   if (focusable) td.tabIndex = -1;
-  if (value === null) {
+  if (raw === 'null') {
     td.textContent = 'NULL';
     td.dataset.kind = 'null';
-  } else if (isNumber(value)) {
-    td.textContent = value.number;
+  } else if (rawIsNumber(raw)) {
+    td.textContent = raw;
     td.dataset.kind = 'number';
-  } else if (typeof value === 'string') {
-    td.textContent = value;
+  } else if (rawIsText(raw)) {
+    td.textContent = parsed(raw, raw);
     td.dataset.kind = 'string';
-  } else if (Array.isArray(value)) {
-    td.textContent = JSON.stringify(value);
+  } else if (typeof raw === 'string' && raw.startsWith('[')) {
+    td.textContent = raw;
     td.dataset.kind = 'array';
-  } else if (typeof value === 'object') {
-    td.textContent = JSON.stringify(value);
+  } else if (typeof raw === 'string' && raw.startsWith('{')) {
+    td.textContent = raw;
     td.dataset.kind = 'object';
   } else {
-    td.textContent = JSON.stringify(value);
+    td.textContent = String(raw ?? '');
     td.dataset.kind = 'string';
   }
   return td;
@@ -475,7 +477,7 @@ const renderRows = result => {
   const resultColumns = (result.columns ?? []).map(column => typeof column === 'string' ? { name: column, decltype: '' } : { name: column?.name ?? '', decltype: column?.decltype ?? '' });
   const types = resultColumns.map(column => column.decltype || (schema(rows).find(item => item.name === column.name)?.decltype ?? ''));
   const numbers = resultColumns.map((_, index) => numericType(types[index])
-    || result.rows.every(row => row[index] === null || isNumber(row[index])) && result.rows.some(row => isNumber(row[index])));
+    || result.rows.every(row => row[index] === 'null' || rawIsNumber(row[index])) && result.rows.some(row => rawIsNumber(row[index])));
   const keys = primaryKey(rows);
   const keyIndexes = keys.map(key => resultColumns.findIndex(column => column.name === key));
   const canEdit = rows.dataset.editable === '1' && keys.length > 0 && keyIndexes.every(index => index >= 0);
@@ -503,7 +505,7 @@ const renderRows = result => {
   const body = table.createTBody();
   for (const row of result.rows) {
     const tr = body.insertRow();
-    const canEditRow = canEdit && keyIndexes.every(index => typeof row[index] === 'string' || isNumber(row[index]));
+    const canEditRow = canEdit && keyIndexes.every(index => rawIsEditableKey(row[index]));
     tr.dataset.rowEditable = canEditRow ? '1' : '0';
     row.forEach((value, index) => tr.append(cellFor(value, numbers[index], canEditRow)));
     if (canEdit) tr.append(actionCell('td', canEditRow ? deleteButton : null));
@@ -549,8 +551,8 @@ const commit = async () => {
   renderRows(result);
   if (affected === 0) {
     setStatus('No rows matched — the row may have changed or been deleted. Reloaded table.');
-  } else if (expected > 0 && matched < expected) {
-    setStatus(`Updated ${plural(matched, 'row')} of ${expected} — some rows may have changed or been deleted. Reloaded table.`);
+  } else if (expected > 0 && (matched !== expected || affected !== expected)) {
+    setStatus(`Affected ${plural(affected, 'row')} across ${expected} expected — the table schema or rows may have changed. Reloaded table.`);
   } else {
     setStatus(`Committed ${plural(total, 'change')}.`);
   }
@@ -589,6 +591,8 @@ const openInsert = () => {
     input.id = id;
     input.dataset.insertColumn = column.name;
     input.dataset.insertType = typeof column.decltype === 'string' ? column.decltype : '';
+    const autoKey = column.primaryKey > 0 && numericType(input.dataset.insertType);
+    if (column.primaryKey > 0 && !autoKey && column.defaultValue == null) input.dataset.insertIncludeEmpty = '1';
     input.placeholder = typeof column.defaultValue === 'string' ? column.defaultValue : input.dataset.insertType;
     input.required = column.notNull === true && column.defaultValue == null && !(column.primaryKey > 0);
     if (numericType(input.dataset.insertType)) input.inputMode = 'decimal';
@@ -608,7 +612,7 @@ const insert = async form => {
     return;
   }
   const values = [...form.querySelectorAll('[data-insert-column]')]
-    .filter(input => input.value !== '')
+    .filter(input => input.value !== '' || input.dataset.insertIncludeEmpty === '1')
     .map(input => `${JSON.stringify(input.dataset.insertColumn)}:${typedJson(input.value, input.dataset.insertType)}`);
   saving = true;
   submit.disabled = true;
@@ -618,6 +622,7 @@ const insert = async form => {
   submit.disabled = false;
   renderCommit();
   if (result.error) {
+    pending = null;
     alert.querySelector('p').textContent = result.error;
     alert.hidden = false;
     return;
@@ -665,6 +670,7 @@ const remove = async form => {
   submit.disabled = false;
   renderCommit();
   if (result.error) {
+    pending = null;
     alert.querySelector('p').textContent = result.error;
     alert.hidden = false;
     return;
@@ -675,8 +681,8 @@ const remove = async form => {
   suppressLiveUntil = Date.now() + 800;
   renderRows(result);
   const affected = numberValue(result.rowsAffected, 0);
-  setStatus(affected === 0 ? 'Row was already deleted or changed. Reloaded table.' : 'Deleted 1 row.');
-  const remaining = panel()?.querySelectorAll('tbody tr') ?? [];
+  setStatus(affected === 0 ? 'Row was already deleted or changed. Reloaded table.' : affected === 1 ? 'Deleted 1 row.' : `Deleted ${plural(affected, 'row')}. Reloaded table.`);
+  const remaining = panel()?.querySelectorAll('tbody tr:not([hidden])') ?? [];
   focusCell(remaining[Math.min(target.index, remaining.length - 1)]?.querySelector('td[tabindex]') ?? null);
 };
 
@@ -746,11 +752,11 @@ window.addEventListener('datastar-fetch', event => {
   const { type, argsRaw } = event.detail ?? {};
   if (type !== 'datastar-patch-elements') return;
   if (!String(argsRaw?.elements ?? '').includes('id="tables-browser"')) return;
-  if (busy()) {
+  if (Date.now() < suppressLiveUntil) {
+    event.stopImmediatePropagation();
+  } else if (busy()) {
     event.stopImmediatePropagation();
     pending = event.detail;
-  } else if (Date.now() < suppressLiveUntil) {
-    event.stopImmediatePropagation();
   }
 }, true);
 

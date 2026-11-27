@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Databases
@@ -44,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Databases
 
         public static Task<DatabaseSqlResult> PreviewAsync(IDatabaseBackend backend, DatabaseScope scope, DatabaseRegion home, string databaseId, string table, CancellationToken cancellationToken)
         {
-            return backend.SqlAsync(scope, home, databaseId, "SELECT * FROM " + Identifier(table) + " LIMIT " + PreviewRows.ToString(System.Globalization.CultureInfo.InvariantCulture), false, cancellationToken);
+            return backend.SqlAsync(scope, home, databaseId, "SELECT * FROM " + Identifier(table) + " LIMIT " + PreviewRows.ToString(CultureInfo.InvariantCulture), false, cancellationToken);
         }
 
         public static string CompactType(string? decltype)

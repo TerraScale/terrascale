@@ -21,6 +21,7 @@ function mount(host) {
     const pages = host.querySelector('[data-sql-pages]');
     const buttons = [...pages.querySelectorAll('button')];
     const last = Math.max(0, Math.ceil(rows.length / pageSize) - 1);
+    const numericColumns = [...host.querySelectorAll('thead th')].map(th => th.classList.contains('ts-num'));
     let page = 0;
     const show = target => {
       page = Math.max(0, Math.min(last, target));
@@ -28,13 +29,13 @@ function mount(host) {
       const fragment = document.createDocumentFragment();
       for (const row of rows.slice(start, start + pageSize)) {
         const tr = document.createElement('tr');
-        for (const raw of row) {
+        row.forEach((raw, index) => {
           const td = document.createElement('td');
           td.textContent = raw === 'null' ? 'NULL' : text(raw);
           td.dataset.kind = raw === 'null' ? 'null' : isText(raw) ? 'string' : raw.startsWith('{') ? 'object' : raw.startsWith('[') ? 'array' : 'number';
-          if (td.dataset.kind === 'number') td.className = 'ts-num';
+          if (numericColumns[index] || td.dataset.kind === 'number') td.className = 'ts-num';
           tr.append(td);
-        }
+        });
         fragment.append(tr);
       }
       host.querySelector('tbody')?.replaceChildren(fragment);
