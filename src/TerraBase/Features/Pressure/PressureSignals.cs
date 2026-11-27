@@ -44,13 +44,12 @@ internal sealed class PressureSignals
 
     public void ConnectionClosed() => Interlocked.Decrement(ref _connections);
 
-    public void EnterRequest()
+    public IDisposable Request()
     {
         Interlocked.Increment(ref _requests);
         Interlocked.Increment(ref _inFlight);
+        return new Lease(this);
     }
-
-    public void ExitRequest() => Interlocked.Decrement(ref _inFlight);
 
     public PressureBody Sample()
     {
@@ -76,6 +75,19 @@ internal sealed class PressureSignals
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return (0, 0);
+        }
+    }
+
+    private sealed class Lease(PressureSignals signals) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                Interlocked.Decrement(ref signals._inFlight);
+            }
         }
     }
 }

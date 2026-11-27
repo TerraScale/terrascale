@@ -220,20 +220,20 @@ test('R8 a TTL branch keeps its identity through catalog sync and a rename in ev
         const facts = ({ region, homeRegion, replicaRegions, placementVersion, ttlSeconds, ...identity }: Record<string, unknown>) => identity;
         expect(extended).toMatchObject({ id, branchedFrom: source.id, createdAt: original.createdAt, previousName: original.name, regions: ['fra', 'gru'] });
         await expect.poll(async () => facts(await json<Record<string, unknown>>(await cells.get(`${fra}${database(id, projectId)}`))),
-          { message: 'fra receives the name and expiry changed through gru', timeout: 45_000, intervals: [100, 250, 500] })
+          { message: 'fra receives the name and expiry changed through gru', timeout: 45_000, intervals: [250, 500, 1000] })
           .toEqual(facts(extended));
 
         const cleared = await json<Record<string, unknown>>(await cells.delete(`${fra}${database(id, projectId)}/ttl`));
         expect(cleared.expiresAt).toBeNull();
         await expect.poll(async () => facts(await json<Record<string, unknown>>(await cells.get(`${gru}${database(id, projectId)}`))),
-          { message: 'gru receives the TTL cleared through fra', timeout: 45_000, intervals: [100, 250, 500] })
+          { message: 'gru receives the TTL cleared through fra', timeout: 45_000, intervals: [250, 500, 1000] })
           .toEqual(facts(cleared));
 
         const changedName = name('renamed-in-fra');
         const renamedInFra = await json<Record<string, unknown>>(await cells.patch(`${fra}${database(id, projectId)}`, { data: { name: changedName } }));
         expect(facts(renamedInFra)).toEqual({ ...facts(cleared), name: changedName, previousName: cleared.name });
         await expect.poll(async () => facts(await json<Record<string, unknown>>(await cells.get(`${gru}${database(id, projectId)}`))),
-          { message: 'gru receives the name changed through fra', timeout: 45_000, intervals: [100, 250, 500] })
+          { message: 'gru receives the name changed through fra', timeout: 45_000, intervals: [250, 500, 1000] })
           .toEqual(facts(renamedInFra));
         console.log('R8 both regions agree on the branch identity after TTL and name changes made through either region');
       } finally {
@@ -319,7 +319,7 @@ test('R23 concurrent writes in gru and fra converge on identical rows in both re
       const [gruRows, fraRows] = await Promise.all([gru, fra].map(async origin =>
         (await answer(cells, origin, created.id, ['SELECT id, value FROM items ORDER BY id'])).results[0].rows));
       return JSON.stringify(gruRows) === JSON.stringify(fraRows) ? gruRows : { gru: gruRows, fra: fraRows };
-    }, { message: 'gru and fra converge on the same rows', timeout: 45_000, intervals: [100, 250, 500] })
+    }, { message: 'gru and fra converge on the same rows', timeout: 45_000, intervals: [250, 500, 1000] })
       .toEqual([[0, expect.stringMatching(/^(gru|fra)$/)], [1, 'gru'], [2, 'fra']]);
     const merged = (await answer(cells, gru, created.id, ['SELECT value FROM items WHERE id = 0'], { bookmark: atFra.bookmark })).results[0].rows;
     console.log(`R23 concurrent same-row updates resolved to ${JSON.stringify(merged)} in both regions`);

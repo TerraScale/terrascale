@@ -26,7 +26,6 @@ internal sealed class PgWire(IDuplexPipe transport, TimeProvider timeProvider) :
         }
 
         _tls = tls;
-        Reader.Dispose();
         Writer.Dispose();
         Reader = new PgFrameReader(PipeReader.Create(tls, new StreamPipeReaderOptions(leaveOpen: true)), timeProvider);
         Writer = new PgBackendWriter(PipeWriter.Create(tls, new StreamPipeWriterOptions(leaveOpen: true)), timeProvider);
@@ -35,7 +34,6 @@ internal sealed class PgWire(IDuplexPipe transport, TimeProvider timeProvider) :
 
     public async ValueTask DisposeAsync()
     {
-        Reader.Dispose();
         Writer.Dispose();
         if (_tls is { } tls)
         {

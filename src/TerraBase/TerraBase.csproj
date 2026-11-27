@@ -48,8 +48,4 @@
   <ItemGroup>
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="TerraBase.Benchmarks" />
-  </ItemGroup>
 </Project>

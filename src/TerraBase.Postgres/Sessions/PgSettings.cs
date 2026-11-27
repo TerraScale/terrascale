@@ -69,9 +69,6 @@ internal sealed class PgSettings
 
     private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _sessionValues = new(StringComparer.OrdinalIgnoreCase);
-    private ConsistencyMode _defaultMode;
-    private SqlAccess _defaultAccess;
-    private TimeSpan _statementTimeout;
 
     public PgSettings(string user, string applicationName)
     {
@@ -82,18 +79,23 @@ internal sealed class PgSettings
 
         _values["application_name"] = applicationName;
         _values["session_authorization"] = user;
-        RefreshDerived();
     }
 
     public IReadOnlyDictionary<string, string> Values => _values;
 
     public IEnumerable<KeyValuePair<string, string>> Reported => _values.Where(static pair => ReportedNames.Contains(pair.Key) && pair.Key != Bookmark);
 
-    public ConsistencyMode DefaultMode => _defaultMode;
+    public ConsistencyMode DefaultMode =>
+        _values["default_transaction_isolation"].Equals("serializable", StringComparison.OrdinalIgnoreCase)
+        || _values[Consistency].Equals("strong", StringComparison.OrdinalIgnoreCase)
+            ? ConsistencyMode.Strong
+            : ConsistencyMode.Fast;
 
-    public SqlAccess DefaultAccess => _defaultAccess;
+    public SqlAccess DefaultAccess => _values["default_transaction_read_only"] is "on" or "true" ? SqlAccess.Read : SqlAccess.Write;
 
-    public TimeSpan StatementTimeout => _statementTimeout;
+    public TimeSpan StatementTimeout => ParseDuration(_values["statement_timeout"]) is { } timeout && timeout > TimeSpan.Zero && timeout < PostgresLimits.StatementTimeout
+        ? timeout
+        : PostgresLimits.StatementTimeout;
 
     public bool TryGet(string name, out string value)
     {
@@ -141,17 +143,11 @@ internal sealed class PgSettings
         }
 
         _values[canonical] = applied;
-        RefreshDerived();
         return new PgSettingChange(canonical, applied, ReportedNames.Contains(canonical));
     }
 
     public IReadOnlyList<PgSettingChange> EndTransaction()
     {
-        if (_sessionValues.Count == 0)
-        {
-            return [];
-        }
-
         List<PgSettingChange> changes = [];
         foreach (var (name, value) in _sessionValues)
         {
@@ -160,7 +156,6 @@ internal sealed class PgSettings
         }
 
         _sessionValues.Clear();
-        RefreshDerived();
         return changes;
     }
 
@@ -179,23 +174,10 @@ internal sealed class PgSettings
         }
 
         _sessionValues.Clear();
-        RefreshDerived();
         return changes;
     }
 
     public void SetInternal(string name, string value) => _values[name] = value;
-
-    private void RefreshDerived()
-    {
-        _defaultMode = _values["default_transaction_isolation"].Equals("serializable", StringComparison.OrdinalIgnoreCase)
-            || _values[Consistency].Equals("strong", StringComparison.OrdinalIgnoreCase)
-                ? ConsistencyMode.Strong
-                : ConsistencyMode.Fast;
-        _defaultAccess = _values["default_transaction_read_only"] is "on" or "true" ? SqlAccess.Read : SqlAccess.Write;
-        _statementTimeout = ParseDuration(_values["statement_timeout"]) is { } timeout && timeout > TimeSpan.Zero && timeout < PostgresLimits.StatementTimeout
-            ? timeout
-            : PostgresLimits.StatementTimeout;
-    }
 
     private static PgError? Validate(string name, string value) => name switch
     {

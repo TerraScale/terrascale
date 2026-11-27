@@ -66,14 +66,19 @@ public sealed class QuicRpcHost : IAsyncDisposable
         where TRes : IBinaryMessage<TRes>
     {
         ArgumentNullException.ThrowIfNull(handler);
-        UnaryDispatch dispatch = (context, payload, cancellationToken) =>
+        UnaryDispatch dispatch = async (context, payload, cancellationToken) =>
         {
             if (!BinaryMessage.TryDecode<TReq>(payload.Span, out var request))
             {
-                return ValueTask.FromResult<UnaryDispatchOutcome>(Malformed(context));
+                return Malformed(context);
             }
 
-            return AwaitUnaryAsync(handler(context, request, cancellationToken));
+            var outcome = await handler(context, request, cancellationToken);
+            return outcome switch
+            {
+                TRes response => FrameBuilder.Encode(response),
+                QuicRemoteError error => error,
+            };
         };
         Register(messageTypeId, dispatch);
         return this;
@@ -92,14 +97,14 @@ public sealed class QuicRpcHost : IAsyncDisposable
         where TMsg : IBinaryMessage<TMsg>
     {
         ArgumentNullException.ThrowIfNull(handler);
-        PushDispatch dispatch = (context, payload, cancellationToken) =>
+        PushDispatch dispatch = async (context, payload, cancellationToken) =>
         {
             if (!BinaryMessage.TryDecode<TMsg>(payload.Span, out var message))
             {
-                return ValueTask.FromResult<PushDispatchOutcome>(Malformed(context));
+                return Malformed(context);
             }
 
-            return handler(context, message, cancellationToken);
+            return await handler(context, message, cancellationToken);
         };
         lock (_gate)
         {
@@ -156,18 +161,6 @@ public sealed class QuicRpcHost : IAsyncDisposable
         {
             await core.DisposeAsync();
         }
-    }
-
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<UnaryDispatchOutcome>))]
-    private static async ValueTask<UnaryDispatchOutcome> AwaitUnaryAsync<TRes>(ValueTask<QuicHandlerOutcome<TRes>> pending)
-        where TRes : IBinaryMessage<TRes>
-    {
-        var outcome = await pending;
-        return outcome switch
-        {
-            TRes response => FrameBuilder.Encode(response),
-            QuicRemoteError error => error,
-        };
     }
 
     private static QuicRemoteError Malformed(QuicCallContext context) =>

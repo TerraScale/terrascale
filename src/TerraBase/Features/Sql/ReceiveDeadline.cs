@@ -10,104 +10,41 @@ internal sealed class ReceiveDeadline : IDisposable
     private readonly TimeProvider _time;
     private readonly Func<bool, Task> _expire;
     private readonly CancellationTokenSource _stop = new();
-    private readonly CancellationTokenSource? _linked;
     private readonly ITimer _timer;
     private long _armedAt;
     private TimeSpan _budget;
     private bool _partial;
-    private bool _armed;
-    private bool _expired;
+    private bool _finished;
     private bool _disposed;
 
-    public ReceiveDeadline(TimeProvider time, Func<bool, Task> expire, CancellationToken outerToken = default)
+    public ReceiveDeadline(TimeProvider time, TimeSpan idle, Func<bool, Task> expire, (long Started, int Bytes)? progress = null)
     {
         _time = time;
         _expire = expire;
-        if (outerToken.CanBeCanceled)
+        _armedAt = time.GetTimestamp();
+        _budget = idle;
+        if (progress is { } initial)
         {
-            _linked = CancellationTokenSource.CreateLinkedTokenSource(outerToken, _stop.Token);
+            _ = Advance(initial.Started, initial.Bytes);
         }
 
-        _timer = time.CreateTimer(static state => ((ReceiveDeadline?)state)?.Fire(), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _timer = time.CreateTimer(_ => Fire(), null, _finished ? Timeout.InfiniteTimeSpan : Due(), Timeout.InfiniteTimeSpan);
     }
 
-    public CancellationToken Token => _linked?.Token ?? _stop.Token;
+    public CancellationToken Token => _stop.Token;
 
     public Task Expiry { get; private set; } = Task.CompletedTask;
-
-    public void Arm(TimeSpan idle, (long Started, int Bytes)? progress = null)
-    {
-        lock (_gate)
-        {
-            if (_disposed || _expired)
-            {
-                return;
-            }
-
-            _armed = true;
-            _partial = false;
-            _armedAt = _time.GetTimestamp();
-            _budget = idle;
-            Expiry = Task.CompletedTask;
-            if (progress is { } initial && !Advance(initial.Started, initial.Bytes))
-            {
-                _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-                return;
-            }
-
-            _timer.Change(Due(), Timeout.InfiniteTimeSpan);
-        }
-    }
-
-    public void ArmPartial(long started, int bytes)
-    {
-        lock (_gate)
-        {
-            if (_disposed || _expired)
-            {
-                return;
-            }
-
-            var budget = QosPolicy.MessageBudget(bytes);
-            if (_armed && _partial && _armedAt == started)
-            {
-                if (budget > _budget)
-                {
-                    _budget = budget;
-                }
-
-                return;
-            }
-
-            _armed = true;
-            _partial = true;
-            _armedAt = started;
-            _budget = budget;
-            Expiry = Task.CompletedTask;
-            _timer.Change(Due(), Timeout.InfiniteTimeSpan);
-        }
-    }
 
     public void Progress(long started, int bytes)
     {
         lock (_gate)
         {
-            if (!_armed || _disposed || _expired)
+            if (_finished)
             {
                 return;
             }
 
-            var wasPartial = _partial && _armedAt == started;
-            if (!Advance(started, bytes))
-            {
-                _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-                return;
-            }
-
-            if (!wasPartial)
-            {
-                _timer.Change(Due(), Timeout.InfiniteTimeSpan);
-            }
+            _timer.Change(Advance(started, bytes) ? Due() : Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
     }
 
@@ -115,8 +52,7 @@ internal sealed class ReceiveDeadline : IDisposable
     {
         if (_time.GetElapsedTime(_armedAt, started) > _budget)
         {
-            _armed = false;
-            _expired = true;
+            _finished = true;
             Expiry = ExpireAsync(_partial);
             return false;
         }
@@ -137,21 +73,15 @@ internal sealed class ReceiveDeadline : IDisposable
     {
         lock (_gate)
         {
-            if (_expired)
+            if (_finished)
             {
                 return false;
             }
 
-            if (!_armed)
-            {
-                return true;
-            }
-
-            _armed = false;
+            _finished = true;
             _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             if (_partial && _budget - _time.GetElapsedTime(_armedAt) <= TimeSpan.Zero)
             {
-                _expired = true;
                 Expiry = ExpireAsync(true);
                 return false;
             }
@@ -165,18 +95,17 @@ internal sealed class ReceiveDeadline : IDisposable
         lock (_gate)
         {
             _disposed = true;
-            _armed = false;
             _timer.Dispose();
-            _linked?.Dispose();
             _stop.Dispose();
         }
     }
 
     private void Fire()
     {
+        bool partial;
         lock (_gate)
         {
-            if (!_armed || _disposed || _expired)
+            if (_finished)
             {
                 return;
             }
@@ -188,9 +117,9 @@ internal sealed class ReceiveDeadline : IDisposable
                 return;
             }
 
-            _armed = false;
-            _expired = true;
-            Expiry = ExpireAsync(_partial);
+            _finished = true;
+            partial = _partial;
+            Expiry = ExpireAsync(partial);
         }
     }
 

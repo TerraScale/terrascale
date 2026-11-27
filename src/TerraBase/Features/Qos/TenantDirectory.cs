@@ -21,30 +21,14 @@ internal readonly union CallerTenantResolution(Tenant, NoTenant, ForeignProject,
 
 internal sealed class TenantDirectory(CatalogStore catalog)
 {
-    public ValueTask<CallerTenantResolution> ForCallerProjectAsync(Caller caller, Ulid projectId, CancellationToken cancellationToken)
+    public async ValueTask<CallerTenantResolution> ForCallerProjectAsync(Caller caller, Ulid projectId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         if (PinnedElsewhere(caller, projectId))
         {
-            return ValueTask.FromResult<CallerTenantResolution>(ForeignProject.Instance);
+            return ForeignProject.Instance;
         }
 
-        if (catalog.TryGetProject(projectId, out var cachedProject)
-            && catalog.TryGetOrganization(cachedProject.OrganizationId, out var cachedOrganization))
-        {
-            CallerTenantResolution resolved = Owns(caller, cachedProject, cachedOrganization.CreatedBy)
-                ? cachedProject.OrganizationId == PlatformCatalog.OrganizationId
-                    ? NoTenant.Instance
-                    : new Tenant(cachedOrganization.Id, cachedOrganization.Plan)
-                : ForeignProject.Instance;
-            return ValueTask.FromResult(resolved);
-        }
-
-        return ForCallerProjectSlowAsync(caller, projectId, cancellationToken);
-    }
-
-    private async ValueTask<CallerTenantResolution> ForCallerProjectSlowAsync(Caller caller, Ulid projectId, CancellationToken cancellationToken)
-    {
         var project = await catalog.GetProjectAsync(projectId, cancellationToken);
         return project switch
         {
@@ -61,23 +45,13 @@ internal sealed class TenantDirectory(CatalogStore catalog)
         };
     }
 
-    public ValueTask<TenantResolution> ForOrganizationAsync(Ulid organizationId, CancellationToken cancellationToken)
+    public async ValueTask<TenantResolution> ForOrganizationAsync(Ulid organizationId, CancellationToken cancellationToken)
     {
         if (organizationId == PlatformCatalog.OrganizationId)
         {
-            return ValueTask.FromResult<TenantResolution>(NoTenant.Instance);
+            return NoTenant.Instance;
         }
 
-        if (catalog.TryGetOrganization(organizationId, out var cached))
-        {
-            return ValueTask.FromResult<TenantResolution>(new Tenant(cached.Id, cached.Plan));
-        }
-
-        return ForOrganizationSlowAsync(organizationId, cancellationToken);
-    }
-
-    private async ValueTask<TenantResolution> ForOrganizationSlowAsync(Ulid organizationId, CancellationToken cancellationToken)
-    {
         var organization = await catalog.GetOrganizationAsync(organizationId, cancellationToken);
         return organization switch
         {

@@ -24,22 +24,6 @@ internal sealed partial class PostgresConnection
         "tginitdeferred", "inhdetachpending", "extrelocatable", "proretset", "proisstrict", "pg_table_is_visible", "pg_is_in_recovery",
     ]);
 
-    private static readonly string[] SelectTags = BuildTags("SELECT ");
-    private static readonly string[] UpdateTags = BuildTags("UPDATE ");
-    private static readonly string[] DeleteTags = BuildTags("DELETE ");
-    private static readonly string[] InsertTags = BuildTags("INSERT 0 ");
-
-    private static string[] BuildTags(string prefix)
-    {
-        var tags = new string[17];
-        for (var index = 0; index < tags.Length; index++)
-        {
-            tags[index] = prefix + index.ToString(CultureInfo.InvariantCulture);
-        }
-
-        return tags;
-    }
-
     private async ValueTask<PgOutcome> GuardAsync(PgCommand command, IReadOnlyList<SqlValue> parameters, IReadOnlyList<PgColumn>? describedColumns)
     {
         using var scope = session.BeginStatement(closed);
@@ -110,11 +94,6 @@ internal sealed partial class PostgresConnection
 
         var statement = new SqlStatement(command.Rewrite.Sql, command.Rewrite.Bind(parameters), NoNamed);
         var executed = await ExecuteStatementAsync(statement, command.Access, cancellationToken);
-        if (command.Verb is "CREATE" or "ALTER" or "DROP")
-        {
-            session.InvalidateSchemaCache();
-        }
-
         return executed switch
         {
             SqlResultSet set => ToResult(command, set, describedColumns),
@@ -145,7 +124,7 @@ internal sealed partial class PostgresConnection
             var read = await session.Executor.ReadAsync(request, cancellationToken);
             return read switch
             {
-                SqlReadResult result => ObservedRead(result),
+                SqlReadResult result => Observed(result.Observed, result.ResultSets),
                 SqlError error => PgErrors.From(error),
                 StorageBusy busy => PgErrors.From(busy),
                 StorageTimeout timeout => PgErrors.From(timeout),
@@ -155,38 +134,19 @@ internal sealed partial class PostgresConnection
         var written = await session.Executor.WriteAsync(request, cancellationToken);
         return written switch
         {
-            SqlWriteResult write => ObservedWrite(write),
+            SqlWriteResult write => Observed(write.Commit.Bookmark, write.ResultSets),
             SqlError error => PgErrors.From(error),
             SerializationConflict conflict => PgErrors.From(conflict),
-            SchemaMismatch mismatch => ObservedSchemaMismatch(mismatch),
+            SchemaMismatch mismatch => PgErrors.From(mismatch),
             ClusterUnavailable unavailable => PgErrors.From(unavailable),
             ClusterTimeout timeout => PgErrors.From(timeout),
             StorageBusy busy => PgErrors.From(busy),
         };
     }
 
-    private PgStatementResult ObservedRead(SqlReadResult result)
-    {
-        session.ObserveCurrentSchemaEpoch();
-        return Observed(result.Observed, result.ResultSets);
-    }
-
-    private PgStatementResult ObservedWrite(SqlWriteResult write)
-    {
-        session.ObserveSchemaEpoch(write.Commit.SchemaEpoch);
-        return Observed(write.Commit.Bookmark, write.ResultSets);
-    }
-
-    private PgStatementResult ObservedSchemaMismatch(SchemaMismatch mismatch)
-    {
-        session.ObserveSchemaEpoch(mismatch.ActualEpoch);
-        return PgErrors.From(mismatch);
-    }
-
-    private async ValueTask<PgStatementResult> ExecuteInTransactionAsync(ISqlTransaction active, SqlStatement statement, CancellationToken cancellationToken)
+    private static async ValueTask<PgStatementResult> ExecuteInTransactionAsync(ISqlTransaction active, SqlStatement statement, CancellationToken cancellationToken)
     {
         var executed = await active.ExecuteAsync(statement, cancellationToken);
-        session.ObserveCurrentSchemaEpoch();
         return executed switch
         {
             SqlResultSet set => set,
@@ -227,13 +187,14 @@ internal sealed partial class PostgresConnection
             return tag;
         }
 
+        var affected = set.RowsAffected.ToString(CultureInfo.InvariantCulture);
         return command.Verb switch
         {
-            "INSERT" or "REPLACE" => (ulong)set.RowsAffected < (ulong)InsertTags.Length ? InsertTags[set.RowsAffected] : $"INSERT 0 {set.RowsAffected.ToString(CultureInfo.InvariantCulture)}",
-            "UPDATE" => (ulong)set.RowsAffected < (ulong)UpdateTags.Length ? UpdateTags[set.RowsAffected] : $"UPDATE {set.RowsAffected.ToString(CultureInfo.InvariantCulture)}",
-            "DELETE" => (ulong)set.RowsAffected < (ulong)DeleteTags.Length ? DeleteTags[set.RowsAffected] : $"DELETE {set.RowsAffected.ToString(CultureInfo.InvariantCulture)}",
-            "MERGE" => $"MERGE {set.RowsAffected.ToString(CultureInfo.InvariantCulture)}",
-            "SELECT" or "VALUES" or "WITH" or "PRAGMA" => (uint)set.Rows.Count < (uint)SelectTags.Length ? SelectTags[set.Rows.Count] : $"SELECT {set.Rows.Count.ToString(CultureInfo.InvariantCulture)}",
+            "INSERT" or "REPLACE" => $"INSERT 0 {affected}",
+            "UPDATE" => $"UPDATE {affected}",
+            "DELETE" => $"DELETE {affected}",
+            "MERGE" => $"MERGE {affected}",
+            "SELECT" or "VALUES" or "WITH" or "PRAGMA" => $"SELECT {set.Rows.Count.ToString(CultureInfo.InvariantCulture)}",
             var verb => verb,
         };
     }

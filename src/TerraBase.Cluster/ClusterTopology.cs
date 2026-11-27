@@ -8,41 +8,26 @@ namespace TerraBase.Cluster;
 
 public sealed record StrongParticipantTarget(string Region, string NodeId, bool IsLocal);
 
-public sealed class ClusterTopology
+public sealed class ClusterTopology(ClusterOptions options)
 {
     private static readonly SearchValues<char> Hex = SearchValues.Create("0123456789abcdefABCDEF");
 
-    private readonly ClusterOptions _options;
-    private readonly FrozenDictionary<string, PeerNodeInfo> _peers;
-    private readonly FrozenDictionary<(string Node, string Region), string> _origins;
-    private readonly OriginEntry[] _originEntries;
-    private readonly FrozenDictionary<string, RegionCandidates> _candidatesByRegion;
+    private readonly FrozenDictionary<string, PeerNodeInfo> _peers = options.Peers.ToFrozenDictionary(static peer => peer.NodeId, StringComparer.Ordinal);
+    private readonly FrozenDictionary<(string Node, string Region), string> _origins = Origins(options);
 
-    public ClusterTopology(ClusterOptions options)
-    {
-        _options = options;
-        _peers = options.Peers.ToFrozenDictionary(static peer => peer.NodeId, StringComparer.Ordinal);
-        _origins = BuildOrigins(options);
-        _originEntries = [.. _origins.Select(static entry => new OriginEntry(entry.Key.Node, entry.Key.Region, entry.Value))];
-        RegionPeers = options.RegionPeers;
-        RemotePeers = options.RemotePeers;
-        Regions = options.Regions;
-        _candidatesByRegion = BuildRegionCandidates(options, Regions);
-    }
+    public string LocalNodeId => options.NodeId;
 
-    public string LocalNodeId => _options.NodeId;
+    public string LocalRegion => options.Region;
 
-    public string LocalRegion => _options.Region;
+    public string StorageOrigin => options.StorageOrigin;
 
-    public string StorageOrigin => _options.StorageOrigin;
+    public IReadOnlyList<PeerNodeInfo> Peers => options.Peers;
 
-    public IReadOnlyList<PeerNodeInfo> Peers => _options.Peers;
+    public IReadOnlyList<PeerNodeInfo> RegionPeers { get; } = options.RegionPeers;
 
-    public IReadOnlyList<PeerNodeInfo> RegionPeers { get; }
+    public IReadOnlyList<PeerNodeInfo> RemotePeers { get; } = options.RemotePeers;
 
-    public IReadOnlyList<PeerNodeInfo> RemotePeers { get; }
-
-    public IReadOnlyList<string> Regions { get; }
+    public IReadOnlyList<string> Regions { get; } = options.Regions;
 
     public int RegionQuorum => (Regions.Count / 2) + 1;
 
@@ -59,132 +44,21 @@ public sealed class ClusterTopology
     internal bool IsRegionPeer(QuicCallContext context) =>
         IsPeer(context) && string.Equals(context.RemoteRegion, LocalRegion, StringComparison.Ordinal);
 
-    internal bool IsPeerOrigin(QuicCallContext context, string origin)
-    {
-        if (!_origins.TryGetValue((context.RemoteNodeId, context.RemoteRegion), out var expected) || !MatchesOrigin(expected, origin))
-        {
-            return false;
-        }
+    internal bool IsPeerOrigin(QuicCallContext context, string origin) =>
+        _origins.TryGetValue((context.RemoteNodeId, context.RemoteRegion), out var expected) && MatchesOrigin(expected, origin)
+        && !_origins.Any(entry => !string.Equals(entry.Key.Node, context.RemoteNodeId, StringComparison.Ordinal) && MatchesOrigin(entry.Value, origin));
 
-        for (var index = 0; index < _originEntries.Length; index++)
-        {
-            var entry = _originEntries[index];
-            if (!string.Equals(entry.Node, context.RemoteNodeId, StringComparison.Ordinal) && MatchesOrigin(entry.BaseOrigin, origin))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    internal bool IsRegionOrigin(string region, string origin)
-    {
-        for (var index = 0; index < _originEntries.Length; index++)
-        {
-            var entry = _originEntries[index];
-            if (string.Equals(region, entry.Region, StringComparison.Ordinal) && MatchesOrigin(entry.BaseOrigin, origin))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    internal bool IsRegionOrigin(string region, string origin) =>
+        _origins.Any(entry => string.Equals(region, entry.Key.Region, StringComparison.Ordinal) && MatchesOrigin(entry.Value, origin));
 
     internal static QuicRemoteError PeerForbidden() => new("forbidden", "the authenticated node is not authorized for this cluster operation");
 
-    public IReadOnlyList<StrongParticipantTarget> StrongParticipants(Ulid databaseId)
-    {
-        var participants = new StrongParticipantTarget[Regions.Count];
-        for (var index = 0; index < Regions.Count; index++)
-        {
-            participants[index] = StrongCandidates(Regions[index], databaseId)[0];
-        }
-
-        return participants;
-    }
-
-    public IReadOnlyList<StrongParticipantTarget> StrongCandidates(string region, Ulid databaseId)
-    {
-        if (!_candidatesByRegion.TryGetValue(region, out var group) || group.Nodes.Length == 0)
-        {
-            return [new StrongParticipantTarget(region, _options.NodeId, true)];
-        }
-
-        if (group.SingleTarget is { } single)
-        {
-            return single;
-        }
-
-        var count = group.Nodes.Length;
-        Span<byte> dbBytes = stackalloc byte[16];
-        _ = databaseId.TryWriteBytes(dbBytes);
-        var ordered = new StrongParticipantTarget[count];
-        var weights = count <= 16 ? stackalloc ulong[count] : new ulong[count];
-        for (var index = 0; index < count; index++)
-        {
-            var node = group.Nodes[index];
-            ordered[index] = node.Target;
-            weights[index] = Weight(dbBytes, node.NodeIdUtf8);
-        }
-
-        for (var index = 1; index < count; index++)
-        {
-            var keyWeight = weights[index];
-            var keyTarget = ordered[index];
-            var position = index - 1;
-            while (position >= 0 && weights[position] < keyWeight)
-            {
-                weights[position + 1] = weights[position];
-                ordered[position + 1] = ordered[position];
-                position--;
-            }
-
-            weights[position + 1] = keyWeight;
-            ordered[position + 1] = keyTarget;
-        }
-
-        return ordered;
-    }
-
-    private static FrozenDictionary<(string Node, string Region), string> BuildOrigins(ClusterOptions options) =>
+    private static FrozenDictionary<(string Node, string Region), string> Origins(ClusterOptions options) =>
         options.Peers.Select(static peer => (Node: peer.NodeId, peer.Region))
             .Append((Node: options.NodeId, options.Region))
             .GroupBy(static member => member.Region, StringComparer.Ordinal)
             .SelectMany(static region => region.Select(member => KeyValuePair.Create(member, region.Count() == 1 ? region.Key : ClusterOptions.OriginFor(member.Node))))
             .ToFrozenDictionary();
-
-    private static FrozenDictionary<string, RegionCandidates> BuildRegionCandidates(ClusterOptions options, IReadOnlyList<string> regions)
-    {
-        var map = new Dictionary<string, RegionCandidates>(regions.Count, StringComparer.Ordinal);
-        for (var index = 0; index < regions.Count; index++)
-        {
-            var region = regions[index];
-            List<CandidateNode> nodes = [];
-            for (var peerIndex = 0; peerIndex < options.Peers.Count; peerIndex++)
-            {
-                var peer = options.Peers[peerIndex];
-                if (string.Equals(peer.Region, region, StringComparison.Ordinal))
-                {
-                    var target = new StrongParticipantTarget(region, peer.NodeId, false);
-                    nodes.Add(new CandidateNode(target, Encoding.UTF8.GetBytes(peer.NodeId)));
-                }
-            }
-
-            if (string.Equals(region, options.Region, StringComparison.Ordinal))
-            {
-                var target = new StrongParticipantTarget(region, options.NodeId, true);
-                nodes.Add(new CandidateNode(target, Encoding.UTF8.GetBytes(options.NodeId)));
-            }
-
-            var array = nodes.ToArray();
-            StrongParticipantTarget[]? single = array.Length == 1 ? [array[0].Target] : null;
-            map[region] = new RegionCandidates(array, single);
-        }
-
-        return map.ToFrozenDictionary(StringComparer.Ordinal);
-    }
 
     private static bool MatchesOrigin(string baseOrigin, string origin)
     {
@@ -204,18 +78,29 @@ public sealed class ClusterTopology
             && !origin.AsSpan(separator + 1).ContainsAnyExcept(Hex);
     }
 
-    private static ulong Weight(ReadOnlySpan<byte> dbBytes, byte[] nodeUtf8)
+    public IReadOnlyList<StrongParticipantTarget> StrongParticipants(Ulid databaseId) =>
+        [.. Regions.Select(region => StrongCandidates(region, databaseId)[0])];
+
+    public IReadOnlyList<StrongParticipantTarget> StrongCandidates(string region, Ulid databaseId)
     {
-        var total = 16 + nodeUtf8.Length;
-        Span<byte> buffer = total <= 128 ? stackalloc byte[total] : new byte[total];
-        dbBytes.CopyTo(buffer);
-        nodeUtf8.CopyTo(buffer[16..]);
-        return XxHash64.HashToUInt64(buffer);
+        var candidates = options.Peers.Where(peer => string.Equals(peer.Region, region, StringComparison.Ordinal)).Select(static peer => peer.NodeId);
+        if (string.Equals(region, options.Region, StringComparison.Ordinal))
+        {
+            candidates = candidates.Append(options.NodeId);
+        }
+
+        StrongParticipantTarget[] ordered = [.. candidates
+            .OrderByDescending(nodeId => Weight(databaseId, nodeId))
+            .Select(nodeId => new StrongParticipantTarget(region, nodeId, string.Equals(nodeId, options.NodeId, StringComparison.Ordinal)))];
+        return ordered.Length > 0 ? ordered : [new StrongParticipantTarget(region, options.NodeId, true)];
     }
 
-    private readonly record struct OriginEntry(string Node, string Region, string BaseOrigin);
-
-    private readonly record struct CandidateNode(StrongParticipantTarget Target, byte[] NodeIdUtf8);
-
-    private sealed record RegionCandidates(CandidateNode[] Nodes, StrongParticipantTarget[]? SingleTarget);
+    private static ulong Weight(Ulid databaseId, string nodeId)
+    {
+        var node = Encoding.UTF8.GetBytes(nodeId);
+        Span<byte> buffer = stackalloc byte[16 + node.Length];
+        _ = databaseId.TryWriteBytes(buffer);
+        node.CopyTo(buffer[16..]);
+        return XxHash64.HashToUInt64(buffer);
+    }
 }

@@ -11,10 +11,7 @@ internal sealed record PgRewriteContext(string DatabaseName, string UserName, in
 
     public static string Version => $"PostgreSQL {ServerVersion} on SQLite, compiled by TerraBase, 64-bit";
 
-    public static string Literal(string value) =>
-        value.Contains('\'', StringComparison.Ordinal)
-            ? string.Concat("'", value.Replace("'", "''", StringComparison.Ordinal), "'")
-            : string.Concat("'", value, "'");
+    public static string Literal(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 }
 
 internal sealed record PgParameterColumn(int Parameter, string Column);
@@ -26,8 +23,7 @@ internal sealed record PgRewrite(
     IReadOnlyList<PgParameterColumn> ParameterColumns,
     IReadOnlyList<string> ReferencedNames,
     bool UsesCatalog,
-    IReadOnlyList<SqlValue> LiftedLiterals,
-    bool DependsOnSettings = false)
+    IReadOnlyList<SqlValue> LiftedLiterals)
 {
     private const int MaxStatementBytes = 16 * 1024;
     private const string ProbePrefix = "SELECT * FROM (";
@@ -39,16 +35,8 @@ internal sealed record PgRewrite(
 
     internal string ProbeSql => string.Concat(ProbePrefix, Sql, ProbeSuffix);
 
-    internal static bool Fits(ReadOnlySpan<char> sql, bool describe = false)
-    {
-        var limit = MaxStatementBytes - (describe ? ProbePrefix.Length + ProbeSuffix.Length : 0);
-        if (sql.Length * 3 <= limit)
-        {
-            return true;
-        }
-
-        return Encoding.UTF8.GetByteCount(sql) <= limit;
-    }
+    internal static bool Fits(ReadOnlySpan<char> sql, bool describe = false) =>
+        Encoding.UTF8.GetByteCount(sql) <= MaxStatementBytes - (describe ? ProbePrefix.Length + ProbeSuffix.Length : 0);
 
     internal IReadOnlyList<SqlValue> Bind(IReadOnlyList<SqlValue> parameters) =>
         LiftedLiterals.Count == 0 ? parameters : [.. parameters.Take(ParameterCount), .. LiftedLiterals];

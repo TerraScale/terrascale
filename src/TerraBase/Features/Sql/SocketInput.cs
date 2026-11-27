@@ -36,7 +36,7 @@ internal sealed class SocketInput(TimeProvider time)
             lock (_gate)
             {
                 field = value;
-                if (_messages.TryPeek(out var first) && first.Completed is null)
+                if (_messages.TryPeek(out var first))
                 {
                     field?.Invoke(first.Started, first.Received, first.Sequence);
                 }
@@ -80,7 +80,7 @@ internal sealed class SocketInput(TimeProvider time)
                 return null;
             }
 
-            if (_messages.TryPeek(out var next) && next.Completed is null)
+            if (_messages.TryPeek(out var next))
             {
                 Progress?.Invoke(next.Started, next.Received, next.Sequence);
             }
@@ -102,7 +102,6 @@ internal sealed class SocketInput(TimeProvider time)
 
     private void InspectLocked(ReadOnlySpan<byte> bytes)
     {
-        var progressed = false;
         while (!_invalid && !bytes.IsEmpty)
         {
             if (_header == 0)
@@ -124,7 +123,7 @@ internal sealed class SocketInput(TimeProvider time)
 
                 if (!_control)
                 {
-                    progressed = true;
+                    Report(0);
                 }
 
                 _header = 1;
@@ -166,12 +165,7 @@ internal sealed class SocketInput(TimeProvider time)
                 {
                     var mask = Math.Min(count, _maskBytes);
                     _maskBytes -= mask;
-                    if (_current is { } current)
-                    {
-                        current.Received += count - mask;
-                    }
-
-                    progressed = true;
+                    Report(count - mask);
                 }
 
                 bytes = bytes[count..];
@@ -189,10 +183,19 @@ internal sealed class SocketInput(TimeProvider time)
                 Finish();
             }
         }
+    }
 
-        if (progressed && !_invalid && _messages.TryPeek(out var head) && head.Completed is null)
+    private void Report(int bytes)
+    {
+        if (_current is not { } current)
         {
-            Progress?.Invoke(head.Started, head.Received, head.Sequence);
+            return;
+        }
+
+        current.Received += bytes;
+        if (_messages.TryPeek(out var first) && ReferenceEquals(first, current))
+        {
+            Progress?.Invoke(current.Started, current.Received, current.Sequence);
         }
     }
 

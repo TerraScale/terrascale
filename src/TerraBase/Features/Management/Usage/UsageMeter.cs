@@ -81,19 +81,7 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
 
     private const int MaxBatchCounters = 1000;
 
-    private static readonly KeyValuePair<string, object?> TagRequests = new("metric", UsageMetrics.Requests);
-
-    private static readonly KeyValuePair<string, object?> TagReads = new("metric", UsageMetrics.Reads);
-
-    private static readonly KeyValuePair<string, object?> TagWrites = new("metric", UsageMetrics.Writes);
-
-    private static readonly KeyValuePair<string, object?> TagRowsRead = new("metric", UsageMetrics.RowsRead);
-
-    private static readonly KeyValuePair<string, object?> TagRowsWritten = new("metric", UsageMetrics.RowsWritten);
-
-    private static readonly KeyValuePair<string, object?> TagStrongCommits = new("metric", UsageMetrics.StrongCommits);
-
-    private readonly Dictionary<UsageKey, long> _pending = new(UsageKeyComparer.Instance);
+    private readonly Dictionary<(string Scope, string Month, string Metric), long> _pending = [];
     private readonly HashSet<string> _droppedMonths = new(StringComparer.Ordinal);
     private readonly HashSet<string> _droppedWritten = new(StringComparer.Ordinal);
     private readonly List<FlushBatch> _batches = [];
@@ -108,7 +96,6 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
     private DateTimeOffset _lastHeartbeat = DateTimeOffset.MinValue;
     private volatile CommitMetadata? _unconfirmed;
     private volatile bool _lastFailed;
-    private volatile MonthCache? _monthCache;
 
     public bool FlushFailing => _lastFailed || _unconfirmed is not null;
 
@@ -124,20 +111,6 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
 
     public static string Month(DateTimeOffset at) => at.ToString("yyyy-MM", CultureInfo.InvariantCulture);
 
-    private string CurrentMonth()
-    {
-        var now = time.GetUtcNow();
-        var cached = _monthCache;
-        if (cached is not null && cached.Year == now.Year && cached.Month == now.Month)
-        {
-            return cached.Text;
-        }
-
-        var formatted = Month(now);
-        _monthCache = new MonthCache(now.Year, now.Month, formatted);
-        return formatted;
-    }
-
     public void Record(Ulid projectId, Ulid databaseId, string metric, long value)
     {
         if (value <= 0)
@@ -145,154 +118,26 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
             return;
         }
 
-        var month = CurrentMonth();
-        var database = new UsageKey(databaseId, IsProject: false, month, metric);
-        var project = new UsageKey(projectId, IsProject: true, month, metric);
+        var month = Month(time.GetUtcNow());
+        var database = (DatabaseScope(databaseId), month, metric);
+        var project = (ProjectScope(projectId), month, metric);
         bool admitted;
         lock (_gate)
         {
-            admitted = AddPairLocked(database, project, month, value);
-        }
-
-        (admitted ? _recorded : _dropped).Add(value, new KeyValuePair<string, object?>("metric", metric));
-    }
-
-    public void RecordSqlBatch(
-        Ulid projectId, Ulid databaseId, long requests, long reads, long writes, long rowsRead, long rowsWritten, long strongCommits)
-    {
-        var month = CurrentMonth();
-        bool requestsOk = false;
-        bool readsOk = false;
-        bool writesOk = false;
-        bool rowsReadOk = false;
-        bool rowsWrittenOk = false;
-        bool strongCommitsOk = false;
-        lock (_gate)
-        {
-            if (_pending.Count + 12 <= MaxPendingCounters)
+            var growth = (_pending.ContainsKey(database) ? 0 : 1) + (_pending.ContainsKey(project) ? 0 : 1);
+            admitted = _pending.Count + growth <= MaxPendingCounters;
+            if (admitted)
             {
-                if (requests > 0)
-                {
-                    AddPairUncheckedLocked(databaseId, projectId, month, UsageMetrics.Requests, requests);
-                    requestsOk = true;
-                }
-
-                if (reads > 0)
-                {
-                    AddPairUncheckedLocked(databaseId, projectId, month, UsageMetrics.Reads, reads);
-                    readsOk = true;
-                }
-
-                if (writes > 0)
-                {
-                    AddPairUncheckedLocked(databaseId, projectId, month, UsageMetrics.Writes, writes);
-                    writesOk = true;
-                }
-
-                if (rowsRead > 0)
-                {
-                    AddPairUncheckedLocked(databaseId, projectId, month, UsageMetrics.RowsRead, rowsRead);
-                    rowsReadOk = true;
-                }
-
-                if (rowsWritten > 0)
-                {
-                    AddPairUncheckedLocked(databaseId, projectId, month, UsageMetrics.RowsWritten, rowsWritten);
-                    rowsWrittenOk = true;
-                }
-
-                if (strongCommits > 0)
-                {
-                    AddPairUncheckedLocked(databaseId, projectId, month, UsageMetrics.StrongCommits, strongCommits);
-                    strongCommitsOk = true;
-                }
+                CollectionsMarshal.GetValueRefOrAddDefault(_pending, database, out _) += value;
+                CollectionsMarshal.GetValueRefOrAddDefault(_pending, project, out _) += value;
             }
             else
             {
-                if (requests > 0)
-                {
-                    requestsOk = AddPairLocked(new UsageKey(databaseId, false, month, UsageMetrics.Requests), new UsageKey(projectId, true, month, UsageMetrics.Requests), month, requests);
-                }
-
-                if (reads > 0)
-                {
-                    readsOk = AddPairLocked(new UsageKey(databaseId, false, month, UsageMetrics.Reads), new UsageKey(projectId, true, month, UsageMetrics.Reads), month, reads);
-                }
-
-                if (writes > 0)
-                {
-                    writesOk = AddPairLocked(new UsageKey(databaseId, false, month, UsageMetrics.Writes), new UsageKey(projectId, true, month, UsageMetrics.Writes), month, writes);
-                }
-
-                if (rowsRead > 0)
-                {
-                    rowsReadOk = AddPairLocked(new UsageKey(databaseId, false, month, UsageMetrics.RowsRead), new UsageKey(projectId, true, month, UsageMetrics.RowsRead), month, rowsRead);
-                }
-
-                if (rowsWritten > 0)
-                {
-                    rowsWrittenOk = AddPairLocked(new UsageKey(databaseId, false, month, UsageMetrics.RowsWritten), new UsageKey(projectId, true, month, UsageMetrics.RowsWritten), month, rowsWritten);
-                }
-
-                if (strongCommits > 0)
-                {
-                    strongCommitsOk = AddPairLocked(new UsageKey(databaseId, false, month, UsageMetrics.StrongCommits), new UsageKey(projectId, true, month, UsageMetrics.StrongCommits), month, strongCommits);
-                }
+                _droppedMonths.Add(month);
             }
         }
 
-        if (_recorded.Enabled || _dropped.Enabled)
-        {
-            if (requests > 0)
-            {
-                (requestsOk ? _recorded : _dropped).Add(requests, TagRequests);
-            }
-
-            if (reads > 0)
-            {
-                (readsOk ? _recorded : _dropped).Add(reads, TagReads);
-            }
-
-            if (writes > 0)
-            {
-                (writesOk ? _recorded : _dropped).Add(writes, TagWrites);
-            }
-
-            if (rowsRead > 0)
-            {
-                (rowsReadOk ? _recorded : _dropped).Add(rowsRead, TagRowsRead);
-            }
-
-            if (rowsWritten > 0)
-            {
-                (rowsWrittenOk ? _recorded : _dropped).Add(rowsWritten, TagRowsWritten);
-            }
-
-            if (strongCommits > 0)
-            {
-                (strongCommitsOk ? _recorded : _dropped).Add(strongCommits, TagStrongCommits);
-            }
-        }
-    }
-
-    private void AddPairUncheckedLocked(Ulid databaseId, Ulid projectId, string month, string metric, long value)
-    {
-        CollectionsMarshal.GetValueRefOrAddDefault(_pending, new UsageKey(databaseId, IsProject: false, month, metric), out _) += value;
-        CollectionsMarshal.GetValueRefOrAddDefault(_pending, new UsageKey(projectId, IsProject: true, month, metric), out _) += value;
-    }
-
-    private bool AddPairLocked(UsageKey database, UsageKey project, string month, long value)
-    {
-        var growth = (_pending.ContainsKey(database) ? 0 : 1) + (_pending.ContainsKey(project) ? 0 : 1);
-        if (_pending.Count + growth > MaxPendingCounters)
-        {
-            _droppedMonths.Add(month);
-            return false;
-        }
-
-        CollectionsMarshal.GetValueRefOrAddDefault(_pending, database, out _) += value;
-        CollectionsMarshal.GetValueRefOrAddDefault(_pending, project, out _) += value;
-        return true;
+        (admitted ? _recorded : _dropped).Add(value, new KeyValuePair<string, object?>("metric", metric));
     }
 
     public async ValueTask<OrganizationCountersOutcome> OrganizationAsync(Ulid organizationId, string month, CancellationToken cancellationToken)
@@ -548,23 +393,11 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
                 return null;
             }
 
-            var count = Math.Min(_pending.Count, MaxBatchCounters);
-            var drained = new Dictionary<(string Scope, string Month, string Metric), long>(count);
-            var keys = new UsageKey[count];
-            var index = 0;
-            foreach (var (key, value) in _pending)
+            Dictionary<(string Scope, string Month, string Metric), long> drained = [];
+            foreach (var key in _pending.Keys.Take(MaxBatchCounters).ToArray())
             {
-                keys[index++] = key;
-                drained[(key.Scope, key.Month, key.Metric)] = value;
-                if (index == count)
-                {
-                    break;
-                }
-            }
-
-            for (var i = 0; i < count; i++)
-            {
-                _ = _pending.Remove(keys[i]);
+                drained[key] = _pending[key];
+                _ = _pending.Remove(key);
             }
 
             _sequence = Math.Max(_sequence, time.GetUtcNow().ToUnixTimeMilliseconds()) + 1;
@@ -618,30 +451,11 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
             }
 
             Dictionary<(string Scope, string Metric), long> values = [];
-            foreach (var (key, value) in _pending)
+            foreach (var (key, value) in _pending.Where(item => string.Equals(item.Key.Month, month, StringComparison.Ordinal)).Concat(
+                _batches.Where(batch => batch.Sequence > committed).SelectMany(static batch => batch.Counters)
+                    .Where(item => string.Equals(item.Key.Month, month, StringComparison.Ordinal))))
             {
-                if (string.Equals(key.Month, month, StringComparison.Ordinal))
-                {
-                    var scopeKey = (key.Scope, key.Metric);
-                    CollectionsMarshal.GetValueRefOrAddDefault(values, scopeKey, out _) += value;
-                }
-            }
-
-            foreach (var batch in _batches)
-            {
-                if (batch.Sequence <= committed)
-                {
-                    continue;
-                }
-
-                foreach (var (key, value) in batch.Counters)
-                {
-                    if (string.Equals(key.Month, month, StringComparison.Ordinal))
-                    {
-                        var scopeKey = (key.Scope, key.Metric);
-                        CollectionsMarshal.GetValueRefOrAddDefault(values, scopeKey, out _) += value;
-                    }
-                }
+                values[(key.Scope, key.Metric)] = values.GetValueOrDefault((key.Scope, key.Metric)) + value;
             }
 
             return values;
@@ -709,25 +523,4 @@ internal sealed class UsageMeter(SystemDatabase system, UsageCommits commits, Ti
     private static UsageMonthsOutcome Months(IReadOnlyList<IReadOnlyList<SqlValue>> rows) => new([.. rows.Select(static row => row.TextAt(0))]);
 
     private sealed record FlushBatch(long Sequence, IReadOnlyDictionary<(string Scope, string Month, string Metric), long> Counters, DateTimeOffset? CommittedAt);
-
-    private sealed record MonthCache(int Year, int Month, string Text);
-
-    private readonly record struct UsageKey(Ulid Id, bool IsProject, string Month, string Metric)
-    {
-        public string Scope => IsProject ? ProjectScope(Id) : DatabaseScope(Id);
-    }
-
-    private sealed class UsageKeyComparer : IEqualityComparer<UsageKey>
-    {
-        public static UsageKeyComparer Instance { get; } = new();
-
-        public bool Equals(UsageKey x, UsageKey y) =>
-            x.Id == y.Id
-            && x.IsProject == y.IsProject
-            && string.Equals(x.Metric, y.Metric, StringComparison.Ordinal)
-            && string.Equals(x.Month, y.Month, StringComparison.Ordinal);
-
-        public int GetHashCode(UsageKey obj) =>
-            HashCode.Combine(obj.Id, obj.IsProject, StringComparer.Ordinal.GetHashCode(obj.Metric), StringComparer.Ordinal.GetHashCode(obj.Month));
-    }
 }

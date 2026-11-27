@@ -210,12 +210,6 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                     ? await CopyLiveAsync(source, destination, cancellationToken)
                     : CopySnapshot(source, destination, target);
             }
-
-            if (copied is not null && FileIo.SyncFile(stagingContext.DatabasePath) is { } syncError)
-            {
-                return new StorageBusy(syncError, TimeSpan.FromSeconds(1));
-            }
-
             var createEmpty = false;
             CausalBookmark baseline;
             if (copied is { } snapshotBaseline)
@@ -253,22 +247,6 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return history;
             }
 
-            if (entries.Count == 0 && !createEmpty && baseline.Dominates(target))
-            {
-                if (FileIo.MoveDirectory(staging, branchContext.Directory) is { } moveError)
-                {
-                    return new StorageBusy(moveError, TimeSpan.FromSeconds(1));
-                }
-
-                var direct = DatabaseSession.Open(branchContext, create: false, strict: false, ReleaseAsync);
-                return direct switch
-                {
-                    DatabaseSession session => Branch(Track(session)),
-                    StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.Zero),
-                    StorageBusy busy => busy,
-                };
-            }
-
             var opened = DatabaseSession.Open(stagingContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync);
             var branch = opened switch
             {
@@ -281,8 +259,6 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
 
             return await ReplayBranchAsync(branch, branchContext, entries, target, cancellationToken);
-
-            static BranchDatabaseOutcome Branch(ISqlDatabaseSession session) => session;
         }
         finally
         {
@@ -367,59 +343,23 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             var taken = _time.GetUtcNow();
             var path = Path.Combine(directory, string.Concat(Ulid.NewUlid(taken).ToString(), ".db"));
             var context = Context(databaseId, session.RawKey) with { DatabasePath = path };
-            var completed = false;
-            try
+            if (SqliteConnection.OpenOrNull(ConnectionOptions(context)) is not { } destination)
             {
-                SnapshotOutcome outcome;
-                using (var destination = SqliteConnection.OpenOrNull(ConnectionOptions(context)))
-                {
-                    if (destination is null)
-                    {
-                        return new StorageBusy("snapshot file could not be created", TimeSpan.FromSeconds(1));
-                    }
-
-                    outcome = await session.BackupToAsync(destination, cancellationToken);
-                }
-
-                var snapshot = outcome switch
-                {
-                    SnapshotCapture capture => SyncSnapshot(databaseId, capture, taken, path),
-                    StorageBusy busy => busy,
-                };
-                completed = snapshot switch
-                {
-                    DatabaseSnapshot => true,
-                    DatabaseNotFound or StorageBusy => false,
-                };
-                return snapshot;
+                return new StorageBusy("snapshot file could not be created", TimeSpan.FromSeconds(1));
             }
-            finally
+
+            var outcome = await session.BackupToAsync(destination, cancellationToken);
+            destination.Dispose();
+            return outcome switch
             {
-                if (!completed)
-                {
-                    _ = FileIo.DeleteFile(path);
-                }
-            }
+                SnapshotCapture capture => new DatabaseSnapshot(databaseId, capture.Bookmark, capture.SchemaEpoch, new FileInfo(path).Length, taken, path),
+                StorageBusy busy => busy,
+            };
         }
         finally
         {
             await session.DisposeAsync();
         }
-    }
-
-    private static SnapshotDatabaseOutcome SyncSnapshot(Ulid databaseId, SnapshotCapture capture, DateTimeOffset taken, string path)
-    {
-        if (FileIo.SyncFile(path) is { } syncError)
-        {
-            return new StorageBusy(syncError, TimeSpan.FromSeconds(1));
-        }
-
-        if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
-        {
-            FileIo.SyncDirectory(directory);
-        }
-
-        return new DatabaseSnapshot(databaseId, capture.Bookmark, capture.SchemaEpoch, new FileInfo(path).Length, taken, path);
     }
 
     public async ValueTask<DeleteDatabaseOutcome> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken)
@@ -509,10 +449,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         new(databaseId, DatabaseDirectory(databaseId), DatabasePath(databaseId), rawKey.ToArray(), _options, _time, Clock, Snowflake);
 
     private static SqliteOpenOptions ConnectionOptions(SessionContext context) =>
-        new(context.DatabasePath, false, context.RawKey, context.Options.ReaderCacheSizeKib, context.DatabaseId, context.Options.DeltaColumns)
-        {
-            BackupDestination = true,
-        };
+        new(context.DatabasePath, false, context.RawKey, context.Options.ReaderCacheSizeKib, context.DatabaseId, context.Options.DeltaColumns);
 
     private SemaphoreSlim Gate(Ulid databaseId) => _gates.GetOrAdd(databaseId, static _ => new SemaphoreSlim(1, 1));
 

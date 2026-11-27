@@ -159,14 +159,11 @@ internal static class Listeners
     {
         public WebApplication UseTerraBaseListeners()
         {
-            var options = app.Services.GetRequiredService<TerraBaseOptions>();
-            var admission = app.Services.GetRequiredService<CallerAdmission>();
             app.Use(async (context, next) =>
             {
                 var arrivedOn = ArrivedOn(context);
                 var endpoint = context.GetEndpoint();
-                var metadata = endpoint?.Metadata.GetMetadata<ListenerMetadata>();
-                var servedBy = metadata?.Listeners ?? [];
+                var servedBy = endpoint?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? [];
                 if (arrivedOn is not { } listener)
                 {
                     context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -174,9 +171,9 @@ internal static class Listeners
                 }
 
                 if (listener == TerraBaseListener.Internal
-                    && !ReferenceEquals(metadata, ListenerMetadata.Probe))
+                    && !ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe))
                 {
-                    if (!await admission.AdmitAsync(context))
+                    if (!await context.RequestServices.GetRequiredService<CallerAdmission>().AdmitAsync(context))
                     {
                         await ErrorResults.WriteAsync(context, StatusCodes.Status401Unauthorized, "unauthorized",
                             "the internal listener needs X-TerraBase-Peer-Credential or a valid X-TerraScale-Caller token");
@@ -201,10 +198,15 @@ internal static class Listeners
                     return;
                 }
 
+                var options = context.RequestServices.GetRequiredService<TerraBaseOptions>();
                 if (listener == TerraBaseListener.Client)
                 {
-                    context.Response.Headers.TryAdd("X-TerraBase-Region", options.Region);
-                    context.Response.Headers.TryAdd("X-TerraBase-Machine", options.MachineId);
+                    context.Response.OnStarting(() =>
+                    {
+                        context.Response.Headers.TryAdd("X-TerraBase-Region", options.Region);
+                        context.Response.Headers.TryAdd("X-TerraBase-Machine", options.MachineId);
+                        return Task.CompletedTask;
+                    });
                 }
 
                 await next(context);

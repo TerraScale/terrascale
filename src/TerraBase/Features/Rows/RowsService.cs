@@ -1,8 +1,5 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
@@ -32,15 +29,7 @@ internal enum RowAction
 
 internal sealed record RowCommand(RowAction Action, string? Table, long? Key, IReadOnlyDictionary<string, JsonElement>? Values);
 
-internal sealed record PlannedRow(
-    SqlStatement Write,
-    SqlValue[]? CheckArgs,
-    string? CreateAllowed,
-    string? CreateProjected,
-    CompiledCondition? UpdateRule,
-    string? UpdateNext,
-    IReadOnlyList<string>? Clauses,
-    long UpdateKey);
+internal sealed record PlannedRow(SqlStatement Write, SqlStatement? Check);
 
 internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClusterCoordinator coordinator, SqlRunner runner, TimeProvider time)
 {
@@ -51,14 +40,6 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     public const string Batch = "/v1/projects/{project}/databases/{database}/rows:batch";
 
     public const int MaxOperations = 100;
-
-    private const int MaxTableCacheEntries = 4096;
-
-    private static readonly ConditionalWeakTable<IReadOnlyList<string>, string> ReadableColumnsCache = new();
-
-    private readonly ConcurrentDictionary<TableCacheKey, TableMetadata> _tableCache = new(TableCacheKeyComparer.Instance);
-
-    private int _tableCacheCount;
 
     public async ValueTask<RowsOutcome> RunAsync(
         Caller caller, string? project, string? database, IReadOnlyList<RowCommand> commands, bool batch, CancellationToken cancellationToken)
@@ -85,7 +66,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     private async ValueTask<RowsOutcome> ExecuteAsync(
         ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<RowCommand> commands, bool batch, CancellationToken cancellationToken)
     {
-        var writes = HasWrites(commands);
+        var writes = commands.Any(static command => command.Action != RowAction.Read);
         if (writes && !target.CanWrite)
         {
             return SqlRefusal.ForbiddenScope(0);
@@ -97,10 +78,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             ResourceNotFound or BackendUnavailable => new RulesSet(new Dictionary<string, RulesTable>()),
         };
         var now = time.GetUtcNow();
-        var renderTime = now.ToUnixTimeMilliseconds();
-        var planned = new PlannedRow[commands.Count];
-        string? lastTable = null;
-        TableMetadata? lastMeta = null;
+        List<PlannedRow> planned = [];
         for (var index = 0; index < commands.Count; index++)
         {
             if (commands[index].Table is not { Length: > 0 } table)
@@ -108,27 +86,16 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                 return new InvalidInput("table names the table", "invalid_table");
             }
 
-            TableMetadata? meta;
-            if (lastMeta is not null && lastTable is not null && AsciiIgnoreCaseComparer.Instance.Equals(lastTable, table))
+            var tableColumns = await RulesService.TableColumnsAsync(session, table, cancellationToken);
+            if (tableColumns.Count == 0)
             {
-                meta = lastMeta;
-            }
-            else
-            {
-                meta = await GetTableMetadataAsync(session, table, cancellationToken);
-                if (meta is null)
-                {
-                    return new ResourceNotFound(string.Concat("the database has no table ", table), "unknown_table");
-                }
-
-                lastTable = table;
-                lastMeta = meta;
+                return new ResourceNotFound(string.Concat("the database has no table ", table), "unknown_table");
             }
 
-            var built = Build(commands[index], table, meta, set, target.EndUser, now, renderTime, new Position(index, batch));
+            var built = Build(commands[index], table, tableColumns, set, target.EndUser, now, new Position(index, batch));
             var failure = built switch
             {
-                PlannedRow row => Assign(planned, index, row),
+                PlannedRow row => Add(planned, row),
                 RowRefused refused => new RowsOutcome(refused),
                 SqlRefusal refusal => new RowsOutcome(refusal),
             };
@@ -138,23 +105,22 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             }
         }
 
-        if (writes && batch && commands.Count > 1)
+        if (await ValidateAsync(session, target, commands, planned, batch, cancellationToken) is { } invalid)
         {
-            return await ExecuteBatchWriteAsync(target, session, commands, planned, renderTime, cancellationToken);
+            return invalid;
         }
 
-        var writeStatements = new SqlStatement[planned.Length];
-        for (var i = 0; i < planned.Length; i++)
+        if (writes && batch)
         {
-            writeStatements[i] = planned[i].Write;
+            return await ExecuteBatchWriteAsync(target, session, commands, planned, cancellationToken);
         }
 
-        var request = new SqlStatementRequest(target.Database.Id, writeStatements, writes ? SqlAccess.Write : SqlAccess.Read,
+        var request = new SqlStatementRequest(target.Database.Id, [.. planned.Select(static row => row.Write)], writes ? SqlAccess.Write : SqlAccess.Read,
             target.Database.DefaultConsistency, CausalBookmark.Empty);
         var outcome = writes
             ? await coordinator.ExecuteWriteAsync(session, request, cancellationToken) switch
             {
-                SqlWriteResult written => await AnswersOrValidateAsync(session, target, written.ResultSets, commands, planned, batch, wrote: true, renderTime, cancellationToken),
+                SqlWriteResult written => Answers(target, written.ResultSets, commands, batch, wrote: true),
                 SqlError error => new RowsOutcome(SqlRefusal.From(error)),
                 SerializationConflict conflict => new RowsOutcome(SqlRefusal.From(conflict)),
                 SchemaMismatch mismatch => new RowsOutcome(SqlRefusal.From(mismatch)),
@@ -172,115 +138,38 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         return outcome;
     }
 
-    private ValueTask<TableMetadata?> GetTableMetadataAsync(ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
-    {
-        var epoch = session.SchemaEpoch;
-        var key = new TableCacheKey(session.DatabaseId, session.SessionIncarnation, table, epoch);
-        if (_tableCache.TryGetValue(key, out var cached))
-        {
-            return ValueTask.FromResult<TableMetadata?>(cached);
-        }
-
-        return LoadTableMetadataAsync(session, table, epoch, key, cancellationToken);
-    }
-
-    private async ValueTask<TableMetadata?> LoadTableMetadataAsync(
-        ISqlDatabaseSession session, string table, ulong epoch, TableCacheKey key, CancellationToken cancellationToken)
-    {
-        var raw = await RulesService.TableColumnsAsync(session, table, cancellationToken);
-        if (raw.Count == 0)
-        {
-            return null;
-        }
-
-        var columns = new TableColumn[raw.Count];
-        var names = new string[raw.Count];
-        var quotedNames = new string[raw.Count];
-        var columnIndex = new Dictionary<string, int>(raw.Count, StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < raw.Count; i++)
-        {
-            var col = raw[i];
-            columns[i] = col;
-            names[i] = col.Name;
-            quotedNames[i] = RulesCompiler.Quote(col.Name);
-            columnIndex.TryAdd(col.Name, i);
-        }
-
-        var metadata = new TableMetadata(columns, names, quotedNames, RulesCompiler.Quote(table), columnIndex);
-        if (session.SchemaEpoch == epoch && session.SessionIncarnation == key.SessionIncarnation)
-        {
-            StoreTableMetadata(key, metadata);
-        }
-
-        return metadata;
-    }
-
-    private void StoreTableMetadata(TableCacheKey key, TableMetadata metadata)
-    {
-        if (!_tableCache.ContainsKey(key) && Volatile.Read(ref _tableCacheCount) >= MaxTableCacheEntries)
-        {
-            _tableCache.Clear();
-            Volatile.Write(ref _tableCacheCount, 0);
-        }
-
-        if (_tableCache.TryAdd(key, metadata))
-        {
-            Interlocked.Increment(ref _tableCacheCount);
-        }
-        else
-        {
-            _tableCache[key] = metadata;
-        }
-    }
-
-    private static bool HasWrites(IReadOnlyList<RowCommand> commands)
-    {
-        for (var i = 0; i < commands.Count; i++)
-        {
-            if (commands[i].Action != RowAction.Read)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private async ValueTask<RowsOutcome> ExecuteBatchWriteAsync(
-        ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<RowCommand> commands, PlannedRow[] planned, long renderTime, CancellationToken cancellationToken)
+        ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<RowCommand> commands, List<PlannedRow> planned, CancellationToken cancellationToken)
     {
         var begun = await coordinator.BeginTransactionAsync(session, new SqlTransactionOptions(target.Database.DefaultConsistency, SqlAccess.Write, CausalBookmark.Empty), cancellationToken);
         return begun switch
         {
-            ISqlTransaction transaction => await RunBatchTransactionAsync(target, session, transaction, commands, planned, renderTime, cancellationToken),
+            ISqlTransaction transaction => await RunBatchTransactionAsync(target, session, transaction, commands, planned, cancellationToken),
             StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
             ClusterTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
         };
     }
 
     private async ValueTask<RowsOutcome> RunBatchTransactionAsync(
-        ResolvedDatabase target, ISqlDatabaseSession session, ISqlTransaction transaction, IReadOnlyList<RowCommand> commands, PlannedRow[] planned, long renderTime, CancellationToken cancellationToken)
+        ResolvedDatabase target, ISqlDatabaseSession session, ISqlTransaction transaction, IReadOnlyList<RowCommand> commands, List<PlannedRow> planned, CancellationToken cancellationToken)
     {
         await using (transaction)
         {
-            var results = new SqlResultSet[planned.Length];
-            for (var index = 0; index < planned.Length; index++)
+            List<SqlResultSet> results = new(planned.Count);
+            for (var index = 0; index < planned.Count; index++)
             {
                 var step = await transaction.ExecuteAsync(planned[index].Write, cancellationToken);
-                (RowsOutcome? Failure, bool RowRefused) stepFailure = step switch
+                var failure = step switch
                 {
                     SqlResultSet result => CollectOrRefuse(results, result, commands[index], index),
-                    SqlError error => (new RowsOutcome(SqlRefusal.From(error)), false),
-                    StorageBusy busy => (new RowsOutcome(SqlRefusal.From(busy)), false),
-                    StorageTimeout timeout => (new RowsOutcome(SqlRefusal.From(timeout)), false),
+                    SqlError error => new RowsOutcome(SqlRefusal.From(error)),
+                    StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
+                    StorageTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
                 };
-                if (stepFailure.Failure is { } refused)
+                if (failure is { } refused)
                 {
-                    var validation = stepFailure.RowRefused
-                        ? await CheckFailureInTransactionAsync(transaction, target.EndUser, commands[index], planned[index], index, renderTime, cancellationToken)
-                        : null;
                     await transaction.RollbackAsync(cancellationToken);
-                    return validation ?? refused;
+                    return refused;
                 }
             }
 
@@ -297,132 +186,68 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         }
     }
 
-    private static (RowsOutcome? Failure, bool RowRefused) CollectOrRefuse(SqlResultSet[] results, SqlResultSet result, RowCommand command, int index)
+    private static RowsOutcome? CollectOrRefuse(List<SqlResultSet> results, SqlResultSet result, RowCommand command, int index)
     {
         if (result.Rows.Count == 0)
         {
-            return (new RowsOutcome(new RowRefused(
+            return new RowRefused(
                 command.Action == RowAction.Create ? StatusCodes.Status403Forbidden : StatusCodes.Status404NotFound,
                 command.Action == RowAction.Create ? "rule_denied" : "row_not_found",
                 command.Action == RowAction.Create ? "the rules refused the row" : "the row does not exist or the rules hide it",
-                new RowsErrorDetails(Table: command.Table, Index: index))), true);
+                new RowsErrorDetails(Table: command.Table, Index: index));
         }
 
-        results[index] = result;
-        return (null, false);
+        results.Add(result);
+        return null;
     }
 
-    private async ValueTask<RowsOutcome> AnswersOrValidateAsync(
-        ISqlDatabaseSession session,
-        ResolvedDatabase target,
-        IReadOnlyList<SqlResultSet> results,
-        IReadOnlyList<RowCommand> commands,
-        PlannedRow[] planned,
-        bool batch,
-        bool wrote,
-        long renderTime,
+    private static async ValueTask<RowsOutcome?> ValidateAsync(
+        ISqlDatabaseSession session, ResolvedDatabase target, IReadOnlyList<RowCommand> commands, List<PlannedRow> planned, bool batch,
         CancellationToken cancellationToken)
     {
-        var count = Math.Min(commands.Count, results.Count);
-        for (var index = 0; index < count; index++)
+        List<(int Index, SqlStatement Check)> checks = [];
+        for (var index = 0; index < planned.Count; index++)
         {
-            if (results[index].Rows.Count == 0)
+            if (planned[index].Check is { } check)
             {
-                if (BuildCheckStatement(planned[index], target.EndUser, commands[index].Table, renderTime) is { } check)
-                {
-                    var read = await session.ExecuteReadAsync(
-                        new SqlStatementRequest(target.Database.Id, [check], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty),
-                        cancellationToken);
-                    var validation = read switch
-                    {
-                        SqlReadResult answered when answered.ResultSets.Count > 0 => CheckSingleResult(answered.ResultSets[0], commands[index], index, batch),
-                        SqlReadResult => null,
-                        SqlError error => new RowsOutcome(SqlRefusal.From(error)),
-                        StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
-                        StorageTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
-                    };
-                    if (validation is { } refusedValidation)
-                    {
-                        return refusedValidation;
-                    }
-                }
-
-                break;
+                checks.Add((index, check));
             }
         }
 
-        return Answers(target, results, commands, batch, wrote);
-    }
-
-    private static async ValueTask<RowsOutcome?> CheckFailureInTransactionAsync(
-        ISqlTransaction transaction,
-        RulesAuth? auth,
-        RowCommand command,
-        PlannedRow planned,
-        int index,
-        long renderTime,
-        CancellationToken cancellationToken)
-    {
-        if (BuildCheckStatement(planned, auth, command.Table, renderTime) is not { } check)
+        if (checks.Count == 0)
         {
             return null;
         }
 
-        var outcome = await transaction.ExecuteAsync(check, cancellationToken);
-        return outcome switch
+        var request = new SqlStatementRequest(target.Database.Id, [.. checks.Select(static item => item.Check)], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
+        var read = await session.ExecuteReadAsync(request, cancellationToken);
+        return read switch
         {
-            SqlResultSet result => CheckSingleResult(result, command, index, batch: true),
+            SqlReadResult answered => Checked(answered.ResultSets, checks, commands, batch),
             SqlError error => new RowsOutcome(SqlRefusal.From(error)),
             StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
             StorageTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
         };
     }
 
-    private static SqlStatement? BuildCheckStatement(PlannedRow planned, RulesAuth? auth, string? tableName, long renderTime)
+    private static RowsOutcome? Checked(IReadOnlyList<SqlResultSet> results, List<(int Index, SqlStatement Check)> checks, IReadOnlyList<RowCommand> commands, bool batch)
     {
-        if (planned.Clauses is not { Count: > 0 } clauses || planned.CheckArgs is not { } checkSourceArgs)
+        for (var at = 0; at < checks.Count && at < results.Count; at++)
         {
-            return null;
-        }
-
-        if (planned.CreateAllowed is { } createAllowed && planned.CreateProjected is { } createProjected)
-        {
-            return SqlBuild.Statement(
-                string.Concat("SELECT ", createAllowed, ", ", string.Join(", ", clauses), " FROM (SELECT ", createProjected, ") AS new"),
-                checkSourceArgs);
-        }
-
-        if (planned.UpdateNext is not { } next || tableName is null)
-        {
-            return null;
-        }
-
-        var quotedTable = RulesCompiler.Quote(tableName);
-        var checkedAllowed = planned.UpdateRule is not null && auth is not null
-            ? RulesCompiler.Render(planned.UpdateRule, auth, renderTime, newPrefix: "new.", rowPrefix: "row_values.")
-            : "1";
-        var checkArgs = new SqlValue[checkSourceArgs.Length + 2];
-        checkArgs[0] = SqlBuild.Integer(planned.UpdateKey);
-        Array.Copy(checkSourceArgs, 0, checkArgs, 1, checkSourceArgs.Length);
-        checkArgs[^1] = SqlBuild.Integer(planned.UpdateKey);
-        return SqlBuild.Statement(string.Concat("SELECT ", checkedAllowed, ", ", string.Join(", ", clauses), " FROM (SELECT * FROM ",
-            quotedTable, " WHERE rowid = ?) AS row_values, (SELECT ", next, " FROM ", quotedTable, " WHERE rowid = ?) AS new"), checkArgs);
-    }
-
-    private static RowsOutcome? CheckSingleResult(SqlResultSet result, RowCommand command, int index, bool batch)
-    {
-        if (result.Rows is not [var row, ..] || !IsTrue(row[0]))
-        {
-            return null;
-        }
-
-        for (var clause = 1; clause < row.Count; clause++)
-        {
-            if (!IsTrue(row[clause]))
+            if (results[at].Rows is not [var row, ..] || !IsTrue(row[0]))
             {
-                return new RowsOutcome(new RowRefused(StatusCodes.Status400BadRequest, "validation_failed",
-                    string.Concat("validate[", (clause - 1).ToString(CultureInfo.InvariantCulture), "] is false for the written row"),
-                    new RowsErrorDetails(Table: command.Table, Index: batch ? index : null, Clause: clause - 1)));
+                continue;
+            }
+
+            for (var clause = 1; clause < row.Count; clause++)
+            {
+                if (!IsTrue(row[clause]))
+                {
+                    var index = checks[at].Index;
+                    return new RowsOutcome(new RowRefused(StatusCodes.Status400BadRequest, "validation_failed",
+                        string.Concat("validate[", (clause - 1).ToString(CultureInfo.InvariantCulture), "] is false for the written row"),
+                        new RowsErrorDetails(Table: commands[index].Table, Index: batch ? index : null, Clause: clause - 1)));
+                }
             }
         }
 
@@ -434,9 +259,8 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     private RowsOutcome Answers(ResolvedDatabase target, IReadOnlyList<SqlResultSet> results, IReadOnlyList<RowCommand> commands, bool batch, bool wrote)
     {
         runner.Meter(target, results, wrote, target.Database.DefaultConsistency);
-        var count = Math.Min(commands.Count, results.Count);
-        var answers = new RowAnswer[count];
-        for (var index = 0; index < count; index++)
+        List<RowAnswer> answers = [];
+        for (var index = 0; index < commands.Count && index < results.Count; index++)
         {
             var result = results[index];
             if (result.Rows.Count == 0)
@@ -450,31 +274,10 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
 
             var row = result.Rows[0];
             var key = row[0].TryGetIntegral(out var rowId) ? rowId.ToString(CultureInfo.InvariantCulture) : SqlBuild.Format(row[0]);
-            IReadOnlyList<KeyValuePair<string, SqlValue>>? values;
-            if (commands[index].Action == RowAction.Delete)
-            {
-                values = null;
-            }
-            else
-            {
-                var valueCount = result.Columns.Count - 1;
-                if (valueCount <= 0)
-                {
-                    values = [];
-                }
-                else
-                {
-                    var pairs = new KeyValuePair<string, SqlValue>[valueCount];
-                    for (var at = 0; at < valueCount; at++)
-                    {
-                        pairs[at] = new KeyValuePair<string, SqlValue>(result.Columns[at + 1].Name, row[at + 1]);
-                    }
-
-                    values = pairs;
-                }
-            }
-
-            answers[index] = new RowAnswer(key, values);
+            IReadOnlyList<KeyValuePair<string, SqlValue>>? values = commands[index].Action == RowAction.Delete
+                ? null
+                : [.. result.Columns.Skip(1).Select((column, at) => new KeyValuePair<string, SqlValue>(column.Name, row[at + 1]))];
+            answers.Add(new RowAnswer(key, values));
         }
 
         return new RowsOutcome(answers);
@@ -486,12 +289,12 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     }
 
     private static RowPlanOutcome Build(
-        RowCommand command, string tableName, TableMetadata meta, RulesSet? set, RulesAuth? auth, DateTimeOffset now, long renderTime, Position position)
+        RowCommand command, string tableName, IReadOnlyList<TableColumn> tableColumns, RulesSet? set, RulesAuth? auth, DateTimeOffset now, Position position)
     {
-        var columns = meta.Names;
+        IReadOnlyList<string> columns = [.. tableColumns.Select(static column => column.Name)];
         var rule = set?.Table(tableName);
-        var table = meta.QuotedTable;
-        var readable = rule?.Columns is { Count: > 0 } chosen ? CachedReadableColumns(chosen) : "*";
+        var table = RulesCompiler.Quote(tableName);
+        var readable = rule?.Columns is { Count: > 0 } chosen ? string.Join(", ", chosen.Select(RulesCompiler.Quote)) : "*";
         if (set is not null && auth is not null && rule is null)
         {
             return SqlRefusal.RuleDenied(string.Concat("the rules do not cover ", tableName), position.Index);
@@ -504,207 +307,95 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             RowAction.Read or RowAction.Delete => null,
             _ => throw new UnreachableException(),
         };
-
-        List<(int ColumnIndex, string Column, SqlValue Value)>? values = null;
-        if (command.Values is { Count: > 0 } rawValues)
+        var values = new List<(string Column, SqlValue Value)>();
+        foreach (var (column, element) in command.Values ?? new Dictionary<string, JsonElement>())
         {
-            values = new List<(int ColumnIndex, string Column, SqlValue Value)>(rawValues.Count + (assigned?.Count ?? 0));
-            foreach (var (column, element) in rawValues)
+            var known = columns.FirstOrDefault(name => string.Equals(name, column, StringComparison.OrdinalIgnoreCase));
+            if (known is null)
             {
-                if (!meta.ColumnIndex.TryGetValue(column, out var columnIdx))
-                {
-                    return new RowRefused(StatusCodes.Status400BadRequest, "unknown_column", string.Concat("the table ", tableName, " has no column ", column),
-                        position.Details(tableName, column));
-                }
-
-                var known = columns[columnIdx];
-                if (SqlWire.Value(element) is not { } value)
-                {
-                    return new RowRefused(StatusCodes.Status400BadRequest, "invalid_request", string.Concat(known, " is not a SQL value"), position.Details(tableName, known));
-                }
-
-                if (auth is not null && (!ContainsIgnoreCase(rule?.Writable, known) || ContainsKeyIgnoreCase(assigned, known)))
-                {
-                    return new RowRefused(StatusCodes.Status403Forbidden, "column_not_writable", string.Concat(known, " is not writable"), position.Details(tableName, known));
-                }
-
-                values.Add((columnIdx, known, value));
+                return new RowRefused(StatusCodes.Status400BadRequest, "unknown_column", string.Concat("the table ", tableName, " has no column ", column),
+                    position.Details(tableName, column));
             }
+
+            if (SqlWire.Value(element) is not { } value)
+            {
+                return new RowRefused(StatusCodes.Status400BadRequest, "invalid_request", string.Concat(known, " is not a SQL value"), position.Details(tableName, known));
+            }
+
+            if (auth is not null && (rule?.Writable?.Contains(known, StringComparer.OrdinalIgnoreCase) != true
+                || assigned?.Keys.Contains(known, StringComparer.OrdinalIgnoreCase) == true))
+            {
+                return new RowRefused(StatusCodes.Status403Forbidden, "column_not_writable", string.Concat(known, " is not writable"), position.Details(tableName, known));
+            }
+
+            values.Add((known, value));
         }
 
-        if (auth is not null && assigned is { Count: > 0 })
+        if (auth is not null && assigned is not null)
         {
-            values ??= new List<(int ColumnIndex, string Column, SqlValue Value)>(assigned.Count);
             var ulid = Ulid.NewUlid(now);
             foreach (var (column, expression) in assigned)
             {
-                for (var i = values.Count - 1; i >= 0; i--)
-                {
-                    if (string.Equals(values[i].Column, column, StringComparison.OrdinalIgnoreCase))
-                    {
-                        values.RemoveAt(i);
-                    }
-                }
-
-                var columnIdx = meta.ColumnIndex.TryGetValue(column, out var found) ? found : -1;
-                values.Add((columnIdx, column, RulesCompiler.SetValue(expression, auth, renderTime, ulid)));
+                values.RemoveAll(value => string.Equals(value.Column, column, StringComparison.OrdinalIgnoreCase));
+                values.Add((column, RulesCompiler.SetValue(expression, auth, now.ToUnixTimeMilliseconds(), ulid)));
             }
         }
 
+        var renderTime = now.ToUnixTimeMilliseconds();
         return command.Action switch
         {
             RowAction.Read => Condition(rule?.Read, auth, RulesOperation.Read, columns, position.Index, renderTime) switch
             {
                 string condition => new PlannedRow(
-                    SqlBuild.Statement(string.Concat("SELECT rowid, ", readable, " FROM ", table, " WHERE rowid = ? AND ", condition), SqlBuild.Integer(command.Key ?? 0)),
-                    null, null, null, null, null, null, 0),
+                    SqlBuild.Statement(string.Concat("SELECT rowid, ", readable, " FROM ", table, " WHERE rowid = ? AND ", condition), SqlBuild.Integer(command.Key ?? 0)), null),
                 SqlRefusal refusal => refusal,
             },
             RowAction.Delete => Condition(rule?.Delete, auth, RulesOperation.Delete, columns, position.Index, renderTime) switch
             {
                 string condition => new PlannedRow(
-                    SqlBuild.Statement(string.Concat("DELETE FROM ", table, " WHERE rowid = ? AND ", condition, " RETURNING rowid"), SqlBuild.Integer(command.Key ?? 0)),
-                    null, null, null, null, null, null, 0),
+                    SqlBuild.Statement(string.Concat("DELETE FROM ", table, " WHERE rowid = ? AND ", condition, " RETURNING rowid"), SqlBuild.Integer(command.Key ?? 0)), null),
                 SqlRefusal refusal => refusal,
             },
-            RowAction.Create => Create(table, readable, values, rule, auth, meta, position.Index, renderTime),
-            RowAction.Update => Update(table, readable, command.Key ?? 0, values, rule, auth, meta, position.Index, renderTime),
+            RowAction.Create => Create(table, readable, values, rule, auth, tableColumns, columns, position.Index, renderTime),
+            RowAction.Update => Update(table, readable, command.Key ?? 0, values, rule, auth, columns, position.Index, renderTime),
             _ => throw new UnreachableException(),
         };
     }
 
-    private static string CachedReadableColumns(IReadOnlyList<string> columns) =>
-        ReadableColumnsCache.GetValue(columns, static list =>
-        {
-            var sb = new StringBuilder();
-            for (var i = 0; i < list.Count; i++)
-            {
-                if (i > 0)
-                {
-                    sb.Append(", ");
-                }
-
-                sb.Append(RulesCompiler.Quote(list[i]));
-            }
-
-            return sb.ToString();
-        });
-
-    private static bool ContainsIgnoreCase(IReadOnlyList<string>? list, string value)
-    {
-        if (list is null)
-        {
-            return false;
-        }
-
-        for (var i = 0; i < list.Count; i++)
-        {
-            if (string.Equals(list[i], value, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool ContainsKeyIgnoreCase(IReadOnlyDictionary<string, string>? dictionary, string key)
-    {
-        if (dictionary is null)
-        {
-            return false;
-        }
-
-        if (dictionary.ContainsKey(key))
-        {
-            return true;
-        }
-
-        foreach (var existing in dictionary.Keys)
-        {
-            if (string.Equals(existing, key, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static RowPlanOutcome Create(
-        string table, string readable, List<(int ColumnIndex, string Column, SqlValue Value)>? values, RulesTable? rule, RulesAuth? auth, TableMetadata meta,
-        int index, long renderTime)
+        string table, string readable, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<TableColumn> tableColumns,
+        IReadOnlyList<string> columns, int index, long renderTime)
     {
-        if (values is null || values.Count == 0)
+        if (values.Count == 0)
         {
             return SqlRefusal.Invalid("row names at least one column", index);
         }
 
-        var tableColumns = meta.Columns;
-        var quotedNames = meta.QuotedNames;
-        Span<int> valueByColumn = tableColumns.Length <= 64 ? stackalloc int[tableColumns.Length] : new int[tableColumns.Length];
-        valueByColumn.Fill(-1);
-
-        var namesBuilder = new StringBuilder(values.Count * 12);
-        var boundCount = 0;
-        for (var i = 0; i < values.Count; i++)
+        var names = string.Join(", ", values.Select(static value => RulesCompiler.Quote(value.Column)));
+        List<string> projection = [];
+        List<SqlValue> args = [];
+        foreach (var column in tableColumns)
         {
-            var item = values[i];
-            if (i > 0)
-            {
-                namesBuilder.Append(", ");
-            }
-
-            if (item.ColumnIndex >= 0)
-            {
-                namesBuilder.Append(quotedNames[item.ColumnIndex]);
-                if (valueByColumn[item.ColumnIndex] < 0)
-                {
-                    valueByColumn[item.ColumnIndex] = i;
-                    boundCount++;
-                }
-            }
-            else
-            {
-                namesBuilder.Append(RulesCompiler.Quote(item.Column));
-            }
-        }
-
-        var names = namesBuilder.ToString();
-        var bound = new SqlValue[boundCount];
-        var nextBound = 0;
-        var projectedBuilder = new StringBuilder(tableColumns.Length * 16);
-        for (var c = 0; c < tableColumns.Length; c++)
-        {
-            if (c > 0)
-            {
-                projectedBuilder.Append(", ");
-            }
-
-            var matched = valueByColumn[c];
+            var matched = values.FindIndex(value => string.Equals(value.Column, column.Name, StringComparison.OrdinalIgnoreCase));
             if (matched >= 0)
             {
-                projectedBuilder.Append("? AS ");
-                projectedBuilder.Append(quotedNames[c]);
-                bound[nextBound++] = values[matched].Value;
+                projection.Add(string.Concat("? AS ", RulesCompiler.Quote(column.Name)));
+                args.Add(values[matched].Value);
             }
-            else if (tableColumns[c].DefaultSql is { Length: > 0 } defaultSql)
+            else if (column.DefaultSql is { Length: > 0 } defaultSql)
             {
-                projectedBuilder.Append('(');
-                projectedBuilder.Append(defaultSql);
-                projectedBuilder.Append(") AS ");
-                projectedBuilder.Append(quotedNames[c]);
+                projection.Add(string.Concat("(", defaultSql, ") AS ", RulesCompiler.Quote(column.Name)));
             }
             else
             {
-                projectedBuilder.Append("NULL AS ");
-                projectedBuilder.Append(quotedNames[c]);
+                projection.Add(string.Concat("NULL AS ", RulesCompiler.Quote(column.Name)));
             }
         }
 
-        var projected = projectedBuilder.ToString();
-        var condition = Condition(rule?.Create, auth, RulesOperation.Create, meta.Names, index, renderTime, newPrefix: "new.");
-        var validations = Validations(rule, auth, meta.Names, index, renderTime);
+        var projected = string.Join(", ", projection);
+        SqlValue[] bound = [.. args];
+        var condition = Condition(rule?.Create, auth, RulesOperation.Create, columns, index, renderTime, newPrefix: "new.");
+        var validations = Validations(rule, auth, columns, index, renderTime);
         return condition switch
         {
             string allowed => validations switch
@@ -712,13 +403,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                 IReadOnlyList<string> clauses => new PlannedRow(
                     SqlBuild.Statement(string.Concat("INSERT INTO ", table, " (", names, ") SELECT ", names, " FROM (SELECT ", projected, ") AS new WHERE ",
                         Conjunction(allowed, clauses), " RETURNING rowid, ", readable), bound),
-                    clauses.Count == 0 ? null : bound,
-                    clauses.Count == 0 ? null : allowed,
-                    clauses.Count == 0 ? null : projected,
-                    null,
-                    null,
-                    clauses.Count == 0 ? null : clauses,
-                    0),
+                    clauses.Count == 0 ? null : SqlBuild.Statement(string.Concat("SELECT ", allowed, ", ", string.Join(", ", clauses), " FROM (SELECT ", projected, ") AS new"), bound)),
                 SqlRefusal refusal => refusal,
             },
             SqlRefusal refusal => refusal,
@@ -726,148 +411,41 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     }
 
     private static RowPlanOutcome Update(
-        string table, string readable, long key, List<(int ColumnIndex, string Column, SqlValue Value)>? values, RulesTable? rule, RulesAuth? auth, TableMetadata meta,
+        string table, string readable, long key, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns,
         int index, long renderTime)
     {
-        if (values is null || values.Count == 0)
+        if (values.Count == 0)
         {
             return SqlRefusal.Invalid("row names at least one column", index);
         }
 
-        var columns = meta.Names;
-        var quotedNames = meta.QuotedNames;
-        Span<int> exactValueByColumn = columns.Length <= 64 ? stackalloc int[columns.Length] : new int[columns.Length];
-        exactValueByColumn.Fill(-1);
-
-        var assignmentsBuilder = new StringBuilder(values.Count * 16);
-        var nextArgCount = 0;
-        for (var i = 0; i < values.Count; i++)
+        var assignments = string.Join(", ", values.Select(static value => string.Concat(RulesCompiler.Quote(value.Column), " = ?")));
+        var next = string.Join(", ", columns.Select(column => values.Any(value => value.Column == column)
+            ? string.Concat("? AS ", RulesCompiler.Quote(column))
+            : string.Concat(table, ".", RulesCompiler.Quote(column), " AS ", RulesCompiler.Quote(column))));
+        List<SqlValue> nextArgs = [.. columns.Where(column => values.Any(value => value.Column == column)).Select(column => values.First(value => value.Column == column).Value)];
+        List<SqlValue> args = [.. values.Select(static value => value.Value), SqlBuild.Integer(key), .. nextArgs];
+        var condition = Condition(rule?.Update, auth, RulesOperation.Update, columns, index, renderTime, newPrefix: "new.", rowPrefix: string.Concat(table, "."));
+        var checkCondition = Condition(rule?.Update, auth, RulesOperation.Update, columns, index, renderTime, newPrefix: "new.", rowPrefix: "row_values.");
+        var validations = Validations(rule, auth, columns, index, renderTime);
+        return condition switch
         {
-            var item = values[i];
-            if (i > 0)
+            string allowed => checkCondition switch
             {
-                assignmentsBuilder.Append(", ");
-            }
-
-            if (item.ColumnIndex >= 0 && string.Equals(item.Column, columns[item.ColumnIndex], StringComparison.Ordinal))
-            {
-                assignmentsBuilder.Append(quotedNames[item.ColumnIndex]);
-                if (exactValueByColumn[item.ColumnIndex] < 0)
+                string checkedAllowed => validations switch
                 {
-                    exactValueByColumn[item.ColumnIndex] = i;
-                    nextArgCount++;
-                }
-            }
-            else
-            {
-                assignmentsBuilder.Append(RulesCompiler.Quote(item.Column));
-            }
-
-            assignmentsBuilder.Append(" = ?");
-        }
-
-        var assignments = assignmentsBuilder.ToString();
-        var nextBuilder = new StringBuilder(columns.Length * 24);
-        var args = new SqlValue[values.Count + 1 + nextArgCount];
-        for (var i = 0; i < values.Count; i++)
-        {
-            args[i] = values[i].Value;
-        }
-
-        args[values.Count] = SqlBuild.Integer(key);
-        var nextArgPos = values.Count + 1;
-        for (var c = 0; c < columns.Length; c++)
-        {
-            if (c > 0)
-            {
-                nextBuilder.Append(", ");
-            }
-
-            var matched = exactValueByColumn[c];
-            if (matched >= 0)
-            {
-                nextBuilder.Append("? AS ");
-                nextBuilder.Append(quotedNames[c]);
-                args[nextArgPos++] = values[matched].Value;
-            }
-            else
-            {
-                nextBuilder.Append(table);
-                nextBuilder.Append('.');
-                nextBuilder.Append(quotedNames[c]);
-                nextBuilder.Append(" AS ");
-                nextBuilder.Append(quotedNames[c]);
-            }
-        }
-
-        var next = nextBuilder.ToString();
-        var (compiledRule, compileFailure) = CompileUpdateCondition(rule?.Update, auth, columns, index);
-        if (compileFailure is not null)
-        {
-            return compileFailure;
-        }
-
-        return Validations(rule, auth, columns, index, renderTime) switch
-        {
-            IReadOnlyList<string> clauses => BuildUpdatePlan(table, readable, key, assignments, next, args, values.Count, nextArgCount, compiledRule, auth, clauses, renderTime),
+                    IReadOnlyList<string> clauses => new PlannedRow(
+                        SqlBuild.Statement(string.Concat("UPDATE ", table, " SET ", assignments, " WHERE rowid = ? AND EXISTS (SELECT 1 FROM (SELECT ", next,
+                            ") AS new WHERE ", Conjunction(allowed, clauses), ") RETURNING rowid, ", readable), [.. args]),
+                        clauses.Count == 0 ? null : SqlBuild.Statement(string.Concat("SELECT ", checkedAllowed, ", ", string.Join(", ", clauses), " FROM (SELECT * FROM ",
+                            table, " WHERE rowid = ?) AS row_values, (SELECT ", next, " FROM ", table, " WHERE rowid = ?) AS new"),
+                            [SqlBuild.Integer(key), .. nextArgs, SqlBuild.Integer(key)])),
+                    SqlRefusal refusal => refusal,
+                },
+                SqlRefusal refusal => refusal,
+            },
             SqlRefusal refusal => refusal,
         };
-    }
-
-    private static (CompiledCondition? Compiled, SqlRefusal? Failure) CompileUpdateCondition(
-        string? condition, RulesAuth? auth, IReadOnlyList<string> columns, int index)
-    {
-        if (auth is null)
-        {
-            return (null, null);
-        }
-
-        if (condition is null)
-        {
-            return (null, SqlRefusal.RuleDenied("the rules do not allow this operation", index));
-        }
-
-        return RulesCompiler.Compile(condition, columns, RulesOperation.Update) switch
-        {
-            CompiledCondition compiled => (compiled, null),
-            InvalidInput refused => (null, new SqlRefusal("rules_invalid", refused.Message, "42501", index, StatusCodes.Status403Forbidden)),
-        };
-    }
-
-    private static PlannedRow BuildUpdatePlan(
-        string table,
-        string readable,
-        long key,
-        string assignments,
-        string next,
-        SqlValue[] args,
-        int valueCount,
-        int nextArgCount,
-        CompiledCondition? compiledRule,
-        RulesAuth? auth,
-        IReadOnlyList<string> clauses,
-        long renderTime)
-    {
-        var allowed = compiledRule is not null && auth is not null
-            ? RulesCompiler.Render(compiledRule, auth, renderTime, newPrefix: "new.", rowPrefix: string.Concat(table, "."))
-            : "1";
-        SqlValue[]? nextArgs = null;
-        if (clauses.Count > 0)
-        {
-            nextArgs = new SqlValue[nextArgCount];
-            Array.Copy(args, valueCount + 1, nextArgs, 0, nextArgCount);
-        }
-
-        return new PlannedRow(
-            SqlBuild.Statement(string.Concat("UPDATE ", table, " SET ", assignments, " WHERE rowid = ? AND EXISTS (SELECT 1 FROM (SELECT ", next,
-                ") AS new WHERE ", Conjunction(allowed, clauses), ") RETURNING rowid, ", readable), args),
-            nextArgs,
-            null,
-            null,
-            compiledRule,
-            clauses.Count > 0 ? next : null,
-            clauses.Count > 0 ? clauses : null,
-            key);
     }
 
     private static string Conjunction(string condition, IReadOnlyList<string> clauses) =>
@@ -880,10 +458,10 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             return Clauses([]);
         }
 
-        var rendered = new string[clauses.Count];
-        for (var i = 0; i < clauses.Count; i++)
+        List<string> rendered = [];
+        foreach (var clause in clauses)
         {
-            var compiled = RulesCompiler.Compile(clauses[i], columns, RulesOperation.Validate) switch
+            var compiled = RulesCompiler.Compile(clause, columns, RulesOperation.Validate) switch
             {
                 CompiledCondition ready => ready,
                 InvalidInput => null,
@@ -893,7 +471,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                 return new SqlRefusal("rules_invalid", "a validate clause no longer compiles against the table", "42501", index, StatusCodes.Status403Forbidden);
             }
 
-            rendered[i] = RulesCompiler.Render(compiled, auth, renderTime, "new.");
+            rendered.Add(RulesCompiler.Render(compiled, auth, renderTime, "new."));
         }
 
         return Clauses(rendered);
@@ -922,32 +500,9 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         };
     }
 
-    private static RowsOutcome? Assign(PlannedRow[] planned, int index, PlannedRow row)
+    private static RowsOutcome? Add(List<PlannedRow> planned, PlannedRow row)
     {
-        planned[index] = row;
+        planned.Add(row);
         return null;
-    }
-
-    private readonly record struct TableCacheKey(Ulid DatabaseId, long SessionIncarnation, string Table, ulong SchemaEpoch);
-
-    private sealed record TableMetadata(
-        TableColumn[] Columns,
-        string[] Names,
-        string[] QuotedNames,
-        string QuotedTable,
-        Dictionary<string, int> ColumnIndex);
-
-    private sealed class TableCacheKeyComparer : IEqualityComparer<TableCacheKey>
-    {
-        public static TableCacheKeyComparer Instance { get; } = new();
-
-        public bool Equals(TableCacheKey x, TableCacheKey y) =>
-            x.DatabaseId == y.DatabaseId
-            && x.SessionIncarnation == y.SessionIncarnation
-            && x.SchemaEpoch == y.SchemaEpoch
-            && AsciiIgnoreCaseComparer.Instance.Equals(x.Table, y.Table);
-
-        public int GetHashCode(TableCacheKey obj) =>
-            HashCode.Combine(obj.DatabaseId, obj.SessionIncarnation, obj.SchemaEpoch, AsciiIgnoreCaseComparer.Instance.GetHashCode(obj.Table));
     }
 }

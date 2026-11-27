@@ -91,7 +91,7 @@ internal sealed partial class PostgresConnection
         {
             CommitMetadata metadata => Committed(metadata),
             SerializationConflict conflict => PgErrors.From(conflict),
-            SchemaMismatch mismatch => ObservedCommitSchemaMismatch(mismatch),
+            SchemaMismatch mismatch => PgErrors.From(mismatch),
             ClusterUnavailable unavailable => PgErrors.From(unavailable),
             ClusterTimeout timeout => PgErrors.From(timeout),
             StorageBusy busy => PgErrors.From(busy),
@@ -102,15 +102,8 @@ internal sealed partial class PostgresConnection
 
     private PgError? Committed(CommitMetadata metadata)
     {
-        session.ObserveSchemaEpoch(metadata.SchemaEpoch);
         session.Observe(metadata.Bookmark);
         return null;
-    }
-
-    private PgError ObservedCommitSchemaMismatch(SchemaMismatch mismatch)
-    {
-        session.ObserveSchemaEpoch(mismatch.ActualEpoch);
-        return PgErrors.From(mismatch);
     }
 
     private async ValueTask<PgOutcome> RollbackAsync()
@@ -146,11 +139,6 @@ internal sealed partial class PostgresConnection
         foreach (var change in session.Settings.EndTransaction())
         {
             session.Report(change);
-        }
-
-        if (rollback)
-        {
-            session.InvalidateSchemaCache();
         }
 
         if (block.Active is not { } active)
@@ -200,15 +188,9 @@ internal sealed partial class PostgresConnection
         var outcome = await ExecuteStatementAsync(new SqlStatement($"ROLLBACK TO SAVEPOINT {command.Name}", [], NoNamed), block.Access, cancellationToken);
         return outcome switch
         {
-            SqlResultSet => RolledBackToSavepoint(),
+            SqlResultSet => PgResult.Command("ROLLBACK"),
             PgError error => Restore(block, failed, error),
         };
-    }
-
-    private PgOutcome RolledBackToSavepoint()
-    {
-        session.InvalidateSchemaCache();
-        return PgResult.Command("ROLLBACK");
     }
 
     private static PgError Restore(PostgresTransactionBlock block, bool failed, PgError error)
@@ -350,7 +332,6 @@ internal sealed partial class PostgresConnection
 
         session.Statements.Clear();
         session.Portals.Clear();
-        session.InvalidateSchemaCache();
         await StopListeningAsync(session);
         foreach (var change in session.Settings.ResetAll())
         {

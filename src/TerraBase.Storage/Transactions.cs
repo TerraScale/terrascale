@@ -50,41 +50,8 @@ internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOp
 
     public async ValueTask<Command?> NextCommandAsync(TimeSpan idleTimeout, TimeProvider time)
     {
-        if (_commands.Reader.TryRead(out var immediate))
-        {
-            Volatile.Write(ref _current, immediate);
-            return immediate;
-        }
-
-        if (idleTimeout == Timeout.InfiniteTimeSpan)
-        {
-            if (await _commands.Reader.WaitToReadAsync() && _commands.Reader.TryRead(out var next))
-            {
-                Volatile.Write(ref _current, next);
-                return next;
-            }
-
-            Volatile.Write(ref _current, null);
-            Abandon();
-            return null;
-        }
-
         using var cancellation = new CancellationTokenSource();
-        var wait = _commands.Reader.WaitToReadAsync(cancellation.Token);
-        if (wait.IsCompletedSuccessfully)
-        {
-            if (await wait && _commands.Reader.TryRead(out var readyCommand))
-            {
-                Volatile.Write(ref _current, readyCommand);
-                return readyCommand;
-            }
-
-            Volatile.Write(ref _current, null);
-            Abandon();
-            return null;
-        }
-
-        var ready = wait.AsTask();
+        var ready = _commands.Reader.WaitToReadAsync(cancellation.Token).AsTask();
         var delay = Task.Delay(idleTimeout, time, cancellation.Token);
         var winner = await Task.WhenAny(ready, delay);
         await cancellation.CancelAsync();
@@ -190,13 +157,7 @@ internal sealed class ReadTransaction : ISqlTransaction
         _idleTimeout = idleTimeout;
         if (idleTimeout != Timeout.InfiniteTimeSpan && idleTimeout > TimeSpan.Zero)
         {
-            _idleTimer = time.CreateTimer(static state =>
-            {
-                if (state is ReadTransaction transaction)
-                {
-                    transaction.Abandon();
-                }
-            }, this, idleTimeout, Timeout.InfiniteTimeSpan);
+            _idleTimer = time.CreateTimer(static state => ((ReadTransaction)state!).Abandon(), this, idleTimeout, Timeout.InfiniteTimeSpan);
         }
     }
 

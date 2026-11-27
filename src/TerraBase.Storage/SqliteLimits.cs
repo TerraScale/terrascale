@@ -22,8 +22,6 @@ internal static class SqliteLimits
         (SqliteNative.LimitTriggerDepth, 32),
     ];
 
-    private static int _verified;
-
     public static void ApplyHeapLimits()
     {
         var hard = Math.Max(MinHardHeapBytes, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4);
@@ -38,11 +36,6 @@ internal static class SqliteLimits
 
     public static SqliteStatus Verify(nint db)
     {
-        if (Volatile.Read(ref _verified) != 0)
-        {
-            return SqliteStatus.Success;
-        }
-
         foreach (var (id, value) in UserLimits)
         {
             _ = SqliteNative.Limit(db, id, value);
@@ -52,7 +45,6 @@ internal static class SqliteLimits
             }
         }
 
-        Volatile.Write(ref _verified, 1);
         return SqliteStatus.Success;
     }
 

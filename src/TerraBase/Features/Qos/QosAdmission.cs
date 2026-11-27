@@ -26,19 +26,7 @@ internal sealed class QosAdmission : IAsyncDisposable
         _refused = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.refused");
     }
 
-    public ValueTask<RateLimitLease> AdmitAsync(Ulid databaseId, CancellationToken cancellationToken)
-    {
-        var immediate = _limiter.AttemptAcquire(databaseId, 1);
-        if (immediate.IsAcquired)
-        {
-            return ValueTask.FromResult(immediate);
-        }
-
-        immediate.Dispose();
-        return AdmitSlowAsync(databaseId, cancellationToken);
-    }
-
-    private async ValueTask<RateLimitLease> AdmitSlowAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<RateLimitLease> AdmitAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         var lease = await _limiter.AcquireAsync(databaseId, 1, cancellationToken);
         if (!lease.IsAcquired)

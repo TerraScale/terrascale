@@ -6,6 +6,6 @@ done
 for file in "$pids"/*.pid; do
   [ -f "$file" ] || continue
   pid=$(cat "$file")
-  while kill -0 "$pid" 2> /dev/null; do sleep 0.05; done
+  while kill -0 "$pid" 2> /dev/null; do sleep 0.1; done
   rm -f "$file"
 done

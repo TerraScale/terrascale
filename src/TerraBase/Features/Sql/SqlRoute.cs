@@ -11,7 +11,7 @@ internal static class SqlRoute
     public static ExecuteSqlResponse V2(
         SqlRunResolution outcome) => outcome switch
         {
-            SqlRun run => new ExecuteBody(SqlWire.Results(run.Results), SqlRunner.EncodeBookmark(run.Bookmark), ConsistencyHeaders.Format(run.Mode)),
+            SqlRun run => new ExecuteBody(SqlWire.Results(run.Results), run.Bookmark.Encode(), ConsistencyHeaders.Format(run.Mode)),
             SqlRefusal refusal => refusal,
             InvalidInput invalid => invalid,
             CredentialRejected unauthorized => unauthorized,

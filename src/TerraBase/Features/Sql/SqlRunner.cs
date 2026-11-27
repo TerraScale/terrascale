@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Runtime.CompilerServices;
 using TerraBase.Configuration;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Usage;
@@ -20,37 +19,10 @@ internal readonly union SqlWaitOutcome(Completed, SqlRefusal);
 
 public sealed record SqlRun(IReadOnlyList<SqlResultSet> Results, CausalBookmark Bookmark, ConsistencyMode Mode, string? RulesVersion = null);
 
-public sealed record SqlCausality(ConsistencyMode? Mode, CausalBookmark After)
-{
-    public static SqlCausality Default { get; } = new(null, CausalBookmark.Empty);
-}
+public sealed record SqlCausality(ConsistencyMode? Mode, CausalBookmark After);
 
 internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coordinator, RulesEnforcer rules, UsageMeter usage, QosAdmission qos, TerraBaseOptions options)
 {
-    private static readonly Completed Done = new();
-
-    private static readonly ConditionalWeakTable<CausalBookmark, string> EncodedBookmarks = new();
-
-    private static BookmarkEncoding? _lastEncodedBookmark;
-
-    public static string EncodeBookmark(CausalBookmark bookmark)
-    {
-        ArgumentNullException.ThrowIfNull(bookmark);
-        if (bookmark.IsEmpty)
-        {
-            return string.Empty;
-        }
-
-        if (Volatile.Read(ref _lastEncodedBookmark) is { } cached && ReferenceEquals(cached.Bookmark, bookmark))
-        {
-            return cached.Encoded;
-        }
-
-        var encoded = EncodedBookmarks.GetValue(bookmark, static value => value.Encode());
-        Volatile.Write(ref _lastEncodedBookmark, new BookmarkEncoding(bookmark, encoded));
-        return encoded;
-    }
-
     public static SqlCausalityOutcome Causality(HttpRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -72,14 +44,14 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
             mode = parsed;
         }
 
-        return mode is null && after.IsEmpty ? SqlCausality.Default : new SqlCausality(mode, after);
+        return new SqlCausality(mode, after);
     }
 
     public static void WriteHeaders(HttpResponse response, SqlRun run)
     {
         ArgumentNullException.ThrowIfNull(response);
         ArgumentNullException.ThrowIfNull(run);
-        response.Headers[ConsistencyHeaders.Bookmark] = EncodeBookmark(run.Bookmark);
+        response.Headers[ConsistencyHeaders.Bookmark] = run.Bookmark.Encode();
         response.Headers[ConsistencyHeaders.Consistency] = ConsistencyHeaders.Format(run.Mode);
         if (run.RulesVersion is { Length: > 0 } rulesVersion)
         {
@@ -111,21 +83,6 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         };
     }
 
-    public async ValueTask<SqlRunOutcome> RunPlannedAsync(
-        ResolvedDatabase target, SqlBatch batch, SqlCausality causality, bool serviceRead, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(target);
-        ArgumentNullException.ThrowIfNull(batch);
-        ArgumentNullException.ThrowIfNull(causality);
-        using var lease = await qos.AdmitAsync(target.Database.Id, cancellationToken);
-        if (!lease.IsAcquired)
-        {
-            return new SqlRefusal("tenant_busy", "the database has too many requests in flight; retry", "53300", 0, StatusCodes.Status429TooManyRequests, TimeSpan.FromSeconds(1));
-        }
-
-        return await RunBatchAsync(target, batch, causality, serviceRead, cancellationToken);
-    }
-
     public async ValueTask<EnforcementOutcome> PrepareAsync(
         ResolvedDatabase target, IReadOnlyList<PlannedStatement> statements, CatalogReader catalog, CancellationToken cancellationToken)
     {
@@ -139,43 +96,22 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
         return target.EndUser is { } auth
             ? await rules.ApplyAsync(target.Database.Id, auth, statements, cancellationToken, catalog)
-            : new EnforcedSql(ExtractStatements(statements), null);
+            : new EnforcedSql([.. statements.Select(static statement => statement.Statement)], null);
     }
 
-    public ValueTask<EnforcementOutcome> PrepareBatchAsync(
-        ResolvedDatabase target, SqlBatch batch, ISqlTransaction transaction, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(target);
-        ArgumentNullException.ThrowIfNull(batch);
-        var firstWrite = FirstWrite(batch.Statements);
-        if (firstWrite >= 0 && !target.CanWrite)
-        {
-            return ValueTask.FromResult<EnforcementOutcome>(SqlRefusal.ForbiddenScope(firstWrite));
-        }
-
-        return target.EndUser is { } auth
-            ? rules.ApplyAsync(target.Database.Id, auth, batch.Statements, cancellationToken, RulesEnforcer.Catalog(transaction))
-            : ValueTask.FromResult<EnforcementOutcome>(new EnforcedSql(batch.Sql, null));
-    }
-
-    public ValueTask<SqlWaitOutcome> WaitAsync(ResolvedDatabase target, CausalBookmark after, CancellationToken cancellationToken)
+    public async ValueTask<SqlWaitOutcome> WaitAsync(ResolvedDatabase target, CausalBookmark after, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(after);
         if (after.IsEmpty)
         {
-            return ValueTask.FromResult<SqlWaitOutcome>(Done);
+            return new Completed();
         }
 
-        return WaitSlowAsync(target.Database.Id, after, cancellationToken);
-    }
-
-    private async ValueTask<SqlWaitOutcome> WaitSlowAsync(Ulid databaseId, CausalBookmark after, CancellationToken cancellationToken)
-    {
-        var outcome = await coordinator.WaitForBookmarkAsync(databaseId, after, options.QueryBudget, cancellationToken);
+        var outcome = await coordinator.WaitForBookmarkAsync(target.Database.Id, after, options.QueryBudget, cancellationToken);
         return outcome switch
         {
-            BookmarkReached or DatabaseNotFound => Done,
+            BookmarkReached or DatabaseNotFound => new Completed(),
             ClusterTimeout timeout => SqlRefusal.From(timeout),
         };
     }
@@ -184,27 +120,11 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(results);
-        long rowsRead = 0;
-        long rowsWritten = 0;
-        for (var index = 0; index < results.Count; index++)
-        {
-            var result = results[index];
-            rowsRead += result.Rows.Count;
-            if (wrote)
-            {
-                rowsWritten += result.RowsAffected;
-            }
-        }
-
-        usage.RecordSqlBatch(
-            target.Project.Id,
-            target.Database.Id,
-            requests: 1,
-            reads: wrote ? 0 : 1,
-            writes: wrote ? 1 : 0,
-            rowsRead: rowsRead,
-            rowsWritten: rowsWritten,
-            strongCommits: wrote && mode == ConsistencyMode.Strong ? 1 : 0);
+        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.Requests, 1);
+        usage.Record(target.Project.Id, target.Database.Id, wrote ? UsageMetrics.Writes : UsageMetrics.Reads, 1);
+        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.RowsRead, results.Sum(static result => (long)result.Rows.Count));
+        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.RowsWritten, wrote ? results.Sum(static result => result.RowsAffected) : 0);
+        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.StrongCommits, wrote && mode == ConsistencyMode.Strong ? 1 : 0);
     }
 
     public static string Describe(CommitMetadata commit) =>
@@ -225,9 +145,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         {
             Completed => await access.OpenAsync(target.Database, cancellationToken) switch
             {
-                ISqlDatabaseSession session when target.EndUser is null =>
-                    await ExecuteAsync(target, session, batch.Sql, batch.Writes, mode, causality.After, null, serviceRead, cancellationToken),
-                ISqlDatabaseSession session => await rules.ApplyAsync(target.Database.Id, target.EndUser, batch.Statements, cancellationToken, RulesEnforcer.Catalog(session)) switch
+                ISqlDatabaseSession session => await PrepareAsync(target, batch.Statements, RulesEnforcer.Catalog(session), cancellationToken) switch
                 {
                     EnforcedSql enforced => await ExecuteAsync(target, session, enforced.Statements, batch.Writes, mode, causality.After, enforced.RulesVersion, serviceRead, cancellationToken),
                     SqlRefusal refusal => refusal,
@@ -276,22 +194,6 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         return new SqlRun(results, bookmark, mode, rulesVersion);
     }
 
-    private static SqlStatement[] ExtractStatements(IReadOnlyList<PlannedStatement> statements)
-    {
-        if (statements.Count == 0)
-        {
-            return [];
-        }
-
-        var extracted = new SqlStatement[statements.Count];
-        for (var index = 0; index < statements.Count; index++)
-        {
-            extracted[index] = statements[index].Statement;
-        }
-
-        return extracted;
-    }
-
     private static int FirstWrite(IReadOnlyList<PlannedStatement> statements)
     {
         for (var index = 0; index < statements.Count; index++)
@@ -304,6 +206,4 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
         return -1;
     }
-
-    private sealed record BookmarkEncoding(CausalBookmark Bookmark, string Encoded);
 }

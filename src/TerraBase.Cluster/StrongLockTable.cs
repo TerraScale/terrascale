@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Collections.Frozen;
-using System.Runtime.InteropServices;
 
 namespace TerraBase.Cluster;
 
@@ -19,69 +17,15 @@ public sealed record StrongLockHolder(
     public static StrongLockHolder From(StrongPreparePayload payload, string coordinatorNodeId, long expiresAtTimestamp)
     {
         ArgumentNullException.ThrowIfNull(payload);
-        IReadOnlySet<RowKey> writeKeys;
-        IReadOnlySet<string> writeTables;
-        if (payload.WriteKeys.Count == 0)
-        {
-            writeKeys = FrozenSet<RowKey>.Empty;
-            writeTables = FrozenSet<string>.Empty;
-        }
-        else
-        {
-            var keys = new HashSet<RowKey>(payload.WriteKeys.Count);
-            var tables = new HashSet<string>(payload.WriteKeys.Count, StringComparer.OrdinalIgnoreCase);
-            for (var index = 0; index < payload.WriteKeys.Count; index++)
-            {
-                var key = payload.WriteKeys[index];
-                _ = keys.Add(key);
-                _ = tables.Add(key.Table);
-            }
-
-            writeKeys = keys;
-            writeTables = tables;
-        }
-
-        IReadOnlySet<RowKey> readKeys;
-        if (payload.ReadSet.Count == 0)
-        {
-            readKeys = FrozenSet<RowKey>.Empty;
-        }
-        else
-        {
-            var keys = new HashSet<RowKey>(payload.ReadSet.Count);
-            for (var index = 0; index < payload.ReadSet.Count; index++)
-            {
-                _ = keys.Add(payload.ReadSet[index].Key);
-            }
-
-            readKeys = keys;
-        }
-
-        IReadOnlySet<string> scannedTables;
-        if (payload.ScannedTables.Count == 0)
-        {
-            scannedTables = FrozenSet<string>.Empty;
-        }
-        else
-        {
-            var tables = new HashSet<string>(payload.ScannedTables.Count, StringComparer.OrdinalIgnoreCase);
-            for (var index = 0; index < payload.ScannedTables.Count; index++)
-            {
-                _ = tables.Add(payload.ScannedTables[index]);
-            }
-
-            scannedTables = tables;
-        }
-
         return new StrongLockHolder(
             payload.DatabaseId,
             payload.TxId,
             payload.Priority,
             coordinatorNodeId,
-            writeKeys,
-            readKeys,
-            writeTables,
-            scannedTables,
+            payload.WriteKeys.ToHashSet(),
+            payload.ReadSet.Select(static read => read.Key).ToHashSet(),
+            payload.WriteKeys.Select(static key => key.Table).ToHashSet(StringComparer.OrdinalIgnoreCase),
+            payload.ScannedTables.ToHashSet(StringComparer.OrdinalIgnoreCase),
             payload.IsSchemaChange,
             expiresAtTimestamp);
     }
@@ -91,49 +35,11 @@ public sealed record StrongLockHolder(
         ArgumentNullException.ThrowIfNull(other);
         return IsSchemaChange
             || other.IsSchemaChange
-            || SetsOverlap(WriteKeys, other.WriteKeys)
-            || SetsOverlap(WriteKeys, other.ReadKeys)
-            || SetsOverlap(ReadKeys, other.WriteKeys)
-            || SetsOverlap(WriteTables, other.ScannedTables)
-            || SetsOverlap(ScannedTables, other.WriteTables);
-    }
-
-    private static bool SetsOverlap<T>(IReadOnlySet<T> left, IReadOnlySet<T> right)
-    {
-        if (left.Count == 0 || right.Count == 0)
-        {
-            return false;
-        }
-
-        var (smaller, larger) = left.Count <= right.Count ? (left, right) : (right, left);
-        if (smaller is HashSet<T> hashSet)
-        {
-            foreach (var item in hashSet)
-            {
-                if (larger.Contains(item))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        if (smaller is FrozenSet<T> frozen)
-        {
-            var items = frozen.Items;
-            for (var index = 0; index < items.Length; index++)
-            {
-                if (larger.Contains(items[index]))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        return smaller.Overlaps(larger);
+            || WriteKeys.Overlaps(other.WriteKeys)
+            || WriteKeys.Overlaps(other.ReadKeys)
+            || ReadKeys.Overlaps(other.WriteKeys)
+            || WriteTables.Overlaps(other.ScannedTables)
+            || ScannedTables.Overlaps(other.WriteTables);
     }
 }
 
@@ -150,14 +56,12 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
     private const int FinalizedCapacity = 65536;
 
     private readonly Lock _gate = new();
-    private readonly Dictionary<Ulid, DatabaseLockBucket> _databases = [];
-    private readonly HashSet<Ulid> _activeTxIds = [];
+    private readonly Dictionary<Ulid, Dictionary<Ulid, StrongLockHolder>> _databases = [];
     private readonly Dictionary<Ulid, TaskCompletionSource> _released = [];
     private readonly HashSet<Ulid> _finalized = [];
     private readonly Queue<Ulid> _finalizedOrder = new();
     private readonly HashSet<(Ulid DatabaseId, Ulid TxId, string Coordinator)> _remoteAborts = [];
     private readonly Queue<(Ulid DatabaseId, Ulid TxId, string Coordinator)> _remoteAbortOrder = new();
-    private int _activeCount;
     private long _expired;
     private long _wounded;
 
@@ -165,7 +69,16 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
 
     public long Wounds => Interlocked.Read(ref _wounded);
 
-    public int ActiveHolders => Volatile.Read(ref _activeCount);
+    public int ActiveHolders
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _databases.Values.Sum(static holders => holders.Count);
+            }
+        }
+    }
 
     public long LeaseDeadline(TimeSpan lease) => timeProvider.GetTimestamp() + (long)(lease.TotalSeconds * timeProvider.TimestampFrequency);
 
@@ -179,37 +92,35 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
                 return new LockDenied(candidate);
             }
 
-            ref var bucketRef = ref CollectionsMarshal.GetValueRefOrAddDefault(_databases, candidate.DatabaseId, out var exists);
-            if (!exists || bucketRef is null)
+            if (!_databases.TryGetValue(candidate.DatabaseId, out var holders))
             {
-                bucketRef = new DatabaseLockBucket();
+                holders = [];
+                _databases[candidate.DatabaseId] = holders;
             }
 
-            var bucket = bucketRef;
-            EvictExpired(bucket);
-            if (bucket.TryGet(candidate.TxId, out var existing))
+            EvictExpired(holders);
+            if (holders.TryGetValue(candidate.TxId, out var existing))
             {
                 return string.Equals(existing.CoordinatorNodeId, candidate.CoordinatorNodeId, StringComparison.Ordinal)
                     ? new LockGranted(existing)
                     : new LockDenied(existing);
             }
 
-            var collector = new ConflictCollector();
-            bucket.FindConflicts(candidate, ref collector);
-            if (!collector.HasConflicts)
+            List<StrongLockHolder> conflicts = [.. holders.Values.Where(candidate.ConflictsWith)];
+            if (conflicts.Count == 0)
             {
-                bucket.Add(candidate);
-                _ = _activeTxIds.Add(candidate.TxId);
-                Volatile.Write(ref _activeCount, _activeCount + 1);
+                holders[candidate.TxId] = candidate;
+                _released[candidate.TxId] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 return new LockGranted(candidate);
             }
 
-            if (collector.Oldest is { } oldest && oldest.Priority <= candidate.Priority)
+            var oldest = conflicts.MinBy(static holder => holder.Priority);
+            if (oldest is not null && oldest.Priority <= candidate.Priority)
             {
                 return new LockDenied(oldest);
             }
 
-            return new LockWoundRequired(collector.ToArray());
+            return new LockWoundRequired(conflicts);
         }
     }
 
@@ -218,15 +129,9 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
         Task released;
         lock (_gate)
         {
-            if (!_activeTxIds.Contains(txId))
+            if (!_released.TryGetValue(txId, out var signal))
             {
                 return true;
-            }
-
-            ref var signal = ref CollectionsMarshal.GetValueRefOrAddDefault(_released, txId, out var exists);
-            if (!exists || signal is null)
-            {
-                signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             }
 
             released = signal.Task;
@@ -243,7 +148,31 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
     {
         lock (_gate)
         {
-            return ReleaseLocked(databaseId, txId);
+            if (_released.Remove(txId, out var signal))
+            {
+                signal.TrySetResult();
+            }
+
+            if (_finalized.Add(txId))
+            {
+                _finalizedOrder.Enqueue(txId);
+                while (_finalizedOrder.Count > FinalizedCapacity)
+                {
+                    _ = _finalized.Remove(_finalizedOrder.Dequeue());
+                }
+            }
+
+            if (!_databases.TryGetValue(databaseId, out var holders) || !holders.Remove(txId))
+            {
+                return false;
+            }
+
+            if (holders.Count == 0)
+            {
+                _ = _databases.Remove(databaseId);
+            }
+
+            return true;
         }
     }
 
@@ -261,10 +190,10 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
                 }
             }
 
-            if (_databases.TryGetValue(databaseId, out var bucket) && bucket.TryGet(txId, out var holder)
+            if (_databases.TryGetValue(databaseId, out var holders) && holders.TryGetValue(txId, out var holder)
                 && string.Equals(holder.CoordinatorNodeId, coordinator, StringComparison.Ordinal))
             {
-                _ = ReleaseLocked(databaseId, txId);
+                _ = Release(databaseId, txId);
             }
         }
     }
@@ -278,78 +207,20 @@ public sealed class StrongLockTable(TimeProvider timeProvider)
         }
     }
 
-    private bool ReleaseLocked(Ulid databaseId, Ulid txId)
+    private void EvictExpired(Dictionary<Ulid, StrongLockHolder> holders)
     {
-        if (_released.Count > 0 && _released.Remove(txId, out var signal))
-        {
-            signal.TrySetResult();
-        }
-
-        if (_finalized.Add(txId))
-        {
-            _finalizedOrder.Enqueue(txId);
-            while (_finalizedOrder.Count > FinalizedCapacity)
-            {
-                _ = _finalized.Remove(_finalizedOrder.Dequeue());
-            }
-        }
-
-        if (!_databases.TryGetValue(databaseId, out var bucket) || !bucket.Remove(txId))
-        {
-            return false;
-        }
-
-        _ = _activeTxIds.Remove(txId);
-        Volatile.Write(ref _activeCount, _activeCount - 1);
-        if (bucket.Count == 0)
-        {
-            _ = _databases.Remove(databaseId);
-        }
-
-        return true;
-    }
-
-    private void EvictExpired(DatabaseLockBucket bucket)
-    {
-        if (bucket.Count == 0)
-        {
-            return;
-        }
-
         var now = timeProvider.GetTimestamp();
-        if (now < bucket.NextExpiryTimestamp)
+        foreach (var (txId, holder) in holders.ToArray())
         {
-            return;
-        }
-
-        var minExpiry = long.MaxValue;
-        var evicted = 0;
-        var holders = bucket.Holders;
-        for (var index = holders.Count - 1; index >= 0; index--)
-        {
-            var holder = holders[index];
-            if (holder.ExpiresAtTimestamp <= now)
+            if (holder.ExpiresAtTimestamp <= now && holders.Remove(txId))
             {
-                bucket.RemoveAt(index);
-                _ = _activeTxIds.Remove(holder.TxId);
-                if (_released.Count > 0 && _released.Remove(holder.TxId, out var signal))
+                if (_released.Remove(txId, out var signal))
                 {
                     signal.TrySetResult();
                 }
 
-                evicted++;
+                Interlocked.Increment(ref _expired);
             }
-            else if (holder.ExpiresAtTimestamp < minExpiry)
-            {
-                minExpiry = holder.ExpiresAtTimestamp;
-            }
-        }
-
-        bucket.NextExpiryTimestamp = minExpiry;
-        if (evicted > 0)
-        {
-            Volatile.Write(ref _activeCount, _activeCount - evicted);
-            Interlocked.Add(ref _expired, evicted);
         }
     }
 }

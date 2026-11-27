@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Net;
 using DotNext.IO;
 using DotNext.Net.Cluster;
@@ -8,10 +7,9 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, ClusterMemberId memberId, EndPoint endPoint, bool isRemote) : IRaftClusterMember, IDisposable
+internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, EndPoint endPoint, bool isRemote) : IRaftClusterMember, IDisposable
 {
     private readonly CancellationTokenSource _pending = new();
-    private readonly IReadOnlyDictionary<string, string> _metadata = new Dictionary<string, string>(StringComparer.Ordinal) { ["node"] = nodeId }.ToFrozenDictionary(StringComparer.Ordinal);
     private IRaftClusterMember.ReplicationState _state;
     private int _status = (int)(isRemote ? ClusterMemberStatus.Unknown : ClusterMemberStatus.Available);
 
@@ -19,7 +17,7 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, Cl
 
     public string NodeId { get; } = nodeId;
 
-    public ClusterMemberId Id { get; } = memberId;
+    public ClusterMemberId Id { get; } = RaftIdentity.For(nodeId);
 
     public EndPoint EndPoint { get; } = endPoint;
 
@@ -32,7 +30,7 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, Cl
     ref IRaftClusterMember.ReplicationState IRaftClusterMember.State => ref _state;
 
     public ValueTask<IReadOnlyDictionary<string, string>> GetMetadataAsync(bool refresh, CancellationToken token) =>
-        ValueTask.FromResult(_metadata);
+        ValueTask.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>(StringComparer.Ordinal) { ["node"] = NodeId });
 
     public async Task<bool> ResignAsync(CancellationToken token) =>
         (await VoteCallAsync(RaftVoteKind.Resign, 0, 0, 0, token)).Value != 0;
@@ -79,22 +77,10 @@ internal sealed class QuicRaftMember(RaftShardContext context, string nodeId, Cl
             return new Result<ReplicationStatus> { Term = term, Value = new ReplicationStatus { Result = HeartbeatResult.ReplicatedWithLeaderTerm, LastIndex = prevLogIndex + entries.Count } };
         }
 
-        var count = entries.Count;
-        IReadOnlyList<RaftWireEntry> wire;
-        if (count == 0)
+        List<RaftWireEntry> wire = new(entries.Count);
+        foreach (var entry in entries)
         {
-            wire = [];
-        }
-        else
-        {
-            var array = new RaftWireEntry[count];
-            for (var index = 0; index < count; index++)
-            {
-                var entry = entries[index];
-                array[index] = new RaftWireEntry(entry.Term, entry.CommandId, entry.IsConfiguration, await PayloadAsync(entry, token));
-            }
-
-            wire = array;
+            wire.Add(new RaftWireEntry(entry.Term, entry.CommandId, entry.IsConfiguration, await PayloadAsync(entry, token)));
         }
 
         var message = new RaftAppendMessage(context.Shard, RaftAppendKind.Append, context.LocalId, term, prevLogIndex, prevLogTerm, commitIndex, context.StateVersion, wire);

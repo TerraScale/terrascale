@@ -18,20 +18,16 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         ArgumentNullException.ThrowIfNull(payload);
         var started = timeProvider.GetTimestamp();
         var leaseDeadline = started + (long)(options.StrongLockLease.TotalSeconds * timeProvider.TimestampFrequency);
-        var regions = topology.Regions;
-        var regionCount = regions.Count;
+        var regionCount = topology.Regions.Count;
         var required = topology.RegionQuorum;
         var voteCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var dispatch = new VoteDispatchState();
-        var votes = new Task<RegionVote>[regionCount];
-        for (var index = 0; index < regionCount; index++)
-        {
-            votes[index] = VoteRegionAsync(session, payload, handle, regions[index], dispatch, voteCancel.Token);
-        }
-
+        var dispatchGate = new Lock();
+        var closed = false;
+        List<string> dispatched = [];
+        List<Task<RegionVote>> votes = [.. topology.Regions.Select(region => VoteRegionAsync(session, payload, handle, region, dispatchGate, () => closed, dispatched, voteCancel.Token))];
         var prepared = 0;
         var unreachable = 0;
-        List<StrongPrepareOutcome>? rejections = null;
+        List<StrongPrepareOutcome> rejections = [];
         try
         {
             await foreach (var completed in Task.WhenEach(votes).WithCancellation(cancellationToken))
@@ -40,13 +36,12 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
                 var definitive = result.Vote switch
                 {
                     Prepared => Increment(ref prepared),
-                    Wounded wounded => Reject(ref rejections, wounded, definitive: false),
-                    ReadSetStale stale => Reject(ref rejections, stale, definitive: true),
-                    SchemaEpochStale epoch => Reject(ref rejections, epoch, definitive: true),
+                    Wounded wounded => Reject(rejections, wounded, definitive: false),
+                    ReadSetStale stale => Reject(rejections, stale, definitive: true),
+                    SchemaEpochStale epoch => Reject(rejections, epoch, definitive: true),
                     ClusterUnavailable => Increment(ref unreachable),
                 };
-                var rejectionCount = rejections?.Count ?? 0;
-                if (prepared >= required || definitive || regionCount - rejectionCount - unreachable < required)
+                if (prepared >= required || definitive || regionCount - rejections.Count - unreachable < required)
                 {
                     await voteCancel.CancelAsync();
                     break;
@@ -71,9 +66,15 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
                 TaskScheduler.Default);
         }
 
-        var remoteParticipants = dispatch.CloseAndSnapshot();
+        string[] remoteParticipants;
+        lock (dispatchGate)
+        {
+            closed = true;
+            remoteParticipants = [.. dispatched.Distinct(StringComparer.Ordinal)];
+        }
+
         var withinLease = timeProvider.GetElapsedTime(started) < options.StrongLockLease / 2;
-        return new StrongVoteTally(prepared, required, rejections is not null ? rejections : [], unreachable, remoteParticipants, leaseDeadline, withinLease);
+        return new StrongVoteTally(prepared, required, rejections, unreachable, remoteParticipants, leaseDeadline, withinLease);
     }
 
     private async Task<RegionVote> VoteRegionAsync(
@@ -81,26 +82,37 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         StrongPreparePayload payload,
         StrongTransactionHandle handle,
         string region,
-        VoteDispatchState dispatch,
+        Lock dispatchGate,
+        Func<bool> isClosed,
+        List<string> dispatched,
         CancellationToken cancellationToken)
     {
         var candidates = topology.StrongCandidates(region, payload.DatabaseId);
-        var ordered = OrderCandidates(candidates);
+        StrongParticipantTarget[] ordered = [.. candidates.OrderByDescending(candidate => candidate.IsLocal || health.IsReachable(candidate.NodeId))];
         StrongVote last = new ClusterUnavailable("no candidate available in region", "region_unreachable");
-        for (var index = 0; index < ordered.Count; index++)
+        foreach (var candidate in ordered)
         {
             if (cancellationToken.IsCancellationRequested)
             {
                 break;
             }
 
-            var candidate = ordered[index];
-            if (!candidate.IsLocal && !dispatch.TryRecord(handle, candidate.NodeId, cancellationToken))
+            if (!candidate.IsLocal)
             {
-                break;
+                lock (dispatchGate)
+                {
+                    if (isClosed() || cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    handle.DispatchTo(candidate.NodeId);
+                    dispatched.Add(candidate.NodeId);
+                }
             }
 
             var vote = await VoteAsync(session, payload, candidate, cancellationToken);
+
             last = vote;
             if (!IsRetryable(vote))
             {
@@ -111,105 +123,13 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         return new RegionVote(last);
     }
 
-    private IReadOnlyList<StrongParticipantTarget> OrderCandidates(IReadOnlyList<StrongParticipantTarget> candidates)
-    {
-        var count = candidates.Count;
-        if (count <= 1)
-        {
-            return candidates;
-        }
-
-        var seenUnreachable = false;
-        var needsReorder = false;
-        for (var index = 0; index < count; index++)
-        {
-            var candidate = candidates[index];
-            var reachable = candidate.IsLocal || health.IsReachable(candidate.NodeId);
-            if (!reachable)
-            {
-                seenUnreachable = true;
-            }
-            else if (seenUnreachable)
-            {
-                needsReorder = true;
-                break;
-            }
-        }
-
-        if (!needsReorder)
-        {
-            return candidates;
-        }
-
-        var ordered = new StrongParticipantTarget[count];
-        var write = 0;
-        for (var index = 0; index < count; index++)
-        {
-            var candidate = candidates[index];
-            if (candidate.IsLocal || health.IsReachable(candidate.NodeId))
-            {
-                ordered[write++] = candidate;
-            }
-        }
-
-        for (var index = 0; index < count; index++)
-        {
-            var candidate = candidates[index];
-            if (!candidate.IsLocal && !health.IsReachable(candidate.NodeId))
-            {
-                ordered[write++] = candidate;
-            }
-        }
-
-        return ordered;
-    }
-
     private static bool IsRetryable(StrongVote vote) => vote switch
     {
         ClusterUnavailable => true,
         Prepared or Wounded or ReadSetStale or SchemaEpochStale => false,
     };
 
-    private readonly record struct RegionVote(StrongVote Vote);
-
-    private sealed class VoteDispatchState
-    {
-        private readonly Lock _gate = new();
-        private HashSet<string>? _dispatched;
-        private bool _closed;
-
-        public bool TryRecord(StrongTransactionHandle handle, string nodeId, CancellationToken cancellationToken)
-        {
-            lock (_gate)
-            {
-                if (_closed || cancellationToken.IsCancellationRequested)
-                {
-                    return false;
-                }
-
-                handle.DispatchTo(nodeId);
-                _dispatched ??= new HashSet<string>(StringComparer.Ordinal);
-                _ = _dispatched.Add(nodeId);
-                return true;
-            }
-        }
-
-        public string[] CloseAndSnapshot()
-        {
-            lock (_gate)
-            {
-                _closed = true;
-                if (_dispatched is null || _dispatched.Count == 0)
-                {
-                    return [];
-                }
-
-                var result = new string[_dispatched.Count];
-                _dispatched.CopyTo(result);
-                return result;
-            }
-        }
-    }
+    private sealed record RegionVote(StrongVote Vote);
 
     private static bool Increment(ref int counter)
     {
@@ -217,9 +137,8 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         return false;
     }
 
-    private static bool Reject(ref List<StrongPrepareOutcome>? rejections, StrongPrepareOutcome outcome, bool definitive)
+    private static bool Reject(List<StrongPrepareOutcome> rejections, StrongPrepareOutcome outcome, bool definitive)
     {
-        rejections ??= [];
         rejections.Add(outcome);
         return definitive;
     }
@@ -357,26 +276,18 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
                 return new ClusterTimeout("participant lock leases expired before the staged commit");
             }
 
-            var commitValueTask = session.CommitStagedAsync(staged.Token, clock.Tick(), tally.LeaseDeadline, CancellationToken.None);
-            if (commitValueTask.IsCompletedSuccessfully)
+            using var timer = new CancellationTokenSource();
+            var elapsed = Task.Delay(timeProvider.GetElapsedTime(now, tally.LeaseDeadline), timeProvider, timer.Token);
+            var completion = session.CommitStagedAsync(staged.Token, clock.Tick(), tally.LeaseDeadline, CancellationToken.None).AsTask();
+            if (await Task.WhenAny(completion, elapsed) != completion && !completion.IsCompletedSuccessfully)
             {
-                committed = await commitValueTask;
+                recovery.Enqueue(() => ResolveExpiredCommitAsync(session, staged, handle, payload, tally, completion));
+                deferred = true;
+                return new ClusterUnavailable("the staged commit's outcome could not be confirmed before its participant leases expired", "write_outcome_unknown");
             }
-            else
-            {
-                using var timer = new CancellationTokenSource();
-                var elapsed = Task.Delay(timeProvider.GetElapsedTime(now, tally.LeaseDeadline), timeProvider, timer.Token);
-                var completion = commitValueTask.AsTask();
-                if (await Task.WhenAny(completion, elapsed) != completion && !completion.IsCompletedSuccessfully)
-                {
-                    recovery.Enqueue(() => ResolveExpiredCommitAsync(session, staged, handle, payload, tally, completion));
-                    deferred = true;
-                    return new ClusterUnavailable("the staged commit's outcome could not be confirmed before its participant leases expired", "write_outcome_unknown");
-                }
 
-                await timer.CancelAsync();
-                committed = await completion;
-            }
+            await timer.CancelAsync();
+            committed = await completion;
         }
         finally
         {
@@ -430,18 +341,13 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
 
     private void CatchUpOnStaleVotes(Ulid databaseId, StrongVoteTally tally)
     {
-        for (var index = 0; index < tally.Rejections.Count; index++)
+        if (tally.Rejections.Any(static rejection => rejection switch
         {
-            var stale = tally.Rejections[index] switch
-            {
-                ReadSetStale or SchemaEpochStale => true,
-                Prepared or Wounded => false,
-            };
-            if (stale)
-            {
-                _ = databases.RequestCatchUp(databaseId);
-                return;
-            }
+            ReadSetStale or SchemaEpochStale => true,
+            Prepared or Wounded => false,
+        }))
+        {
+            _ = databases.RequestCatchUp(databaseId);
         }
     }
 
@@ -474,17 +380,12 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
 
     private static ClusterCommitTransactionOutcome Rejection(Ulid databaseId, StagedWrite staged, StrongVoteTally tally, StrongTransactionHandle handle)
     {
-        var rejections = tally.Rejections;
-        var hasReadSetStale = false;
-        var hasWounded = false;
-        for (var index = 0; index < rejections.Count; index++)
+        foreach (var rejection in tally.Rejections)
         {
-            var schema = rejections[index] switch
+            var schema = rejection switch
             {
                 SchemaEpochStale stale => stale,
-                ReadSetStale => Mark(ref hasReadSetStale),
-                Wounded => Mark(ref hasWounded),
-                Prepared => null,
+                Prepared or Wounded or ReadSetStale => null,
             };
             if (schema is not null)
             {
@@ -492,12 +393,20 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
             }
         }
 
-        if (hasReadSetStale)
+        if (tally.Rejections.Any(static rejection => rejection switch
+        {
+            ReadSetStale => true,
+            Prepared or Wounded or SchemaEpochStale => false,
+        }))
         {
             return Conflict(staged, "read_set_stale");
         }
 
-        if (hasWounded || handle.State == StrongTransactionState.Aborted)
+        if (tally.Rejections.Any(static rejection => rejection switch
+        {
+            Wounded => true,
+            Prepared or ReadSetStale or SchemaEpochStale => false,
+        }) || handle.State == StrongTransactionState.Aborted)
         {
             return Conflict(staged, WoundedReason);
         }
@@ -510,12 +419,6 @@ public sealed class StrongCoordinator(ClusterTopology topology, ClusterDatabases
         return new ClusterUnavailable(
             string.Concat("strong quorum unreachable: ", tally.Prepared.ToString(CultureInfo.InvariantCulture), " of ", tally.Required.ToString(CultureInfo.InvariantCulture), " regions prepared"),
             "strong_quorum_unreachable");
-
-        static SchemaEpochStale? Mark(ref bool flag)
-        {
-            flag = true;
-            return null;
-        }
     }
 
     private async ValueTask AbortAsync(ISqlDatabaseSession session, StagedWrite staged, StrongTransactionHandle handle, StrongPreparePayload payload, StrongVoteTally tally, string reason)

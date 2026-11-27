@@ -47,11 +47,9 @@ const mailPurposes = ['Authentication', 'Invitation', 'Alert', 'Allowance', 'Sup
 test('sign up, verify the email, onboard on Free, create a database and an API key', async ({ page, context, audit, browser }, info) => {
   if (info.project.name !== 'desktop-setup') {
     await onLocalStack(async () => {
-      const [terrabase, authMetrics, platformMetrics] = await Promise.all([
-        fetch('http://127.0.0.1:9091/metrics').then((response) => response.text()),
-        fetch('http://127.0.0.1:9092/metrics').then((response) => response.text()),
-        fetch('http://127.0.0.1:9093/metrics').then((response) => response.text()),
-      ]);
+      const terrabase = await (await fetch('http://127.0.0.1:9091/metrics')).text();
+      const authMetrics = await (await fetch('http://127.0.0.1:9092/metrics')).text();
+      const platformMetrics = await (await fetch('http://127.0.0.1:9093/metrics')).text();
       for (const name of [
         'terrabase_backup_disabled',
         'terrabase_caller_keys_expired',

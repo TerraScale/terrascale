@@ -1,9 +1,6 @@
-using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
-using System.Text;
-using DotNext.Net.Cluster;
 using DotNext.Net.Cluster.Consensus.Raft;
 using DotNext.Net.Cluster.Consensus.Raft.StateMachine;
 using Microsoft.Extensions.Logging;
@@ -24,23 +21,18 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
     private const UnixFileMode PrivateFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
-    private static readonly InRegionReplicated Replicated = new();
-
     private readonly ILogger _logger = loggerFactory.CreateLogger<InRegionRaftRouter>();
-    private readonly FrozenDictionary<string, ClusterMemberId> _memberIds = BuildMemberIds(options, topology);
-    private readonly byte[] _localOriginUtf8 = Encoding.UTF8.GetBytes(options.StorageOrigin);
-    private readonly bool _isReplicated = topology.RegionPeers.Count >= 2;
     private RaftShard[] _shards = [];
     private WriteAheadLog[] _logs = [];
 
-    public bool IsReplicated => _isReplicated;
+    public bool IsReplicated => options.RegionPeers.Count >= 2;
 
     public int ShardCount => options.RaftShardCount;
 
     public ushort ShardOf(Ulid databaseId) => RaftIdentity.ShardOf(databaseId, options.RaftShardCount);
 
     public string? LeaderOf(Ulid databaseId) =>
-        !_isReplicated ? options.NodeId : Volatile.Read(ref _shards) is { Length: > 0 } shards ? shards[ShardOf(databaseId)].Leader?.NodeId : null;
+        !IsReplicated ? options.NodeId : Volatile.Read(ref _shards) is { Length: > 0 } shards ? shards[ShardOf(databaseId)].Leader?.NodeId : null;
 
     public void Map(QuicRpcHost host)
     {
@@ -52,7 +44,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        if (!_isReplicated)
+        if (!IsReplicated)
         {
             ClusterLog.RaftSingleNode(_logger, options.Region);
             return;
@@ -61,49 +53,27 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
         var configuration = new RaftMemberConfiguration(options);
         var shards = new RaftShard[options.RaftShardCount];
         var logs = new WriteAheadLog[options.RaftShardCount];
-        var localId = _memberIds[options.NodeId];
+        var localId = RaftIdentity.For(options.NodeId);
         var root = Path.Combine(options.DataDirectory, "raft");
         Restrict(root);
-        var regionPeers = topology.RegionPeers;
         for (var index = 0; index < shards.Length; index++)
         {
             var shard = (ushort)index;
             var context = new RaftShardContext(shard, localId, client, options.RaftRequestTimeout);
             var location = Path.Combine(root, string.Concat("shard-", shard.ToString("D3", CultureInfo.InvariantCulture)));
             Restrict(location);
-            var machine = new RaftShardStateMachine(IStateMachine.CreateNoOp(SnapshotThreshold), _localOriginUtf8, ApplyAsync);
+            var machine = new RaftShardStateMachine(IStateMachine.CreateNoOp(SnapshotThreshold), ApplyAsync);
             logs[index] = new WriteAheadLog(new WriteAheadLog.Options { Location = location }, machine);
             Restrict(location);
             shards[index] = new RaftShard(configuration, context, loggerFactory.CreateLogger<RaftShard>()) { AuditTrail = logs[index] };
-            var members = new QuicRaftMember[regionPeers.Count + 1];
-            members[0] = new QuicRaftMember(context, options.NodeId, localId, options.ListenEndPoint, isRemote: false);
-            for (var peerIndex = 0; peerIndex < regionPeers.Count; peerIndex++)
-            {
-                var peer = regionPeers[peerIndex];
-                members[peerIndex + 1] = new QuicRaftMember(context, peer.NodeId, _memberIds[peer.NodeId], new DnsEndPoint(peer.Host, peer.QuicPort), isRemote: true);
-            }
-
+            List<QuicRaftMember> members = [new QuicRaftMember(context, options.NodeId, options.ListenEndPoint, isRemote: false)];
+            members.AddRange(options.RegionPeers.Select(peer => new QuicRaftMember(context, peer.NodeId, new DnsEndPoint(peer.Host, peer.QuicPort), isRemote: true)));
             await shards[index].StartShardAsync(members, cancellationToken);
         }
 
         Volatile.Write(ref _logs, logs);
         Volatile.Write(ref _shards, shards);
-        ClusterLog.RaftStarted(_logger, options.Region, shards.Length, regionPeers.Count + 1);
-    }
-
-    private static FrozenDictionary<string, ClusterMemberId> BuildMemberIds(ClusterOptions options, ClusterTopology topology)
-    {
-        var ids = new Dictionary<string, ClusterMemberId>(topology.RegionPeers.Count + 1, StringComparer.Ordinal)
-        {
-            [options.NodeId] = RaftIdentity.For(options.NodeId),
-        };
-        for (var index = 0; index < topology.RegionPeers.Count; index++)
-        {
-            var peerId = topology.RegionPeers[index].NodeId;
-            ids[peerId] = RaftIdentity.For(peerId);
-        }
-
-        return ids.ToFrozenDictionary(StringComparer.Ordinal);
+        ClusterLog.RaftStarted(_logger, options.Region, shards.Length, options.RegionPeers.Count + 1);
     }
 
     private static void Restrict(string location)
@@ -127,19 +97,14 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
         }
     }
 
-    public ValueTask<InRegionReplicationOutcome> ReplicateAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
+    public async ValueTask<InRegionReplicationOutcome> ReplicateAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commit);
-        if (!_isReplicated || commit.Sequence == 0)
+        if (!IsReplicated || commit.Sequence == 0)
         {
-            return new(Replicated);
+            return new InRegionReplicated();
         }
 
-        return ReplicateSlowAsync(databaseId, commit, cancellationToken);
-    }
-
-    private async ValueTask<InRegionReplicationOutcome> ReplicateSlowAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
-    {
         if (Volatile.Read(ref _shards) is not { Length: > 0 } shards)
         {
             return new ClusterUnavailable("in-region raft is not started", "raft_not_ready");
@@ -167,7 +132,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
             return outcome switch
             {
-                RaftProposeStatus.Committed => Replicated,
+                RaftProposeStatus.Committed => new InRegionReplicated(),
                 RaftProposeStatus.Failed when cancellationToken.IsCancellationRequested || deadline.IsCancellationRequested => new ClusterTimeout("in-region raft quorum was not reached in time"),
                 RaftProposeStatus.Failed => new ClusterUnavailable("in-region raft quorum was not reached", "raft_quorum"),
                 RaftProposeStatus.NotLeader => new ClusterUnavailable("in-region raft leadership moved", "raft_leader_moving"),
@@ -220,7 +185,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
         }
     }
 
-    private async ValueTask<RaftProposeStatus> ForwardAsync(string leaderNodeId, ushort shard, ReadOnlyMemory<byte> payload, CancellationToken deadline, CancellationToken cancellationToken)
+    private async ValueTask<RaftProposeStatus> ForwardAsync(string leaderNodeId, ushort shard, byte[] payload, CancellationToken deadline, CancellationToken cancellationToken)
     {
         var message = new RaftAppendMessage(shard, RaftAppendKind.Propose, default, 0, 0, 0, 0, 0, [new RaftWireEntry(0, null, false, payload)]);
         try
@@ -241,12 +206,9 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
     private RaftShard? Shard(ushort index) =>
         Volatile.Read(ref _shards) is { } shards && index < shards.Length ? shards[index] : null;
 
-    private bool MatchesMemberId(string nodeId, ClusterMemberId sender) =>
-        _memberIds.TryGetValue(nodeId, out var expected) && sender == expected;
-
     private async ValueTask<QuicHandlerOutcome<RaftVoteResponse>> HandleVoteAsync(QuicCallContext context, RaftVoteMessage message, CancellationToken cancellationToken)
     {
-        if (!topology.IsRegionPeer(context) || !MatchesMemberId(context.RemoteNodeId, message.Sender))
+        if (!topology.IsRegionPeer(context) || message.Sender != RaftIdentity.For(context.RemoteNodeId))
         {
             return ClusterTopology.PeerForbidden();
         }
@@ -283,8 +245,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
                 return new QuicRemoteError(QuicRemoteError.MalformedRequest, "a raft proposal carries exactly one entry");
             }
 
-            var payload = message.Entries[0].Payload;
-            if (ReplicatedCommit.Decode(payload.Span) is not { } proposed || ShardOf(proposed.DatabaseId) != message.Shard)
+            if (ReplicatedCommit.Decode(message.Entries[0].Payload.Span) is not { } proposed || ShardOf(proposed.DatabaseId) != message.Shard)
             {
                 return new QuicRemoteError(QuicRemoteError.MalformedRequest, "raft proposal is not a commit for this shard");
             }
@@ -295,7 +256,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
             }
 
             var status = shard.Leader is { IsRemote: false }
-                ? await RaftBoundary.ReplicateAsync(shard, payload, cancellationToken, cancellationToken)
+                ? await RaftBoundary.ReplicateAsync(shard, message.Entries[0].Payload.ToArray(), cancellationToken, cancellationToken)
                 : RaftProposeStatus.NotLeader;
             return new RaftAppendResponse(shard.CurrentTerm, 0, 0, status);
         }
@@ -305,18 +266,9 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
             return new QuicRemoteError(QuicRemoteError.MalformedRequest, "unknown raft append kind");
         }
 
-        if (!MatchesMemberId(context.RemoteNodeId, message.Sender))
+        if (message.Sender != RaftIdentity.For(context.RemoteNodeId) || message.Entries.Any(entry => !IsRegionEntry(message.Shard, entry)))
         {
             return ClusterTopology.PeerForbidden();
-        }
-
-        var entries = message.Entries;
-        for (var index = 0; index < entries.Count; index++)
-        {
-            if (!IsRegionEntry(message.Shard, entries[index]))
-            {
-                return ClusterTopology.PeerForbidden();
-            }
         }
 
         return await shard.HandleAppendAsync(message, cancellationToken);
@@ -324,7 +276,7 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
 
     private async ValueTask<QuicHandlerOutcome<RaftAppendResponse>> HandleSnapshotAsync(QuicCallContext context, RaftSnapshotMessage message, CancellationToken cancellationToken)
     {
-        if (!topology.IsRegionPeer(context) || !MatchesMemberId(context.RemoteNodeId, message.Sender))
+        if (!topology.IsRegionPeer(context) || message.Sender != RaftIdentity.For(context.RemoteNodeId))
         {
             return ClusterTopology.PeerForbidden();
         }
@@ -363,7 +315,7 @@ internal static class RaftBoundary
         }
     }
 
-    public static async ValueTask<RaftProposeStatus> ReplicateAsync(RaftShard shard, ReadOnlyMemory<byte> payload, CancellationToken deadline, CancellationToken cancellationToken)
+    public static async ValueTask<RaftProposeStatus> ReplicateAsync(RaftShard shard, byte[] payload, CancellationToken deadline, CancellationToken cancellationToken)
     {
         try
         {

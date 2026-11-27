@@ -266,12 +266,7 @@ public sealed record CommitLogSegment(
     long FirstSequence,
     long LastSequence,
     long SizeBytes,
-    DateTimeOffset SealedAtUtc)
-{
-    public DateTimeOffset? FirstCommittedAtUtc { get; init; }
-
-    public DateTimeOffset? LastCommittedAtUtc { get; init; }
-}
+    DateTimeOffset SealedAtUtc);
 
 public sealed record DatabaseOpenRequest(Ulid DatabaseId, ReadOnlyMemory<byte> RawKey)
 {
@@ -396,16 +391,6 @@ public interface ISqlDatabaseSession : IAsyncDisposable
     CausalBookmark CurrentBookmark { get; }
 
     bool IsUsable { get; }
-
-    long ChangeGeneration => 0;
-
-    long FilteredChangeGeneration => ChangeGeneration;
-
-    long SessionIncarnation => 0;
-
-    void ConfigureFilteredChangeTables(IReadOnlySet<string> excludedTables)
-    {
-    }
 
     ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken);
 

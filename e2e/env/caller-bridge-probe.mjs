@@ -43,7 +43,7 @@ try {
     }, statement);
     assert.equal(response.status, 200, 'bearer internal call succeeds, caller=' + caller + ': ' + response.text);
     assert.deepEqual(JSON.parse(response.text).results[0].rows, [[291]]);
-    await expect.poll(requests, { message: 'gru usage flush', intervals: [50, 100] }).toBeGreaterThan(before);
+    await expect.poll(requests, { message: 'gru usage flush', intervals: [250] }).toBeGreaterThan(before);
     assert.equal(await requests() - before, 1, 'internal SQL metered once in gru');
     const sourceAfter = await metrics(assigned('metrics'));
     if (caller) assert.equal(count(sourceAfter, 'caller') - count(sourceBefore, 'caller'), 1);
@@ -60,7 +60,7 @@ try {
     assert.equal(response.status, 200);
     rows = (await response.json()).results[0].rows;
     return rows;
-  }, { message: 'fra converges on the gru rows', intervals: [50, 100] }).toEqual([[291]]);
+  }, { message: 'fra converges on the gru rows', intervals: [250] }).toEqual([[291]]);
   assert.equal(count(await metrics(assigned('metrics_fra')), 'caller_rejected') - count(before, 'caller_rejected'), 0);
   console.log('public caller header on fra: fra rows=' + JSON.stringify(rows) + ', rejected caller +0');
 } finally {

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func renderMarkdown(mode string, cfg config, reports []sdkReport, telemetry *resourceTelemetry) string {
+func renderMarkdown(mode string, cfg config, reports []sdkReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# TerraScale E2E Benchmark Results\n\n")
 	fmt.Fprintf(&b, "- Date: %s\n", time.Now().UTC().Format(time.RFC3339))
@@ -42,16 +42,5 @@ func renderMarkdown(mode string, cfg config, reports []sdkReport, telemetry *res
 				scenario, sdk, res.OpsPerSec, res.P50Ms, res.P95Ms, res.P99Ms, res.MeanMs)
 		}
 	}
-
-	if telemetry != nil {
-		b.WriteString("\n## Resource Summary (TerraBase)\n\n")
-		b.WriteString("| Metric | Value |\n")
-		b.WriteString("| --- | ---: |\n")
-		fmt.Fprintf(&b, "| Current RSS (MiB) | %.2f |\n", telemetry.CurrentRSSMiB)
-		fmt.Fprintf(&b, "| Peak RSS (MiB) | %.2f |\n", telemetry.PeakRSSMiB)
-		fmt.Fprintf(&b, "| CPU Time (ms) | %.1f |\n", telemetry.CPUTimeMs)
-		fmt.Fprintf(&b, "| Data Directory (bytes) | %d |\n", telemetry.DiskBytes)
-	}
-
 	return b.String()
 }

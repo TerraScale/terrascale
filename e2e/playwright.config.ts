@@ -14,15 +14,13 @@ if (faultRequested) process.env.E2E_FAULT_SELECTED = '1';
 if (faultRequested && (production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '2')) {
   throw new Error('the fault project requires the local four-node stack: E2E_REGIONS=2 E2E_NODES_PER_REGION=2');
 }
-const envWorkers = Number(process.env.E2E_WORKERS);
-const localWorkers = Number.isInteger(envWorkers) && envWorkers > 0 ? envWorkers : 6;
 
 export default defineConfig({
   outputDir: production ? `production-report/${cleanup ? 'cleanup' : 'suite'}-results` : 'test-results',
   fullyParallel: true,
   forbidOnly: true,
   retries: 0,
-  workers: faultRequested ? 1 : production ? 6 : localWorkers,
+  workers: faultRequested ? 1 : 6,
   timeout: 60_000 + mailWait,
   globalTimeout: production ? Math.max(1, envelopeDeadline(stateDir, cleanup ? 'cleanup' : 'suite') - Date.now()) : 0,
   expect: { timeout: 20_000 },

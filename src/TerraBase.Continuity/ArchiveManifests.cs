@@ -199,7 +199,7 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
     private async ValueTask<ArchiveManifest> CompletePublicationAsync(
         Ulid databaseId, ArchiveManifest published, StagedArchiveSnapshot? snapshot, CancellationToken cancellationToken)
     {
-        if (snapshot is not null && ContainsSnapshotKey(published.Snapshots, snapshot.Snapshot.Key))
+        if (snapshot is not null && published.Snapshots.Any(item => item.Key == snapshot.Snapshot.Key))
         {
             var deleted = await DeleteObjectsAsync([snapshot.Upload.Key], cancellationToken);
             ReportDeferredRetirement(databaseId, deleted);
@@ -254,11 +254,7 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         return new ArchiveObjectsDeleted();
     }
 
-    internal void Forget(Ulid databaseId)
-    {
-        _cache.TryRemove(databaseId, out _);
-        _nextRetirementSweep.TryRemove(databaseId, out _);
-    }
+    internal void Forget(Ulid databaseId) => _cache.TryRemove(databaseId, out _);
 
     private async ValueTask<CachedManifestOutcome> FetchRemoteAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
@@ -289,192 +285,28 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         }
 
         var floor = ArchiveRetention.SnapshotFloor(current);
-        var snapshots = snapshot is not null ? AppendSnapshot(current.Snapshots, snapshot, floor) : current.Snapshots;
-        var archived = segments.Count > 0 ? AppendSegments(current.Segments, segments, floor) : current.Segments;
+        var snapshots = current.Snapshots;
+        if (snapshot is not null && !snapshots.Any(existing => existing.Key == snapshot.Key)
+            && (snapshots.Count == 0 || snapshot.TakenAtUtc >= snapshots.Min(static existing => existing.TakenAtUtc))
+            && CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark) && bookmark.Dominates(floor))
+        {
+            snapshots = [.. snapshots.Append(snapshot).OrderBy(static item => item.TakenAtUtc)];
+        }
+
+        var archived = current.Segments;
+        if (segments.Count > 0)
+        {
+            var keys = archived.Select(static segment => segment.Key).ToHashSet(StringComparer.Ordinal);
+            var added = segments.Where(segment => segment.LastSequence > floor.Get(segment.Origin) && keys.Add(segment.Key)).ToArray();
+            if (added.Length > 0)
+            {
+                archived = [.. archived.Concat(added).OrderBy(static item => item.Origin, StringComparer.Ordinal).ThenBy(static item => item.FirstSequence)];
+            }
+        }
 
         return ReferenceEquals(snapshots, current.Snapshots) && ReferenceEquals(archived, current.Segments)
             ? current
             : current with { Snapshots = snapshots, Segments = archived };
-    }
-
-    private static IReadOnlyList<ArchivedSnapshot> AppendSnapshot(IReadOnlyList<ArchivedSnapshot> existing, ArchivedSnapshot snapshot, CausalBookmark floor)
-    {
-        var earliest = DateTimeOffset.MaxValue;
-        var sorted = true;
-        for (var index = 0; index < existing.Count; index++)
-        {
-            var item = existing[index];
-            if (string.Equals(item.Key, snapshot.Key, StringComparison.Ordinal))
-            {
-                return existing;
-            }
-
-            if (item.TakenAtUtc < earliest)
-            {
-                earliest = item.TakenAtUtc;
-            }
-
-            if (index > 0 && existing[index - 1].TakenAtUtc > item.TakenAtUtc)
-            {
-                sorted = false;
-            }
-        }
-
-        if ((existing.Count > 0 && snapshot.TakenAtUtc < earliest)
-            || !CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark)
-            || !bookmark.Dominates(floor))
-        {
-            return existing;
-        }
-
-        var next = new ArchivedSnapshot[existing.Count + 1];
-        if (!sorted)
-        {
-            for (var index = 0; index < existing.Count; index++)
-            {
-                next[index] = existing[index];
-            }
-
-            next[existing.Count] = snapshot;
-            Array.Sort(next, static (left, right) => left.TakenAtUtc.CompareTo(right.TakenAtUtc));
-            return next;
-        }
-
-        var insertAt = existing.Count;
-        while (insertAt > 0 && existing[insertAt - 1].TakenAtUtc > snapshot.TakenAtUtc)
-        {
-            insertAt--;
-        }
-
-        for (var index = 0; index < insertAt; index++)
-        {
-            next[index] = existing[index];
-        }
-
-        next[insertAt] = snapshot;
-        for (var index = insertAt; index < existing.Count; index++)
-        {
-            next[index + 1] = existing[index];
-        }
-
-        return next;
-    }
-
-    private static IReadOnlyList<ArchivedSegment> AppendSegments(
-        IReadOnlyList<ArchivedSegment> existing,
-        IReadOnlyList<ArchivedSegment> segments,
-        CausalBookmark floor)
-    {
-        if (segments.Count == 1)
-        {
-            var candidate = segments[0];
-            if (candidate.LastSequence <= floor.Get(candidate.Origin))
-            {
-                return existing;
-            }
-
-            var sorted = true;
-            for (var index = 0; index < existing.Count; index++)
-            {
-                var item = existing[index];
-                if (string.Equals(item.Key, candidate.Key, StringComparison.Ordinal))
-                {
-                    return existing;
-                }
-
-                if (index > 0 && CompareSegment(existing[index - 1], item) > 0)
-                {
-                    sorted = false;
-                }
-            }
-
-            var singleNext = new ArchivedSegment[existing.Count + 1];
-            if (!sorted)
-            {
-                for (var index = 0; index < existing.Count; index++)
-                {
-                    singleNext[index] = existing[index];
-                }
-
-                singleNext[existing.Count] = candidate;
-                Array.Sort(singleNext, CompareSegment);
-                return singleNext;
-            }
-
-            var insertAt = existing.Count;
-            while (insertAt > 0 && CompareSegment(existing[insertAt - 1], candidate) > 0)
-            {
-                insertAt--;
-            }
-
-            for (var index = 0; index < insertAt; index++)
-            {
-                singleNext[index] = existing[index];
-            }
-
-            singleNext[insertAt] = candidate;
-            for (var index = insertAt; index < existing.Count; index++)
-            {
-                singleNext[index + 1] = existing[index];
-            }
-
-            return singleNext;
-        }
-
-        HashSet<string> keys = new(existing.Count + segments.Count, StringComparer.Ordinal);
-        for (var index = 0; index < existing.Count; index++)
-        {
-            _ = keys.Add(existing[index].Key);
-        }
-
-        List<ArchivedSegment>? added = null;
-        for (var index = 0; index < segments.Count; index++)
-        {
-            var segment = segments[index];
-            if (segment.LastSequence > floor.Get(segment.Origin) && keys.Add(segment.Key))
-            {
-                added ??= new List<ArchivedSegment>(segments.Count - index);
-                added.Add(segment);
-            }
-        }
-
-        if (added is null)
-        {
-            return existing;
-        }
-
-        var merged = new ArchivedSegment[existing.Count + added.Count];
-        for (var index = 0; index < existing.Count; index++)
-        {
-            merged[index] = existing[index];
-        }
-
-        for (var index = 0; index < added.Count; index++)
-        {
-            merged[existing.Count + index] = added[index];
-        }
-
-        Array.Sort(merged, CompareSegment);
-        return merged;
-    }
-
-    private static int CompareSegment(ArchivedSegment left, ArchivedSegment right)
-    {
-        var origin = string.CompareOrdinal(left.Origin, right.Origin);
-        return origin != 0 ? origin : left.FirstSequence.CompareTo(right.FirstSequence);
-    }
-
-    private static bool ContainsSnapshotKey(IReadOnlyList<ArchivedSnapshot> snapshots, string key)
-    {
-        for (var index = 0; index < snapshots.Count; index++)
-        {
-            if (string.Equals(snapshots[index].Key, key, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private async ValueTask<StageArchiveRetirementOutcome> StageRetirementAsync(
@@ -616,7 +448,7 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
     private async ValueTask<ContinuityUnavailable?> SweepSnapshotUploadAsync(
         Ulid databaseId, ArchiveManifest current, StagedArchiveRetirement upload, CancellationToken cancellationToken)
     {
-        if (ContainsSnapshotKey(current.Snapshots, upload.Retirement.Keys[0]))
+        if (current.Snapshots.Any(snapshot => snapshot.Key == upload.Retirement.Keys[0]))
         {
             var deleted = await DeleteObjectsAsync([upload.Key], cancellationToken);
             return deleted switch

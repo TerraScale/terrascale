@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"math/big"
 	"net"
 	"net/http"
@@ -35,10 +34,9 @@ import (
 )
 
 const (
-	platformAuthProject   = "00000000000000000000000002"
-	platformAuthDatabase  = "ts-auth"
-	crockfordLower        = "0123456789abcdefghjkmnpqrstvwxyz"
-	linuxClockTicksPerSec = 100.0
+	platformAuthProject  = "00000000000000000000000002"
+	platformAuthDatabase = "ts-auth"
+	crockfordLower       = "0123456789abcdefghjkmnpqrstvwxyz"
 )
 
 type stackTarget struct {
@@ -47,13 +45,6 @@ type stackTarget struct {
 	dashboardURL string
 	apiKey       string
 	project      string
-}
-
-type resourceTelemetry struct {
-	CurrentRSSMiB float64
-	PeakRSSMiB    float64
-	CPUTimeMs     float64
-	DiskBytes     int64
 }
 
 type managedProc struct {
@@ -66,12 +57,10 @@ type managedProc struct {
 }
 
 type localStack struct {
-	target    stackTarget
-	tempDir   string
-	tbDataDir string
-	tbProc    *managedProc
-	tlsProxy  *http.Server
-	procs     []*managedProc
+	target   stackTarget
+	tempDir  string
+	tlsProxy *http.Server
+	procs    []*managedProc
 }
 
 func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
@@ -182,7 +171,6 @@ func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
 	if err := os.MkdirAll(tbDataDir, 0o700); err != nil {
 		return nil, err
 	}
-	stack.tbDataDir = tbDataDir
 
 	fmt.Fprintf(os.Stderr, "ts-bench: starting TerraBase on %s (internal %s)...\n", tbPublicURL, tbInternalURL)
 	tbProc, err := startProcess("terrabase", tbPath, nil, mergeEnv(
@@ -201,7 +189,6 @@ func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
 	if err != nil {
 		return nil, err
 	}
-	stack.tbProc = tbProc
 	stack.procs = append(stack.procs, tbProc)
 	if err := waitReady(ctx, tbPublicURL+"/readyz", tbProc, 60*time.Second); err != nil {
 		return nil, err
@@ -267,121 +254,6 @@ func startLocalStack(ctx context.Context, cfg config) (*localStack, error) {
 	}
 	ok = true
 	return stack, nil
-}
-
-func (s *localStack) captureTelemetry() (resourceTelemetry, error) {
-	if s.tbProc == nil || s.tbProc.cmd == nil || s.tbProc.cmd.Process == nil {
-		return resourceTelemetry{}, errors.New("terrabase process not running")
-	}
-	pid := s.tbProc.cmd.Process.Pid
-	currentRSSMiB, peakRSSMiB, err := readProcMemoryMiB(pid)
-	if err != nil {
-		return resourceTelemetry{}, err
-	}
-	cpuTimeMs, err := readProcCPUTimeMs(pid)
-	if err != nil {
-		return resourceTelemetry{}, err
-	}
-	diskBytes, err := dirSizeBytes(s.tbDataDir)
-	if err != nil {
-		return resourceTelemetry{}, err
-	}
-	return resourceTelemetry{
-		CurrentRSSMiB: currentRSSMiB,
-		PeakRSSMiB:    peakRSSMiB,
-		CPUTimeMs:     cpuTimeMs,
-		DiskBytes:     diskBytes,
-	}, nil
-}
-
-func readProcMemoryMiB(pid int) (float64, float64, error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
-	if err != nil {
-		return 0, 0, fmt.Errorf("read /proc/%d/status: %w", pid, err)
-	}
-	var currentKB, peakKB uint64
-	var haveCurrent, havePeak bool
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(line, "VmRSS:"); ok {
-			val, err := parseProcKB(rest)
-			if err != nil {
-				return 0, 0, fmt.Errorf("parse VmRSS: %w", err)
-			}
-			currentKB = val
-			haveCurrent = true
-		} else if rest, ok := strings.CutPrefix(line, "VmHWM:"); ok {
-			val, err := parseProcKB(rest)
-			if err != nil {
-				return 0, 0, fmt.Errorf("parse VmHWM: %w", err)
-			}
-			peakKB = val
-			havePeak = true
-		}
-	}
-	if !haveCurrent || !havePeak {
-		return 0, 0, fmt.Errorf("/proc/%d/status missing VmRSS or VmHWM", pid)
-	}
-	return float64(currentKB) / 1024.0, float64(peakKB) / 1024.0, nil
-}
-
-func parseProcKB(raw string) (uint64, error) {
-	fields := strings.Fields(raw)
-	if len(fields) == 0 {
-		return 0, errors.New("empty value")
-	}
-	return strconv.ParseUint(fields[0], 10, 64)
-}
-
-func readProcCPUTimeMs(pid int) (float64, error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0, fmt.Errorf("read /proc/%d/stat: %w", pid, err)
-	}
-	_, after, ok := strings.CutLast(strings.TrimSpace(string(data)), ") ")
-	if !ok {
-		return 0, fmt.Errorf("malformed /proc/%d/stat", pid)
-	}
-	fields := strings.Fields(after)
-	if len(fields) <= 12 {
-		return 0, fmt.Errorf("incomplete /proc/%d/stat fields", pid)
-	}
-	utime, err := strconv.ParseUint(fields[11], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse utime: %w", err)
-	}
-	stime, err := strconv.ParseUint(fields[12], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse stime: %w", err)
-	}
-	return float64(utime+stime) * 1000.0 / linuxClockTicksPerSec, nil
-}
-
-func dirSizeBytes(root string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if errors.Is(walkErr, os.ErrNotExist) {
-				return nil
-			}
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		total += info.Size()
-		return nil
-	})
-	if err != nil {
-		return 0, fmt.Errorf("walk %s: %w", root, err)
-	}
-	return total, nil
 }
 
 func (s *localStack) close() {
@@ -743,7 +615,7 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 	if err != nil {
 		return "", "", "", err
 	}
-	apiKey := keyID + "_" + secretSuffix
+	apiKey := "sk_" + keyID + "_" + secretSuffix
 	digest := sha256.Sum256([]byte(apiKey))
 	secretHash := hex.EncodeToString(digest[:])
 	now := time.Now().UTC().Format("2006-01-02 15:04:05.0000000")
@@ -755,15 +627,6 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 			Args: []any{
 				orgID,
 				"ts-bench",
-				ownerID,
-				now,
-				ulid.Make().String(),
-			},
-		},
-		{
-			SQL: "INSERT INTO memberships (organization_id, user_id, instance_id, role, joined_at, version) VALUES (?, ?, 'terrascale', 'owner', ?, ?)",
-			Args: []any{
-				orgID,
 				ownerID,
 				now,
 				ulid.Make().String(),
@@ -798,10 +661,6 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 		return "", "", "", fmt.Errorf("seed benchmark project and API key: %w", err)
 	}
 
-	if err := provisionOrganization(ctx, internalClient, tbInternalURL, peerSecret, orgID); err != nil {
-		return "", "", "", fmt.Errorf("provision benchmark organization in TerraBase: %w", err)
-	}
-
 	if err := enrollProject(ctx, internalClient, tbInternalURL, peerSecret, projectID, orgID); err != nil {
 		return "", "", "", fmt.Errorf("enroll benchmark project in TerraBase: %w", err)
 	}
@@ -811,35 +670,6 @@ func bootstrapProjectAndAPIKey(ctx context.Context, tbInternalURL, authHTTPURL, 
 		return "", "", "", fmt.Errorf("verify bootstrapped API key exchange: %w", err)
 	}
 	return projectID, apiKey, accessToken, nil
-}
-
-func provisionOrganization(ctx context.Context, client *http.Client, tbInternalURL, peerSecret, orgID string) error {
-	payload, err := json.Marshal(struct {
-		Plan string `json:"plan"`
-	}{Plan: "enterprise"})
-	if err != nil {
-		return err
-	}
-	endpoint := tbInternalURL + "/admin/organizations/" + orgID + "/plan"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-TerraBase-Peer-Credential", peerSecret)
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("organization plan status %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
 }
 
 func enrollProject(ctx context.Context, client *http.Client, tbInternalURL, peerSecret, projectID, orgID string) error {

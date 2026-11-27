@@ -4,41 +4,18 @@ internal sealed record TableNotFound(string Table);
 
 internal readonly union TableSchemaLookup(TableSchema, TableNotFound, SqliteStatus);
 
-internal sealed unsafe partial class SqliteConnection
+internal sealed partial class SqliteConnection
 {
     public SqliteStatus ReadSchemaCookie(out long cookie)
     {
         cookie = 0;
-        var statement = _schemaCookieStatement;
-        if (statement == 0)
+        var status = QueryFirst("PRAGMA schema_version", out var row);
+        if (!status.IsOk || row is null || !row[0].TryGetIntegral(out cookie))
         {
-            var utf8 = "PRAGMA schema_version"u8;
-            byte* tail = null;
-            int rc;
-            fixed (byte* pointer = utf8)
-            {
-                rc = SqliteNative.PrepareV3(Handle, pointer, utf8.Length, SqliteNative.PreparePersistent, &statement, &tail);
-            }
-
-            if (rc != SqliteNative.Ok)
-            {
-                return Status(rc);
-            }
-
-            _schemaCookieStatement = statement;
+            return status.IsOk ? SqliteStatus.Fail("schema_version unavailable") : status;
         }
 
-        var step = SqliteNative.Step(statement);
-        if (step == SqliteNative.Row)
-        {
-            cookie = SqliteNative.ColumnInt64(statement, 0);
-            var reset = SqliteNative.Reset(statement);
-            return reset == SqliteNative.Ok ? SqliteStatus.Success : Status(reset);
-        }
-
-        var status = step == SqliteNative.Done ? SqliteStatus.Fail("schema_version unavailable") : Status(step);
-        _ = SqliteNative.Reset(statement);
-        return status;
+        return SqliteStatus.Success;
     }
 
     public SqliteStatus ValidateSchemaCache()
@@ -53,7 +30,6 @@ internal sealed unsafe partial class SqliteConnection
         var deltaVersion = _options.DeltaColumns.Version;
         if (cookie == _schemaCookie && deltaVersion == _deltaVersion)
         {
-            MarkUserCacheValidated(cookie, deltaVersion);
             return SqliteStatus.Success;
         }
 
@@ -88,7 +64,6 @@ internal sealed unsafe partial class SqliteConnection
 
         _schemaCookie = cookie;
         _deltaVersion = deltaVersion;
-        MarkUserCacheValidated(cookie, deltaVersion);
         return SqliteStatus.Success;
     }
 
@@ -96,7 +71,6 @@ internal sealed unsafe partial class SqliteConnection
     {
         _schemas.Clear();
         _schemaCookie = -1;
-        ClearStatementCaches();
     }
 
     public TableSchemaLookup Schema(string table)

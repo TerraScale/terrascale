@@ -32,18 +32,16 @@ internal static class SqlText
     public static bool TryTokenize(string sql, out List<SqlToken> tokens)
     {
         ArgumentNullException.ThrowIfNull(sql);
-        var span = sql.AsSpan();
-        var length = span.Length;
-        tokens = new List<SqlToken>(Math.Clamp(length / 4, 4, 64));
+        tokens = [];
         var i = 0;
-        while (i < length)
+        while (i < sql.Length)
         {
-            var c = span[i];
-            var next = i + 1 < length ? span[i + 1] : '\0';
+            var c = sql[i];
+            var next = i + 1 < sql.Length ? sql[i + 1] : '\0';
             if (StartsSpace(c))
             {
                 i++;
-                while (i < length && IsSpace(span[i]))
+                while (i < sql.Length && IsSpace(sql[i]))
                 {
                     i++;
                 }
@@ -64,15 +62,15 @@ internal static class SqlText
 
             if (c == '-' && next == '-')
             {
-                var rel = span[i..].IndexOf('\n');
-                i = rel < 0 ? length : i + rel;
+                var end = sql.IndexOf('\n', i);
+                i = end < 0 ? sql.Length : end;
                 continue;
             }
 
             if (c == '/' && next == '*')
             {
-                var rel = span[(i + 2)..].IndexOf("*/", StringComparison.Ordinal);
-                i = rel < 0 ? length : i + 2 + rel + 2;
+                var end = sql.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                i = end < 0 ? sql.Length : end + 2;
                 continue;
             }
 
@@ -82,7 +80,7 @@ internal static class SqlText
             switch (c)
             {
                 case '\'' or '"' or '`':
-                    if (!TryQuoted(sql, span, ref i, c, out value))
+                    if (!TryQuoted(sql, ref i, c, out value))
                     {
                         return false;
                     }
@@ -90,18 +88,17 @@ internal static class SqlText
                     kind = c == '\'' ? SqlTokenKind.String : SqlTokenKind.Quoted;
                     break;
                 case '[':
-                    var relClose = span[(i + 1)..].IndexOf(']');
-                    if (relClose < 0)
+                    var close = sql.IndexOf(']', i + 1);
+                    if (close < 0)
                     {
                         return false;
                     }
 
-                    var close = i + 1 + relClose;
                     (kind, value, i) = (SqlTokenKind.Quoted, sql[(i + 1)..close], close + 1);
                     break;
                 case 'x' or 'X' when next == '\'':
                     i++;
-                    if (!TryQuoted(sql, span, ref i, '\'', out value))
+                    if (!TryQuoted(sql, ref i, '\'', out value))
                     {
                         return false;
                     }
@@ -110,20 +107,20 @@ internal static class SqlText
                     break;
                 case '?':
                     i++;
-                    while (i < length && char.IsAsciiDigit(span[i]))
+                    while (i < sql.Length && char.IsAsciiDigit(sql[i]))
                     {
                         i++;
                     }
 
-                    (kind, value) = (SqlTokenKind.Parameter, i == start + 1 ? "?" : sql[start..i]);
+                    (kind, value) = (SqlTokenKind.Parameter, sql[start..i]);
                     break;
-                case ':' or '@' or '$' or '#' when Variable(span, i) is not 0 and var varLength:
-                    if (varLength < 0)
+                case ':' or '@' or '$' or '#' when Variable(sql, i) is not 0 and var length:
+                    if (length < 0)
                     {
                         return false;
                     }
 
-                    (kind, value, i) = (SqlTokenKind.Parameter, sql[start..(start + varLength)], start + varLength);
+                    (kind, value, i) = (SqlTokenKind.Parameter, sql[start..(start + length)], start + length);
                     break;
                 case '#':
                     return false;
@@ -132,7 +129,7 @@ internal static class SqlText
                     break;
                 case var digit when char.IsAsciiDigit(digit) || digit == '.':
                     i++;
-                    while (i < length && (IsWordPart(span[i]) || span[i] == '.' || (span[i] is '+' or '-' && span[i - 1] is 'e' or 'E')))
+                    while (i < sql.Length && (IsWordPart(sql[i]) || sql[i] == '.' || (sql[i] is '+' or '-' && sql[i - 1] is 'e' or 'E')))
                     {
                         i++;
                     }
@@ -140,66 +137,34 @@ internal static class SqlText
                     (kind, value) = (SqlTokenKind.Number, sql[start..i]);
                     break;
                 case var letter when IsWordStart(letter):
-                    i++;
-                    while (i < length && IsWordPart(span[i]))
+                    while (i < sql.Length && IsWordPart(sql[i]))
                     {
                         i++;
                     }
 
                     (kind, value) = (SqlTokenKind.Word, sql[start..i]);
                     break;
-                case '-' when next == '>' && i + 2 < length && span[i + 2] == '>':
+                case '-' when next == '>' && i + 2 < sql.Length && sql[i + 2] == '>':
                     (kind, value, i) = (SqlTokenKind.Symbol, "->>", i + 3);
                     break;
-                case '<' when next == '>':
-                    (kind, value, i) = (SqlTokenKind.Symbol, "<>", i + 2);
-                    break;
-                case '<' when next == '=':
-                    (kind, value, i) = (SqlTokenKind.Symbol, "<=", i + 2);
-                    break;
-                case '<' when next == '<':
-                    (kind, value, i) = (SqlTokenKind.Symbol, "<<", i + 2);
-                    break;
-                case '>' when next == '=':
-                    (kind, value, i) = (SqlTokenKind.Symbol, ">=", i + 2);
-                    break;
-                case '>' when next == '>':
-                    (kind, value, i) = (SqlTokenKind.Symbol, ">>", i + 2);
-                    break;
+                case '<' when next is '>' or '=' or '<':
+                case '>' when next is '=' or '>':
                 case '!' when next == '=':
-                    (kind, value, i) = (SqlTokenKind.Symbol, "!=", i + 2);
-                    break;
                 case '=' when next == '=':
-                    (kind, value, i) = (SqlTokenKind.Symbol, "==", i + 2);
-                    break;
                 case '|' when next == '|':
-                    (kind, value, i) = (SqlTokenKind.Symbol, "||", i + 2);
-                    break;
                 case '-' when next == '>':
-                    (kind, value, i) = (SqlTokenKind.Symbol, "->", i + 2);
+                    (kind, value, i) = (SqlTokenKind.Symbol, sql[i..(i + 2)], i + 2);
                     break;
                 default:
-                    (kind, value) = c switch
+                    kind = c switch
                     {
-                        ';' => (SqlTokenKind.Semicolon, ";"),
-                        '(' => (SqlTokenKind.Open, "("),
-                        ')' => (SqlTokenKind.Close, ")"),
-                        ',' => (SqlTokenKind.Comma, ","),
-                        '=' => (SqlTokenKind.Symbol, "="),
-                        '<' => (SqlTokenKind.Symbol, "<"),
-                        '>' => (SqlTokenKind.Symbol, ">"),
-                        '+' => (SqlTokenKind.Symbol, "+"),
-                        '-' => (SqlTokenKind.Symbol, "-"),
-                        '*' => (SqlTokenKind.Symbol, "*"),
-                        '/' => (SqlTokenKind.Symbol, "/"),
-                        '%' => (SqlTokenKind.Symbol, "%"),
-                        '|' => (SqlTokenKind.Symbol, "|"),
-                        '&' => (SqlTokenKind.Symbol, "&"),
-                        '~' => (SqlTokenKind.Symbol, "~"),
-                        '!' => (SqlTokenKind.Symbol, "!"),
-                        _ => (SqlTokenKind.Symbol, sql[i..(i + 1)]),
+                        ';' => SqlTokenKind.Semicolon,
+                        '(' => SqlTokenKind.Open,
+                        ')' => SqlTokenKind.Close,
+                        ',' => SqlTokenKind.Comma,
+                        _ => SqlTokenKind.Symbol,
                     };
-                    i++;
+                    (value, i) = (sql[i..(i + 1)], i + 1);
                     break;
             }
 
@@ -209,36 +174,18 @@ internal static class SqlText
         return true;
     }
 
-    private static bool TryQuoted(string sql, ReadOnlySpan<char> span, ref int i, char quote, out string value)
+    private static bool TryQuoted(string sql, ref int i, char quote, out string value)
     {
-        var contentStart = i + 1;
-        var rel = span[contentStart..].IndexOf(quote);
-        if (rel < 0)
+        var text = new StringBuilder();
+        for (var j = i + 1; j < sql.Length; j++)
         {
-            value = "";
-            return false;
-        }
-
-        var firstQuote = contentStart + rel;
-        if (firstQuote + 1 >= span.Length || span[firstQuote + 1] != quote)
-        {
-            i = firstQuote + 1;
-            value = firstQuote == contentStart ? "" : sql[contentStart..firstQuote];
-            return true;
-        }
-
-        var text = new StringBuilder(span.Length - contentStart);
-        text.Append(span.Slice(contentStart, rel));
-        text.Append(quote);
-        for (var j = firstQuote + 2; j < span.Length; j++)
-        {
-            if (span[j] != quote)
+            if (sql[j] != quote)
             {
-                text.Append(span[j]);
+                text.Append(sql[j]);
                 continue;
             }
 
-            if (j + 1 < span.Length && span[j + 1] == quote)
+            if (j + 1 < sql.Length && sql[j + 1] == quote)
             {
                 text.Append(quote);
                 j++;
@@ -258,7 +205,7 @@ internal static class SqlText
 
     private static bool StartsSpace(char c) => c is ' ' or '\t' or '\n' or '\f' or '\r';
 
-    private static int Variable(ReadOnlySpan<char> sql, int start)
+    private static int Variable(string sql, int start)
     {
         var named = 0;
         var i = start + 1;

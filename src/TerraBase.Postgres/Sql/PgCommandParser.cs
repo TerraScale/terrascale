@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Text;
 using TerraBase.Postgres.Protocol;
 using TerraScale.Contracts.Consistency;
@@ -7,30 +6,14 @@ namespace TerraBase.Postgres.Sql;
 
 internal static class PgCommandParser
 {
-    private static readonly IReadOnlyList<PgCommand> EmptyCommands = [new PgEmptyCommand()];
-
-    public static PgParseResult Parse(string sql, PgRewriteContext context)
-    {
-        if (sql.Contains('\0', StringComparison.Ordinal))
-        {
-            return PgRewrite.NulCharacter;
-        }
-
-        var rented = ArrayPool<PgToken>.Shared.Rent((sql.Length / 4) + 16);
-        try
-        {
-            if (PgLexer.TryTokenize(sql, ref rented, out var count) is { } error)
+    public static PgParseResult Parse(string sql, PgRewriteContext context) =>
+        sql.Contains('\0', StringComparison.Ordinal)
+            ? PgRewrite.NulCharacter
+            : PgLexer.Tokenize(sql) switch
             {
-                return error;
-            }
-
-            return ParseTokens(sql, rented.AsSpan(0, count), context);
-        }
-        finally
-        {
-            ArrayPool<PgToken>.Shared.Return(rented);
-        }
-    }
+                PgToken[] tokens => ParseTokens(sql, tokens, context),
+                PgError error => error,
+            };
 
     public static PgQueryParseResult ParseQuery(string sql, PgRewriteContext context) =>
         Parse(sql, context) switch
@@ -40,48 +23,18 @@ internal static class PgCommandParser
             PgError error => error,
         };
 
-    private static PgParseResult ParseTokens(string sql, ReadOnlySpan<PgToken> tokens, PgRewriteContext context)
+    private static PgParseResult ParseTokens(string sql, PgToken[] tokens, PgRewriteContext context)
     {
-        var hasSemicolon = false;
-        for (var index = 0; index < tokens.Length; index++)
-        {
-            if (tokens[index].Kind == PgTokenKind.Semicolon)
-            {
-                hasSemicolon = true;
-                break;
-            }
-        }
-
-        if (!hasSemicolon)
-        {
-            var editor = PgTokenEditor.Create(sql, tokens);
-            if (editor.Count == 0)
-            {
-                return new PgParseResult(EmptyCommands);
-            }
-
-            if (!PgRewrite.Fits(editor.SourceSpan(0, editor.Count - 1)))
-            {
-                return PgRewrite.StatementTooLong;
-            }
-
-            return ParseStatement(editor, context) switch
-            {
-                PgCommand command => new PgParseResult([command]),
-                PgError error => error,
-            };
-        }
-
         List<PgCommand> commands = [];
         foreach (var (start, length) in Split(sql, tokens))
         {
-            var editor = PgTokenEditor.Create(sql, tokens.Slice(start, length));
+            var editor = PgTokenEditor.Create(sql, tokens.AsSpan(start, length));
             if (editor.Count == 0)
             {
                 continue;
             }
 
-            if (!PgRewrite.Fits(editor.SourceSpan(0, editor.Count - 1)))
+            if (!PgRewrite.Fits(sql.AsSpan(editor.Start(0), editor.End(editor.Count - 1) - editor.Start(0))))
             {
                 return PgRewrite.StatementTooLong;
             }
@@ -99,7 +52,7 @@ internal static class PgCommandParser
 
         if (commands.Count == 0)
         {
-            return new PgParseResult(EmptyCommands);
+            commands.Add(new PgEmptyCommand());
         }
 
         return commands;
@@ -111,7 +64,7 @@ internal static class PgCommandParser
         return null;
     }
 
-    private static List<(int Start, int Length)> Split(string sql, ReadOnlySpan<PgToken> tokens)
+    private static List<(int Start, int Length)> Split(string sql, PgToken[] tokens)
     {
         List<(int Start, int Length)> statements = [];
         var start = 0;
@@ -119,7 +72,7 @@ internal static class PgCommandParser
         var blockDepth = 0;
         var words = 0;
         var trigger = false;
-        var firstIsCreate = false;
+        string? first = null;
         for (var index = 0; index < tokens.Length; index++)
         {
             var token = tokens[index];
@@ -135,9 +88,10 @@ internal static class PgCommandParser
                     var word = sql.AsSpan(token.Start, token.Length);
                     if (words == 0)
                     {
-                        firstIsCreate = word.Equals("CREATE", StringComparison.OrdinalIgnoreCase);
+                        first = word.ToString();
                     }
-                    else if (words <= 2 && firstIsCreate && word.Equals("TRIGGER", StringComparison.OrdinalIgnoreCase))
+                    else if (words <= 2 && first is { } leading && leading.Equals("CREATE", StringComparison.OrdinalIgnoreCase)
+                        && word.Equals("TRIGGER", StringComparison.OrdinalIgnoreCase))
                     {
                         trigger = true;
                     }
@@ -158,7 +112,7 @@ internal static class PgCommandParser
                     start = index + 1;
                     words = 0;
                     trigger = false;
-                    firstIsCreate = false;
+                    first = null;
                     break;
             }
         }
@@ -169,26 +123,7 @@ internal static class PgCommandParser
 
     private static PgStatementParseResult ParseStatement(PgTokenEditor tokens, PgRewriteContext context)
     {
-        if (tokens.Kind(0) != PgTokenKind.Word)
-        {
-            return BuildSql(tokens, context, null);
-        }
-
-        var raw = tokens.Raw(0);
-        if (raw.Equals("SELECT", StringComparison.OrdinalIgnoreCase))
-        {
-            return CannedSelect(tokens) is { } canned ? canned : BuildSql(tokens, context, null);
-        }
-
-        if (raw.Equals("UPDATE", StringComparison.OrdinalIgnoreCase)
-            || raw.Equals("INSERT", StringComparison.OrdinalIgnoreCase)
-            || raw.Equals("DELETE", StringComparison.OrdinalIgnoreCase)
-            || raw.Equals("WITH", StringComparison.OrdinalIgnoreCase))
-        {
-            return BuildSql(tokens, context, null);
-        }
-
-        var first = tokens.Text(0).ToLowerInvariant();
+        var first = tokens.Kind(0) == PgTokenKind.Word ? tokens.Text(0).ToLowerInvariant() : string.Empty;
         switch (first)
         {
             case "begin":
@@ -266,6 +201,8 @@ internal static class PgCommandParser
             case "table":
                 tokens.Replace(0, "SELECT * FROM");
                 return BuildSql(tokens, context, "SELECT");
+            case "select" when CannedSelect(tokens) is { } canned:
+                return canned;
             default:
                 return BuildSql(tokens, context, null);
         }
@@ -282,7 +219,7 @@ internal static class PgCommandParser
     {
         var verb = Verb(tokens);
         var access = Access(tokens, verb);
-        var explain = verb == "EXPLAIN";
+        var explain = tokens.IsWord(0, "EXPLAIN");
         if (explain)
         {
             var body = 1;
@@ -308,12 +245,7 @@ internal static class PgCommandParser
 
     private static string Verb(PgTokenEditor tokens)
     {
-        if (tokens.Kind(0) != PgTokenKind.Word)
-        {
-            return string.Empty;
-        }
-
-        var first = CanonicalVerb(tokens.Raw(0));
+        var first = tokens.Kind(0) == PgTokenKind.Word ? tokens.Text(0).ToUpperInvariant() : string.Empty;
         if (first != "WITH")
         {
             return first;
@@ -327,107 +259,13 @@ internal static class PgCommandParser
                 continue;
             }
 
-            if (tokens.Kind(index) == PgTokenKind.Word)
+            if (tokens.IsAnyWord(index, "SELECT", "INSERT", "UPDATE", "DELETE", "VALUES"))
             {
-                var raw = tokens.Raw(index);
-                if (raw.Equals("SELECT", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "SELECT";
-                }
-
-                if (raw.Equals("INSERT", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "INSERT";
-                }
-
-                if (raw.Equals("UPDATE", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "UPDATE";
-                }
-
-                if (raw.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "DELETE";
-                }
-
-                if (raw.Equals("VALUES", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "VALUES";
-                }
+                return tokens.Text(index).ToUpperInvariant();
             }
         }
 
         return "SELECT";
-    }
-
-    private static string CanonicalVerb(ReadOnlySpan<char> raw)
-    {
-        if (raw.Equals("SELECT", StringComparison.OrdinalIgnoreCase))
-        {
-            return "SELECT";
-        }
-
-        if (raw.Equals("UPDATE", StringComparison.OrdinalIgnoreCase))
-        {
-            return "UPDATE";
-        }
-
-        if (raw.Equals("INSERT", StringComparison.OrdinalIgnoreCase))
-        {
-            return "INSERT";
-        }
-
-        if (raw.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
-        {
-            return "DELETE";
-        }
-
-        if (raw.Equals("WITH", StringComparison.OrdinalIgnoreCase))
-        {
-            return "WITH";
-        }
-
-        if (raw.Equals("CREATE", StringComparison.OrdinalIgnoreCase))
-        {
-            return "CREATE";
-        }
-
-        if (raw.Equals("DROP", StringComparison.OrdinalIgnoreCase))
-        {
-            return "DROP";
-        }
-
-        if (raw.Equals("ALTER", StringComparison.OrdinalIgnoreCase))
-        {
-            return "ALTER";
-        }
-
-        if (raw.Equals("VALUES", StringComparison.OrdinalIgnoreCase))
-        {
-            return "VALUES";
-        }
-
-        if (raw.Equals("EXPLAIN", StringComparison.OrdinalIgnoreCase))
-        {
-            return "EXPLAIN";
-        }
-
-        if (raw.Equals("PRAGMA", StringComparison.OrdinalIgnoreCase))
-        {
-            return "PRAGMA";
-        }
-
-        if (raw.Equals("REPLACE", StringComparison.OrdinalIgnoreCase))
-        {
-            return "REPLACE";
-        }
-
-        if (raw.Equals("MERGE", StringComparison.OrdinalIgnoreCase))
-        {
-            return "MERGE";
-        }
-
-        return raw.ToString().ToUpperInvariant();
     }
 
     private static SqlAccess Access(PgTokenEditor tokens, string verb)
@@ -439,24 +277,8 @@ internal static class PgCommandParser
 
         for (var index = 0; index < tokens.Count; index++)
         {
-            if (tokens.Kind(index) != PgTokenKind.Word)
-            {
-                continue;
-            }
-
-            var raw = tokens.Raw(index);
-            if (raw.Length is < 4 or > 7)
-            {
-                continue;
-            }
-
-            if (raw.Equals("INSERT", StringComparison.OrdinalIgnoreCase)
-                || raw.Equals("DELETE", StringComparison.OrdinalIgnoreCase)
-                || raw.Equals("REPLACE", StringComparison.OrdinalIgnoreCase)
-                || raw.Equals("CREATE", StringComparison.OrdinalIgnoreCase)
-                || raw.Equals("DROP", StringComparison.OrdinalIgnoreCase)
-                || raw.Equals("ALTER", StringComparison.OrdinalIgnoreCase)
-                || (raw.Equals("UPDATE", StringComparison.OrdinalIgnoreCase) && !tokens.IsAnyWord(index - 1, "FOR", "KEY", "NO", "ON", "DO")))
+            if (tokens.IsAnyWord(index, "INSERT", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER")
+                || (tokens.IsWord(index, "UPDATE") && !tokens.IsAnyWord(index - 1, "FOR", "KEY", "NO", "ON", "DO")))
             {
                 return SqlAccess.Write;
             }
@@ -576,7 +398,7 @@ internal static class PgCommandParser
 
     private static PgCommand? CannedSelect(PgTokenEditor tokens)
     {
-        var source = tokens.SourceSpan(0, tokens.Count - 1);
+        var source = tokens.RenderSource(0, tokens.Count - 1);
         if (source.Contains("elemtypoid", StringComparison.Ordinal) && source.Contains("pg_type", StringComparison.Ordinal))
         {
             return new PgCannedCommand(PgTypeLoad.Types());
@@ -605,23 +427,15 @@ internal static class PgCommandParser
             }
         }
 
+        var schema = "pg_catalog";
         var relation = from + 1;
-        var isPgCatalog = true;
         if (tokens.IsName(relation) && tokens.Kind(relation + 1) == PgTokenKind.Period)
         {
-            isPgCatalog = tokens.EqualsIdentifier(relation, "pg_catalog");
+            schema = tokens.Identifier(relation);
             relation += 2;
         }
 
-        if (!isPgCatalog || !tokens.IsName(relation))
-        {
-            return null;
-        }
-
-        var isEmpty = tokens.Kind(relation) == PgTokenKind.Word
-            ? PgCatalogSql.IsAlwaysEmpty("pg_catalog", tokens.Raw(relation))
-            : PgCatalogSql.IsAlwaysEmpty("pg_catalog", tokens.Identifier(relation));
-        return isEmpty
+        return tokens.IsName(relation) && PgCatalogSql.IsAlwaysEmpty(schema, tokens.Identifier(relation))
             ? new PgCannedCommand(new PgResult([.. SelectListNames(tokens, from).Select(static name => new PgColumn(name, PgOid.Text))], [], "SELECT 0"))
             : null;
     }

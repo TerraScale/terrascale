@@ -125,7 +125,7 @@ export async function converged(cells: Cells, region: string, id: string, statem
     expect(response.headers()['x-terrabase-region']).toBe(regionOf(region));
     rows = result.results[0].rows;
     return done(rows);
-  }, { message: `${regionOf(region)} converges on ${statement}`, timeout: 45_000, intervals: [100, 250, 500] }).toBe(true);
+  }, { message: `${regionOf(region)} converges on ${statement}`, timeout: 45_000, intervals: [250, 500, 1000] }).toBe(true);
   return rows;
 }
 

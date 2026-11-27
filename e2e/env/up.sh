@@ -1,7 +1,6 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source "$here/service.sh"
-eval "$(jq -r 'to_entries[] | "export E2E_PORT_\(.key)=\(.value)"' "$state/ports.json")"
 build=$(cd "${E2E_BUILD:?E2E_BUILD holds the terrabase, ts-platform, ts-auth and dashboard builds}" && pwd)
 trust=${SSL_CERT_FILE:?SSL_CERT_FILE is the trust bundle that holds the run CA}
 umask 077
@@ -73,18 +72,10 @@ else
     TERRABASE_PORT="$(e2e_port terrabase)" TERRABASE_METRICS_PORT="$(e2e_port metrics)" TERRABASE_POSTGRES_PORT="$(e2e_port postgres)" \
     TERRABASE_QUIC_PORT="$(e2e_port quic)" dotnet "$build/terrabase/terrabase.dll"
   ready terrabase curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port terrabase)/readyz"
-  node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof" &
-  peer_probe_pid=$!
-  (
-    curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port metrics)/metrics" > "$state/backup-disabled.metrics"
-    awk '/^terrabase_backup_disabled(\{[^}]*\})? 1$/ {found=1; print} END {exit !found}' "$state/backup-disabled.metrics"
-    [ "$(curl -sS --max-time 2 -o "$state/backup-disabled.json" -w '%{http_code}' "http://127.0.0.1:$(e2e_port terrabase)/backupz")" = 503 ]
-  ) &
-  backup_probe_pid=$!
-  probe_failed=0
-  wait "$peer_probe_pid" || probe_failed=1
-  wait "$backup_probe_pid" || probe_failed=1
-  [ "$probe_failed" -eq 0 ]
+  node "$here/caller-peer-probe.mjs" "$state" > "$state/caller-peer-proof"
+  curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port metrics)/metrics" > "$state/backup-disabled.metrics"
+  awk '/^terrabase_backup_disabled(\{[^}]*\})? 1$/ {found=1; print} END {exit !found}' "$state/backup-disabled.metrics"
+  [ "$(curl -sS --max-time 2 -o "$state/backup-disabled.json" -w '%{http_code}' "http://127.0.0.1:$(e2e_port terrabase)/backupz")" = 503 ]
 fi
 
 start ts-platform env TS_PLATFORM_PORT="$(e2e_port platform)" TS_PLATFORM_METRICS_PORT="$(e2e_port platform_metrics)" \
@@ -97,6 +88,7 @@ start ts-platform env TS_PLATFORM_PORT="$(e2e_port platform)" TS_PLATFORM_METRIC
   TERRABASE_SHAPES_ACCESS_KEY_ID="$r2_access_key_id" TERRABASE_SHAPES_SECRET_ACCESS_KEY="$r2_secret_access_key" \
   TERRABASE_SHAPES_CDN_HOST=shapes-ts-terrabase-shapes-prod.terrascale.tech TERRABASE_SHAPES_CDN_ZONE=4cc466e19478c116fae7dc445a6d0911 \
   TERRABASE_SHAPES_CDN_API_TOKEN="$cloudflare_token" dotnet "$build/ts-platform/ts-platform.dll"
+ready ts-platform curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port platform)/readyz"
 
 auth=(TS_AUTH_TERRABASE_URL="http://127.0.0.1:$(e2e_port internal)" TS_AUTH_LISTEN="http://127.0.0.1:$(e2e_port auth)" TS_AUTH_METRICS_LISTEN="http://127.0.0.1:$(e2e_port auth_metrics)"
   TS_AUTH_TURNSTILE_SITE_KEY=1x00000000000000000000AA TS_AUTH_TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
@@ -108,31 +100,15 @@ auth=(TS_AUTH_TERRABASE_URL="http://127.0.0.1:$(e2e_port internal)" TS_AUTH_LIST
   TS_AUTH_SMTP_USERNAME="$smtp_username" TS_AUTH_SMTP_PASSWORD="$smtp_password"
   CLOUDFLARE_ACCOUNT_ID="$cloudflare_account" CLOUDFLARE_EMAIL_TOKEN="$cloudflare_token")
 start ts-auth env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll"
-timeout --kill-after=10 "$boot_seconds" env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll" provision-signing-key > "$logs/provision-signing-key.log" 2>&1 &
-provision_pid=$!
-
-ready ts-platform curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port platform)/readyz" &
-platform_ready_pid=$!
-ready ts-auth curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port auth)/readyz" &
-auth_ready_pid=$!
-provision_status=0
-wait "$provision_pid" || provision_status=$?
-if [ "$provision_status" -ne 0 ]; then
-  kill "$platform_ready_pid" "$auth_ready_pid" 2> /dev/null || true
-  echo "ts-auth provision-signing-key failed or was still running after $boot_seconds s (exit status $provision_status)" >&2
-  tail -n 40 "$logs/provision-signing-key.log" >&2
-  exit 1
-fi
-ready_failed=0
-wait "$platform_ready_pid" || ready_failed=1
-wait "$auth_ready_pid" || ready_failed=1
-[ "$ready_failed" -eq 0 ]
-
+timeout --kill-after=10 "$boot_seconds" env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll" provision-signing-key > "$logs/provision-signing-key.log" 2>&1 \
+  || { echo "ts-auth provision-signing-key failed or was still running after $boot_seconds s (exit status $?)" >&2; tail -n 40 "$logs/provision-signing-key.log" >&2; exit 1; }
 start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOARD_SESSION_ENCRYPTION_KEY="$session_key" \
   STRIPE_SECRET_KEY="$stripe_secret_key" STRIPE_WEBHOOK_SECRET="$stripe_signing_secret" TERRABASE_PEER_SECRET="$peer_secret" \
   TS_DASHBOARD_TERRABASE_URL="http://127.0.0.1:$(e2e_port internal)" TS_DASHBOARD_PLATFORM_URL="http://127.0.0.1:$(e2e_port platform)" \
   TS_REGION=gru TS_NODE=journey-1 \
   dotnet "$build/dashboard/TerraScale.Dashboard.dll" --environment Production --urls "http://127.0.0.1:$(e2e_port dashboard)" --contentRoot "$build/dashboard"
+
+ready ts-auth curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port auth)/readyz"
 ready dashboard curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 echo

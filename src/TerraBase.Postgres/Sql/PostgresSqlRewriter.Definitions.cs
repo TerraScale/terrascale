@@ -2,7 +2,7 @@ using System.Text;
 
 namespace TerraBase.Postgres.Sql;
 
-internal ref partial struct PostgresSqlRewriter
+internal sealed partial class PostgresSqlRewriter
 {
     private void RewriteDefinitions()
     {

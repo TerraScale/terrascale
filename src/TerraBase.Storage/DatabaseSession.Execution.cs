@@ -71,64 +71,20 @@ internal sealed partial class DatabaseSession
             return exposure.ToSqlError(index);
         }
 
-        var info = context.Info;
-        if (statement.Scope is null && _writer.TryGetCachedUserStatement(sql) is { HasWriterAnalysis: true } cached)
-        {
-            if (!context.DdlFault.IsOk)
-            {
-                return context.DdlFault.ToSqlError(index);
-            }
-
-            if (context.Mode == ConsistencyMode.Fast && Gate(cached.WrittenTables) is { } cachedReason)
-            {
-                return new StrongRequired(DatabaseId, cachedReason);
-            }
-
-            if (context.AnalyzeReads)
-            {
-                CollectScannedTables(context, cached.ReadOnly, cached.ReadTables, cached.WrittenTables, cached.AnalyzedSql, cached.IsInsertOrReplace);
-            }
-
-            info.Reset();
-            var bound = _writer.BindUser(cached.Handle, statement);
-            if (!bound.IsOk)
-            {
-                SqliteConnection.ResetCachedUserStatement(cached.Handle);
-                return bound.ToSqlError(index);
-            }
-
-            _capture.Annotation = cached.Annotation;
-            var stepped = _writer.StepCachedUser(cached, info, out var cachedResult, limitResults: true, context.CancellationToken);
-            _capture.Annotation = null;
-            if (!stepped.IsOk)
-            {
-                if (stepped.Primary == SqliteNative.Schema)
-                {
-                    _writer.InvalidateSchemaCache();
-                }
-
-                return stepped.ToSqlError(index);
-            }
-
-            context.Results.Add(cachedResult);
-            return cachedResult;
-        }
-
         var bytes = Encoding.UTF8.GetBytes(sql);
         var offset = 0;
         var last = EmptyResult;
+        var info = context.Info;
         var prepared = 0;
         while (offset < bytes.Length)
         {
-            var isFirst = offset == 0;
             var remaining = bytes.AsSpan(offset);
-            var status = _writer.PrepareUser(remaining, statement.Scope, info, out var handle, out var consumed, persistent: statement.Scope is null && isFirst);
+            var status = _writer.PrepareUser(remaining, statement.Scope, info, out var handle, out var consumed);
             if (!status.IsOk)
             {
                 return status.ToSqlError(index);
             }
 
-            var isSingleStatement = isFirst && SqliteConnection.IsTrailingEmpty(remaining[consumed..]);
             var segment = Encoding.UTF8.GetString(remaining[..consumed]);
             offset += Math.Max(consumed, 1);
             if (handle == 0)
@@ -160,14 +116,12 @@ internal sealed partial class DatabaseSession
             if ((SqlAnalyzer.RewriteSnowflakeInsert(segment, tokens, _capture.Resolve) ?? SqlAnalyzer.RewriteTriggerInserts(segment, tokens, _capture.Resolve)) is { } rewritten)
             {
                 SqliteConnection.FinalizeStatement(handle);
-                var rewrittenBytes = Encoding.UTF8.GetBytes(rewritten);
-                status = _writer.PrepareUser(rewrittenBytes, statement.Scope, info, out handle, out var rewrittenConsumed, persistent: statement.Scope is null && isSingleStatement);
+                status = _writer.PrepareUser(Encoding.UTF8.GetBytes(rewritten), statement.Scope, info, out handle, out _);
                 if (!status.IsOk)
                 {
                     return status.ToSqlError(index);
                 }
 
-                isSingleStatement &= SqliteConnection.IsTrailingEmpty(rewrittenBytes.AsSpan(rewrittenConsumed));
                 segment = rewritten;
                 tokens = SqlTokenizer.Tokenize(segment);
             }
@@ -179,45 +133,9 @@ internal sealed partial class DatabaseSession
             }
 
             var isDdl = !isExplain && info.IsDdl;
-            var inserts = IsInsertOrReplace(tokens);
             if (context.AnalyzeReads)
             {
-                CollectScannedTables(context, SqliteConnection.IsReadOnly(handle), info.ReadTables, info.WrittenTables, segment, inserts);
-            }
-
-            var annotation = SqlAnalyzer.Annotate(tokens, _capture.Resolve);
-            if (!_capture.Fault.IsOk)
-            {
-                _capture.Annotation = null;
-                SqliteConnection.FinalizeStatement(handle);
-                return _capture.Fault.ToSqlError(index);
-            }
-
-            var cacheable = statement.Scope is null && isSingleStatement && !info.IsUncacheable && !info.IsDdl && info.Savepoint is null && info.CreatedTable is null;
-            if (cacheable && _writer.CacheUserStatement(sql, handle, info, hasWriterAnalysis: true, segment, inserts, annotation) is { } entry)
-            {
-                status = _writer.BindUser(entry.Handle, statement);
-                if (!status.IsOk)
-                {
-                    SqliteConnection.ResetCachedUserStatement(entry.Handle);
-                    return status.ToSqlError(index);
-                }
-
-                _capture.Annotation = entry.Annotation;
-                status = _writer.StepCachedUser(entry, info, out var cachedResult, limitResults: true, context.CancellationToken);
-                _capture.Annotation = null;
-                if (!status.IsOk)
-                {
-                    if (status.Primary == SqliteNative.Schema)
-                    {
-                        _writer.InvalidateSchemaCache();
-                    }
-
-                    return status.ToSqlError(index);
-                }
-
-                context.Results.Add(cachedResult);
-                return cachedResult;
+                CollectScannedTables(context, handle, segment, tokens);
             }
 
             status = _writer.BindUser(handle, statement);
@@ -238,7 +156,14 @@ internal sealed partial class DatabaseSession
                 }
             }
 
-            _capture.Annotation = annotation;
+            _capture.Annotation = SqlAnalyzer.Annotate(tokens, _capture.Resolve);
+            if (!_capture.Fault.IsOk)
+            {
+                _capture.Annotation = null;
+                SqliteConnection.FinalizeStatement(handle);
+                return _capture.Fault.ToSqlError(index);
+            }
+
             status = _writer.StepUser(handle, info, out var result, limitResults: true, context.CancellationToken);
             _capture.Annotation = null;
             SqliteConnection.FinalizeStatement(handle);
@@ -325,12 +250,14 @@ internal sealed partial class DatabaseSession
         return source >= 0 && tokens[source].Is("AS");
     }
 
-    private StrongRequiredReason? Gate(StatementInfo info) =>
-        info.IsDdl ? StrongRequiredReason.SchemaChange : Gate(info.WrittenTables);
-
-    private StrongRequiredReason? Gate(IReadOnlyCollection<string> writtenTables)
+    private StrongRequiredReason? Gate(StatementInfo info)
     {
-        if (writtenTables.Count == 0)
+        if (info.IsDdl)
+        {
+            return StrongRequiredReason.SchemaChange;
+        }
+
+        if (info.WrittenTables.Count == 0)
         {
             return null;
         }
@@ -340,7 +267,7 @@ internal sealed partial class DatabaseSession
             return StrongRequiredReason.StrictTable;
         }
 
-        foreach (var table in writtenTables)
+        foreach (var table in info.WrittenTables)
         {
             if (_capture.Resolve(table) is not { } schema)
             {
@@ -361,34 +288,10 @@ internal sealed partial class DatabaseSession
         return null;
     }
 
-    private static bool IsInsertOrReplace(List<SqlToken> tokens)
+    private void CollectScannedTables(WriteContext context, nint handle, string segment, List<SqlToken> tokens)
     {
-        var verb = SqlAnalyzer.MainVerb(tokens);
-        return verb >= 0 && (tokens[verb].Is("INSERT") || tokens[verb].Is("REPLACE"));
-    }
-
-    private static bool ContainsIgnoreCase(IReadOnlyCollection<string> names, string value)
-    {
-        foreach (var name in names)
-        {
-            if (string.Equals(name, value, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private void CollectScannedTables(
-        WriteContext context,
-        bool readOnly,
-        IReadOnlyCollection<string> readTables,
-        IReadOnlyCollection<string> writtenTables,
-        string segment,
-        bool inserts)
-    {
-        foreach (var table in writtenTables)
+        var info = context.Info;
+        foreach (var table in info.WrittenTables)
         {
             if (_capture.Resolve(table) is { HasSecondaryUnique: true })
             {
@@ -396,21 +299,21 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        if (readTables.Count == 0)
+        if (info.ReadTables.Count == 0)
         {
             return;
         }
 
-        if (readOnly)
+        if (SqliteConnection.IsReadOnly(handle))
         {
-            context.ScannedTables.UnionWith(readTables);
+            context.ScannedTables.UnionWith(info.ReadTables);
             return;
         }
 
         List<string> plan = [];
         if (!_writer.ExplainQueryPlan(segment, plan).IsOk)
         {
-            context.ScannedTables.UnionWith(readTables);
+            context.ScannedTables.UnionWith(info.ReadTables);
             return;
         }
 
@@ -423,9 +326,9 @@ internal sealed partial class DatabaseSession
                 continue;
             }
 
-            if (!ContainsIgnoreCase(readTables, table))
+            if (!info.ReadTables.Contains(table))
             {
-                context.ScannedTables.UnionWith(readTables);
+                context.ScannedTables.UnionWith(info.ReadTables);
                 return;
             }
 
@@ -436,9 +339,11 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        foreach (var table in readTables)
+        var verb = SqlAnalyzer.MainVerb(tokens);
+        var inserts = verb >= 0 && (tokens[verb].Is("INSERT") || tokens[verb].Is("REPLACE"));
+        foreach (var table in info.ReadTables)
         {
-            var readsOnlyWrittenRow = ContainsIgnoreCase(writtenTables, table) && accesses.GetValueOrDefault(table) switch
+            var readsOnlyWrittenRow = info.WrittenTables.Contains(table) && accesses.GetValueOrDefault(table) switch
             {
                 0 => true,
                 1 => !inserts && pointLookups.Contains(table),
@@ -559,57 +464,28 @@ internal sealed partial class DatabaseSession
 
         var snapshot = _context.Clock.Tick();
         var stamp = snapshot;
-        var scope = WriterScope();
-        scope.Reset();
-        var observed = new List<ObservedRow>(changes.Count);
-        var tables = _laneItemTables;
-        tables.Clear();
-        var mutations = LocalStamper.Stamp(scope, changes, ref stamp, persist: false, observed, tables);
-        tables.Clear();
+        var scope = new WriteScope(_writer);
+        List<ObservedRow> observed = [];
+        var mutations = LocalStamper.Stamp(scope, changes, ref stamp, persist: false, observed, new Dictionary<string, HlcTimestamp>(StringComparer.OrdinalIgnoreCase));
         if (scope.Failed)
         {
             return scope.Failure;
         }
 
-        var readKeys = observed.Count == 0 ? [] : new ReadKey[observed.Count];
-        var writeKeys = observed.Count == 0 ? [] : new RowKey[observed.Count];
-        for (var index = 0; index < observed.Count; index++)
-        {
-            var row = observed[index];
-            readKeys[index] = new ReadKey(row.Key, row.RowHlc);
-            writeKeys[index] = row.Key;
-        }
-
-        string[] scannedTables;
-        if (context.ScannedTables.Count == 0)
-        {
-            scannedTables = [];
-        }
-        else
-        {
-            scannedTables = new string[context.ScannedTables.Count];
-            context.ScannedTables.CopyTo(scannedTables);
-            if (scannedTables.Length > 1)
-            {
-                Array.Sort(scannedTables, StringComparer.Ordinal);
-            }
-        }
-
-        var now = _context.Time.GetUtcNow();
         var payload = MutationBatchCodec.Encode(new DeltaBatch(context.Ddl, mutations));
         var staged = new StagedWrite(
-            new StagedWriteToken(Ulid.NewUlid(now)),
+            new StagedWriteToken(Ulid.NewUlid(_context.Time.GetUtcNow())),
             DatabaseId,
-            Ulid.NewUlid(now),
+            Ulid.NewUlid(_context.Time.GetUtcNow()),
             snapshot,
             SchemaEpoch,
-            readKeys,
-            scannedTables,
-            writeKeys,
+            [.. observed.Select(static row => new ReadKey(row.Key, row.RowHlc))],
+            [.. context.ScannedTables.Order(StringComparer.Ordinal)],
+            [.. observed.Select(static row => row.Key)],
             context.IsSchemaChange,
             [.. context.Results],
             payload);
-        descriptor = new StagedDescriptor(staged, observed, now);
+        descriptor = new StagedDescriptor(staged, observed, _context.Time.GetUtcNow());
         return SqliteStatus.Success;
     }
 
@@ -654,28 +530,19 @@ internal sealed partial class DatabaseSession
             return exposure.ToSqlError(index);
         }
 
-        if (statement.Scope is null && reader.TryGetCachedUserStatement(sql) is { } cached)
-        {
-            info.Reset();
-            readTables?.UnionWith(cached.ReadTables);
-            return ExecuteCachedOnReader(reader, cached, statement, index, info, limitResults, cancellationToken);
-        }
-
         var bytes = Encoding.UTF8.GetBytes(sql);
         var offset = 0;
         var last = EmptyResult;
         var prepared = 0;
         while (offset < bytes.Length)
         {
-            var isFirst = offset == 0;
             var remaining = bytes.AsSpan(offset);
-            var status = reader.PrepareUser(remaining, statement.Scope, info, out var handle, out var consumed, persistent: statement.Scope is null && isFirst);
+            var status = reader.PrepareUser(remaining, statement.Scope, info, out var handle, out var consumed);
             if (!status.IsOk)
             {
                 return status.ToSqlError(index);
             }
 
-            var isSingleStatement = isFirst && SqliteConnection.IsTrailingEmpty(remaining[consumed..]);
             offset += Math.Max(consumed, 1);
             if (handle == 0)
             {
@@ -689,12 +556,6 @@ internal sealed partial class DatabaseSession
             }
 
             readTables?.UnionWith(info.ReadTables);
-            var cacheable = statement.Scope is null && isSingleStatement && !info.IsUncacheable && !info.IsDdl && info.Savepoint is null && info.CreatedTable is null;
-            if (cacheable && reader.CacheUserStatement(sql, handle, info, hasWriterAnalysis: false, sql, isInsertOrReplace: false, annotation: null) is { } entry)
-            {
-                return ExecuteCachedOnReader(reader, entry, statement, index, info, limitResults, cancellationToken);
-            }
-
             status = reader.BindUser(handle, statement);
             if (status.IsOk)
             {
@@ -709,35 +570,5 @@ internal sealed partial class DatabaseSession
         }
 
         return last;
-    }
-
-    private static ReaderStatementOutcome ExecuteCachedOnReader(
-        SqliteConnection reader,
-        CachedUserStatement cached,
-        SqlStatement statement,
-        int index,
-        StatementInfo info,
-        bool limitResults,
-        CancellationToken cancellationToken)
-    {
-        var status = reader.BindUser(cached.Handle, statement);
-        if (!status.IsOk)
-        {
-            SqliteConnection.ResetCachedUserStatement(cached.Handle);
-            return status.ToSqlError(index);
-        }
-
-        status = reader.StepCachedUser(cached, info, out var result, limitResults, cancellationToken);
-        if (!status.IsOk)
-        {
-            if (status.Primary == SqliteNative.Schema)
-            {
-                reader.InvalidateSchemaCache();
-            }
-
-            return status.ToSqlError(index);
-        }
-
-        return result;
     }
 }

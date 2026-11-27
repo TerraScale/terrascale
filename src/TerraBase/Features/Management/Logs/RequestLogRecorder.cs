@@ -23,38 +23,13 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 {
     private const int Batch = 256;
 
-    private const string InsertSql =
-        "INSERT OR IGNORE INTO request_logs (database_id, id, at, method, path, status, duration_ms, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-
     private static readonly TimeSpan Retention = TimeSpan.FromDays(7);
-
-    private static readonly TimeSpan FlushWindow = TimeSpan.FromMilliseconds(200);
-
-    private static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
 
     private readonly Channel<RequestLogEntry> _queue = Channel.CreateBounded<RequestLogEntry>(new BoundedChannelOptions(8192)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
-        SingleReader = false,
+        SingleReader = true,
     });
-
-    private readonly SemaphoreSlim _writeGate = new(1, 1);
-
-    private readonly CancellationTokenSource _shutdownDrain = new();
-
-    private readonly Lock _drainGate = new();
-
-    private readonly List<RequestLogEntry> _batchBuffer = new(Batch);
-
-    private TaskCompletionSource _wake = NewWake();
-
-    private int _activeUsers;
-
-    private bool _disposed;
-
-    private int _queued;
-
-    private DateTimeOffset _pruneAt = DateTimeOffset.MinValue;
 
     public static void Mark(HttpContext context, Ulid databaseId) => context.Features.Set(new LoggedDatabase(databaseId));
 
@@ -62,11 +37,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     {
         var now = time.GetUtcNow();
         var logId = id is not null && RequestIdentity.IsValid(id) ? id : Ulid.NewUlid(now).ToString();
-        if (_queue.Writer.TryWrite(new RequestLogEntry(logId, databaseId, now, Method(method), path, status, Math.Max(0, durationMs), options.Region))
-            && Interlocked.Increment(ref _queued) >= Batch)
-        {
-            SignalWake();
-        }
+        _queue.Writer.TryWrite(new RequestLogEntry(logId, databaseId, now, Method(method), path, status, Math.Max(0, durationMs), options.Region));
     }
 
     public void Record(HttpContext context, long started)
@@ -84,96 +55,9 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     public bool HasGap(string? after) =>
         after is { Length: 26 } && Ulid.TryParse(after, out var cursor) && cursor.Time < time.GetUtcNow() - Retention;
 
-    public async ValueTask FlushAsync(CancellationToken cancellationToken)
-    {
-        if (!TryAcquireUser(out var drainToken))
-        {
-            return;
-        }
-
-        Task? drain = null;
-        try
-        {
-            await _writeGate.WaitAsync(cancellationToken);
-            if (!_queue.Reader.TryPeek(out _))
-            {
-                _writeGate.Release();
-                return;
-            }
-
-            lock (_drainGate)
-            {
-                if (_disposed)
-                {
-                    _writeGate.Release();
-                    return;
-                }
-
-                _activeUsers++;
-            }
-
-            drain = DrainAndReleaseAsync(drainToken);
-        }
-        finally
-        {
-            ReleaseUser();
-        }
-
-        await drain.WaitAsync(cancellationToken);
-    }
-
-    private async Task DrainAndReleaseAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            await DrainLockedAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception error)
-        {
-            logger.ZLogWarning(error, $"Request log drain failed");
-        }
-        finally
-        {
-            _writeGate.Release();
-            ReleaseUser();
-        }
-    }
-
-    private bool TryAcquireUser(out CancellationToken drainToken)
-    {
-        lock (_drainGate)
-        {
-            if (_disposed)
-            {
-                drainToken = default;
-                return false;
-            }
-
-            _activeUsers++;
-            drainToken = _shutdownDrain.Token;
-            return true;
-        }
-    }
-
-    private void ReleaseUser()
-    {
-        lock (_drainGate)
-        {
-            if (--_activeUsers == 0 && _disposed)
-            {
-                _shutdownDrain.Dispose();
-                _writeGate.Dispose();
-            }
-        }
-    }
-
     public async ValueTask<RequestLogsOutcome> ListAsync(
         Ulid databaseId, string? after, int limit, int? minStatus, int? maxStatus, CancellationToken cancellationToken)
     {
-        await FlushAsync(cancellationToken);
         var statement = after is null
             ? SqlBuild.Statement(
                 "SELECT id, database_id, at, method, path, status, duration_ms, region FROM request_logs "
@@ -193,196 +77,38 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
         };
     }
 
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        await base.StopAsync(cancellationToken);
-        using var timeout = new CancellationTokenSource(ShutdownDrainTimeout, time);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
-        using var cancelInFlight = linked.Token.Register(static state =>
-        {
-            if (state is RequestLogRecorder recorder)
-            {
-                recorder.CancelShutdownDrain();
-            }
-        }, this);
-        try
-        {
-            await FlushAsync(linked.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-        }
-        finally
-        {
-            if (linked.IsCancellationRequested)
-            {
-                CancelShutdownDrain();
-            }
-        }
-    }
-
-    private void CancelShutdownDrain()
-    {
-        var cancel = false;
-        lock (_drainGate)
-        {
-            if (!_disposed && !_shutdownDrain.IsCancellationRequested)
-            {
-                _activeUsers++;
-                cancel = true;
-            }
-        }
-
-        if (cancel)
-        {
-            try
-            {
-                _shutdownDrain.Cancel();
-            }
-            finally
-            {
-                ReleaseUser();
-            }
-        }
-    }
-
-    public override void Dispose()
-    {
-        var cancelDrain = false;
-        lock (_drainGate)
-        {
-            if (!_disposed)
-            {
-                _disposed = true;
-                if (_activeUsers == 0)
-                {
-                    _shutdownDrain.Dispose();
-                    _writeGate.Dispose();
-                }
-                else if (!_shutdownDrain.IsCancellationRequested)
-                {
-                    _activeUsers++;
-                    cancelDrain = true;
-                }
-            }
-        }
-
-        if (cancelDrain)
-        {
-            try
-            {
-                _shutdownDrain.Cancel();
-            }
-            finally
-            {
-                ReleaseUser();
-            }
-        }
-
-        base.Dispose();
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _pruneAt = time.GetUtcNow();
-        using var timer = time.CreateTimer(
-            static state => (state as RequestLogRecorder)?.SignalWake(),
-            this,
-            Timeout.InfiniteTimeSpan,
-            Timeout.InfiniteTimeSpan);
-        while (await _queue.Reader.WaitToReadAsync(stoppingToken))
+        var pruneAt = time.GetUtcNow();
+        await foreach (var first in _queue.Reader.ReadAllAsync(stoppingToken))
         {
-            if (Volatile.Read(ref _queued) < Batch)
+            List<RequestLogEntry> batch = [first];
+            while (batch.Count < Batch && _queue.Reader.TryRead(out var next))
             {
-                var wake = ResetWake();
-                if (Volatile.Read(ref _queued) < Batch)
-                {
-                    timer.Change(FlushWindow, Timeout.InfiniteTimeSpan);
-                    try
-                    {
-                        await wake.Task.WaitAsync(stoppingToken);
-                    }
-                    finally
-                    {
-                        timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-                    }
-                }
+                batch.Add(next);
             }
 
-            await FlushAsync(stoppingToken);
-        }
-    }
-
-    private async ValueTask DrainLockedAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            _batchBuffer.Clear();
-            while (_batchBuffer.Count < Batch && _queue.Reader.TryRead(out var entry))
+            List<SqlStatement> statements = [.. batch.Select(static entry => SqlBuild.Statement(
+                "INSERT OR IGNORE INTO request_logs (database_id, id, at, method, path, status, duration_ms, region) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                SqlBuild.Id(entry.DatabaseId), SqlBuild.Text(entry.Id), SqlBuild.Time(entry.At), SqlBuild.Text(entry.Method), SqlBuild.Text(entry.Path),
+                SqlBuild.Integer(entry.Status), SqlBuild.Integer(entry.DurationMs), SqlBuild.Text(entry.Region)))];
+            if (time.GetUtcNow() >= pruneAt)
             {
-                _batchBuffer.Add(entry);
+                pruneAt = time.GetUtcNow().AddHours(1);
+                statements.Add(SqlBuild.Statement("DELETE FROM request_logs WHERE at < ?", SqlBuild.Time(time.GetUtcNow() - Retention)));
             }
 
-            var count = _batchBuffer.Count;
-            if (count == 0)
-            {
-                Volatile.Write(ref _queued, 0);
-                return;
-            }
-
-            if (Interlocked.Add(ref _queued, -count) < 0)
-            {
-                Volatile.Write(ref _queued, 0);
-            }
-
-            var now = time.GetUtcNow();
-            var prune = now >= _pruneAt;
-            var statements = new SqlStatement[prune ? count + 1 : count];
-            for (var index = 0; index < count; index++)
-            {
-                var entry = _batchBuffer[index];
-                statements[index] = SqlBuild.Statement(
-                    InsertSql,
-                    SqlBuild.Id(entry.DatabaseId), SqlBuild.Text(entry.Id), SqlBuild.Time(entry.At), SqlBuild.Text(entry.Method), SqlBuild.Text(entry.Path),
-                    SqlBuild.Integer(entry.Status), SqlBuild.Integer(entry.DurationMs), SqlBuild.Text(entry.Region));
-            }
-
-            _batchBuffer.Clear();
-            if (prune)
-            {
-                _pruneAt = now.AddHours(1);
-                statements[count] = SqlBuild.Statement("DELETE FROM request_logs WHERE at < ?", SqlBuild.Time(now - Retention));
-            }
-
-            var outcome = await system.WriteTelemetryAsync(statements, ConsistencyMode.Fast, cancellationToken);
-            var failure = outcome switch
+            if (await system.WriteAsync(statements, ConsistencyMode.Fast, stoppingToken) switch
             {
                 SqlWriteResult => null,
                 StateConflict conflict => conflict.Message,
                 BackendUnavailable unavailable => unavailable.Message,
-            };
-            if (failure is not null)
+            } is { } failure)
             {
                 logger.ZLogWarning($"Request logs were dropped: {failure:@Reason}");
             }
-
-            if (count < Batch)
-            {
-                return;
-            }
         }
     }
-
-    private static TaskCompletionSource NewWake() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    private TaskCompletionSource ResetWake()
-    {
-        var next = NewWake();
-        Volatile.Write(ref _wake, next);
-        return next;
-    }
-
-    private void SignalWake() => Volatile.Read(ref _wake).TrySetResult();
 
     private static string Method(string method) => method switch
     {

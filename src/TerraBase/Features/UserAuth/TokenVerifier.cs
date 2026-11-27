@@ -1,8 +1,6 @@
 using System.Buffers;
 using System.Buffers.Text;
-using System.Collections.Concurrent;
 using System.Collections.Frozen;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Protocols;
@@ -35,13 +33,9 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private const int MaxProjectIssuers = 1024;
 
-    private const int MaxTokenChars = 16 * 1024;
-
-    private const int MaxVerifiedTokens = 4096;
-
     private static readonly TimeSpan ProjectIssuerIdle = TimeSpan.FromHours(1);
 
-    private static readonly JsonWebTokenHandler Tokens = new() { MaximumTokenSizeInBytes = MaxTokenChars };
+    private static readonly JsonWebTokenHandler Tokens = new() { MaximumTokenSizeInBytes = 16 * 1024 };
 
     private static readonly string[] Algorithms =
     [
@@ -54,55 +48,21 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private static readonly string[] TenantRefusedClaims = ["project_id", "instance_id", "token_kind", "platform_role", "key_id", "key_gen"];
 
-    private readonly string? _platformIssuer = options.AuthIssuer?.TrimEnd('/');
-
     private readonly IssuerEntry? _platform = options.AuthIssuer is { } issuer ? CreateIssuer(http, issuer) : null;
 
     private readonly Dictionary<string, IssuerSlot> _projects = new(StringComparer.Ordinal);
 
     private readonly Lock _issuers = new();
 
-    private readonly ConcurrentDictionary<TokenDigest, VerifiedTokenEntry> _verifiedTokens = new();
-
-    private readonly Lock _trimGate = new();
-
-    private int _verifiedCount;
-
-    public bool TryVerifyCached(ReadOnlySpan<char> token, [NotNullWhen(true)] out Caller? caller)
+    public async ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
     {
-        if (_platform is null || _platformIssuer is null || token.Length is 0 or > MaxTokenChars)
+        if (_platform is null || options.AuthIssuer is not { } rawPlatformIssuer)
         {
-            caller = null;
-            return false;
+            return new CredentialRejected("bearer tokens need TERRABASE_AUTH_ISSUER", "invalid_token");
         }
 
-        return TryGetCachedToken(TokenDigest.HashUtf8(token), out caller);
-    }
+        var platformIssuer = rawPlatformIssuer.TrimEnd('/');
 
-    public ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
-    {
-        if (_platform is null || _platformIssuer is not { } platformIssuer)
-        {
-            return ValueTask.FromResult<CallerAuthenticationOutcome>(new CredentialRejected("bearer tokens need TERRABASE_AUTH_ISSUER", "invalid_token"));
-        }
-
-        if (token.Length is 0 or > MaxTokenChars)
-        {
-            return ValueTask.FromResult<CallerAuthenticationOutcome>(new CredentialRejected("the bearer token is malformed", "invalid_token"));
-        }
-
-        var digest = TokenDigest.HashUtf8(token);
-        if (TryGetCachedToken(digest, out var cached))
-        {
-            return ValueTask.FromResult<CallerAuthenticationOutcome>(cached);
-        }
-
-        return VerifySlowAsync(token, digest, platformIssuer, cancellationToken);
-    }
-
-    private async ValueTask<CallerAuthenticationOutcome> VerifySlowAsync(
-        string token, TokenDigest digest, string platformIssuer, CancellationToken cancellationToken)
-    {
         if (!Tokens.CanReadToken(token) || Read(token) is not { } unverified)
         {
             return new CredentialRejected("the bearer token is malformed", "invalid_token");
@@ -111,18 +71,17 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         var trust = await TrustAsync(unverified, platformIssuer, cancellationToken);
         return trust switch
         {
-            TrustedIssuer trusted => await VerifyTrustedAsync(token, digest, trusted, cancellationToken),
+            TrustedIssuer trusted => await VerifyTrustedAsync(token, trusted, cancellationToken),
             UntrustedIssuer => new CredentialRejected("the bearer token's issuer is not trusted", "invalid_token"),
             BackendUnavailable unavailable => unavailable,
         };
     }
 
-    private async ValueTask<CallerAuthenticationOutcome> VerifyTrustedAsync(
-        string token, TokenDigest digest, TrustedIssuer trusted, CancellationToken cancellationToken)
+    private async ValueTask<CallerAuthenticationOutcome> VerifyTrustedAsync(string token, TrustedIssuer trusted, CancellationToken cancellationToken)
     {
         try
         {
-            return await VerifyPinnedAsync(token, digest, trusted, cancellationToken);
+            return await VerifyPinnedAsync(token, trusted, cancellationToken);
         }
         finally
         {
@@ -130,15 +89,14 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
-    private async ValueTask<CallerAuthenticationOutcome> VerifyPinnedAsync(
-        string token, TokenDigest digest, TrustedIssuer trusted, CancellationToken cancellationToken)
+    private async ValueTask<CallerAuthenticationOutcome> VerifyPinnedAsync(string token, TrustedIssuer trusted, CancellationToken cancellationToken)
     {
-        if (await CurrentConfigurationAsync(trusted.Entry, cancellationToken) is not { } state)
+        if (await CurrentConfigurationAsync(trusted.Entry, cancellationToken) is not { } configuration)
         {
             return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
         }
 
-        var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, state.Configuration.SigningKeys));
+        var validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, configuration.SigningKeys));
         if (!validated.IsValid && validated.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
             if (trusted.Tenant is { } project)
@@ -167,8 +125,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                 return new BackendUnavailable("ts-auth signing keys are unavailable; retry", "token_keys_pending");
             }
 
-            state = refreshed;
-            validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, state.Configuration.SigningKeys));
+            validated = await Tokens.ValidateTokenAsync(token, Parameters(trusted, refreshed.SigningKeys));
         }
 
         if (!validated.IsValid || validated.SecurityToken is not JsonWebToken jwt)
@@ -176,149 +133,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return new CredentialRejected("the bearer token is invalid or expired", "invalid_token");
         }
 
-        var outcome = trusted.Tenant is { } tenant ? ClassifyTenant(jwt, tenant) : Classify(jwt);
-        return outcome switch
-        {
-            Caller caller => Remember(digest, caller, trusted.Entry, state, jwt),
-            CredentialRejected rejected => rejected,
-            BackendUnavailable unavailable => unavailable,
-        };
-    }
-
-    private CallerAuthenticationOutcome Remember(
-        TokenDigest digest, Caller caller, IssuerEntry entry, FreshConfigurationState state, JsonWebToken jwt)
-    {
-        if (TryReadLifetime(jwt, out var expiresAt, out var notBefore))
-        {
-            var now = time.GetUtcNow();
-            var ticks = time.GetTimestamp();
-            if (now < expiresAt
-                && (notBefore is not { } nbf || now >= nbf)
-                && !entry.Retired
-                && ReferenceEquals(entry.Fresh, state)
-                && time.GetElapsedTime(state.FetchedTimestamp, ticks) < ConfigurationLifetime)
-            {
-                CacheVerifiedToken(digest, new VerifiedTokenEntry(caller, entry, state, expiresAt, notBefore), now, ticks);
-            }
-        }
-
-        return caller;
-    }
-
-    private bool TryGetCachedToken(TokenDigest digest, [NotNullWhen(true)] out Caller? caller)
-    {
-        if (_verifiedTokens.TryGetValue(digest, out var entry))
-        {
-            var now = time.GetUtcNow();
-            var ticks = time.GetTimestamp();
-            if (!entry.Issuer.Retired
-                && ReferenceEquals(entry.Issuer.Fresh, entry.Configuration)
-                && time.GetElapsedTime(entry.Configuration.FetchedTimestamp, ticks) < ConfigurationLifetime
-                && now < entry.ExpiresAt
-                && (entry.NotBefore is not { } notBefore || now >= notBefore))
-            {
-                Volatile.Write(ref entry.Issuer.LastUsed, ticks);
-                caller = entry.Caller;
-                return true;
-            }
-
-            if (entry.Issuer.Retired
-                || !ReferenceEquals(entry.Issuer.Fresh, entry.Configuration)
-                || time.GetElapsedTime(entry.Configuration.FetchedTimestamp, ticks) >= ConfigurationLifetime
-                || now >= entry.ExpiresAt)
-            {
-                if (_verifiedTokens.TryRemove(digest, out _))
-                {
-                    _ = Interlocked.Decrement(ref _verifiedCount);
-                }
-            }
-        }
-
-        caller = null;
-        return false;
-    }
-
-    private void CacheVerifiedToken(TokenDigest digest, VerifiedTokenEntry entry, DateTimeOffset now, long ticks)
-    {
-        if (Volatile.Read(ref _verifiedCount) >= MaxVerifiedTokens)
-        {
-            TrimVerifiedTokens(now, ticks);
-        }
-
-        if (Volatile.Read(ref _verifiedCount) < MaxVerifiedTokens && _verifiedTokens.TryAdd(digest, entry))
-        {
-            _ = Interlocked.Increment(ref _verifiedCount);
-        }
-    }
-
-    private void TrimVerifiedTokens(DateTimeOffset now, long ticks)
-    {
-        if (!_trimGate.TryEnter())
-        {
-            return;
-        }
-
-        try
-        {
-            if (Volatile.Read(ref _verifiedCount) < MaxVerifiedTokens)
-            {
-                return;
-            }
-
-            var removed = 0;
-            foreach (var (key, value) in _verifiedTokens)
-            {
-                if (value.Issuer.Retired
-                    || !ReferenceEquals(value.Issuer.Fresh, value.Configuration)
-                    || time.GetElapsedTime(value.Configuration.FetchedTimestamp, ticks) >= ConfigurationLifetime
-                    || now >= value.ExpiresAt)
-                {
-                    if (_verifiedTokens.TryRemove(key, out _))
-                    {
-                        _ = Interlocked.Decrement(ref _verifiedCount);
-                        removed++;
-                    }
-                }
-            }
-
-            if (Volatile.Read(ref _verifiedCount) >= MaxVerifiedTokens)
-            {
-                var target = MaxVerifiedTokens / 4;
-                foreach (var (key, _) in _verifiedTokens)
-                {
-                    if (removed >= target)
-                    {
-                        break;
-                    }
-
-                    if (_verifiedTokens.TryRemove(key, out _))
-                    {
-                        _ = Interlocked.Decrement(ref _verifiedCount);
-                        removed++;
-                    }
-                }
-            }
-        }
-        finally
-        {
-            _trimGate.Exit();
-        }
-    }
-
-    private static bool TryReadLifetime(JsonWebToken jwt, out DateTimeOffset expiresAt, out DateTimeOffset? notBefore)
-    {
-        if (jwt.ValidTo == DateTime.MinValue)
-        {
-            expiresAt = default;
-            notBefore = null;
-            return false;
-        }
-
-        expiresAt = new DateTimeOffset(DateTime.SpecifyKind(jwt.ValidTo, DateTimeKind.Utc));
-        notBefore = jwt.ValidFrom == DateTime.MinValue
-            ? null
-            : new DateTimeOffset(DateTime.SpecifyKind(jwt.ValidFrom, DateTimeKind.Utc));
-        return true;
+        return trusted.Tenant is { } tenant ? ClassifyTenant(jwt, tenant) : Classify(jwt);
     }
 
     private async ValueTask<IssuerTrust> TrustAsync(JsonWebToken token, string platformIssuer, CancellationToken cancellationToken)
@@ -404,15 +219,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             }
 
             var now = time.GetTimestamp();
-            var lastUsed = Volatile.Read(ref slot.Entry.LastUsed);
-            if (slot.Entry.Pins == 0 && time.GetElapsedTime(lastUsed, now) > ProjectIssuerIdle)
+            if (slot.Entry.Pins == 0 && time.GetElapsedTime(slot.LastUsed, now) > ProjectIssuerIdle)
             {
-                slot.Entry.Retired = true;
                 _projects.Remove(issuer);
                 return MissingIssuer.Instance;
             }
 
-            Volatile.Write(ref slot.Entry.LastUsed, now);
+            slot.LastUsed = now;
             slot.Entry.Pins++;
             return slot.Entry;
         }
@@ -430,7 +243,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                     return null;
                 }
 
-                Volatile.Write(ref slot.Entry.LastUsed, now);
+                slot.LastUsed = now;
                 slot.Entry.Pins++;
                 return slot.Entry;
             }
@@ -438,14 +251,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             if (_projects.Count >= MaxProjectIssuers)
             {
                 string? idle = null;
-                var oldest = long.MaxValue;
+                long oldest = long.MaxValue;
                 foreach (var (key, candidate) in _projects)
                 {
-                    var candidateLastUsed = Volatile.Read(ref candidate.Entry.LastUsed);
-                    if (candidate.Entry.Pins == 0 && candidateLastUsed < oldest)
+                    if (candidate.Entry.Pins == 0 && candidate.LastUsed < oldest)
                     {
                         idle = key;
-                        oldest = candidateLastUsed;
+                        oldest = candidate.LastUsed;
                     }
                 }
 
@@ -454,16 +266,12 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                     return null;
                 }
 
-                if (_projects.Remove(idle, out var evicted))
-                {
-                    evicted.Entry.Retired = true;
-                }
+                _projects.Remove(idle);
             }
 
             var created = CreateIssuer(http, issuer);
             created.Pins = 1;
-            Volatile.Write(ref created.LastUsed, now);
-            _projects.Add(issuer, new IssuerSlot(created));
+            _projects.Add(issuer, new IssuerSlot(created) { LastUsed = now });
             return created;
         }
     }
@@ -474,10 +282,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         {
             if (_projects.TryGetValue(issuer, out var slot))
             {
-                slot.Entry.Retired = true;
                 if (slot.Entry.Pins == 0)
                 {
                     _projects.Remove(issuer);
+                }
+                else
+                {
+                    slot.Entry.Retired = true;
                 }
             }
         }
@@ -614,20 +425,20 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
     private static readonly TimeSpan ConfigurationLifetime = TimeSpan.FromHours(1);
 
-    private async Task<FreshConfigurationState?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
+    private async Task<OpenIdConnectConfiguration?> CurrentConfigurationAsync(IssuerEntry entry, CancellationToken cancellationToken)
     {
         if (entry.Fresh is { } fresh && time.GetElapsedTime(fresh.FetchedTimestamp) < ConfigurationLifetime)
         {
-            return fresh;
+            return fresh.Configuration;
         }
 
-        return await Retrieval(entry, unknownKey: false).WaitAsync(cancellationToken) ?? entry.Fresh;
+        return await Retrieval(entry, unknownKey: false).WaitAsync(cancellationToken) ?? entry.Fresh?.Configuration;
     }
 
-    private async Task<FreshConfigurationState?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken) =>
+    private async Task<OpenIdConnectConfiguration?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken) =>
         await Retrieval(entry, unknownKey: true).WaitAsync(cancellationToken);
 
-    private Task<FreshConfigurationState?> Retrieval(IssuerEntry entry, bool unknownKey)
+    private Task<OpenIdConnectConfiguration?> Retrieval(IssuerEntry entry, bool unknownKey)
     {
         lock (entry.Gate)
         {
@@ -641,7 +452,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                 : (entry.LastRefreshAttemptTimestamp, entry.LastRefreshFailed);
             if (attempted != 0 && time.GetElapsedTime(attempted) < RefreshCooldown)
             {
-                return Task.FromResult(failed ? null : entry.Fresh);
+                return Task.FromResult(failed ? null : entry.Fresh?.Configuration);
             }
 
             var started = RetrieveAsync(Pin(entry), unknownKey);
@@ -650,14 +461,14 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
-    private async Task<FreshConfigurationState?> RetrieveAsync(IssuerEntry entry, bool unknownKey)
+    private async Task<OpenIdConnectConfiguration?> RetrieveAsync(IssuerEntry entry, bool unknownKey)
     {
         await Task.Yield();
         OpenIdConnectConfiguration? fetched = null;
-        FreshConfigurationState? state = null;
         try
         {
             fetched = await FetchAsync(entry);
+            return fetched;
         }
         finally
         {
@@ -674,8 +485,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
                 if (fetched is not null)
                 {
-                    state = new FreshConfigurationState(fetched, now);
-                    entry.Fresh = state;
+                    entry.Fresh = new FreshConfigurationState(fetched, now);
                 }
 
                 entry.Inflight = null;
@@ -683,8 +493,6 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 
             Unpin(entry);
         }
-
-        return state;
     }
 
     private static async Task<OpenIdConnectConfiguration?> FetchAsync(IssuerEntry entry)
@@ -699,13 +507,6 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return null;
         }
     }
-
-    private sealed record VerifiedTokenEntry(
-        Caller Caller,
-        IssuerEntry Issuer,
-        FreshConfigurationState Configuration,
-        DateTimeOffset ExpiresAt,
-        DateTimeOffset? NotBefore);
 }
 
 internal sealed record FreshConfigurationState(OpenIdConnectConfiguration Configuration, long FetchedTimestamp);
@@ -716,20 +517,21 @@ internal sealed class IssuerEntry(string issuer, string metadataAddress, HttpDoc
     public string MetadataAddress { get; } = metadataAddress;
     public HttpDocumentRetriever Retriever { get; } = retriever;
     public Lock Gate { get; } = new();
-    public Task<FreshConfigurationState?>? Inflight;
+    public Task<OpenIdConnectConfiguration?>? Inflight;
     public volatile FreshConfigurationState? Fresh;
     public long LastRefreshAttemptTimestamp;
     public long LastUnknownKeyAttemptTimestamp;
-    public long LastUsed;
     public bool LastUnknownKeyFailed;
     public int Pins;
-    public volatile bool Retired;
+    public bool Retired;
     public bool LastRefreshFailed;
 }
 
 internal sealed class IssuerSlot(IssuerEntry entry)
 {
     public IssuerEntry Entry { get; } = entry;
+
+    public long LastUsed { get; set; }
 }
 
 internal sealed record MissingIssuer

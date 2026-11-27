@@ -16,9 +16,6 @@ sqlite_flags=(
   -DSQLITE_ENABLE_SESSION
   -DSQLITE_ENABLE_MATH_FUNCTIONS
   -DSQLITE_DEFAULT_FOREIGN_KEYS=1
-  -DSQLITE_TEMP_STORE=2
-  -DSQLITE_OMIT_DEPRECATED
-  -DSQLITE_USE_ALLOCA
   -DCODEC_TYPE=CODEC_TYPE_CHACHA20
 )
 sqlite_link_flags=(-Wl,-soname,libsqlite3mc.so -Wl,--build-id=sha1 -Wl,-z,noexecstack -lm -lpthread)

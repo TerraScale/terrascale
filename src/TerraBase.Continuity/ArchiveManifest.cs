@@ -1,7 +1,5 @@
-using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -52,26 +50,7 @@ internal sealed record ArchiveManifest(
         Dictionary<string, long> through = new(snapshotFloor.Entries, StringComparer.Ordinal);
         foreach (var segment in Segments)
         {
-            ref var current = ref CollectionsMarshal.GetValueRefOrAddDefault(through, segment.Origin, out _);
-            if (segment.LastSequence > current)
-            {
-                current = segment.LastSequence;
-            }
-        }
-
-        return through;
-    }
-
-    public long ArchivedThrough(string origin, CausalBookmark snapshotFloor)
-    {
-        var through = snapshotFloor.Get(origin);
-        for (var index = 0; index < Segments.Count; index++)
-        {
-            var segment = Segments[index];
-            if (string.Equals(segment.Origin, origin, StringComparison.Ordinal) && segment.LastSequence > through)
-            {
-                through = segment.LastSequence;
-            }
+            through[segment.Origin] = Math.Max(segment.LastSequence, through.GetValueOrDefault(segment.Origin));
         }
 
         return through;
@@ -148,35 +127,14 @@ internal static class ManifestCodec
             || decoded.UpdatedAtUtc == DateTimeOffset.MaxValue
             || decoded.Snapshots is null
             || decoded.Segments is null
-            || decoded.Operations is null)
+            || decoded.Operations is null
+            || decoded.Snapshots.Any(snapshot => snapshot is null || !CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark)
+                || snapshot.Key != ArchiveKeys.Snapshot(databaseId, snapshot.TakenAtUtc, bookmark))
+            || decoded.Segments.Any(segment => segment is null || segment.Origin is not { } origin || !StorageEngineOptions.IsValidRegion(origin)
+                || segment.SizeBytes <= 0 || segment.FirstSequence <= 0 || segment.LastSequence < segment.FirstSequence
+                || segment.Key != ArchiveKeys.Segment(databaseId, origin, segment.FirstSequence, segment.LastSequence)))
         {
             return new ArchiveManifestCorrupted("archive manifest does not describe this database", "archive_manifest_corrupted");
-        }
-
-        for (var index = 0; index < decoded.Snapshots.Count; index++)
-        {
-            var snapshot = decoded.Snapshots[index];
-            if (snapshot is null
-                || !CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark)
-                || !string.Equals(snapshot.Key, ArchiveKeys.Snapshot(databaseId, snapshot.TakenAtUtc, bookmark), StringComparison.Ordinal))
-            {
-                return new ArchiveManifestCorrupted("archive manifest does not describe this database", "archive_manifest_corrupted");
-            }
-        }
-
-        for (var index = 0; index < decoded.Segments.Count; index++)
-        {
-            var segment = decoded.Segments[index];
-            if (segment is null
-                || segment.Origin is not { } origin
-                || !StorageEngineOptions.IsValidRegion(origin)
-                || segment.SizeBytes <= 0
-                || segment.FirstSequence <= 0
-                || segment.LastSequence < segment.FirstSequence
-                || !string.Equals(segment.Key, ArchiveKeys.Segment(databaseId, origin, segment.FirstSequence, segment.LastSequence), StringComparison.Ordinal))
-            {
-                return new ArchiveManifestCorrupted("archive manifest does not describe this database", "archive_manifest_corrupted");
-            }
         }
 
         return decoded;
@@ -184,15 +142,9 @@ internal static class ManifestCodec
 
     public static IReadOnlyList<DecodedSnapshot> Snapshots(ArchiveManifest manifest)
     {
-        if (manifest.Snapshots.Count == 0)
+        List<DecodedSnapshot> snapshots = [];
+        foreach (var snapshot in manifest.Snapshots)
         {
-            return [];
-        }
-
-        List<DecodedSnapshot> snapshots = new(manifest.Snapshots.Count);
-        for (var index = 0; index < manifest.Snapshots.Count; index++)
-        {
-            var snapshot = manifest.Snapshots[index];
             if (CausalBookmark.TryDecode(snapshot.Bookmark, out var bookmark))
             {
                 snapshots.Add(new DecodedSnapshot(snapshot, bookmark));
@@ -214,47 +166,35 @@ internal static class ManifestCodec
 
 internal static class ArchiveKeys
 {
-    public static string DatabasePrefix(Ulid databaseId) =>
-        string.Create(CultureInfo.InvariantCulture, $"databases/{databaseId}/");
+    public static string DatabasePrefix(Ulid databaseId) => string.Concat("databases/", databaseId.ToString(), "/");
 
-    public static string Manifest(Ulid databaseId) =>
-        string.Create(CultureInfo.InvariantCulture, $"databases/{databaseId}/manifest.json");
+    public static string Manifest(Ulid databaseId) => string.Concat(DatabasePrefix(databaseId), "manifest.json");
 
-    public static string RetirementPrefix(Ulid databaseId) =>
-        string.Create(CultureInfo.InvariantCulture, $"databases/{databaseId}/retirements/");
+    public static string RetirementPrefix(Ulid databaseId) => string.Concat(DatabasePrefix(databaseId), "retirements/");
 
     public static string Snapshot(Ulid databaseId, DateTimeOffset takenAtUtc, CausalBookmark bookmark)
     {
-        var encoded = bookmark.Encode();
-        var maxBytes = Encoding.UTF8.GetMaxByteCount(encoded.Length);
-        byte[]? rented = null;
-        var utf8Buffer = maxBytes <= 1024 ? stackalloc byte[maxBytes] : (rented = ArrayPool<byte>.Shared.Rent(maxBytes));
-        Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
-        try
-        {
-            var written = Encoding.UTF8.GetBytes(encoded, utf8Buffer);
-            _ = SHA256.HashData(utf8Buffer[..written], digest);
-        }
-        finally
-        {
-            if (rented is not null)
-            {
-                ArrayPool<byte>.Shared.Return(rented);
-            }
-        }
-
-        Span<char> hashChars = stackalloc char[16];
-        _ = Convert.TryToHexStringLower(digest[..8], hashChars, out _);
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"databases/{databaseId}/snapshots/{takenAtUtc.ToUnixTimeMilliseconds():D16}-{hashChars}.snap");
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(bookmark.Encode())).AsSpan(0, 8));
+        return string.Concat(
+            DatabasePrefix(databaseId),
+            "snapshots/",
+            takenAtUtc.ToUnixTimeMilliseconds().ToString("D16", CultureInfo.InvariantCulture),
+            "-",
+            hash,
+            ".snap");
     }
 
     public static string Segment(Ulid databaseId, CommitLogSegment segment) =>
         Segment(databaseId, segment.OriginRegion, segment.FirstSequence, segment.LastSequence);
 
     public static string Segment(Ulid databaseId, string origin, long firstSequence, long lastSequence) =>
-        string.Create(
-            CultureInfo.InvariantCulture,
-            $"databases/{databaseId}/segments/{origin}/{firstSequence:D20}-{lastSequence:D20}.tblog");
+        string.Concat(
+            DatabasePrefix(databaseId),
+            "segments/",
+            origin,
+            "/",
+            firstSequence.ToString("D20", CultureInfo.InvariantCulture),
+            "-",
+            lastSequence.ToString("D20", CultureInfo.InvariantCulture),
+            ".tblog");
 }

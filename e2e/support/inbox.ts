@@ -23,7 +23,7 @@ const mailpitInbox: Inbox = {
   next: async (address, seen) => {
     let messages: Summary[] = [];
     await expect
-      .poll(async () => (messages = await search(address)).length, { message: `mail number ${seen + 1} for the journey address`, timeout: mailWait, intervals: [50] })
+      .poll(async () => (messages = await search(address)).length, { message: `mail number ${seen + 1} for the journey address`, timeout: mailWait, intervals: [100] })
       .toBeGreaterThan(seen);
     const response = await fetch(`${mailpit}/api/v1/message/${messages[0].ID}`);
     expect(response.status).toBe(200);

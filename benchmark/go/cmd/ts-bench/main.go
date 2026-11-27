@@ -84,7 +84,6 @@ func run() error {
 	external := cfg.terrabaseURL != "" || cfg.authURL != "" || cfg.dashboardURL != "" || cfg.apiKey != "" || cfg.project != ""
 	var target stackTarget
 	var mode string
-	var stack *localStack
 	if external {
 		if cfg.terrabaseURL == "" || cfg.authURL == "" || cfg.dashboardURL == "" || cfg.apiKey == "" || cfg.project == "" {
 			return errors.New("external mode requires --terrabase-url, --auth-url, --dashboard-url, --api-key, and --project")
@@ -98,8 +97,7 @@ func run() error {
 		}
 		mode = "external"
 	} else {
-		var err error
-		stack, err = startLocalStack(ctx, cfg)
+		stack, err := startLocalStack(ctx, cfg)
 		if err != nil {
 			return err
 		}
@@ -145,16 +143,7 @@ func run() error {
 		reports = append(reports, rep)
 	}
 
-	var telemetry *resourceTelemetry
-	if stack != nil {
-		captured, err := stack.captureTelemetry()
-		if err != nil {
-			return fmt.Errorf("capture terrabase telemetry: %w", err)
-		}
-		telemetry = &captured
-	}
-
-	markdown := renderMarkdown(mode, cfg, reports, telemetry)
+	markdown := renderMarkdown(mode, cfg, reports)
 	fmt.Print(markdown)
 	if cfg.outPath != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.outPath), 0o755); err != nil {
