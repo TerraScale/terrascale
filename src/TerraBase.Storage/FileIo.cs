@@ -231,6 +231,24 @@ internal static partial class FileIo
         }
     }
 
+    public static string? Replace(string source, string destination)
+    {
+        try
+        {
+            File.Move(source, destination, overwrite: true);
+            SyncDirectory(Path.GetDirectoryName(destination));
+            return null;
+        }
+        catch (IOException exception)
+        {
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return exception.Message;
+        }
+    }
+
     public static string? MoveDirectory(string source, string destination)
     {
         try

@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -91,6 +92,8 @@ internal readonly union ArchiveManifestDecodeOutcome(ArchiveManifest, ArchiveMan
 
 internal readonly union ArchiveManifestOutcome(ArchiveManifest, ContinuityUnavailable);
 
+internal readonly union ManifestInflateOutcome(ReadOnlyMemory<byte>, ArchiveManifestCorrupted);
+
 internal sealed record PendingArchiveRetirement(string? ManifestETag, IReadOnlyList<string> Keys)
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -106,8 +109,39 @@ internal static class ManifestCodec
     public const string JsonContentType = "application/json";
     public const string BinaryContentType = "application/octet-stream";
 
-    public static byte[] Serialize(ArchiveManifest manifest) =>
-        JsonSerializer.SerializeToUtf8Bytes(manifest, ContinuityJsonContext.Default.ArchiveManifest);
+    private const int MaxManifestBytes = 256 << 20;
+    private const int InflateChunkBytes = 1 << 16;
+    private const int InitialBufferBytes = 1 << 16;
+    private const int RetainedBufferBytes = 8 << 20;
+
+    [ThreadStatic]
+    private static ArrayBufferWriter<byte>? SerializeBuffer;
+
+    [ThreadStatic]
+    private static Utf8JsonWriter? SerializeWriter;
+
+    public static byte[] Serialize(ArchiveManifest manifest)
+    {
+        var buffer = SerializeBuffer ??= new ArrayBufferWriter<byte>(InitialBufferBytes);
+        var writer = SerializeWriter ??= new Utf8JsonWriter(buffer);
+        writer.Reset(buffer);
+        try
+        {
+            JsonSerializer.Serialize(writer, manifest, ContinuityJsonContext.Default.ArchiveManifest);
+            writer.Flush();
+            return buffer.WrittenSpan.ToArray();
+        }
+        finally
+        {
+            buffer.ResetWrittenCount();
+            if (buffer.Capacity > RetainedBufferBytes)
+            {
+                writer.Dispose();
+                SerializeBuffer = null;
+                SerializeWriter = null;
+            }
+        }
+    }
 
     public static byte[] Serialize(PendingArchiveRetirement retirement) =>
         JsonSerializer.SerializeToUtf8Bytes(retirement, ContinuityJsonContext.Default.PendingArchiveRetirement);
@@ -130,7 +164,52 @@ internal static class ManifestCodec
         }
     }
 
-    public static ArchiveManifestDecodeOutcome Deserialize(Ulid databaseId, ReadOnlySpan<byte> json)
+    public static ArchiveManifestDecodeOutcome Deserialize(Ulid databaseId, ReadOnlyMemory<byte> content)
+    {
+        if (content.Length >= 2 && content.Span[0] == 0x1F && content.Span[1] == 0x8B)
+        {
+            var inflated = Inflate(content);
+            return inflated switch
+            {
+                ReadOnlyMemory<byte> json => Decode(databaseId, json.Span),
+                ArchiveManifestCorrupted corrupted => corrupted,
+            };
+        }
+
+        return Decode(databaseId, content.Span);
+    }
+
+    private static ManifestInflateOutcome Inflate(ReadOnlyMemory<byte> compressed)
+    {
+        using var source = MemoryMarshal.TryGetArray(compressed, out var segment) && segment.Array is { } array
+            ? new MemoryStream(array, segment.Offset, segment.Count, writable: false)
+            : new MemoryStream(compressed.ToArray(), writable: false);
+        using var gzip = new GZipStream(source, CompressionMode.Decompress);
+        var output = new ArrayBufferWriter<byte>(InflateChunkBytes);
+        try
+        {
+            while (true)
+            {
+                var read = gzip.Read(output.GetSpan(InflateChunkBytes)[..InflateChunkBytes]);
+                if (read == 0)
+                {
+                    return output.WrittenMemory;
+                }
+
+                output.Advance(read);
+                if (output.WrittenCount > MaxManifestBytes)
+                {
+                    return new ArchiveManifestCorrupted("archive manifest exceeds the decompressed size limit", "archive_manifest_corrupted");
+                }
+            }
+        }
+        catch (InvalidDataException exception)
+        {
+            return new ArchiveManifestCorrupted(string.Concat("archive manifest is not valid gzip: ", exception.Message), "archive_manifest_corrupted");
+        }
+    }
+
+    private static ArchiveManifestDecodeOutcome Decode(Ulid databaseId, ReadOnlySpan<byte> json)
     {
         ArchiveManifest? manifest;
         try

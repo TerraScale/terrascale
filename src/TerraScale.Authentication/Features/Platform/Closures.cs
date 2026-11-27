@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
@@ -16,6 +17,8 @@ public sealed class Closures(
     private static readonly TimeSpan ParkedRetry = TimeSpan.FromMinutes(15);
 
     internal const int ParkAfter = 65;
+
+    private readonly Channel<bool> _deferrals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
     public async Task<bool> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
         await this.AdvanceAsync(await directory.RequestProjectClosureAsync(userId, organizationId, projectId, null, cancellationToken), cancellationToken);
@@ -200,11 +203,18 @@ public sealed class Closures(
         throw ApiException.Unavailable();
     }
 
-    internal async Task<IReadOnlyList<ClosureJob>> DueAsync(int limit, CancellationToken cancellationToken)
+    internal async Task<IReadOnlyList<ClosureJob>> EarliestAsync(int limit, CancellationToken cancellationToken) =>
+        (await data.ReadAsync(connection => connection.QueryAsync<ClosureJob>(
+            "SELECT * FROM closure_jobs ORDER BY next_attempt_at LIMIT @limit", new { limit }), cancellationToken)).AsList();
+
+    internal void ClearDeferrals() => _ = _deferrals.Reader.TryRead(out _);
+
+    internal async Task WaitForDeferralAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
-        var now = clock.GetUtcNow();
-        return (await data.ReadAsync(connection => connection.QueryAsync<ClosureJob>(
-            "SELECT * FROM closure_jobs WHERE next_attempt_at <= @now ORDER BY next_attempt_at LIMIT @limit", new { now, limit }), cancellationToken)).AsList();
+        using var rest = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        await Task.WhenAny(Task.Delay(delay, clock, rest.Token), _deferrals.Reader.WaitToReadAsync(rest.Token).AsTask());
+        await rest.CancelAsync();
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     internal static TimeSpan Backoff(int attempts) => attempts + 1 >= ParkAfter ? ParkedRetry
@@ -228,6 +238,8 @@ public sealed class Closures(
         {
             logger.ZLogWarning($"A {job.Value.Scope:@Scope} closure intent is parked after {ParkAfter} attempts ({failure:@FailureCode}); it now retries every 15 minutes and needs attention");
         }
+
+        _ = _deferrals.Writer.TryWrite(true);
     }
 }
 
@@ -235,10 +247,14 @@ public sealed class ClosureWorker(AuthSchema schema, Closures closures, Platform
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(30);
 
-    public async Task RunOnceAsync(CancellationToken cancellationToken = default)
+    public async Task<ClosurePass> RunOnceAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var due in await closures.DueAsync(BatchSize, cancellationToken))
+        var now = clock.GetUtcNow();
+        var earliest = await closures.EarliestAsync(BatchSize, cancellationToken);
+        ClosureJob[] pending = [.. earliest.Where(job => job.NextAttemptAt <= now)];
+        foreach (var due in pending)
         {
             try
             {
@@ -286,19 +302,25 @@ public sealed class ClosureWorker(AuthSchema schema, Closures closures, Platform
                 }
             }
         }
+
+        return new ClosurePass(
+            pending.Length > 0,
+            earliest.FirstOrDefault(job => job.NextAttemptAt > now) is { } next ? next.NextAttemptAt - now : null);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await schema.Ready.WaitAsync(stoppingToken);
-        using var timer = new PeriodicTimer(Interval, clock);
+        var backoff = Interval;
         try
         {
-            do
+            while (true)
             {
+                closures.ClearDeferrals();
+                var pass = new ClosurePass(true, null);
                 try
                 {
-                    await this.RunOnceAsync(stoppingToken);
+                    pass = await RunOnceAsync(stoppingToken);
                 }
                 catch (Exception error) when (error is not OutOfMemoryException)
                 {
@@ -316,11 +338,16 @@ public sealed class ClosureWorker(AuthSchema schema, Closures closures, Platform
                         _ = logFailure;
                     }
                 }
+
+                backoff = pass.Advanced ? Interval : TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, IdleInterval.Ticks));
+                var wait = pass.NextIn is { } nextIn && nextIn < backoff ? nextIn : backoff;
+                await (pass.Advanced ? Task.Delay(wait, clock, stoppingToken) : closures.WaitForDeferralAsync(wait, stoppingToken));
             }
-            while (await timer.WaitForNextTickAsync(stoppingToken));
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
     }
 }
+
+public sealed record ClosurePass(bool Advanced, TimeSpan? NextIn);

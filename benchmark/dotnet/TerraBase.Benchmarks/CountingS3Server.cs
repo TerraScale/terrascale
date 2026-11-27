@@ -306,7 +306,7 @@ internal sealed class CountingS3Server : IAsyncDisposable
         _ = Interlocked.Add(ref _uploadedBytes, body.Length);
         if (ParseXml(body) is not { Root: { } root } || !string.Equals(root.Name.LocalName, "Delete", StringComparison.Ordinal))
         {
-            await WriteErrorAsync(response, 400, "MalformedXML", "delete request body is not a Delete document");
+            await WriteErrorAsync(response, 400, "MalformedXML", "delete request body is not a Delete payload");
             return;
         }
 

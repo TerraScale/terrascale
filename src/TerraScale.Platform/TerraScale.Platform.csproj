@@ -10,6 +10,7 @@
     <PublishReadyToRun>true</PublishReadyToRun>
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
     <UserSecretsId />
   </PropertyGroup>
 

@@ -453,6 +453,12 @@ public static class BackupCostBenchmarks
             var warm = ctx.CaptureSnapshot();
 
             await Task.Delay(IdleSettleWindow, TimeProvider.System, cancellationToken);
+            foreach (var session in sessions)
+            {
+                _ = SqliteStorageEngine.TrimIdleResources(session, TimeSpan.FromSeconds(1), shrinkWriter: true);
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), TimeProvider.System, cancellationToken);
             CollectMemory();
             var idle = ctx.CaptureSnapshot();
 

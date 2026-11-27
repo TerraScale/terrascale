@@ -157,6 +157,8 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             RowBatch)
         + ")";
 
+    public IdleWake Scheduled { get; } = new();
+
     public static PlatformInvalidRequest? CheckCron(string? cron) =>
         cron is null || CronExpression.TryParse(cron, CronFormat.Standard, out _) ? null : new PlatformInvalidRequest("cron must be a five-field cron expression");
 
@@ -248,6 +250,11 @@ public sealed class FunctionService(PlatformStore store, FunctionSecretSeal seal
             [SqlValues.Statement(Closed, project), guard, upsert, FenceDatabase(database, project, organization, now), read, FenceProject(project, organization, now)],
             SqlContext.Strong,
             cancellationToken);
+        if (cron is not null)
+        {
+            Scheduled.Signal();
+        }
+
         var result = outcome switch
         {
             SqlExecuteResponse { Results: var results } when results[0].Rows.Count > 0 =>

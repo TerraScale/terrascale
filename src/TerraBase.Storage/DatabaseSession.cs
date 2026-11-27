@@ -61,6 +61,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private long _schemaEpoch;
     private long _schemaGeneration;
     private long _filteredChangeGeneration = 1;
+    private long _lastActivityTimestamp;
     private int _references = 1;
     private int _closed;
     private int _laneFaulted;
@@ -68,6 +69,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private int _idleReaderCount;
     private int _openedReaders;
     private int _openingReaders;
+    private int _shrinkWriterQueued;
     private bool _writeGroupBroken;
 
     private DatabaseSession(SessionContext context, SqliteConnection writer, PreupdateCapture capture, CommitLogCipher cipher, bool strict, Func<DatabaseSession, Task> release)
@@ -79,6 +81,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         _strict = strict;
         _release = release;
         _lastCheckpointTimestamp = context.Time.GetTimestamp();
+        _lastActivityTimestamp = _lastCheckpointTimestamp;
         _logOptions = new CommitLogOptions(context.Options.SegmentMaxBytes, context.Options.SegmentMaxAge, context.Options.FsyncCommitLog);
         _idleReaders = new SqliteConnection?[context.Options.ReaderCount];
         _requests = Channel.CreateBounded<LaneRequest>(new BoundedChannelOptions(context.Options.QueueCapacity)
@@ -707,6 +710,87 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
     }
 
+    internal int TrimIdleResources(TimeSpan readerIdleAfter, bool shrinkWriter)
+    {
+        if (!IsUsable || IdleElapsed() < readerIdleAfter)
+        {
+            return 0;
+        }
+
+        List<SqliteConnection> trimmed = [];
+        lock (_readersGate)
+        {
+            if (!IsClosed)
+            {
+                while (_idleReaderCount > 0)
+                {
+                    var reader = _idleReaders[--_idleReaderCount];
+                    _idleReaders[_idleReaderCount] = null;
+                    if (reader is not null)
+                    {
+                        _openedReaders--;
+                        trimmed.Add(reader);
+                    }
+                }
+
+                if (trimmed.Count > 0)
+                {
+                    WakeOneReaderWaiterLocked();
+                }
+            }
+        }
+
+        foreach (var reader in trimmed)
+        {
+            reader.Dispose();
+        }
+
+        if (shrinkWriter)
+        {
+            QueueShrinkWriter();
+        }
+
+        return trimmed.Count;
+    }
+
+    internal bool IsIdleFor(TimeSpan idleFor)
+    {
+        if (!IsUsable || IdleElapsed() < idleFor || Volatile.Read(ref _activeTransaction) is not null || _requests.Reader.Count > 0)
+        {
+            return false;
+        }
+
+        lock (_readersGate)
+        {
+            if (_rentedReaders.Count > 0 || _readerWaiters.Count > 0 || _openingReaders > 0 || _readTransactions.Count > 0)
+            {
+                return false;
+            }
+        }
+
+        lock (_stagedGate)
+        {
+            return _staged.Count == 0;
+        }
+    }
+
+    private void MarkActive() => Volatile.Write(ref _lastActivityTimestamp, _context.Time.GetTimestamp());
+
+    private TimeSpan IdleElapsed() => _context.Time.GetElapsedTime(Volatile.Read(ref _lastActivityTimestamp));
+
+    private void QueueShrinkWriter()
+    {
+        if (Interlocked.CompareExchange(ref _shrinkWriterQueued, 1, 0) != 0)
+        {
+            return;
+        }
+
+        if (!IsUsable || !_requests.Writer.TryWrite(ShrinkWriterRequest.Instance))
+        {
+            Volatile.Write(ref _shrinkWriterQueued, 0);
+        }
+    }
+
     internal void SealCommittedLogs()
     {
         foreach (var log in Logs())
@@ -968,6 +1052,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private bool TryRentIdleReader(out SqliteConnection? reader)
     {
+        MarkActive();
         lock (_readersGate)
         {
             if (!IsClosed && _idleReaderCount > 0)
@@ -988,6 +1073,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private async ValueTask<SqliteConnection?> RentReaderAsync(CancellationToken cancellationToken)
     {
+        MarkActive();
         while (true)
         {
             SqliteConnection? rented = null;
@@ -1145,6 +1231,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private void ReturnReader(SqliteConnection reader)
     {
+        MarkActive();
         var dispose = IsClosed;
         if (!dispose && reader.InTransaction)
         {

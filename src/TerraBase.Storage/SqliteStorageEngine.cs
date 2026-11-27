@@ -10,6 +10,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 {
     private const string SnapshotDirectory = "snapshots";
     private const string BranchStagingDirectory = ".branches";
+    private const long SnapshotVacuumMinFreePages = 64;
+    private const long SnapshotVacuumFreePercent = 15;
 
     private readonly StorageEngineOptions _options;
     private readonly TimeProvider _time;
@@ -53,6 +55,18 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         {
             sqlite.SealCommittedLogs();
         }
+    }
+
+    public static int TrimIdleResources(ISqlDatabaseSession session, TimeSpan readerIdleAfter, bool shrinkWriter)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session is DatabaseSession sqlite ? sqlite.TrimIdleResources(readerIdleAfter, shrinkWriter) : 0;
+    }
+
+    public static bool IsIdle(ISqlDatabaseSession session, TimeSpan idleFor)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session is DatabaseSession sqlite && sqlite.IsIdleFor(idleFor);
     }
 
     public static StorageBusy? RecoverBranchStaging(string rootDirectory)
@@ -366,11 +380,13 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
             var taken = _time.GetUtcNow();
             var path = Path.Combine(directory, string.Concat(Ulid.NewUlid(taken).ToString(), ".db"));
+            var compactPath = string.Concat(path, ".compact");
             var context = Context(databaseId, session.RawKey) with { DatabasePath = path };
             var completed = false;
             try
             {
                 SnapshotOutcome outcome;
+                var compacted = false;
                 using (var destination = SqliteConnection.OpenOrNull(ConnectionOptions(context)))
                 {
                     if (destination is null)
@@ -378,7 +394,17 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                         return new StorageBusy("snapshot file could not be created", TimeSpan.FromSeconds(1));
                     }
 
-                    outcome = await session.BackupToAsync(destination, cancellationToken);
+                    var captured = await session.BackupToAsync(destination, cancellationToken);
+                    outcome = captured switch
+                    {
+                        SnapshotCapture capture => CompactSnapshot(destination, capture, compactPath, out compacted),
+                        StorageBusy busy => busy,
+                    };
+                }
+
+                if (compacted && outcome is SnapshotCapture && FileIo.Replace(compactPath, path) is { } replaceError)
+                {
+                    outcome = new StorageBusy(replaceError, TimeSpan.FromSeconds(1));
                 }
 
                 var snapshot = outcome switch
@@ -395,6 +421,11 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
             finally
             {
+                if (File.Exists(compactPath))
+                {
+                    _ = FileIo.DeleteFile(compactPath);
+                }
+
                 if (!completed)
                 {
                     _ = FileIo.DeleteFile(path);
@@ -405,6 +436,42 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         {
             await session.DisposeAsync();
         }
+    }
+
+    private static SnapshotOutcome CompactSnapshot(SqliteConnection destination, SnapshotCapture capture, string compactPath, out bool compacted)
+    {
+        compacted = false;
+        var status = destination.QueryFirst("PRAGMA page_count;", out var pages);
+        if (!status.IsOk)
+        {
+            return status.ToBusy();
+        }
+
+        status = destination.QueryFirst("PRAGMA freelist_count;", out var free);
+        if (!status.IsOk)
+        {
+            return status.ToBusy();
+        }
+
+        if (pages is not [var pageValue, ..] || free is not [var freeValue, ..]
+            || !pageValue.TryGetIntegral(out var pageCount) || !freeValue.TryGetIntegral(out var freelistCount))
+        {
+            return new StorageBusy("snapshot page counts could not be read", TimeSpan.FromSeconds(1));
+        }
+
+        if (pageCount <= 0 || freelistCount <= SnapshotVacuumMinFreePages || freelistCount * 100L < pageCount * SnapshotVacuumFreePercent)
+        {
+            return capture;
+        }
+
+        var vacuumed = destination.Exec(string.Concat("VACUUM INTO '", compactPath.Replace("'", "''", StringComparison.Ordinal), "';"));
+        if (!vacuumed.IsOk)
+        {
+            return vacuumed.ToBusy();
+        }
+
+        compacted = true;
+        return capture;
     }
 
     private static SnapshotDatabaseOutcome SyncSnapshot(Ulid databaseId, SnapshotCapture capture, DateTimeOffset taken, string path)

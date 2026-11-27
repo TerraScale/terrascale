@@ -41,6 +41,7 @@ internal static class HostModules
             services.AddSingleton(_ => engine);
             services.AddSingleton<ISqlStorageEngine>(static provider => provider.GetRequiredService<SqliteStorageEngine>());
             services.AddSingleton<TenantDatabases>();
+            services.AddHostedService<TenantMemoryReclaimerService>();
             services.AddSingleton<SystemDatabase>();
             return services.AddClusterAndContinuity(prepared.Cluster, prepared.Continuity, engine.Clock);
         }

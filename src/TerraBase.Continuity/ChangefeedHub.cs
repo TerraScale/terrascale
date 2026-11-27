@@ -12,9 +12,12 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
     private readonly Lock _gate = new();
     private readonly ConcurrentDictionary<Ulid, ChangefeedSubscriber[]> _subscribers = new();
 
+    internal ArchiveActivity Activity { get; } = new();
+
     public ValueTask PublishAsync(ChangefeedEntry entry, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        Activity.Observe(entry.DatabaseId, entry.OriginRegion, entry.Sequence);
         if (!_subscribers.TryGetValue(entry.DatabaseId, out var targets))
         {
             return ValueTask.CompletedTask;

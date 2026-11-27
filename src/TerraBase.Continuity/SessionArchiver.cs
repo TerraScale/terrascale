@@ -10,6 +10,12 @@ internal readonly union ArchivedSegmentOutcome(ArchivedSegment, ContinuityUnavai
 
 internal readonly union SegmentCommitTimeOutcome(DateTimeOffset, ContinuityUnavailable);
 
+internal sealed record SnapshotStillDue;
+
+internal sealed record SnapshotTakenElsewhere;
+
+internal readonly union SnapshotRecheckOutcome(SnapshotStillDue, SnapshotTakenElsewhere, ContinuityUnavailable);
+
 internal sealed class SessionArchiver(
     ISqlDatabaseSession session,
     ArchiveManifests manifests,
@@ -19,6 +25,8 @@ internal sealed class SessionArchiver(
     TimeProvider timeProvider)
 {
     private const string LocalSnapshotPattern = "*.db";
+
+    private HashSet<string>? _archivedSegmentKeys;
 
     public async ValueTask<ArchiveManifestOutcome> RunAsync(
         ArchiveManifest manifest,
@@ -31,22 +39,38 @@ internal sealed class SessionArchiver(
         ContinuityUnavailable? failure = null;
         foreach (var (origin, _) in session.CurrentBookmark.Entries)
         {
-            failure = await ArchiveSegmentsAsync(origin, manifest.ArchivedThrough(origin, snapshotFloor), segments, cancellationToken);
+            failure = await ArchiveSegmentsAsync(manifest, origin, manifest.ArchivedThrough(origin, snapshotFloor), segments, cancellationToken);
             if (failure is not null)
             {
                 break;
             }
         }
 
+        var isPreferred = await sessions.Catalog.IsPreferredArchiverAsync(session.DatabaseId, cancellationToken);
         StagedArchiveSnapshot? snapshot = null;
-        if (failure is null && session.CurrentBookmark.Dominates(snapshotFloor) && SnapshotDue(manifest, forceSnapshot))
+        if (failure is null && session.CurrentBookmark.Dominates(snapshotFloor) && SnapshotDue(manifest, forceSnapshot, isPreferred))
         {
-            var staged = await ArchiveSnapshotAsync(cancellationToken);
-            (snapshot, failure) = staged switch
+            SnapshotRecheckOutcome recheck = forceSnapshot ? new SnapshotStillDue() : await RecheckSnapshotAsync(isPreferred, cancellationToken);
+            var proceed = recheck switch
             {
-                StagedArchiveSnapshot archived => (archived, (ContinuityUnavailable?)null),
-                ContinuityUnavailable unavailable => ((StagedArchiveSnapshot?)null, unavailable),
+                SnapshotStillDue => true,
+                SnapshotTakenElsewhere => false,
+                ContinuityUnavailable => false,
             };
+            failure = recheck switch
+            {
+                SnapshotStillDue or SnapshotTakenElsewhere => null,
+                ContinuityUnavailable unavailable => unavailable,
+            };
+            if (proceed)
+            {
+                var staged = await ArchiveSnapshotAsync(cancellationToken);
+                (snapshot, failure) = staged switch
+                {
+                    StagedArchiveSnapshot archived => (archived, (ContinuityUnavailable?)null),
+                    ContinuityUnavailable unavailable => ((StagedArchiveSnapshot?)null, unavailable),
+                };
+            }
         }
 
         var cutoff = await sessions.ReadRetentionCutoffAsync(session.DatabaseId, cancellationToken);
@@ -85,7 +109,7 @@ internal sealed class SessionArchiver(
         }
 
         if (snapshot is not null
-            && stored.Snapshots.Any(archived => archived.Key == snapshot.Snapshot.Key)
+            && stored.Snapshots.Any(archived => archived.Key == snapshot.Snapshot.Key || archived.Bookmark == snapshot.Snapshot.Bookmark)
             && PruneLocalSnapshots(snapshot.Path) is { } ioFailure)
         {
             return ioFailure;
@@ -94,7 +118,19 @@ internal sealed class SessionArchiver(
         return stored;
     }
 
-    private bool SnapshotDue(ArchiveManifest manifest, bool forceSnapshot)
+    private async ValueTask<SnapshotRecheckOutcome> RecheckSnapshotAsync(bool isPreferred, CancellationToken cancellationToken)
+    {
+        var current = await manifests.ReadCurrentAsync(session.DatabaseId, cancellationToken);
+        return current switch
+        {
+            ArchiveManifest fresh when session.CurrentBookmark.Dominates(ArchiveRetention.SnapshotFloor(fresh))
+                && SnapshotDue(fresh, forceSnapshot: false, isPreferred) => new SnapshotStillDue(),
+            ArchiveManifest => new SnapshotTakenElsewhere(),
+            ContinuityUnavailable unavailable => unavailable,
+        };
+    }
+
+    private bool SnapshotDue(ArchiveManifest manifest, bool forceSnapshot, bool isPreferred)
     {
         ArchivedSnapshot? latestArchived = null;
         CausalBookmark? latestBookmark = null;
@@ -123,10 +159,12 @@ internal sealed class SessionArchiver(
             return false;
         }
 
-        return forceSnapshot || timeProvider.GetUtcNow() - latestArchived.TakenAtUtc >= options.SnapshotInterval;
+        var interval = isPreferred ? options.SnapshotInterval : options.SnapshotInterval + options.SnapshotFailoverGrace;
+        return forceSnapshot || timeProvider.GetUtcNow() - latestArchived.TakenAtUtc >= interval;
     }
 
     private async ValueTask<ContinuityUnavailable?> ArchiveSegmentsAsync(
+        ArchiveManifest manifest,
         string origin,
         long archivedThrough,
         List<ArchivedSegment> staged,
@@ -135,19 +173,54 @@ internal sealed class SessionArchiver(
         var listed = await session.ListSealedSegmentsAsync(origin, archivedThrough, cancellationToken);
         return listed switch
         {
-            IReadOnlyList<CommitLogSegment> segments => await UploadSegmentsAsync(segments, staged, cancellationToken),
+            IReadOnlyList<CommitLogSegment> segments => await UploadSegmentsAsync(manifest, segments, staged, cancellationToken),
             StorageBusy busy => Busy(busy),
         };
     }
 
+    private bool IsArchived(ArchiveManifest manifest, CommitLogSegment segment, bool useIndex)
+    {
+        var existing = manifest.Segments;
+        if (existing.Count == 0)
+        {
+            return false;
+        }
+
+        if (!useIndex)
+        {
+            for (var index = existing.Count - 1; index >= 0; index--)
+            {
+                var candidate = existing[index];
+                if (candidate.FirstSequence == segment.FirstSequence
+                    && candidate.LastSequence == segment.LastSequence
+                    && string.Equals(candidate.Origin, segment.OriginRegion, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        _archivedSegmentKeys ??= existing.Select(static item => item.Key).ToHashSet(StringComparer.Ordinal);
+        return _archivedSegmentKeys.Contains(ArchiveKeys.Segment(session.DatabaseId, segment));
+    }
+
     private async ValueTask<ContinuityUnavailable?> UploadSegmentsAsync(
+        ArchiveManifest manifest,
         IReadOnlyList<CommitLogSegment> segments,
         List<ArchivedSegment> staged,
         CancellationToken cancellationToken)
     {
         var ordered = OrderSegments(segments);
+        var useIndex = ordered.Count > 4;
         for (var index = 0; index < ordered.Count; index++)
         {
+            if (IsArchived(manifest, ordered[index], useIndex))
+            {
+                continue;
+            }
+
             var uploaded = await UploadSegmentAsync(ordered[index], cancellationToken);
             var failure = uploaded switch
             {
@@ -210,7 +283,7 @@ internal sealed class SessionArchiver(
         var key = ArchiveKeys.Segment(session.DatabaseId, segment);
         await using (content)
         {
-            var uploaded = await manifests.Store.UploadStreamAsync(key, content, ManifestCodec.BinaryContentType, cancellationToken);
+            var uploaded = await manifests.Store.UploadStreamIfAbsentAsync(key, content, ManifestCodec.BinaryContentType, cancellationToken);
             var failure = uploaded switch
             {
                 ArchiveObjectWritten => (ContinuityUnavailable?)null,
