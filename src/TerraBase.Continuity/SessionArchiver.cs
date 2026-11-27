@@ -28,6 +28,10 @@ internal sealed class SessionArchiver(
     private const string StaleCompactPattern = "*.compact";
     private const string StaleCompactJournalPattern = "*.compact-journal";
 
+    internal IReadOnlyList<ArchivedSegment> UploadedSegments { get; private set; } = [];
+
+    internal ArchivedSnapshot? UploadedSnapshot { get; private set; }
+
     public async ValueTask<ArchiveManifestOutcome> RunAsync(
         ArchiveManifest manifest,
         bool forceSnapshot,
@@ -73,6 +77,8 @@ internal sealed class SessionArchiver(
             }
         }
 
+        UploadedSegments = segments;
+        UploadedSnapshot = snapshot?.Snapshot;
         var cutoff = await sessions.ReadRetentionCutoffAsync(session.DatabaseId, cancellationToken);
         var saved = await manifests.PublishAsync(session.DatabaseId, segments, snapshot, cutoff, cancellationToken);
         return saved switch

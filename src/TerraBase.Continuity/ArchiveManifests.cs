@@ -76,8 +76,6 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
 
     public void Invalidate(Ulid databaseId) => _ = _cache.TryRemove(databaseId, out _);
 
-    internal ArchiveManifest? TryGetCached(Ulid databaseId) => _cache.TryGetValue(databaseId, out var cached) ? cached.Manifest : null;
-
     private ArchiveManifestOutcome Replace(Ulid databaseId, CachedManifest? observed, ArchiveVersionedBytes versioned)
     {
         var decoded = Decode(databaseId, versioned);

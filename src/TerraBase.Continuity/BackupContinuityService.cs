@@ -474,17 +474,16 @@ public sealed class BackupContinuityService(
     {
         ArgumentNullException.ThrowIfNull(bookmark);
         using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
-        var cachedBefore = manifests.TryGetCached(databaseId);
         var operationId = Ulid.NewUlid(timeProvider.GetUtcNow());
         var rewound = await restorer.RewindAsync(operationId, databaseId, new RestoreTarget(bookmark), notifyPeers: false, cancellationToken);
         return rewound switch
         {
-            CausalBookmark applied => TrackPeerRewind(databaseId, applied, cachedBefore),
+            CausalBookmark applied => TrackPeerRewind(databaseId, applied),
             OperationFailed failed => new ContinuityUnavailable(failed.Message, "rewind_failed"),
         };
     }
 
-    private ContinuityRewindOutcome TrackPeerRewind(Ulid databaseId, CausalBookmark rewoundTo, ArchiveManifest? cachedBefore)
+    private ContinuityRewindOutcome TrackPeerRewind(Ulid databaseId, CausalBookmark rewoundTo)
     {
         if (!manifests.IsEnabled)
         {
@@ -497,11 +496,7 @@ public sealed class BackupContinuityService(
             return rewoundTo;
         }
 
-        var marks = cachedBefore is not null ? PreRewindMarksBeyond(cachedBefore, rewoundTo) : null;
-        _pendingPeerRewinds[databaseId] = new PendingPeerRewind(
-            rewoundTo,
-            marks is { Count: > 0 } ? marks : null,
-            timeProvider.GetUtcNow() + PeerRewindRecheckWindow);
+        _pendingPeerRewinds[databaseId] = new PendingPeerRewind(rewoundTo, timeProvider.GetUtcNow() + PeerRewindRecheckWindow);
         return rewoundTo;
     }
 
@@ -692,14 +687,21 @@ public sealed class BackupContinuityService(
         var archived = await archiver.RunAsync(manifest, forceSnapshot, cancellationToken);
         return archived switch
         {
-            ArchiveManifest stored => await ScheduledStatusForSessionAsync(manifest, stored, session, scheduled, cancellationToken),
+            ArchiveManifest stored => await ScheduledStatusForSessionAsync(
+                stored,
+                archiver.UploadedSegments,
+                archiver.UploadedSnapshot,
+                session,
+                scheduled,
+                cancellationToken),
             ContinuityUnavailable unavailable => unavailable,
         };
     }
 
     private async ValueTask<ScheduledArchiveOutcome> ScheduledStatusForSessionAsync(
-        ArchiveManifest loaded,
         ArchiveManifest stored,
+        IReadOnlyList<ArchivedSegment> uploadedSegments,
+        ArchivedSnapshot? uploadedSnapshot,
         ISqlDatabaseSession session,
         bool scheduled,
         CancellationToken cancellationToken)
@@ -707,25 +709,30 @@ public sealed class BackupContinuityService(
         var measured = await StatusForSessionAsync(stored, session, cancellationToken);
         return measured switch
         {
-            BackupStatus status => ScheduledStatus(loaded, stored, status, session, scheduled),
+            BackupStatus status => ScheduledStatus(stored, uploadedSegments, uploadedSnapshot, status, session, scheduled),
             ContinuityNotFound missing => missing,
             ContinuityUnavailable unavailable => unavailable,
         };
     }
 
     private ScheduledArchiveStatus ScheduledStatus(
-        ArchiveManifest loaded,
         ArchiveManifest stored,
+        IReadOnlyList<ArchivedSegment> uploadedSegments,
+        ArchivedSnapshot? uploadedSnapshot,
         BackupStatus status,
         ISqlDatabaseSession session,
         bool scheduled)
     {
         var localBehind = !session.CurrentBookmark.Dominates(status.ArchivedThrough);
-        var peerRewindPending = scheduled && IsPeerRewindPending(session.DatabaseId, loaded, stored);
+        var peerRewindPending = scheduled && IsPeerRewindPending(session.DatabaseId, stored, uploadedSegments, uploadedSnapshot);
         return new ScheduledArchiveStatus(status, localBehind || peerRewindPending);
     }
 
-    private bool IsPeerRewindPending(Ulid databaseId, ArchiveManifest loaded, ArchiveManifest stored)
+    private bool IsPeerRewindPending(
+        Ulid databaseId,
+        ArchiveManifest stored,
+        IReadOnlyList<ArchivedSegment> uploadedSegments,
+        ArchivedSnapshot? uploadedSnapshot)
     {
         if (!_pendingPeerRewinds.TryGetValue(databaseId, out var pending))
         {
@@ -738,10 +745,7 @@ public sealed class BackupContinuityService(
             return false;
         }
 
-        var stillPresent = pending.PreRewindObjects is { } marks
-            ? ContainsAnyMark(loaded, marks) && ContainsAnyMark(stored, marks)
-            : HasHistoryBeyond(loaded, pending.RewoundTo) && HasHistoryBeyond(stored, pending.RewoundTo);
-        if (!stillPresent)
+        if (!HasForeignHistoryBeyond(stored, pending.RewoundTo, uploadedSegments, uploadedSnapshot))
         {
             _ = _pendingPeerRewinds.TryRemove(new KeyValuePair<Ulid, PendingPeerRewind>(databaseId, pending));
             return false;
@@ -750,60 +754,16 @@ public sealed class BackupContinuityService(
         return true;
     }
 
-    private static HashSet<RewindObjectMark> PreRewindMarksBeyond(ArchiveManifest manifest, CausalBookmark rewoundTo)
-    {
-        HashSet<RewindObjectMark> marks = [];
-        for (var index = 0; index < manifest.Segments.Count; index++)
-        {
-            var segment = manifest.Segments[index];
-            if (segment.LastSequence > rewoundTo.Get(segment.Origin))
-            {
-                _ = marks.Add(new RewindObjectMark(segment.Key, segment.SealedAtUtc));
-            }
-        }
-
-        var snapshots = ManifestCodec.Snapshots(manifest);
-        for (var index = 0; index < snapshots.Count; index++)
-        {
-            var snapshot = snapshots[index];
-            if (!rewoundTo.Dominates(snapshot.Bookmark))
-            {
-                _ = marks.Add(new RewindObjectMark(snapshot.Archived.Key, snapshot.Archived.TakenAtUtc));
-            }
-        }
-
-        return marks;
-    }
-
-    private static bool ContainsAnyMark(ArchiveManifest manifest, HashSet<RewindObjectMark> marks)
+    private static bool HasForeignHistoryBeyond(
+        ArchiveManifest manifest,
+        CausalBookmark rewoundTo,
+        IReadOnlyList<ArchivedSegment> uploadedSegments,
+        ArchivedSnapshot? uploadedSnapshot)
     {
         for (var index = 0; index < manifest.Segments.Count; index++)
         {
             var segment = manifest.Segments[index];
-            if (marks.Contains(new RewindObjectMark(segment.Key, segment.SealedAtUtc)))
-            {
-                return true;
-            }
-        }
-
-        for (var index = 0; index < manifest.Snapshots.Count; index++)
-        {
-            var snapshot = manifest.Snapshots[index];
-            if (marks.Contains(new RewindObjectMark(snapshot.Key, snapshot.TakenAtUtc)))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool HasHistoryBeyond(ArchiveManifest manifest, CausalBookmark rewoundTo)
-    {
-        for (var index = 0; index < manifest.Segments.Count; index++)
-        {
-            var segment = manifest.Segments[index];
-            if (segment.LastSequence > rewoundTo.Get(segment.Origin))
+            if (segment.LastSequence > rewoundTo.Get(segment.Origin) && !IsOwnSegment(segment, uploadedSegments))
             {
                 return true;
             }
@@ -812,7 +772,8 @@ public sealed class BackupContinuityService(
         var snapshots = ManifestCodec.Snapshots(manifest);
         for (var index = 0; index < snapshots.Count; index++)
         {
-            if (!rewoundTo.Dominates(snapshots[index].Bookmark))
+            var snapshot = snapshots[index];
+            if (!rewoundTo.Dominates(snapshot.Bookmark) && !IsOwnSnapshot(snapshot.Archived, uploadedSnapshot))
             {
                 return true;
             }
@@ -821,9 +782,26 @@ public sealed class BackupContinuityService(
         return false;
     }
 
-    private readonly record struct RewindObjectMark(string Key, DateTimeOffset Timestamp);
+    private static bool IsOwnSegment(ArchivedSegment candidate, IReadOnlyList<ArchivedSegment> uploaded)
+    {
+        for (var index = 0; index < uploaded.Count; index++)
+        {
+            var item = uploaded[index];
+            if (string.Equals(candidate.Key, item.Key, StringComparison.Ordinal) && candidate.SealedAtUtc == item.SealedAtUtc)
+            {
+                return true;
+            }
+        }
 
-    private sealed record PendingPeerRewind(CausalBookmark RewoundTo, HashSet<RewindObjectMark>? PreRewindObjects, DateTimeOffset ExpiresAtUtc);
+        return false;
+    }
+
+    private static bool IsOwnSnapshot(ArchivedSnapshot candidate, ArchivedSnapshot? uploaded) =>
+        uploaded is not null
+        && string.Equals(candidate.Key, uploaded.Key, StringComparison.Ordinal)
+        && candidate.TakenAtUtc == uploaded.TakenAtUtc;
+
+    private sealed record PendingPeerRewind(CausalBookmark RewoundTo, DateTimeOffset ExpiresAtUtc);
 
     private async ValueTask<BackupStatusOutcome> StatusAsync(ArchiveManifest manifest, Ulid databaseId, CancellationToken cancellationToken)
     {
