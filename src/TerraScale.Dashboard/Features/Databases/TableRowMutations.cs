@@ -96,15 +96,15 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("Send 1 to " + MaxEdits + " edits.");
         }
 
-        var rows = new OrderedDictionary<string, OrderedDictionary<string, string>>(StringComparer.Ordinal);
+        var rows = new OrderedDictionary<string, (OrderedDictionary<string, string> Sets, OrderedDictionary<string, string> Guards)>(StringComparer.Ordinal);
         var editsKey = false;
         foreach (var edit in edits.EnumerateArray())
         {
             if (edit.ValueKind != JsonValueKind.Object || !edit.TryGetProperty("keys", out var keys) ||
                 !edit.TryGetProperty("column", out var named) || named.ValueKind != JsonValueKind.String || named.GetString() is not { } name ||
-                !edit.TryGetProperty("value", out var value))
+                !edit.TryGetProperty("value", out var value) || !edit.TryGetProperty("expected", out var expected))
             {
-                return new TableRowPayloadInvalid("Each edit names its row keys, a column and a value.");
+                return new TableRowPayloadInvalid("Each edit names its row keys, a column, an expected value and a new value.");
             }
 
             if (Match(table, keys, out var where) is { } refused)
@@ -127,13 +127,19 @@ public static class TableRowMutations
                 return new TableRowPayloadInvalid("The value for " + column.Name + " must be text, a number or null.");
             }
 
-            if (!rows.TryGetValue(where, out var sets))
+            if (ValuePredicate(column.Name, expected, true) is not { } guard)
             {
-                sets = new(StringComparer.Ordinal);
-                rows.Add(where, sets);
+                return new TableRowPayloadInvalid("The expected value for " + column.Name + " must be text, a number or null.");
             }
 
-            sets[column.Name] = literal;
+            if (!rows.TryGetValue(where, out var entry))
+            {
+                entry = (new(StringComparer.Ordinal), new(StringComparer.Ordinal));
+                rows.Add(where, entry);
+            }
+
+            entry.Guards.TryAdd(column.Name, guard);
+            entry.Sets[column.Name] = literal;
         }
 
         if (editsKey && rows.Count > 1)
@@ -143,8 +149,8 @@ public static class TableRowMutations
 
         var target = DatabaseTables.Identifier(table.Name);
         string[] statements = [.. rows.Select(row => "UPDATE " + target + "\nSET " +
-            string.Join(", ", row.Value.Select(set => DatabaseTables.Identifier(set.Key) + " = " + set.Value)) +
-            "\nWHERE " + row.Key + ";")];
+            string.Join(", ", row.Value.Sets.Select(set => DatabaseTables.Identifier(set.Key) + " = " + set.Value)) +
+            "\nWHERE " + row.Key + " AND " + string.Join(" AND ", row.Value.Guards.Values) + ";")];
         return new TableRowBatch(statements, string.Join("\n", statements), statements.Length);
     }
 
@@ -225,7 +231,7 @@ public static class TableRowMutations
                 return new TableRowKeyRequired(column.Name + " is not part of the primary key of " + table.Name + ".");
             }
 
-            if (KeyPredicate(column.Name, property.Value) is not { } predicate || !predicates.TryAdd(column.Name, predicate))
+            if (ValuePredicate(column.Name, property.Value, false) is not { } predicate || !predicates.TryAdd(column.Name, predicate))
             {
                 return new TableRowPayloadInvalid("Key " + column.Name + " needs one text or number value.");
             }
@@ -240,13 +246,14 @@ public static class TableRowMutations
         return null;
     }
 
-    private static string? KeyPredicate(string columnName, JsonElement value)
+    private static string? ValuePredicate(string columnName, JsonElement value, bool allowNull)
     {
         var ident = DatabaseTables.Identifier(columnName);
         return value.ValueKind switch
         {
             JsonValueKind.String when Literal(value, false) is { } literal => "typeof(" + ident + ") = 'text' AND " + ident + " COLLATE BINARY = " + literal,
             JsonValueKind.Number => "typeof(" + ident + ") IN ('integer', 'real') AND " + ident + " = " + value.GetRawText(),
+            JsonValueKind.Null when allowNull => ident + " IS NULL",
             _ => null,
         };
     }

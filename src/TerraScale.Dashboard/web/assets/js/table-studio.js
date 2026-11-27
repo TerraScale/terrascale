@@ -42,7 +42,12 @@ const quoteIdent = name => `"${name.replaceAll('"', '""')}"`;
 const quoteText = value => `'${value.replaceAll("'", "''")}'`;
 const plural = (count, word) => `${count.toLocaleString('en-US')} ${count === 1 ? word : `${word}s`}`;
 const numeric = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
-const numericType = type => /INT|REAL|FLOA|DOUB|NUMERIC|DECIMAL|BOOL/i.test(type ?? '');
+const numericType = type => {
+  const text = type ?? '';
+  if (/INT/i.test(text)) return true;
+  if (/CHAR|CLOB|TEXT|BLOB/i.test(text)) return false;
+  return /REAL|FLOA|DOUB|NUMERIC|DECIMAL|BOOL/i.test(text);
+};
 const isNumeric = (type, origKind) => numericType(type) || (!type && origKind === 'number');
 const busy = () => edits.size > 0 || editing !== null || saving;
 
@@ -144,7 +149,7 @@ const statement = (rows, edit) => `UPDATE ${quoteIdent(rows.dataset.tableName)} 
 
 const keyJson = keys => `{${keys.map(([key, cell]) => `${JSON.stringify(key)}:${literal(cell)}`).join(',')}}`;
 
-const payload = () => `{"edits":[${[...edits.values()].map(edit => `{"keys":${keyJson(edit.keys)},"column":${JSON.stringify(edit.column)},"value":${typedJson(edit.value, edit.type, edit.origKind)}}`).join(',')}]}`;
+const payload = () => `{"edits":[${[...edits.values()].map(edit => `{"keys":${keyJson(edit.keys)},"column":${JSON.stringify(edit.column)},"expected":${literal(edit.cell)},"value":${typedJson(edit.value, edit.type, edit.origKind)}}`).join(',')}]}`;
 
 const setStatus = text => {
   const status = document.getElementById('table-commit-status');
@@ -267,6 +272,14 @@ const beginEdit = cell => {
   const origKind = kindOf(cell) ?? 'string';
   const shown = cell.textContent;
   const original = originalText(cell);
+  if (origKind === 'object' || origKind === 'array') {
+    setStatus('Binary values can only be edited in the SQL editor.');
+    return;
+  }
+  if (origKind === 'string' && /[\r\n]/.test(original)) {
+    setStatus('Multiline values can only be edited in the SQL editor.');
+    return;
+  }
   const input = document.createElement('input');
   input.className = 'ts-input ts-input-sm ts-mono ts-studio-cell-input';
   const staged = edits.get(key);
@@ -541,9 +554,9 @@ const commit = async () => {
     setStatus(result.error);
     return;
   }
-  const affected = numberValue(result.rowsAffected, 0);
-  const expected = numberValue(result.expectedRows, 0);
-  const matched = numberValue(result.matchedRows, affected);
+  const affected = numberValue(result.rowsAffected, -1);
+  const expected = numberValue(result.expectedRows, -1);
+  const matched = numberValue(result.matchedRows, -1);
   edits.clear();
   pending = null;
   suppressLiveUntil = Date.now() + 800;
@@ -551,8 +564,8 @@ const commit = async () => {
   renderRows(result);
   if (affected === 0) {
     setStatus('No rows matched — the row may have changed or been deleted. Reloaded table.');
-  } else if (expected > 0 && (matched !== expected || affected !== expected)) {
-    setStatus(`Affected ${plural(affected, 'row')} across ${expected} expected — the table schema or rows may have changed. Reloaded table.`);
+  } else if (expected < 1 || matched !== expected || affected !== expected) {
+    setStatus(`Affected ${plural(Math.max(affected, 0), 'row')} — the table schema or rows may have changed. Reloaded table.`);
   } else {
     setStatus(`Committed ${plural(total, 'change')}.`);
   }
@@ -650,7 +663,8 @@ const askDelete = button => {
   }
   const keys = keysOf(rows, tr);
   if (keys.length === 0 || keys.some(([, cell]) => !cell)) return;
-  deleting = { json: keyJson(keys), index: tr.sectionRowIndex };
+  const visible = [...rows.querySelectorAll('tbody tr:not([hidden])')];
+  deleting = { json: keyJson(keys), index: Math.max(0, visible.indexOf(tr)) };
   dialog.querySelector('[data-delete-sql]').textContent = `DELETE FROM ${quoteIdent(rows.dataset.tableName ?? '')} WHERE ${where(keys)};`;
   dialog.querySelector('[data-delete-error]').hidden = true;
   dialog.showModal();

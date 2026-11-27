@@ -72,10 +72,25 @@ namespace TerraScale.Dashboard.Features.Databases
 
         public static bool NumericType(string? decltype)
         {
-            return decltype is { Length: > 0 } type && (type.Contains("INT", StringComparison.OrdinalIgnoreCase) ||
-                type.Contains("REAL", StringComparison.OrdinalIgnoreCase) || type.Contains("FLOA", StringComparison.OrdinalIgnoreCase) ||
+            if (decltype is not { Length: > 0 } type)
+            {
+                return false;
+            }
+
+            if (type.Contains("INT", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (type.Contains("CHAR", StringComparison.OrdinalIgnoreCase) || type.Contains("CLOB", StringComparison.OrdinalIgnoreCase) ||
+                type.Contains("TEXT", StringComparison.OrdinalIgnoreCase) || type.Contains("BLOB", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return type.Contains("REAL", StringComparison.OrdinalIgnoreCase) || type.Contains("FLOA", StringComparison.OrdinalIgnoreCase) ||
                 type.Contains("DOUB", StringComparison.OrdinalIgnoreCase) || type.Contains("NUMERIC", StringComparison.OrdinalIgnoreCase) ||
-                type.Contains("DECIMAL", StringComparison.OrdinalIgnoreCase) || type.Contains("BOOL", StringComparison.OrdinalIgnoreCase));
+                type.Contains("DECIMAL", StringComparison.OrdinalIgnoreCase) || type.Contains("BOOL", StringComparison.OrdinalIgnoreCase);
         }
 
         internal static string Identifier(string name)
