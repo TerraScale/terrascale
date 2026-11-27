@@ -9,6 +9,7 @@ namespace TerraBase.Postgres.Protocol;
 internal sealed class PgMessageBuffer : IBufferWriter<byte>, IDisposable
 {
     private const int InitialSize = 8192;
+    private const int MaxRetainedSize = 65536;
 
     private byte[] _buffer = ArrayPool<byte>.Shared.Rent(InitialSize);
     private int _length;
@@ -164,14 +165,25 @@ internal sealed class PgMessageBuffer : IBufferWriter<byte>, IDisposable
 
     public void Clear()
     {
+        if (_buffer.Length > MaxRetainedSize)
+        {
+            var oversized = _buffer;
+            _buffer = ArrayPool<byte>.Shared.Rent(InitialSize);
+            ArrayPool<byte>.Shared.Return(oversized);
+        }
+
         _length = 0;
         _messageStart = -1;
     }
 
     public void Dispose()
     {
-        ArrayPool<byte>.Shared.Return(_buffer);
-        _buffer = [];
+        if (_buffer.Length > 0)
+        {
+            ArrayPool<byte>.Shared.Return(_buffer);
+            _buffer = [];
+        }
+
         _length = 0;
     }
 

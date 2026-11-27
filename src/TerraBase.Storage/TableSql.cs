@@ -5,6 +5,8 @@ namespace TerraBase.Storage;
 
 internal sealed class TableSql
 {
+    private const int MaxCachedStatements = 128;
+
     private readonly TableSchema _schema;
     private readonly string _table;
     private readonly string _where;
@@ -64,7 +66,11 @@ internal sealed class TableSql
         }
 
         sql = BuildUpdate(columns);
-        _updates[key] = sql;
+        if (_updates.Count < MaxCachedStatements)
+        {
+            _updates[key] = sql;
+        }
+
         return sql;
     }
 
@@ -82,7 +88,11 @@ internal sealed class TableSql
         }
 
         sql = BuildInsert(columns);
-        _inserts[key] = sql;
+        if (_inserts.Count < MaxCachedStatements)
+        {
+            _inserts[key] = sql;
+        }
+
         return sql;
     }
 
@@ -100,7 +110,11 @@ internal sealed class TableSql
         }
 
         sql = BuildUpsert(columns);
-        _upserts[key] = sql;
+        if (_upserts.Count < MaxCachedStatements)
+        {
+            _upserts[key] = sql;
+        }
+
         return sql;
     }
 

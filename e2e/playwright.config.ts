@@ -1,4 +1,3 @@
-import { availableParallelism } from 'node:os';
 import { defineConfig } from '@playwright/test';
 import { envelopeDeadline } from './support/production-envelope.mjs';
 import { quarantineGrep } from './support/quarantine.mjs';
@@ -16,7 +15,7 @@ if (faultRequested && (production || process.env.E2E_REGIONS !== '2' || process.
   throw new Error('the fault project requires the local four-node stack: E2E_REGIONS=2 E2E_NODES_PER_REGION=2');
 }
 const envWorkers = Number(process.env.E2E_WORKERS);
-const localWorkers = Number.isInteger(envWorkers) && envWorkers > 0 ? envWorkers : Math.min(12, Math.max(6, Math.floor(availableParallelism() / 2)));
+const localWorkers = Number.isInteger(envWorkers) && envWorkers > 0 ? envWorkers : 6;
 
 export default defineConfig({
   outputDir: production ? `production-report/${cleanup ? 'cleanup' : 'suite'}-results` : 'test-results',

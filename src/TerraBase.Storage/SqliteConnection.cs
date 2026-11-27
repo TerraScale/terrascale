@@ -33,6 +33,10 @@ internal sealed record CachedUserStatement(
     bool IsInsertOrReplace,
     StatementAnnotation? Annotation)
 {
+    public SqlColumn[] Columns { get; set; } = Columns;
+
+    public long SchemaCookie { get; set; }
+
     public int LastRowCount { get; set; }
 }
 
@@ -516,6 +520,10 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             FinalizeStatement(handle);
             handle = 0;
         }
+        else if (handle != 0)
+        {
+            _ = SqliteNative.StmtStatus(handle, SqliteNative.StmtStatusReprepare, 1);
+        }
 
         statement = handle;
         return status;
@@ -593,7 +601,10 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             hasWriterAnalysis,
             analyzedSql,
             isInsertOrReplace,
-            annotation);
+            annotation)
+        {
+            SchemaCookie = _userCacheCookie,
+        };
 
         if (_userStatements.TryGetValue(sql, out var existing))
         {
@@ -640,19 +651,26 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     {
         _activeUserStatement = cached.Handle;
         _activeUserStatementEvicted = false;
+        var columns = cached.Columns;
+        bool reprepared;
+        bool evicted;
+        SqliteStatus status;
         try
         {
-            var status = StepUserCore(cached.Handle, info, cached.Columns, cached.ReadOnly, cached.LastRowCount, out result, limitResults, cancellationToken);
+            status = StepUserCore(cached.Handle, info, ref columns, cached.ReadOnly, cached.LastRowCount, out result, out reprepared, limitResults, cancellationToken);
+            if (reprepared)
+            {
+                cached.Columns = columns;
+            }
+
             if (status.IsOk)
             {
                 cached.LastRowCount = result.Rows.Count;
             }
-
-            return status;
         }
         finally
         {
-            var evicted = _activeUserStatementEvicted;
+            evicted = _activeUserStatementEvicted;
             _activeUserStatement = 0;
             _activeUserStatementEvicted = false;
             if (evicted)
@@ -665,6 +683,13 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 _ = SqliteNative.ClearBindings(cached.Handle);
             }
         }
+
+        if (reprepared && !evicted && ReadSchemaCookie(out var cookie).IsOk)
+        {
+            cached.SchemaCookie = cookie;
+        }
+
+        return status;
     }
 
     internal static bool IsTrailingEmpty(ReadOnlySpan<byte> tail)
@@ -823,16 +848,20 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return SqliteStatus.Success;
     }
 
-    public SqliteStatus StepUser(nint statement, StatementInfo info, out SqlResultSet result, bool limitResults, CancellationToken cancellationToken) =>
-        StepUserCore(statement, info, ReadColumns(statement), IsReadOnly(statement), initialRowCapacity: 0, out result, limitResults, cancellationToken);
+    public SqliteStatus StepUser(nint statement, StatementInfo info, out SqlResultSet result, bool limitResults, CancellationToken cancellationToken)
+    {
+        var columns = ReadColumns(statement);
+        return StepUserCore(statement, info, ref columns, IsReadOnly(statement), initialRowCapacity: 0, out result, out _, limitResults, cancellationToken);
+    }
 
     private SqliteStatus StepUserCore(
         nint statement,
         StatementInfo info,
-        SqlColumn[] columns,
+        ref SqlColumn[] columns,
         bool readOnly,
         int initialRowCapacity,
         out SqlResultSet result,
+        out bool reprepared,
         bool limitResults,
         CancellationToken cancellationToken)
     {
@@ -850,7 +879,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 SqliteNative.SetProgressHandler(Handle, 1000, &OnProgress, GCHandle<SqliteConnection>.ToIntPtr(_self));
             }
 
-            status = ReadUserRows(statement, ref rows, columns.Length, initialRowCapacity, limitResults && HasUserLimits, monitorProgress);
+            status = ReadUserRows(statement, ref rows, ref columns, out reprepared, initialRowCapacity, limitResults && HasUserLimits, monitorProgress);
         }
         finally
         {
@@ -900,22 +929,36 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     private SqliteStatus ReadUserRows(
         nint statement,
         ref IReadOnlyList<IReadOnlyList<SqlValue>> rows,
-        int columnCount,
+        ref SqlColumn[] columns,
+        out bool reprepared,
         int initialRowCapacity,
         bool limitResults,
         bool monitorProgress)
     {
+        reprepared = false;
         var remainingBytes = SqlLimits.MaxResultBytes;
         List<IReadOnlyList<SqlValue>>? list = null;
         SqlValue[]? firstRow = null;
         SqlValue[]? previousRow = null;
         var rowCount = 0;
+        var firstStep = true;
         while (!monitorProgress || !IsWorkCanceled())
         {
             var rc = SqliteNative.Step(statement);
             if (Capture is { Fault.IsOk: false } capture)
             {
                 return capture.Fault;
+            }
+
+            if (firstStep)
+            {
+                firstStep = false;
+                if (rc is SqliteNative.Row or SqliteNative.Done
+                    && SqliteNative.StmtStatus(statement, SqliteNative.StmtStatusReprepare, 1) > 0)
+                {
+                    columns = ReadColumns(statement);
+                    reprepared = true;
+                }
             }
 
             if (rc == SqliteNative.Done)
@@ -942,7 +985,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 return TooManyRows;
             }
 
-            var read = ReadUserRow(statement, columnCount, previousRow, limitResults, ref remainingBytes, out var row);
+            var read = ReadUserRow(statement, columns.Length, previousRow, limitResults, ref remainingBytes, out var row);
             if (!read.IsOk)
             {
                 return read;

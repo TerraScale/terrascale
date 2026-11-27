@@ -15,6 +15,8 @@ internal sealed class TerraBaseDatabaseExecutor(
 {
     public Ulid DatabaseId => session.DatabaseId;
 
+    public ulong? SchemaEpoch => session.SchemaEpoch;
+
     public CausalBookmark CurrentBookmark => coordinator.CurrentBookmark(session.DatabaseId).Merge(session.CurrentBookmark);
 
     public async ValueTask<SqlReadOutcome> ReadAsync(SqlStatementRequest request, CancellationToken cancellationToken)

@@ -25,6 +25,9 @@ internal readonly struct CallScope : IDisposable
         return new CallScope(CallScopeState.Rent(timeout, timeProvider, shutdown, caller), shutdown, caller);
     }
 
+    public static CallScope CreateArmable(TimeProvider timeProvider, CancellationToken shutdown, CancellationToken caller) =>
+        new(CallScopeState.Rent(Timeout.InfiniteTimeSpan, timeProvider, shutdown, caller), shutdown, caller);
+
     public static CallScope FromToken(CancellationToken shutdown) => new(null, shutdown, CancellationToken.None);
 
     public CancellationToken Caller => _caller;
@@ -136,10 +139,18 @@ internal sealed class CallScopeState : IDisposable
 
     public void DisarmDeadline()
     {
-        _deadlineArmed = false;
-        if (_customDeadline is not null)
+        if (Volatile.Read(ref _returned) != 0 || _cts.IsCancellationRequested)
         {
-            _customDeadline.CancelAfter(Timeout.InfiniteTimeSpan);
+            return;
+        }
+
+        _deadlineArmed = false;
+        if (_customDeadline is { } custom)
+        {
+            if (!custom.IsCancellationRequested)
+            {
+                custom.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
         }
         else
         {
@@ -149,6 +160,11 @@ internal sealed class CallScopeState : IDisposable
 
     public void ArmDeadline(TimeSpan timeout, TimeProvider timeProvider)
     {
+        if (Volatile.Read(ref _returned) != 0 || _cts.IsCancellationRequested)
+        {
+            return;
+        }
+
         if (timeout == Timeout.InfiniteTimeSpan)
         {
             DisarmDeadline();
@@ -156,9 +172,12 @@ internal sealed class CallScopeState : IDisposable
         }
 
         _deadlineArmed = true;
-        if (_customDeadline is not null)
+        if (_customDeadline is { } custom)
         {
-            _customDeadline.CancelAfter(timeout);
+            if (!custom.IsCancellationRequested)
+            {
+                custom.CancelAfter(timeout);
+            }
         }
         else if (ReferenceEquals(timeProvider, TimeProvider.System))
         {
@@ -166,9 +185,9 @@ internal sealed class CallScopeState : IDisposable
         }
         else
         {
-            var custom = new CancellationTokenSource(timeout, timeProvider);
-            _customDeadline = custom;
-            _customDeadlineReg = custom.Token.UnsafeRegister(CancelCallback, _cts);
+            var created = new CancellationTokenSource(timeout, timeProvider);
+            _customDeadline = created;
+            _customDeadlineReg = created.Token.UnsafeRegister(CancelCallback, _cts);
         }
     }
 

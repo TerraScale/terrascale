@@ -367,18 +367,39 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             var taken = _time.GetUtcNow();
             var path = Path.Combine(directory, string.Concat(Ulid.NewUlid(taken).ToString(), ".db"));
             var context = Context(databaseId, session.RawKey) with { DatabasePath = path };
-            if (SqliteConnection.OpenOrNull(ConnectionOptions(context)) is not { } destination)
+            var completed = false;
+            try
             {
-                return new StorageBusy("snapshot file could not be created", TimeSpan.FromSeconds(1));
-            }
+                SnapshotOutcome outcome;
+                using (var destination = SqliteConnection.OpenOrNull(ConnectionOptions(context)))
+                {
+                    if (destination is null)
+                    {
+                        return new StorageBusy("snapshot file could not be created", TimeSpan.FromSeconds(1));
+                    }
 
-            var outcome = await session.BackupToAsync(destination, cancellationToken);
-            destination.Dispose();
-            return outcome switch
+                    outcome = await session.BackupToAsync(destination, cancellationToken);
+                }
+
+                var snapshot = outcome switch
+                {
+                    SnapshotCapture capture => SyncSnapshot(databaseId, capture, taken, path),
+                    StorageBusy busy => busy,
+                };
+                completed = snapshot switch
+                {
+                    DatabaseSnapshot => true,
+                    DatabaseNotFound or StorageBusy => false,
+                };
+                return snapshot;
+            }
+            finally
             {
-                SnapshotCapture capture => SyncSnapshot(databaseId, capture, taken, path),
-                StorageBusy busy => busy,
-            };
+                if (!completed)
+                {
+                    _ = FileIo.DeleteFile(path);
+                }
+            }
         }
         finally
         {
@@ -391,6 +412,11 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         if (FileIo.SyncFile(path) is { } syncError)
         {
             return new StorageBusy(syncError, TimeSpan.FromSeconds(1));
+        }
+
+        if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
+        {
+            FileIo.SyncDirectory(directory);
         }
 
         return new DatabaseSnapshot(databaseId, capture.Bookmark, capture.SchemaEpoch, new FileInfo(path).Length, taken, path);

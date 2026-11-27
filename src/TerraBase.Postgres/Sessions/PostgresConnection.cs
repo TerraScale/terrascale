@@ -126,6 +126,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
 
     private async ValueTask<bool> SimpleQueryAsync(string sql)
     {
+        session.ObserveCurrentSchemaEpoch();
         PgError? failure;
         if (session.TryGetCachedParse(sql, out var cached))
         {

@@ -275,7 +275,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
     {
         lock (_gate)
         {
-            if (_completing || _writing || _waiters.Count > 0)
+            if (_completing || _writing || _waiters.Count > 0 || HasLiveCapacityWaitersLocked())
             {
                 return false;
             }
@@ -351,15 +351,27 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
             {
                 var wait = capacityWaiter.Task.WaitAsync(scope.Token);
                 await ((Task)wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-                if (wait.IsCanceled && !scope.Caller.IsCancellationRequested)
+                if (!wait.IsCompletedSuccessfully)
                 {
-                    return scope.Interrupted();
+                    if (!capacityWaiter.TrySetCanceled()
+                        && capacityWaiter.Task.IsCompletedSuccessfully
+                        && await capacityWaiter.Task)
+                    {
+                        ForwardCapacityWakeup();
+                    }
+
+                    if (wait.IsCanceled && !scope.Caller.IsCancellationRequested)
+                    {
+                        return scope.Interrupted();
+                    }
+
+                    await wait;
                 }
 
                 if (!await wait)
                 {
                     return _evicted
-                        ? new ChannelEvicted()
+                        ? Evicted
                         : new TransportShutdown("The ordered push channel is closed.");
                 }
             }
@@ -432,10 +444,10 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                     _waiters.Clear();
                 }
 
-                if (_capacityWaiters.Count > 0)
+                while (TryDequeueLiveCapacityWaiterLocked() is { } capWaiter)
                 {
-                    capacityToWake = [.. _capacityWaiters];
-                    _capacityWaiters.Clear();
+                    capacityToWake ??= [];
+                    capacityToWake.Add(capWaiter);
                 }
 
                 if (_completing && !_closingStarted)
@@ -458,7 +470,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 var handedOff = false;
                 while (_waiters.TryDequeue(out var next))
                 {
-                    if (_capacityWaiters.TryDequeue(out var capWaiter))
+                    if (TryDequeueLiveCapacityWaiterLocked() is { } capWaiter)
                     {
                         capacityToWake ??= [];
                         capacityToWake.Add(capWaiter);
@@ -473,6 +485,12 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
                 if (!handedOff)
                 {
+                    while (TryDequeueLiveCapacityWaiterLocked() is { } capWaiter)
+                    {
+                        capacityToWake ??= [];
+                        capacityToWake.Add(capWaiter);
+                    }
+
                     if (_completing && !_closingStarted)
                     {
                         _closingStarted = true;
@@ -501,9 +519,18 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
         if (capacityToWake is not null)
         {
+            var missed = 0;
             foreach (var waiter in capacityToWake)
             {
-                waiter.TrySetResult(true);
+                if (!waiter.TrySetResult(true))
+                {
+                    missed++;
+                }
+            }
+
+            for (var index = 0; index < missed; index++)
+            {
+                ForwardCapacityWakeup();
             }
         }
 
@@ -518,6 +545,51 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         }
     }
 
+    private bool HasLiveCapacityWaitersLocked()
+    {
+        while (_capacityWaiters.TryPeek(out var waiter) && waiter.Task.IsCompleted)
+        {
+            _ = _capacityWaiters.Dequeue();
+        }
+
+        return _capacityWaiters.Count > 0;
+    }
+
+    private TaskCompletionSource<bool>? TryDequeueLiveCapacityWaiterLocked()
+    {
+        while (_capacityWaiters.TryDequeue(out var waiter))
+        {
+            if (!waiter.Task.IsCompleted)
+            {
+                return waiter;
+            }
+        }
+
+        return null;
+    }
+
+    private void ForwardCapacityWakeup()
+    {
+        while (true)
+        {
+            TaskCompletionSource<bool>? next = null;
+            lock (_gate)
+            {
+                if (_completing)
+                {
+                    return;
+                }
+
+                next = TryDequeueLiveCapacityWaiterLocked();
+            }
+
+            if (next is null || next.TrySetResult(true))
+            {
+                return;
+            }
+        }
+    }
+
     private void OnIdleTimeout()
     {
         TimeSpan? reschedule = null;
@@ -526,7 +598,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         lock (_gate)
         {
             _idleTimerScheduled = false;
-            if (_completing || _writing || _waiters.Count > 0)
+            if (_completing || _writing || _waiters.Count > 0 || HasLiveCapacityWaitersLocked())
             {
                 return;
             }

@@ -24,18 +24,21 @@ internal sealed class StreamAbortWatcher : IDisposable
 
     private static readonly Action<object?> CancelCallback = static state =>
     {
-        if (state is CancellationTokenSource cts)
+        if (state is StreamAbortWatcher watcher)
         {
-            cts.Cancel();
+            watcher.TryCancelCts();
         }
     };
 
+    private readonly Lock _ctsGate = new();
     private readonly Action _onWritesClosed;
-    private CancellationTokenSource _cts = new();
+    private readonly CancellationTokenSource _cts = new();
     private CancellationTokenRegistration _handlersReg;
     private Task? _writesClosed;
-    private int _finished;
+    private int _disposed;
+    private int _cancelFired;
     private int _refCount;
+    private bool _ctsRetired;
 
     private StreamAbortWatcher()
     {
@@ -60,22 +63,27 @@ internal sealed class StreamAbortWatcher : IDisposable
             watcher = new StreamAbortWatcher();
         }
 
-        watcher._finished = 0;
-        watcher._handlersReg = handlersToken.UnsafeRegister(CancelCallback, watcher._cts);
         var writesClosed = stream.WritesClosed;
-        if (writesClosed.IsCompleted)
+        var alreadyCompleted = writesClosed.IsCompleted;
+        lock (watcher._ctsGate)
         {
-            watcher._writesClosed = null;
-            watcher._refCount = 1;
+            watcher._ctsRetired = false;
+            watcher._writesClosed = alreadyCompleted ? null : writesClosed;
+            Volatile.Write(ref watcher._disposed, 0);
+            Volatile.Write(ref watcher._cancelFired, 0);
+            Interlocked.Exchange(ref watcher._refCount, alreadyCompleted ? 1 : 2);
+        }
+
+        watcher._handlersReg = handlersToken.UnsafeRegister(CancelCallback, watcher);
+        if (alreadyCompleted)
+        {
             if (writesClosed.IsCanceled || writesClosed.IsFaulted)
             {
-                watcher._cts.Cancel();
+                watcher.TryCancelCts();
             }
         }
         else
         {
-            watcher._writesClosed = writesClosed;
-            watcher._refCount = 2;
             writesClosed.GetAwaiter().UnsafeOnCompleted(watcher._onWritesClosed);
         }
 
@@ -84,19 +92,37 @@ internal sealed class StreamAbortWatcher : IDisposable
 
     public void Dispose()
     {
-        Volatile.Write(ref _finished, 1);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _handlersReg.Dispose();
         _handlersReg = default;
         ReleaseRef();
     }
 
+    private void TryCancelCts()
+    {
+        Volatile.Write(ref _cancelFired, 1);
+        lock (_ctsGate)
+        {
+            if (_ctsRetired || Volatile.Read(ref _disposed) != 0)
+            {
+                return;
+            }
+
+            _cts.Cancel();
+        }
+    }
+
     private void OnWritesClosed()
     {
-        if (Volatile.Read(ref _finished) == 0
+        if (Volatile.Read(ref _disposed) == 0
             && _writesClosed is { } task
             && (task.IsCanceled || task.IsFaulted))
         {
-            _cts.Cancel();
+            TryCancelCts();
         }
 
         ReleaseRef();
@@ -109,11 +135,23 @@ internal sealed class StreamAbortWatcher : IDisposable
             return;
         }
 
-        _writesClosed = null;
-        _finished = 0;
-        if (!_cts.TryReset())
+        var reusable = false;
+        lock (_ctsGate)
         {
-            _cts.Dispose();
+            _ctsRetired = true;
+            _writesClosed = null;
+            if (Volatile.Read(ref _cancelFired) == 0 && !_cts.IsCancellationRequested && _cts.TryReset())
+            {
+                reusable = true;
+            }
+            else
+            {
+                _cts.Dispose();
+            }
+        }
+
+        if (!reusable)
+        {
             return;
         }
 
@@ -483,8 +521,8 @@ internal sealed class QuicRpcServerCore(
         using var reader = new QuicFrameReader(QuicFrameReader.UnaryBufferCapacity);
         using var writeScope = CallScope.Create(QuicMeshLimits.CallTimeout, timeProvider, cancellationToken, CancellationToken.None);
         var isSystemClock = ReferenceEquals(timeProvider, TimeProvider.System);
+        var writeArmed = true;
         var writeArmedTicks = timeProvider.GetTimestamp();
-        var handledAny = false;
 
         var firstRead = await reader.ReadNextAsync(stream, writeScope);
         var (firstReady, firstEnded, firstFault) = UnpackRead(firstRead);
@@ -498,9 +536,8 @@ internal sealed class QuicRpcServerCore(
 
         var keepAlive = supportsPersistentUnary && !reader.CurrentHeader.IsEndOfStream;
         using var idleReadScope = keepAlive
-            ? CallScope.Create(QuicMeshLimits.PushReadTimeout, timeProvider, _idleUnary.Token, cancellationToken)
+            ? CallScope.CreateArmable(timeProvider, _idleUnary.Token, cancellationToken)
             : default;
-        var idleArmedTicks = keepAlive ? timeProvider.GetTimestamp() : 0;
 
         while (true)
         {
@@ -515,10 +552,9 @@ internal sealed class QuicRpcServerCore(
                 metrics.Error(QuicSide.Server, QuicErrorKind.Unmapped);
                 var unmapped = new QuicRemoteError(QuicRemoteError.UnmappedMessageType, $"No unary or server-stream handler is mapped for message type {header.MessageType}.");
                 var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
-                RefreshWriteDeadline(writeScope, isSystemClock, ref writeArmedTicks, handledAny);
+                EnsureWriteDeadline(writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
                 var written = await WriteErrorWithScopeAsync(stream, context, unmapped, closingAfterReply, writeScope);
                 Complete(context, QuicPattern.Unary, started, written, QuicOutcome.RemoteError);
-                handledAny = true;
                 if (closingAfterReply || Fault(written) is not null)
                 {
                     return;
@@ -529,7 +565,12 @@ internal sealed class QuicRpcServerCore(
                 var (unaryRoute, streamRoute) = UnpackRoute(route);
                 if (streamRoute is not null)
                 {
-                    writeScope.DisarmDeadline();
+                    if (writeArmed)
+                    {
+                        writeScope.DisarmDeadline();
+                        writeArmed = false;
+                    }
+
                     await RespondStreamAsync(stream, context, streamRoute, payload, cancellationToken);
                     return;
                 }
@@ -545,13 +586,16 @@ internal sealed class QuicRpcServerCore(
                     }
                     else
                     {
-                        writeScope.DisarmDeadline();
+                        if (writeArmed)
+                        {
+                            writeScope.DisarmDeadline();
+                            writeArmed = false;
+                        }
+
                         reply = await replyTask;
-                        writeScope.ArmDeadline(QuicMeshLimits.CallTimeout, timeProvider);
-                        writeArmedTicks = timeProvider.GetTimestamp();
                     }
 
-                    RefreshWriteDeadline(writeScope, isSystemClock, ref writeArmedTicks, handledAny);
+                    EnsureWriteDeadline(writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
                     var (replyBuilder, replyError) = UnpackUnaryReply(reply);
                     QuicIoWriteOutcome written;
                     QuicOutcome outcome;
@@ -576,7 +620,6 @@ internal sealed class QuicRpcServerCore(
                     }
 
                     Complete(context, QuicPattern.Unary, started, written, outcome);
-                    handledAny = true;
                     if (closingAfterReply || Fault(written) is not null)
                     {
                         return;
@@ -589,16 +632,18 @@ internal sealed class QuicRpcServerCore(
                 return;
             }
 
-            if (!isSystemClock || timeProvider.GetElapsedTime(idleArmedTicks) >= DeadlineRefreshInterval)
+            if (writeArmed)
             {
-                idleReadScope.ArmDeadline(QuicMeshLimits.PushReadTimeout, timeProvider);
-                idleArmedTicks = timeProvider.GetTimestamp();
+                writeScope.DisarmDeadline();
+                writeArmed = false;
             }
 
+            idleReadScope.ArmDeadline(QuicMeshLimits.PushReadTimeout, timeProvider);
             var nextRead = await reader.ReadNextAsync(stream, idleReadScope);
             var (nextReady, nextEnded, nextFault) = UnpackRead(nextRead);
             if (nextReady)
             {
+                idleReadScope.DisarmDeadline();
                 continue;
             }
 
@@ -641,11 +686,12 @@ internal sealed class QuicRpcServerCore(
         QuicRemoteError error => error,
     };
 
-    private void RefreshWriteDeadline(CallScope writeScope, bool isSystemClock, ref long writeArmedTicks, bool handledAny)
+    private void EnsureWriteDeadline(CallScope writeScope, bool isSystemClock, ref bool writeArmed, ref long writeArmedTicks)
     {
-        if (handledAny && (!isSystemClock || timeProvider.GetElapsedTime(writeArmedTicks) >= DeadlineRefreshInterval))
+        if (!writeArmed || !isSystemClock || timeProvider.GetElapsedTime(writeArmedTicks) >= DeadlineRefreshInterval)
         {
             writeScope.ArmDeadline(QuicMeshLimits.CallTimeout, timeProvider);
+            writeArmed = true;
             writeArmedTicks = timeProvider.GetTimestamp();
         }
     }
@@ -741,19 +787,10 @@ internal sealed class QuicRpcServerCore(
         try
         {
             using var reader = new QuicFrameReader();
-            using var scope = CallScope.Create(QuicMeshLimits.PushReadTimeout, timeProvider, cancellationToken, CancellationToken.None);
-            var isSystemClock = ReferenceEquals(timeProvider, TimeProvider.System);
-            var lastArmedTicks = timeProvider.GetTimestamp();
-            var firstRead = true;
+            using var scope = CallScope.CreateArmable(timeProvider, cancellationToken, CancellationToken.None);
             while (true)
             {
-                if (!firstRead && (!isSystemClock || timeProvider.GetElapsedTime(lastArmedTicks) >= DeadlineRefreshInterval))
-                {
-                    scope.ArmDeadline(QuicMeshLimits.PushReadTimeout, timeProvider);
-                    lastArmedTicks = timeProvider.GetTimestamp();
-                }
-
-                firstRead = false;
+                scope.ArmDeadline(QuicMeshLimits.PushReadTimeout, timeProvider);
                 var read = await reader.ReadNextAsync(stream, scope);
                 var (ready, ended, readFault) = UnpackRead(read);
                 if (!ready)
@@ -766,6 +803,7 @@ internal sealed class QuicRpcServerCore(
                     return;
                 }
 
+                scope.DisarmDeadline();
                 metrics.Received(QuicSide.Server, reader.CurrentTotalLength);
                 var header = reader.CurrentHeader;
                 var context = new QuicCallContext(identity.NodeId, identity.Region, header.MessageType, header.RequestId, identity.IsPlatform);

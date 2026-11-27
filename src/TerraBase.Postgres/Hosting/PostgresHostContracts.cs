@@ -48,6 +48,8 @@ public interface IPostgresDatabaseExecutor
 {
     Ulid DatabaseId { get; }
 
+    ulong? SchemaEpoch => null;
+
     CausalBookmark CurrentBookmark { get; }
 
     ValueTask<SqlReadOutcome> ReadAsync(

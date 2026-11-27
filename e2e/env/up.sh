@@ -110,11 +110,6 @@ auth=(TS_AUTH_TERRABASE_URL="http://127.0.0.1:$(e2e_port internal)" TS_AUTH_LIST
 start ts-auth env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll"
 timeout --kill-after=10 "$boot_seconds" env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll" provision-signing-key > "$logs/provision-signing-key.log" 2>&1 &
 provision_pid=$!
-start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOARD_SESSION_ENCRYPTION_KEY="$session_key" \
-  STRIPE_SECRET_KEY="$stripe_secret_key" STRIPE_WEBHOOK_SECRET="$stripe_signing_secret" TERRABASE_PEER_SECRET="$peer_secret" \
-  TS_DASHBOARD_TERRABASE_URL="http://127.0.0.1:$(e2e_port internal)" TS_DASHBOARD_PLATFORM_URL="http://127.0.0.1:$(e2e_port platform)" \
-  TS_REGION=gru TS_NODE=journey-1 \
-  dotnet "$build/dashboard/TerraScale.Dashboard.dll" --environment Production --urls "http://127.0.0.1:$(e2e_port dashboard)" --contentRoot "$build/dashboard"
 
 ready ts-platform curl -fsS --max-time 2 "http://127.0.0.1:$(e2e_port platform)/readyz" &
 platform_ready_pid=$!
@@ -132,6 +127,12 @@ ready_failed=0
 wait "$platform_ready_pid" || ready_failed=1
 wait "$auth_ready_pid" || ready_failed=1
 [ "$ready_failed" -eq 0 ]
+
+start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOARD_SESSION_ENCRYPTION_KEY="$session_key" \
+  STRIPE_SECRET_KEY="$stripe_secret_key" STRIPE_WEBHOOK_SECRET="$stripe_signing_secret" TERRABASE_PEER_SECRET="$peer_secret" \
+  TS_DASHBOARD_TERRABASE_URL="http://127.0.0.1:$(e2e_port internal)" TS_DASHBOARD_PLATFORM_URL="http://127.0.0.1:$(e2e_port platform)" \
+  TS_REGION=gru TS_NODE=journey-1 \
+  dotnet "$build/dashboard/TerraScale.Dashboard.dll" --environment Production --urls "http://127.0.0.1:$(e2e_port dashboard)" --contentRoot "$build/dashboard"
 ready dashboard curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 echo

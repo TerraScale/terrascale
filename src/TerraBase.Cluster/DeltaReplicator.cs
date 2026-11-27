@@ -19,6 +19,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     private const int MaxFrameBytes = QuicProtocol.MaxPayloadBytes - 4096;
     private const int MaxInboundQueuedBatches = 256;
     private const int MaxInboundBatchesPerLease = 16;
+    private const int MaxCachedChannelKeys = 4096;
 
     private static readonly QuicSent Sent = new();
     private static readonly QuicRemoteError Forbidden = ClusterTopology.PeerForbidden();
@@ -502,7 +503,20 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
             if (waitForSpace is not null)
             {
-                await waitForSpace.Task.WaitAsync(cancellationToken);
+                var woken = false;
+                try
+                {
+                    await waitForSpace.Task.WaitAsync(cancellationToken);
+                    woken = true;
+                }
+                finally
+                {
+                    if (!woken && !waitForSpace.TrySetCanceled(cancellationToken))
+                    {
+                        ForwardInboundWakeup(mailbox);
+                    }
+                }
+
                 continue;
             }
 
@@ -655,9 +669,9 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         out string primarySender,
         out bool singleAck)
     {
-        InboundItem first;
-        var dequeued = 0;
         var outOfOrder = false;
+        var empty = false;
+        Queue<TaskCompletionSource>? drainWaiters = null;
         TaskCompletionSource? singleWaiter = null;
         List<TaskCompletionSource>? multiWaiters = null;
 
@@ -668,67 +682,68 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                 mailbox.Draining = false;
                 mailbox.Removed = true;
                 _ = _inboxes.TryRemove(KeyValuePair.Create(databaseId, mailbox));
-                var remainingWaiters = mailbox.Waiters;
+                drainWaiters = mailbox.Waiters;
                 mailbox.Waiters = null;
-                if (remainingWaiters is not null)
-                {
-                    multiWaiters = [.. remainingWaiters];
-                }
-
+                empty = true;
                 batch = [];
                 primarySender = string.Empty;
                 singleAck = false;
-                SignalWaiters(multiWaiters);
-                return false;
-            }
-
-            first = mailbox.Queue.Dequeue();
-            dequeued = 1;
-            primarySender = first.SenderNodeId;
-            singleAck = first.AckRequested;
-
-            if (mailbox.Queue.Count == 0)
-            {
-                batch = first.Commits;
-                PopWaitersLocked(mailbox, dequeued, ref singleWaiter, ref multiWaiters);
             }
             else
             {
-                combined ??= new List<CommitMetadata>(MaxCoalescedCommits);
-                combined.Clear();
-                var batchBytes = AppendCommits(combined, first.Commits, ref outOfOrder);
-                if (singleAck)
+                var first = mailbox.Queue.Dequeue();
+                var dequeued = 1;
+                primarySender = first.SenderNodeId;
+                singleAck = first.AckRequested;
+
+                if (mailbox.Queue.Count == 0)
                 {
-                    ackPeers ??= [];
-                    ackPeers.Clear();
-                    ackPeers.Add(first.SenderNodeId);
+                    batch = first.Commits;
+                    PopWaitersLocked(mailbox, dequeued, ref singleWaiter, ref multiWaiters);
                 }
-
-                while (mailbox.Queue.Count > 0 && combined.Count < MaxCoalescedCommits && batchBytes < MaxCoalescedBytes)
+                else
                 {
-                    var peeked = mailbox.Queue.Peek();
-                    if (combined.Count + peeked.Commits.Count > MaxCoalescedCommits)
-                    {
-                        break;
-                    }
-
-                    var next = mailbox.Queue.Dequeue();
-                    dequeued++;
-                    batchBytes += AppendCommits(combined, next.Commits, ref outOfOrder);
-                    if (next.AckRequested)
+                    combined ??= new List<CommitMetadata>(MaxCoalescedCommits);
+                    combined.Clear();
+                    var batchBytes = AppendCommits(combined, first.Commits, ref outOfOrder);
+                    if (singleAck)
                     {
                         ackPeers ??= [];
-                        AddDistinctPeer(ackPeers, next.SenderNodeId);
+                        ackPeers.Clear();
+                        ackPeers.Add(first.SenderNodeId);
                     }
-                }
 
-                batch = combined;
-                PopWaitersLocked(mailbox, dequeued, ref singleWaiter, ref multiWaiters);
+                    while (mailbox.Queue.Count > 0 && combined.Count < MaxCoalescedCommits && batchBytes < MaxCoalescedBytes)
+                    {
+                        var peeked = mailbox.Queue.Peek();
+                        if (combined.Count + peeked.Commits.Count > MaxCoalescedCommits)
+                        {
+                            break;
+                        }
+
+                        var next = mailbox.Queue.Dequeue();
+                        dequeued++;
+                        batchBytes += AppendCommits(combined, next.Commits, ref outOfOrder);
+                        if (next.AckRequested)
+                        {
+                            ackPeers ??= [];
+                            AddDistinctPeer(ackPeers, next.SenderNodeId);
+                        }
+                    }
+
+                    batch = combined;
+                    PopWaitersLocked(mailbox, dequeued, ref singleWaiter, ref multiWaiters);
+                }
             }
         }
 
-        singleWaiter?.TrySetResult();
-        SignalWaiters(multiWaiters);
+        if (empty)
+        {
+            SignalWaiters(drainWaiters);
+            return false;
+        }
+
+        WakeWaiters(mailbox, singleWaiter, multiWaiters);
 
         if (outOfOrder && combined is not null)
         {
@@ -792,22 +807,94 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     private static void PopWaitersLocked(InboundMailbox mailbox, int count, ref TaskCompletionSource? single, ref List<TaskCompletionSource>? multiple)
     {
         var waiters = mailbox.Waiters;
-        if (waiters is null || waiters.Count == 0)
+        if (waiters is null || waiters.Count == 0 || count <= 0)
         {
             return;
         }
 
-        var toWake = Math.Min(count, waiters.Count);
-        if (toWake == 1)
+        var popped = 0;
+        while (popped < count && waiters.TryDequeue(out var waiter))
         {
-            single = waiters.Dequeue();
-            return;
+            if (waiter.Task.IsCompleted)
+            {
+                continue;
+            }
+
+            if (popped == 0)
+            {
+                single = waiter;
+            }
+            else
+            {
+                if (multiple is null)
+                {
+                    multiple = new List<TaskCompletionSource>(Math.Min(count, waiters.Count + 2));
+                    if (single is not null)
+                    {
+                        multiple.Add(single);
+                        single = null;
+                    }
+                }
+
+                multiple.Add(waiter);
+            }
+
+            popped++;
+        }
+    }
+
+    private static void WakeWaiters(InboundMailbox mailbox, TaskCompletionSource? single, List<TaskCompletionSource>? multiple)
+    {
+        var missed = 0;
+        if (single is not null && !single.TrySetResult())
+        {
+            missed++;
         }
 
-        multiple = new List<TaskCompletionSource>(toWake);
-        for (var index = 0; index < toWake; index++)
+        if (multiple is not null)
         {
-            multiple.Add(waiters.Dequeue());
+            for (var index = 0; index < multiple.Count; index++)
+            {
+                if (!multiple[index].TrySetResult())
+                {
+                    missed++;
+                }
+            }
+        }
+
+        for (var index = 0; index < missed; index++)
+        {
+            ForwardInboundWakeup(mailbox);
+        }
+    }
+
+    private static void ForwardInboundWakeup(InboundMailbox mailbox)
+    {
+        while (true)
+        {
+            TaskCompletionSource? next = null;
+            lock (mailbox.Gate)
+            {
+                var waiters = mailbox.Waiters;
+                if (waiters is null)
+                {
+                    return;
+                }
+
+                while (waiters.TryDequeue(out var candidate))
+                {
+                    if (!candidate.Task.IsCompleted)
+                    {
+                        next = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (next is null || next.TrySetResult())
+            {
+                return;
+            }
         }
     }
 
@@ -821,19 +908,6 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         while (waiters.TryDequeue(out var waiter))
         {
             _ = waiter.TrySetResult();
-        }
-    }
-
-    private static void SignalWaiters(List<TaskCompletionSource>? waiters)
-    {
-        if (waiters is null)
-        {
-            return;
-        }
-
-        for (var index = 0; index < waiters.Count; index++)
-        {
-            _ = waiters[index].TrySetResult();
         }
     }
 
@@ -964,8 +1038,20 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         ClusterUnavailable unavailable => unavailable.Message,
     };
 
-    private string ChannelKey(Ulid databaseId) =>
-        _channelKeys.GetOrAdd(databaseId, static id => id.ToString());
+    private string ChannelKey(Ulid databaseId)
+    {
+        if (_channelKeys.TryGetValue(databaseId, out var existing))
+        {
+            return existing;
+        }
+
+        if (_channelKeys.Count >= MaxCachedChannelKeys)
+        {
+            _channelKeys.Clear();
+        }
+
+        return _channelKeys.GetOrAdd(databaseId, databaseId.ToString());
+    }
 
     private void Enqueue(string nodeId, in OutboundItem item)
     {

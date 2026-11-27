@@ -175,7 +175,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     private ValueTask<TableMetadata?> GetTableMetadataAsync(ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
     {
         var epoch = session.SchemaEpoch;
-        var key = new TableCacheKey(session.DatabaseId, table, epoch);
+        var key = new TableCacheKey(session.DatabaseId, session.SessionIncarnation, table, epoch);
         if (_tableCache.TryGetValue(key, out var cached))
         {
             return ValueTask.FromResult<TableMetadata?>(cached);
@@ -207,7 +207,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         }
 
         var metadata = new TableMetadata(columns, names, quotedNames, RulesCompiler.Quote(table), columnIndex);
-        if (session.SchemaEpoch == epoch)
+        if (session.SchemaEpoch == epoch && session.SessionIncarnation == key.SessionIncarnation)
         {
             StoreTableMetadata(key, metadata);
         }
@@ -267,16 +267,18 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             for (var index = 0; index < planned.Length; index++)
             {
                 var step = await transaction.ExecuteAsync(planned[index].Write, cancellationToken);
-                var failure = step switch
+                (RowsOutcome? Failure, bool RowRefused) stepFailure = step switch
                 {
                     SqlResultSet result => CollectOrRefuse(results, result, commands[index], index),
-                    SqlError error => new RowsOutcome(SqlRefusal.From(error)),
-                    StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
-                    StorageTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                    SqlError error => (new RowsOutcome(SqlRefusal.From(error)), false),
+                    StorageBusy busy => (new RowsOutcome(SqlRefusal.From(busy)), false),
+                    StorageTimeout timeout => (new RowsOutcome(SqlRefusal.From(timeout)), false),
                 };
-                if (failure is { } refused)
+                if (stepFailure.Failure is { } refused)
                 {
-                    var validation = await CheckFailureInTransactionAsync(transaction, target.EndUser, commands[index], planned[index], index, renderTime, cancellationToken);
+                    var validation = stepFailure.RowRefused
+                        ? await CheckFailureInTransactionAsync(transaction, target.EndUser, commands[index], planned[index], index, renderTime, cancellationToken)
+                        : null;
                     await transaction.RollbackAsync(cancellationToken);
                     return validation ?? refused;
                 }
@@ -295,19 +297,19 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         }
     }
 
-    private static RowsOutcome? CollectOrRefuse(SqlResultSet[] results, SqlResultSet result, RowCommand command, int index)
+    private static (RowsOutcome? Failure, bool RowRefused) CollectOrRefuse(SqlResultSet[] results, SqlResultSet result, RowCommand command, int index)
     {
         if (result.Rows.Count == 0)
         {
-            return new RowRefused(
+            return (new RowsOutcome(new RowRefused(
                 command.Action == RowAction.Create ? StatusCodes.Status403Forbidden : StatusCodes.Status404NotFound,
                 command.Action == RowAction.Create ? "rule_denied" : "row_not_found",
                 command.Action == RowAction.Create ? "the rules refused the row" : "the row does not exist or the rules hide it",
-                new RowsErrorDetails(Table: command.Table, Index: index));
+                new RowsErrorDetails(Table: command.Table, Index: index))), true);
         }
 
         results[index] = result;
-        return null;
+        return (null, false);
     }
 
     private async ValueTask<RowsOutcome> AnswersOrValidateAsync(
@@ -926,7 +928,7 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         return null;
     }
 
-    private readonly record struct TableCacheKey(Ulid DatabaseId, string Table, ulong SchemaEpoch);
+    private readonly record struct TableCacheKey(Ulid DatabaseId, long SessionIncarnation, string Table, ulong SchemaEpoch);
 
     private sealed record TableMetadata(
         TableColumn[] Columns,
@@ -940,9 +942,12 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         public static TableCacheKeyComparer Instance { get; } = new();
 
         public bool Equals(TableCacheKey x, TableCacheKey y) =>
-            x.DatabaseId == y.DatabaseId && x.SchemaEpoch == y.SchemaEpoch && AsciiIgnoreCaseComparer.Instance.Equals(x.Table, y.Table);
+            x.DatabaseId == y.DatabaseId
+            && x.SessionIncarnation == y.SessionIncarnation
+            && x.SchemaEpoch == y.SchemaEpoch
+            && AsciiIgnoreCaseComparer.Instance.Equals(x.Table, y.Table);
 
         public int GetHashCode(TableCacheKey obj) =>
-            HashCode.Combine(obj.DatabaseId, obj.SchemaEpoch, AsciiIgnoreCaseComparer.Instance.GetHashCode(obj.Table));
+            HashCode.Combine(obj.DatabaseId, obj.SessionIncarnation, obj.SchemaEpoch, AsciiIgnoreCaseComparer.Instance.GetHashCode(obj.Table));
     }
 }

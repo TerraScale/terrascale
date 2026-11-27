@@ -219,6 +219,7 @@ public sealed class ChangefeedHub(ContinuitySessions sessions, ContinuityOptions
             _metrics = metrics;
             _buffer = new ChangefeedEntry?[capacity];
             _cursor = new ChangefeedCursor(subscription.After);
+            _signal.RunContinuationsAsynchronously = true;
             if (!enumeratorToken.CanBeCanceled || enumeratorToken == subscribeToken)
             {
                 _cancellationToken = subscribeToken;
@@ -526,7 +527,16 @@ internal sealed class ChangefeedCursor
     {
         if (_floor is null)
         {
-            if (_singleOrigin is not null && string.Equals(_singleOrigin, entry.OriginRegion, StringComparison.Ordinal))
+            if (_singleOrigin is null)
+            {
+                if (!_hasOutOfOrder && entry.Sequence == 1)
+                {
+                    _singleOrigin = entry.OriginRegion;
+                    _singleFloor = 1;
+                    return true;
+                }
+            }
+            else if (string.Equals(_singleOrigin, entry.OriginRegion, StringComparison.Ordinal))
             {
                 if (entry.Sequence <= _singleFloor)
                 {
@@ -539,14 +549,18 @@ internal sealed class ChangefeedCursor
                     return true;
                 }
             }
-            else if (!_hasOutOfOrder && _singleOrigin is null && entry.Sequence == 1)
+            else
             {
-                _singleOrigin = entry.OriginRegion;
-                _singleFloor = 1;
-                return true;
+                _floor = new Dictionary<string, long>(2, StringComparer.Ordinal)
+                {
+                    [_singleOrigin] = _singleFloor,
+                };
+                _singleOrigin = null;
+                _singleFloor = 0;
             }
         }
-        else
+
+        if (_floor is not null)
         {
             var floor = _floor.GetValueOrDefault(entry.OriginRegion);
             if (entry.Sequence <= floor)

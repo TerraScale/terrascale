@@ -91,7 +91,7 @@ internal sealed partial class PostgresConnection
         {
             CommitMetadata metadata => Committed(metadata),
             SerializationConflict conflict => PgErrors.From(conflict),
-            SchemaMismatch mismatch => PgErrors.From(mismatch),
+            SchemaMismatch mismatch => ObservedCommitSchemaMismatch(mismatch),
             ClusterUnavailable unavailable => PgErrors.From(unavailable),
             ClusterTimeout timeout => PgErrors.From(timeout),
             StorageBusy busy => PgErrors.From(busy),
@@ -105,6 +105,12 @@ internal sealed partial class PostgresConnection
         session.ObserveSchemaEpoch(metadata.SchemaEpoch);
         session.Observe(metadata.Bookmark);
         return null;
+    }
+
+    private PgError ObservedCommitSchemaMismatch(SchemaMismatch mismatch)
+    {
+        session.ObserveSchemaEpoch(mismatch.ActualEpoch);
+        return PgErrors.From(mismatch);
     }
 
     private async ValueTask<PgOutcome> RollbackAsync()
@@ -333,6 +339,7 @@ internal sealed partial class PostgresConnection
 
         session.Statements.Clear();
         session.Portals.Clear();
+        session.InvalidateSchemaCache();
         await StopListeningAsync(session);
         foreach (var change in session.Settings.ResetAll())
         {

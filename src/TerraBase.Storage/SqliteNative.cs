@@ -50,6 +50,8 @@ internal static unsafe partial class SqliteNative
 
     public const uint PreparePersistent = 0x01;
 
+    internal const int StmtStatusReprepare = 5;
+
     public const int TypeInteger = 1;
     public const int TypeFloat = 2;
     public const int TypeText = 3;
@@ -177,6 +179,10 @@ internal static unsafe partial class SqliteNative
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_stmt_isexplain")]
     [SuppressGCTransition]
     public static partial int StatementIsExplain(nint statement);
+
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_stmt_status")]
+    [SuppressGCTransition]
+    internal static partial int StmtStatus(nint statement, int op, int resetFlag);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_bind_parameter_count")]
     [SuppressGCTransition]

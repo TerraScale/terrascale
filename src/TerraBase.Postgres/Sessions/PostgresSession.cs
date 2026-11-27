@@ -118,7 +118,7 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
 
     public CausalBookmark Bookmark { get; private set; } = CausalBookmark.Empty;
 
-    public ulong SchemaEpoch { get; private set; }
+    public ulong SchemaEpoch { get; private set; } = grant.Executor.SchemaEpoch ?? 0;
 
     public PostgresTransactionBlock? Transaction { get; set; }
 
@@ -170,6 +170,14 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
         if (_parseCache.TryGetValue(sql, out var entry))
         {
             entry.InferredOids = oids;
+        }
+    }
+
+    public void ObserveCurrentSchemaEpoch()
+    {
+        if (grant.Executor.SchemaEpoch is { } epoch)
+        {
+            ObserveSchemaEpoch(epoch);
         }
     }
 

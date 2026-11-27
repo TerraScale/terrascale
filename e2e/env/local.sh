@@ -66,6 +66,13 @@ prepare() {
       (cd "$e2e" && npx playwright install chromium)
       printf '%s\n' "$pw_ver" > "$E2E_STATE/.playwright-chromium.version"
     fi
+    status_lock=$(sha256sum "$repo/sites/status/package-lock.json" | cut -d' ' -f1)
+    if [ ! -x "$repo/sites/status/node_modules/.bin/wrangler" ] \
+      || [ ! -f "$repo/sites/status/node_modules/.status-lock.sha256" ] \
+      || [ "$(cat "$repo/sites/status/node_modules/.status-lock.sha256")" != "$status_lock" ]; then
+      npm ci --prefix "$repo/sites/status" --no-audit --no-fund
+      printf '%s\n' "$status_lock" > "$repo/sites/status/node_modules/.status-lock.sha256"
+    fi
   ) &
   pids+=($!)
   bash "$here/pki.sh" &

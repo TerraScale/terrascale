@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -30,13 +31,15 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private const int HistoryPageSize = 512;
     private static readonly TimeSpan ReaderDrainTimeout = TimeSpan.FromSeconds(5);
     private static readonly BookmarkReached Reached = new();
+    private static long s_nextIncarnation;
 
+    private readonly long _sessionIncarnation = Interlocked.Increment(ref s_nextIncarnation);
     private readonly SessionContext _context;
     private readonly SqliteConnection _writer;
     private readonly PreupdateCapture _capture;
     private readonly CommitLogCipher _cipher;
     private readonly CommitLogOptions _logOptions;
-    private readonly Channel<SqliteConnection> _readers;
+    private readonly Channel<SqliteConnection?> _readers;
     private readonly Channel<LaneRequest> _requests;
     private readonly Lock _readersGate = new();
     private readonly HashSet<SqliteConnection> _rentedReaders = [];
@@ -50,16 +53,17 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private readonly VersionVector _versions = new();
     private readonly Func<DatabaseSession, Task> _release;
     private readonly bool _strict;
+    private FrozenSet<string>? _excludedChangeTables;
     private SqliteOpenOptions? _readerOptions;
     private Task _lane = Task.CompletedTask;
     private LaneRequest[] _inFlight = [];
     private WriteTransaction? _activeTransaction;
     private long _schemaEpoch;
+    private long _filteredChangeGeneration = 1;
     private int _references = 1;
     private int _closed;
     private int _laneFaulted;
     private int _recoveredQuarantined;
-    private int _readerCount;
     private int _openingReaders;
     private bool _writeGroupBroken;
 
@@ -72,7 +76,12 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         _strict = strict;
         _release = release;
         _logOptions = new CommitLogOptions(context.Options.SegmentMaxBytes, context.Options.SegmentMaxAge, context.Options.FsyncCommitLog);
-        _readers = Channel.CreateBounded<SqliteConnection>(new BoundedChannelOptions(context.Options.ReaderCount) { FullMode = BoundedChannelFullMode.Wait });
+        _readers = Channel.CreateBounded<SqliteConnection?>(new BoundedChannelOptions(context.Options.ReaderCount) { FullMode = BoundedChannelFullMode.Wait });
+        for (var index = 0; index < context.Options.ReaderCount; index++)
+        {
+            _ = _readers.Writer.TryWrite(null);
+        }
+
         _requests = Channel.CreateBounded<LaneRequest>(new BoundedChannelOptions(context.Options.QueueCapacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -87,6 +96,18 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     public CausalBookmark CurrentBookmark => _versions.Snapshot();
 
     public long ChangeGeneration => _versions.Generation;
+
+    public long FilteredChangeGeneration =>
+        Volatile.Read(ref _excludedChangeTables) is null ? ChangeGeneration : Volatile.Read(ref _filteredChangeGeneration);
+
+    public long SessionIncarnation => _sessionIncarnation;
+
+    public void ConfigureFilteredChangeTables(IReadOnlySet<string> excludedTables)
+    {
+        ArgumentNullException.ThrowIfNull(excludedTables);
+        Volatile.Write(ref _excludedChangeTables, excludedTables.ToFrozenSet(StringComparer.OrdinalIgnoreCase));
+        _ = Interlocked.Increment(ref _filteredChangeGeneration);
+    }
 
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
 
@@ -164,10 +185,18 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                 setup = writer.Exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA journal_size_limit = 1048576;");
             }
 
-            if (setup.IsOk && FileIo.SyncFile(context.DatabasePath) is { } syncError)
+            if (setup.IsOk)
             {
-                writer.Dispose();
-                return new StorageBusy(syncError, TimeSpan.FromMilliseconds(50));
+                if (FileIo.SyncFile(context.DatabasePath) is { } syncError)
+                {
+                    writer.Dispose();
+                    return new StorageBusy(syncError, TimeSpan.FromMilliseconds(50));
+                }
+
+                if (Path.GetDirectoryName(context.DatabasePath) is { Length: > 0 } directory)
+                {
+                    FileIo.SyncDirectory(directory);
+                }
             }
         }
         else
@@ -246,12 +275,21 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
 
         _requests.Writer.TryComplete();
-        _readers.Writer.TryComplete();
         Volatile.Read(ref _activeTransaction)?.Abandon();
         ReadTransaction[] activeTransactions;
+        List<SqliteConnection> idleReaders = [];
         lock (_readersGate)
         {
+            _readers.Writer.TryComplete();
             activeTransactions = [.. _readTransactions];
+            while (_readers.Reader.TryRead(out var idleReader))
+            {
+                if (idleReader is not null)
+                {
+                    idleReaders.Add(idleReader);
+                }
+            }
+
             foreach (var rented in _rentedReaders)
             {
                 rented.Interrupt();
@@ -268,31 +306,32 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             transaction.Abandon();
         }
 
-        await _lane.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        while (_readers.Reader.TryRead(out var idleReader))
+        foreach (var idleReader in idleReaders)
         {
             idleReader.Dispose();
         }
 
-        if (!_readersDrained.Task.IsCompleted)
+        await _lane.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        while (!_readersDrained.Task.IsCompleted)
         {
             using var drainTimeout = new CancellationTokenSource();
             var delay = Task.Delay(ReaderDrainTimeout, _context.Time, drainTimeout.Token);
-            _ = await Task.WhenAny(_readersDrained.Task, delay);
+            var completed = await Task.WhenAny(_readersDrained.Task, delay);
             await drainTimeout.CancelAsync();
-            if (!_readersDrained.Task.IsCompleted)
+            if (completed == _readersDrained.Task)
             {
-                lock (_readersGate)
+                break;
+            }
+
+            lock (_readersGate)
+            {
+                foreach (var rented in _rentedReaders)
                 {
-                    foreach (var rented in _rentedReaders)
-                    {
-                        rented.Interrupt();
-                    }
+                    rented.Interrupt();
                 }
             }
         }
 
-        _readerCount = 0;
         _versions.Close();
         DisposeResources();
     }
@@ -808,7 +847,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     {
         while (_readers.Reader.TryRead(out var reader))
         {
-            reader.Dispose();
+            reader?.Dispose();
         }
 
         _writer.Dispose();
@@ -825,28 +864,90 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         _cipher.Dispose();
     }
 
+    private void RecordFilteredChange(DeltaBatch batch)
+    {
+        if (ShouldBumpFilteredGeneration(batch))
+        {
+            _ = Interlocked.Increment(ref _filteredChangeGeneration);
+        }
+    }
+
+    private void RecordFilteredChange(List<PendingApply> applied)
+    {
+        for (var index = 0; index < applied.Count; index++)
+        {
+            var pending = applied[index];
+            if (!pending.Quarantined && ShouldBumpFilteredGeneration(pending.Batch))
+            {
+                _ = Interlocked.Increment(ref _filteredChangeGeneration);
+                return;
+            }
+        }
+    }
+
+    private void RecordFilteredChange(Dictionary<string, HlcTimestamp>.KeyCollection touchedTables, bool hasDdl)
+    {
+        if (hasDdl)
+        {
+            _ = Interlocked.Increment(ref _filteredChangeGeneration);
+            return;
+        }
+
+        if (touchedTables.Count == 0)
+        {
+            return;
+        }
+
+        if (Volatile.Read(ref _excludedChangeTables) is not { } excluded)
+        {
+            _ = Interlocked.Increment(ref _filteredChangeGeneration);
+            return;
+        }
+
+        foreach (var table in touchedTables)
+        {
+            if (!excluded.Contains(table))
+            {
+                _ = Interlocked.Increment(ref _filteredChangeGeneration);
+                return;
+            }
+        }
+    }
+
+    private bool ShouldBumpFilteredGeneration(DeltaBatch batch)
+    {
+        if (batch.Ddl.Count > 0)
+        {
+            return true;
+        }
+
+        if (batch.Mutations.Count == 0)
+        {
+            return false;
+        }
+
+        if (Volatile.Read(ref _excludedChangeTables) is not { } excluded)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < batch.Mutations.Count; index++)
+        {
+            if (!excluded.Contains(batch.Mutations[index].Table))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private async ValueTask<SqliteConnection?> RentReaderAsync(CancellationToken cancellationToken)
     {
         while (true)
         {
-            if (_readers.Reader.TryRead(out var reader))
-            {
-                lock (_readersGate)
-                {
-                    if (IsClosed)
-                    {
-                        reader.Dispose();
-                        return null;
-                    }
-
-                    _ = _rentedReaders.Add(reader);
-                }
-
-                return reader;
-            }
-
+            SqliteConnection? rented = null;
             SqliteOpenOptions? openOptions = null;
-            SqliteConnection? pooled = null;
             lock (_readersGate)
             {
                 if (IsClosed)
@@ -854,22 +955,29 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                     return null;
                 }
 
-                if (_readers.Reader.TryRead(out var available))
+                if (_readers.Reader.TryRead(out var slot))
                 {
-                    _ = _rentedReaders.Add(available);
-                    pooled = available;
-                }
-                else if (_readerCount < Options.ReaderCount && _readerOptions is { } configured)
-                {
-                    _readerCount++;
-                    _openingReaders++;
-                    openOptions = configured;
+                    if (slot is not null)
+                    {
+                        _ = _rentedReaders.Add(slot);
+                        rented = slot;
+                    }
+                    else if (_readerOptions is { } configured)
+                    {
+                        _openingReaders++;
+                        openOptions = configured;
+                    }
+                    else
+                    {
+                        _ = _readers.Writer.TryWrite(null);
+                        return null;
+                    }
                 }
             }
 
-            if (pooled is not null)
+            if (rented is not null)
             {
-                return pooled;
+                return rented;
             }
 
             if (openOptions is not null)
@@ -880,31 +988,38 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                     SqliteConnection created => created,
                     SqliteStatus => null,
                 };
-                SqliteConnection? rented = null;
+                if (connection is not null)
+                {
+                    lock (_readersGate)
+                    {
+                        if (!IsClosed)
+                        {
+                            _openingReaders--;
+                            _ = _rentedReaders.Add(connection);
+                            return connection;
+                        }
+                    }
+
+                    connection.Dispose();
+                }
+
                 lock (_readersGate)
                 {
                     _openingReaders--;
-                    if (connection is not null && !IsClosed)
+                    if (IsClosed)
                     {
-                        _ = _rentedReaders.Add(connection);
-                        rented = connection;
-                    }
-                    else
-                    {
-                        _readerCount--;
-                        if (IsClosed && _rentedReaders.Count == 0 && _openingReaders == 0)
+                        if (_rentedReaders.Count == 0 && _openingReaders == 0)
                         {
                             _readersDrained.TrySetResult();
                         }
                     }
+                    else
+                    {
+                        _ = _readers.Writer.TryWrite(null);
+                    }
                 }
 
-                if (rented is null)
-                {
-                    connection?.Dispose();
-                }
-
-                return rented;
+                return null;
             }
 
             if (!await _readers.Reader.WaitToReadAsync(cancellationToken))
@@ -940,25 +1055,48 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private void ReturnReader(SqliteConnection reader)
     {
-        bool closed;
-        lock (_readersGate)
+        var dispose = IsClosed;
+        if (!dispose && reader.InTransaction)
         {
-            _ = _rentedReaders.Remove(reader);
-            closed = IsClosed;
-            if (closed && _rentedReaders.Count == 0 && _openingReaders == 0)
+            _ = reader.Exec("ROLLBACK;");
+            if (reader.InTransaction)
             {
-                _readersDrained.TrySetResult();
+                dispose = true;
             }
         }
 
-        if (!closed && reader.InTransaction)
+        if (!dispose)
+        {
+            lock (_readersGate)
+            {
+                if (!IsClosed && _readers.Writer.TryWrite(reader))
+                {
+                    _ = _rentedReaders.Remove(reader);
+                    return;
+                }
+            }
+        }
+
+        if (reader.InTransaction)
         {
             _ = reader.Exec("ROLLBACK;");
         }
 
-        if (closed || !_readers.Writer.TryWrite(reader))
+        reader.Dispose();
+        lock (_readersGate)
         {
-            reader.Dispose();
+            _ = _rentedReaders.Remove(reader);
+            if (IsClosed)
+            {
+                if (_rentedReaders.Count == 0 && _openingReaders == 0)
+                {
+                    _readersDrained.TrySetResult();
+                }
+            }
+            else
+            {
+                _ = _readers.Writer.TryWrite(null);
+            }
         }
     }
 

@@ -30,6 +30,8 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 
     private static readonly TimeSpan FlushWindow = TimeSpan.FromMilliseconds(200);
 
+    private static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
+
     private readonly Channel<RequestLogEntry> _queue = Channel.CreateBounded<RequestLogEntry>(new BoundedChannelOptions(8192)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
@@ -37,6 +39,8 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     });
 
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+
+    private readonly CancellationTokenSource _shutdownDrain = new();
 
     private readonly List<RequestLogEntry> _batchBuffer = new(Batch);
 
@@ -74,9 +78,24 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     public bool HasGap(string? after) =>
         after is { Length: 26 } && Ulid.TryParse(after, out var cursor) && cursor.Time < time.GetUtcNow() - Retention;
 
-    public async ValueTask FlushAsync(CancellationToken cancellationToken)
+    public ValueTask FlushAsync(CancellationToken cancellationToken) =>
+        FlushCoreAsync(_shutdownDrain.Token, cancellationToken);
+
+    private async ValueTask FlushCoreAsync(CancellationToken drainToken, CancellationToken cancellationToken)
     {
         await _writeGate.WaitAsync(cancellationToken);
+        if (!_queue.Reader.TryPeek(out _))
+        {
+            _writeGate.Release();
+            return;
+        }
+
+        var drain = DrainAndReleaseAsync(drainToken);
+        await drain.WaitAsync(cancellationToken);
+    }
+
+    private async Task DrainAndReleaseAsync(CancellationToken cancellationToken)
+    {
         try
         {
             await DrainLockedAsync(cancellationToken);
@@ -113,11 +132,21 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
-        await FlushAsync(cancellationToken);
+        using var timeout = new CancellationTokenSource(ShutdownDrainTimeout, time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        using var cancelInFlight = linked.Token.Register(static state =>
+        {
+            if (state is CancellationTokenSource cts)
+            {
+                cts.Cancel();
+            }
+        }, _shutdownDrain);
+        await FlushCoreAsync(linked.Token, linked.Token);
     }
 
     public override void Dispose()
     {
+        _shutdownDrain.Dispose();
         _writeGate.Dispose();
         base.Dispose();
     }
@@ -155,7 +184,7 @@ internal sealed class RequestLogRecorder(SystemDatabase system, TerraBaseOptions
 
     private async ValueTask DrainLockedAsync(CancellationToken cancellationToken)
     {
-        while (true)
+        while (!cancellationToken.IsCancellationRequested)
         {
             _batchBuffer.Clear();
             while (_batchBuffer.Count < Batch && _queue.Reader.TryRead(out var entry))

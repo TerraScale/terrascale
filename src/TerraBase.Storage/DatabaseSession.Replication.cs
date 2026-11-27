@@ -17,7 +17,38 @@ internal sealed partial class DatabaseSession
     [ThreadStatic]
     private static StatementInfo? _readerStatementInfo;
 
+    private readonly RemoteGroupProgress _laneRemoteProgress = new();
     private DateTimeOffset _lastEmptyAppliedPrune = DateTimeOffset.MinValue;
+
+    private readonly record struct QueuedRemoteRequest(
+        RemoteApplyRequest Request,
+        int PreDuplicates,
+        List<(string Origin, long Sequence)> Enqueued,
+        List<(string Origin, long Sequence)>? SharedPending);
+
+    private struct RemoteRequestCounts(int applied, int duplicates, int buffered, int quarantined)
+    {
+        public int Applied = applied;
+        public int Duplicates = duplicates;
+        public int Buffered = buffered;
+        public int Quarantined = quarantined;
+    }
+
+    private sealed class RemoteGroupProgress
+    {
+        public HashSet<(string Origin, long Sequence)> Applied { get; } = [];
+
+        public HashSet<(string Origin, long Sequence)> Skipped { get; } = [];
+
+        public HashSet<(string Origin, long Sequence)> Quarantined { get; } = [];
+
+        public void Clear()
+        {
+            Applied.Clear();
+            Skipped.Clear();
+            Quarantined.Clear();
+        }
+    }
 
     private static byte[] CreateMaxHlcCeiling()
     {
@@ -254,7 +285,7 @@ internal sealed partial class DatabaseSession
             && blob.Length == HlcTimestamp.EncodedSize
             ? HlcCodec.Read(blob.Span)
             : HlcTimestamp.Zero;
-        if (!scope.Failed)
+        if (!scope.Failed && hlc > HlcTimestamp.Zero)
         {
             scope.MetaCache?.SetTableHlc(table, hlc);
         }
@@ -432,7 +463,7 @@ internal sealed partial class DatabaseSession
             return;
         }
 
-        List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued = new(requests.Count);
+        List<QueuedRemoteRequest> queued = new(requests.Count);
         for (var index = 0; index < requests.Count; index++)
         {
             var request = requests[index];
@@ -458,6 +489,7 @@ internal sealed partial class DatabaseSession
 
             var preDuplicates = 0;
             var enqueued = new List<(string Origin, long Sequence)>(request.Commits.Count);
+            List<(string Origin, long Sequence)>? sharedPending = null;
             for (var commitIndex = 0; commitIndex < request.Commits.Count; commitIndex++)
             {
                 var commit = request.Commits[commitIndex];
@@ -475,7 +507,8 @@ internal sealed partial class DatabaseSession
 
                 if (!queue.TryAdd(commit.Sequence, commit))
                 {
-                    preDuplicates++;
+                    sharedPending ??= [];
+                    sharedPending.Add((commit.OriginRegion, commit.Sequence));
                 }
                 else
                 {
@@ -501,82 +534,262 @@ internal sealed partial class DatabaseSession
                 continue;
             }
 
-            queued.Add((request, preDuplicates, enqueued));
+            queued.Add(new QueuedRemoteRequest(request, preDuplicates, enqueued, sharedPending));
         }
 
         FlushRemoteGroup(queued);
     }
 
-    private void FlushRemoteGroup(List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued)
+    private void FlushRemoteGroup(List<QueuedRemoteRequest> queued)
     {
         if (queued.Count == 0)
         {
             return;
         }
 
-        HashSet<(string Origin, long Sequence)>? skippedKeys = null;
-        HashSet<(string Origin, long Sequence)>? quarantinedKeys = null;
-        var outcome = ApplyPending([], persist: true, trackOutcomeKeys: true, out skippedKeys, out quarantinedKeys);
+        var progress = _laneRemoteProgress;
+        progress.Clear();
+        var outcome = ApplyPending([], persist: true, progress);
         _ = outcome switch
         {
-            RemoteApplyOutcome => CompleteRemoteGroupSuccess(queued, skippedKeys, quarantinedKeys),
-            SchemaMismatch mismatch => FailRemoteGroup(queued, mismatch),
-            StorageCorrupted corrupted => FailRemoteGroup(queued, corrupted),
-            StorageBusy busy => FailRemoteGroup(queued, busy),
+            RemoteApplyOutcome => CompleteRemoteGroupSuccess(queued, progress),
+            SchemaMismatch mismatch => CompleteRemoteGroupPartialFailure(queued, progress, mismatch),
+            StorageCorrupted corrupted => CompleteRemoteGroupPartialFailure(queued, progress, corrupted),
+            StorageBusy busy => CompleteRemoteGroupPartialFailure(queued, progress, busy),
         };
         queued.Clear();
+        progress.Clear();
     }
 
-    private bool CompleteRemoteGroupSuccess(
-        List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued,
-        HashSet<(string Origin, long Sequence)>? skippedKeys,
-        HashSet<(string Origin, long Sequence)>? quarantinedKeys)
+    private bool CompleteRemoteGroupSuccess(List<QueuedRemoteRequest> queued, RemoteGroupProgress progress)
     {
         var snapshot = _versions.Snapshot();
+        var counts = new RemoteRequestCounts[queued.Count];
         for (var index = 0; index < queued.Count; index++)
         {
-            var (request, preDuplicates, enqueued) = queued[index];
+            var entry = queued[index];
             var applied = 0;
-            var duplicates = preDuplicates;
+            var duplicates = entry.PreDuplicates;
             var buffered = 0;
             var quarantined = 0;
-            for (var commitIndex = 0; commitIndex < enqueued.Count; commitIndex++)
+            for (var commitIndex = 0; commitIndex < entry.Enqueued.Count; commitIndex++)
             {
-                var key = enqueued[commitIndex];
+                var key = entry.Enqueued[commitIndex];
                 if (_pending.TryGetValue(key.Origin, out var queue) && queue.ContainsKey(key.Sequence))
                 {
                     buffered++;
                 }
-                else if (skippedKeys is not null && skippedKeys.Contains(key))
+                else if (progress.Skipped.Contains(key))
                 {
                     duplicates++;
                 }
-                else if (quarantinedKeys is not null && quarantinedKeys.Contains(key))
+                else if (progress.Quarantined.Remove(key))
                 {
                     quarantined++;
                 }
                 else
                 {
+                    _ = progress.Applied.Remove(key);
                     applied++;
                 }
             }
 
-            _ = request.Completion.TrySetResult(new RemoteApplyOutcome(applied, duplicates, buffered, snapshot, quarantined));
+            if (entry.SharedPending is { } sharedPending)
+            {
+                for (var commitIndex = 0; commitIndex < sharedPending.Count; commitIndex++)
+                {
+                    var key = sharedPending[commitIndex];
+                    if (_pending.TryGetValue(key.Origin, out var queue) && queue.ContainsKey(key.Sequence))
+                    {
+                        buffered++;
+                    }
+                    else
+                    {
+                        duplicates++;
+                    }
+                }
+            }
+
+            counts[index] = new RemoteRequestCounts(applied, duplicates, buffered, quarantined);
+        }
+
+        foreach (var (origin, _) in progress.Applied)
+        {
+            var target = FindAttributionTarget(queued, counts, committedOnly: null, origin);
+            counts[target].Applied++;
+        }
+
+        foreach (var (origin, _) in progress.Quarantined)
+        {
+            var target = FindAttributionTarget(queued, counts, committedOnly: null, origin);
+            counts[target].Quarantined++;
+        }
+
+        for (var index = 0; index < queued.Count; index++)
+        {
+            var c = counts[index];
+            _ = queued[index].Request.Completion.TrySetResult(
+                new RemoteApplyOutcome(c.Applied, c.Duplicates, c.Buffered, snapshot, c.Quarantined));
         }
 
         return true;
     }
 
-    private static bool FailRemoteGroup(
-        List<(RemoteApplyRequest Request, int PreDuplicates, List<(string Origin, long Sequence)> Enqueued)> queued,
+    private bool CompleteRemoteGroupPartialFailure(
+        List<QueuedRemoteRequest> queued,
+        RemoteGroupProgress progress,
         ApplyRemoteBatchOutcome failure)
     {
+        var snapshot = _versions.Snapshot();
+        var committed = new bool[queued.Count];
+        var counts = new RemoteRequestCounts[queued.Count];
+        var anyCommitted = false;
         for (var index = 0; index < queued.Count; index++)
         {
-            _ = queued[index].Request.Completion.TrySetResult(failure);
+            var entry = queued[index];
+            if (!IsRequestCommitted(entry))
+            {
+                for (var commitIndex = 0; commitIndex < entry.Enqueued.Count; commitIndex++)
+                {
+                    var key = entry.Enqueued[commitIndex];
+                    _ = progress.Applied.Remove(key);
+                    _ = progress.Quarantined.Remove(key);
+                }
+
+                continue;
+            }
+
+            committed[index] = true;
+            anyCommitted = true;
+            var applied = 0;
+            var duplicates = entry.PreDuplicates;
+            var quarantined = 0;
+            for (var commitIndex = 0; commitIndex < entry.Enqueued.Count; commitIndex++)
+            {
+                var key = entry.Enqueued[commitIndex];
+                if (progress.Skipped.Contains(key))
+                {
+                    duplicates++;
+                }
+                else if (progress.Quarantined.Remove(key))
+                {
+                    quarantined++;
+                }
+                else
+                {
+                    _ = progress.Applied.Remove(key);
+                    applied++;
+                }
+            }
+
+            if (entry.SharedPending is { } sharedPending)
+            {
+                duplicates += sharedPending.Count;
+            }
+
+            counts[index] = new RemoteRequestCounts(applied, duplicates, 0, quarantined);
+        }
+
+        if (anyCommitted)
+        {
+            foreach (var (origin, _) in progress.Applied)
+            {
+                var target = FindAttributionTarget(queued, counts, committed, origin);
+                if (target >= 0)
+                {
+                    counts[target].Applied++;
+                }
+            }
+
+            foreach (var (origin, _) in progress.Quarantined)
+            {
+                var target = FindAttributionTarget(queued, counts, committed, origin);
+                if (target >= 0)
+                {
+                    counts[target].Quarantined++;
+                }
+            }
+        }
+
+        for (var index = 0; index < queued.Count; index++)
+        {
+            if (committed[index])
+            {
+                var c = counts[index];
+                _ = queued[index].Request.Completion.TrySetResult(
+                    new RemoteApplyOutcome(c.Applied, c.Duplicates, 0, snapshot, c.Quarantined));
+            }
+            else
+            {
+                _ = queued[index].Request.Completion.TrySetResult(failure);
+            }
         }
 
         return false;
+    }
+
+    private bool IsRequestCommitted(QueuedRemoteRequest entry)
+    {
+        for (var index = 0; index < entry.Enqueued.Count; index++)
+        {
+            var (origin, sequence) = entry.Enqueued[index];
+            if (sequence > _versions.Get(origin))
+            {
+                return false;
+            }
+        }
+
+        if (entry.SharedPending is { } sharedPending)
+        {
+            for (var index = 0; index < sharedPending.Count; index++)
+            {
+                var (origin, sequence) = sharedPending[index];
+                if (sequence > _versions.Get(origin))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static int FindAttributionTarget(
+        List<QueuedRemoteRequest> queued,
+        RemoteRequestCounts[] counts,
+        bool[]? committedOnly,
+        string origin)
+    {
+        var fallback = -1;
+        var appliedFallback = -1;
+        for (var index = 0; index < queued.Count; index++)
+        {
+            if (committedOnly is not null && !committedOnly[index])
+            {
+                continue;
+            }
+
+            if (fallback < 0)
+            {
+                fallback = index;
+            }
+
+            if (appliedFallback < 0 && counts[index].Applied > 0)
+            {
+                appliedFallback = index;
+            }
+
+            var enqueued = queued[index].Enqueued;
+            for (var commitIndex = 0; commitIndex < enqueued.Count; commitIndex++)
+            {
+                if (string.Equals(enqueued[commitIndex].Origin, origin, StringComparison.Ordinal))
+                {
+                    return index;
+                }
+            }
+        }
+
+        return appliedFallback >= 0 ? appliedFallback : fallback;
     }
 
     private StorageCorrupted? ValidateRemoteBatch(IReadOnlyList<CommitMetadata> commits, bool isReplay)
@@ -587,6 +800,11 @@ internal sealed partial class DatabaseSession
             if (!StorageEngineOptions.IsValidRegion(commit.OriginRegion) || commit.Sequence <= 0)
             {
                 return new StorageCorrupted(DatabaseId, "remote commit carries an invalid origin or sequence");
+            }
+
+            if (CommitFrame.EncodedSize(commit) > CommitFrame.MaxEncodedSize)
+            {
+                return new StorageCorrupted(DatabaseId, "remote commit exceeds the maximum commit log frame size");
             }
 
             if (!isReplay
@@ -614,6 +832,7 @@ internal sealed partial class DatabaseSession
     private ApplyRemoteBatchOutcome ApplyRemote(IReadOnlyList<CommitMetadata> commits, bool isReplay)
     {
         var duplicates = 0;
+        List<(string Origin, long Sequence)>? sharedPending = null;
         for (var index = 0; index < commits.Count; index++)
         {
             var commit = commits[index];
@@ -641,7 +860,8 @@ internal sealed partial class DatabaseSession
 
             if (!queue.TryAdd(commit.Sequence, commit))
             {
-                duplicates++;
+                sharedPending ??= [];
+                sharedPending.Add((commit.OriginRegion, commit.Sequence));
             }
         }
 
@@ -652,6 +872,18 @@ internal sealed partial class DatabaseSession
         }
 
         var outcome = ApplyPending(commits, persist: true);
+        if (sharedPending is not null)
+        {
+            for (var index = 0; index < sharedPending.Count; index++)
+            {
+                var (origin, sequence) = sharedPending[index];
+                if (!_pending.TryGetValue(origin, out var queue) || !queue.ContainsKey(sequence))
+                {
+                    duplicates++;
+                }
+            }
+        }
+
         return outcome switch
         {
             RemoteApplyOutcome applied => applied with { Duplicates = applied.Duplicates + duplicates },
@@ -661,18 +893,8 @@ internal sealed partial class DatabaseSession
         };
     }
 
-    private ApplyRemoteBatchOutcome ApplyPending(IReadOnlyList<CommitMetadata> requested, bool persist) =>
-        ApplyPending(requested, persist, trackOutcomeKeys: false, out _, out _);
-
-    private ApplyRemoteBatchOutcome ApplyPending(
-        IReadOnlyList<CommitMetadata> requested,
-        bool persist,
-        bool trackOutcomeKeys,
-        out HashSet<(string Origin, long Sequence)>? skippedKeys,
-        out HashSet<(string Origin, long Sequence)>? quarantinedKeys)
+    private ApplyRemoteBatchOutcome ApplyPending(IReadOnlyList<CommitMetadata> requested, bool persist, RemoteGroupProgress? progress = null)
     {
-        skippedKeys = null;
-        quarantinedKeys = null;
         var applied = 0;
         var duplicates = 0;
         var quarantined = 0;
@@ -762,7 +984,8 @@ internal sealed partial class DatabaseSession
                 break;
             }
 
-            var status = ApplyInTransaction(order, persist, out var skipped, out var dataFault, trackOutcomeKeys ? skippedKeys ??= [] : null);
+            List<(string Origin, long Sequence)>? iterationSkipped = progress is not null ? [] : null;
+            var status = ApplyInTransaction(order, persist, out var skipped, out var dataFault, iterationSkipped);
             if (dataFault && order is [{ Quarantined: false } single])
             {
                 poisoned ??= [];
@@ -786,11 +1009,6 @@ internal sealed partial class DatabaseSession
                 if (pending.Quarantined)
                 {
                     isolated++;
-                    if (trackOutcomeKeys)
-                    {
-                        quarantinedKeys ??= [];
-                        _ = quarantinedKeys.Add((pending.Commit.OriginRegion, pending.Commit.Sequence));
-                    }
                 }
             }
 
@@ -802,6 +1020,32 @@ internal sealed partial class DatabaseSession
             isolate &= isolated == 0;
             Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
             _versions.Set(tentative);
+            RecordFilteredChange(order);
+            if (progress is not null)
+            {
+                if (iterationSkipped is not null)
+                {
+                    for (var index = 0; index < iterationSkipped.Count; index++)
+                    {
+                        _ = progress.Skipped.Add(iterationSkipped[index]);
+                    }
+                }
+
+                for (var index = 0; index < order.Count; index++)
+                {
+                    var pending = order[index];
+                    var key = (pending.Commit.OriginRegion, pending.Commit.Sequence);
+                    if (pending.Quarantined)
+                    {
+                        _ = progress.Quarantined.Add(key);
+                    }
+                    else if (!progress.Skipped.Contains(key))
+                    {
+                        _ = progress.Applied.Add(key);
+                    }
+                }
+            }
+
             applied += order.Count - skipped - isolated;
             duplicates += skipped;
             quarantined += isolated;
@@ -838,7 +1082,7 @@ internal sealed partial class DatabaseSession
         bool persist,
         out int skipped,
         out bool dataFault,
-        HashSet<(string Origin, long Sequence)>? skippedKeys = null,
+        List<(string Origin, long Sequence)>? skippedKeys = null,
         long? leaseDeadline = null)
     {
         skipped = 0;
@@ -879,7 +1123,7 @@ internal sealed partial class DatabaseSession
                 if (!scope.Failed)
                 {
                     skipped++;
-                    _ = skippedKeys?.Add((commit.OriginRegion, commit.Sequence));
+                    skippedKeys?.Add((commit.OriginRegion, commit.Sequence));
                 }
             }
             else
@@ -1122,6 +1366,7 @@ internal sealed partial class DatabaseSession
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
         _laneVersionUpdate[0] = new KeyValuePair<string, long>(Region, sequence);
         _versions.Set(_laneVersionUpdate);
+        RecordFilteredChange(batch);
         return commit;
     }
 }

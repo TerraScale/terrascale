@@ -44,6 +44,7 @@ internal sealed partial class PostgresConnection
             return new PgError("54000", $"at most {PostgresLimits.MaxPreparedStatements.ToString(CultureInfo.InvariantCulture)} prepared statements per session");
         }
 
+        session.ObserveCurrentSchemaEpoch();
         PgCommand command;
         if (session.TryGetCachedParse(message.Sql, out var cached))
         {

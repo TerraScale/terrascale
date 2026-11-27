@@ -145,7 +145,7 @@ internal sealed partial class PostgresConnection
             var read = await session.Executor.ReadAsync(request, cancellationToken);
             return read switch
             {
-                SqlReadResult result => Observed(result.Observed, result.ResultSets),
+                SqlReadResult result => ObservedRead(result),
                 SqlError error => PgErrors.From(error),
                 StorageBusy busy => PgErrors.From(busy),
                 StorageTimeout timeout => PgErrors.From(timeout),
@@ -165,6 +165,12 @@ internal sealed partial class PostgresConnection
         };
     }
 
+    private PgStatementResult ObservedRead(SqlReadResult result)
+    {
+        session.ObserveCurrentSchemaEpoch();
+        return Observed(result.Observed, result.ResultSets);
+    }
+
     private PgStatementResult ObservedWrite(SqlWriteResult write)
     {
         session.ObserveSchemaEpoch(write.Commit.SchemaEpoch);
@@ -177,9 +183,10 @@ internal sealed partial class PostgresConnection
         return PgErrors.From(mismatch);
     }
 
-    private static async ValueTask<PgStatementResult> ExecuteInTransactionAsync(ISqlTransaction active, SqlStatement statement, CancellationToken cancellationToken)
+    private async ValueTask<PgStatementResult> ExecuteInTransactionAsync(ISqlTransaction active, SqlStatement statement, CancellationToken cancellationToken)
     {
         var executed = await active.ExecuteAsync(statement, cancellationToken);
+        session.ObserveCurrentSchemaEpoch();
         return executed switch
         {
             SqlResultSet set => set,

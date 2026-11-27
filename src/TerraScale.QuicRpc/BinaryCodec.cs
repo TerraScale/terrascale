@@ -170,16 +170,41 @@ internal sealed class FrameBuilder : IBufferWriter<byte>, IDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         var builder = Rent();
-        message.WriteTo(builder);
-        return builder;
+        var transferred = false;
+        try
+        {
+            message.WriteTo(builder);
+            transferred = true;
+            return builder;
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                builder.Dispose();
+            }
+        }
     }
 
     public static FrameBuilder EncodeError(QuicRemoteError error)
     {
+        ArgumentNullException.ThrowIfNull(error);
         var builder = Rent();
-        builder.WriteString(error.Code);
-        builder.WriteString(error.Message);
-        return builder;
+        var transferred = false;
+        try
+        {
+            builder.WriteString(error.Code);
+            builder.WriteString(error.Message);
+            transferred = true;
+            return builder;
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                builder.Dispose();
+            }
+        }
     }
 
     public static FrameBuilder Empty() => Rent();

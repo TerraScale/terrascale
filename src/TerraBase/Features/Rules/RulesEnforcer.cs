@@ -956,14 +956,15 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         {
             var session = sessionCatalog.Session;
             var epoch = session.SchemaEpoch;
-            var key = new LiveTableKey(session.DatabaseId, table, epoch);
+            var incarnation = session.SessionIncarnation;
+            var key = new LiveTableKey(session.DatabaseId, incarnation, table, epoch);
             if (_liveTables.TryGetValue(key, out var cached))
             {
                 return cached.Live is { } live ? live : new MissingTable(cached.SchemaVersion);
             }
 
             var fetched = await QueryLiveTableAsync(catalog, table, index, cancellationToken);
-            if (session.SchemaEpoch == epoch)
+            if (session.SchemaEpoch == epoch && session.SessionIncarnation == incarnation)
             {
                 _ = fetched switch
                 {
@@ -1619,7 +1620,7 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
             session.ExecuteReadAsync(new SqlStatementRequest(session.DatabaseId, statements, SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty), cancellationToken);
     }
 
-    private readonly record struct LiveTableKey(Ulid DatabaseId, string Table, ulong SchemaEpoch);
+    private readonly record struct LiveTableKey(Ulid DatabaseId, long SessionIncarnation, string Table, ulong SchemaEpoch);
 
     private readonly record struct CachedLiveTable(LiveTable? Live, long SchemaVersion);
 
@@ -1628,9 +1629,12 @@ internal sealed class RulesEnforcer(RulesStore store, TimeProvider time)
         public static LiveTableKeyComparer Instance { get; } = new();
 
         public bool Equals(LiveTableKey x, LiveTableKey y) =>
-            x.DatabaseId == y.DatabaseId && x.SchemaEpoch == y.SchemaEpoch && AsciiIgnoreCaseComparer.Instance.Equals(x.Table, y.Table);
+            x.DatabaseId == y.DatabaseId
+            && x.SessionIncarnation == y.SessionIncarnation
+            && x.SchemaEpoch == y.SchemaEpoch
+            && AsciiIgnoreCaseComparer.Instance.Equals(x.Table, y.Table);
 
         public int GetHashCode(LiveTableKey obj) =>
-            HashCode.Combine(obj.DatabaseId, obj.SchemaEpoch, AsciiIgnoreCaseComparer.Instance.GetHashCode(obj.Table));
+            HashCode.Combine(obj.DatabaseId, obj.SessionIncarnation, obj.SchemaEpoch, AsciiIgnoreCaseComparer.Instance.GetHashCode(obj.Table));
     }
 }

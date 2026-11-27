@@ -485,7 +485,13 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
             {
                 _metrics.Received(QuicSide.Client, reader.CurrentTotalLength);
                 var decoded = DecodePayload<TRes>(reader.CurrentHeader, reader.CurrentPayload.Span, messageTypeId, requestId);
-                healthy = unarySlot.IsHealthy;
+                var protocolOk = decoded switch
+                {
+                    TRes => true,
+                    QuicRemoteError error => !string.Equals(error.Code, QuicRemoteError.ProtocolViolation, StringComparison.Ordinal),
+                    QuicUnavailable or QuicTimeout => false,
+                };
+                healthy = protocolOk && unarySlot.IsHealthy;
                 return decoded;
             }
 

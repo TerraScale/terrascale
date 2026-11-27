@@ -232,7 +232,7 @@ public static class CrdtCommitLogBenchmarks
                     string.Create(CultureInfo.InvariantCulture, $"commitlog_frame_seal_open decoded {decoded} != {expectedFrames}"));
             },
             diskBytes: () => segmentBytes.Length,
-            note: string.Create(CultureInfo.InvariantCulture, $"{expectedFrames} frames/op; segment_b={segmentBytes.Length}; AES-GCM+CRC32C"),
+            note: string.Create(CultureInfo.InvariantCulture, $"ReadArchivedSegmentAsync open+decrypt+CRC32C (sealed once in setup); {expectedFrames} frames/op; segment_b={segmentBytes.Length}; AES-GCM+CRC32C"),
             cancellationToken: cancellationToken);
     }
 

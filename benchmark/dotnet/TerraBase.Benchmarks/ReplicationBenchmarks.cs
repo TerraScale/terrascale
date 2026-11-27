@@ -36,7 +36,8 @@ public static class ReplicationBenchmarks
         await RunStream1000CommitsThroughputAsync(ctx, cancellationToken);
         await RunFanout3NodeThroughputAsync(ctx, cancellationToken);
         await RunCatchup5000RowsAsync(ctx, cancellationToken);
-        await RunConcurrent32WritersReplicatedAsync(ctx, cancellationToken);
+        await RunConcurrent32WritersReplicatedAsync(ctx, fsyncCommitLog: false, cancellationToken);
+        await RunConcurrent32WritersReplicatedAsync(ctx, fsyncCommitLog: true, cancellationToken);
     }
 
     private static async Task RunSingleCommitE2ELagAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
@@ -50,6 +51,7 @@ public static class ReplicationBenchmarks
             [("gru-1", "gru", 1), ("fra-1", "fra", 2)],
             [databaseId],
             rawKey,
+            fsyncCommitLog: false,
             cancellationToken);
 
         var primary = cluster.Nodes[0];
@@ -108,7 +110,7 @@ public static class ReplicationBenchmarks
             () => measuredCommits > 0 ? totalWireBytes / measuredCommits : wireBytesPerCommit,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"2-node mTLS QUIC gru->fra write+push+apply+SELECT; wire_b_per_commit={wireBytesPerCommit}B vs TursoDB ~1-5ms LAN / periodic pull sync"),
+                $"2-node mTLS QUIC gru->fra write+push+apply+SELECT; FsyncCommitLog=false, loopback; wire_b_per_commit={wireBytesPerCommit}B vs TursoDB ~1-5ms LAN / periodic pull sync"),
             cancellationToken);
 
         BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, "Single-commit E2E replication dropped pushes.");
@@ -121,7 +123,7 @@ public static class ReplicationBenchmarks
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"  -> repl_single_commit_e2e_lag: p50={metrics.P50Us:F1}us ({metrics.P50Us / 1000.0:F3}ms) p99={metrics.P99Us:F1}us wire={wireBytesPerCommit}B/commit"));
+            $"  -> repl_single_commit_e2e_lag (FsyncCommitLog=false, loopback): p50={metrics.P50Us:F1}us ({metrics.P50Us / 1000.0:F3}ms) p99={metrics.P99Us:F1}us wire={wireBytesPerCommit}B/commit"));
     }
 
     private static async Task RunStream1000CommitsThroughputAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
@@ -136,6 +138,7 @@ public static class ReplicationBenchmarks
             [("gru-1", "gru", 1), ("fra-1", "fra", 2)],
             [databaseId],
             rawKey,
+            fsyncCommitLog: false,
             cancellationToken);
 
         var primary = cluster.Nodes[0];
@@ -200,14 +203,14 @@ public static class ReplicationBenchmarks
             () => totalCommits > 0 ? totalPayloadBytes / totalCommits : (long)Math.Round(wireBytesPerCommit),
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{commitsPerBurst} commits/op (1000/round) gru->fra mTLS QUIC; wire_b_per_commit={wireBytesPerCommit:F1}B ({compressionVsTurso:F1}x smaller than TursoDB 4096B page); commits/s=ops/s*{commitsPerBurst}"),
+                $"{commitsPerBurst} commits/op (1000/round) gru->fra mTLS QUIC; FsyncCommitLog=false, loopback; wire_b_per_commit={wireBytesPerCommit:F1}B ({compressionVsTurso:F1}x smaller than TursoDB 4096B page); commits/s=ops/s*{commitsPerBurst}"),
             cancellationToken);
 
         BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, "Streaming replication dropped pushes.");
         var commitsPerSec = metrics.OpsPerSec * commitsPerBurst;
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"  -> repl_stream_1000_commits_throughput: {commitsPerSec:F1} commits/s | {wireBytesPerCommit:F1} B/commit ({compressionVsTurso:F1}x smaller than TursoDB 4096B page)"));
+            $"  -> repl_stream_1000_commits_throughput (FsyncCommitLog=false, loopback): {commitsPerSec:F1} commits/s | {wireBytesPerCommit:F1} B/commit ({compressionVsTurso:F1}x smaller than TursoDB 4096B page)"));
     }
 
     private static async Task RunFanout3NodeThroughputAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
@@ -222,6 +225,7 @@ public static class ReplicationBenchmarks
             [("gru-1", "gru", 1), ("fra-1", "fra", 2), ("sjc-1", "sjc", 3)],
             [databaseId],
             rawKey,
+            fsyncCommitLog: false,
             cancellationToken);
 
         var primary = cluster.Nodes[0];
@@ -286,14 +290,14 @@ public static class ReplicationBenchmarks
             () => totalCommits > 0 ? totalPayloadBytes / totalCommits : wireBytesPerCommit,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"3-node parallel fanout gru->(fra+sjc) {commitsPerBurst} commits/op; wire_b_per_commit={wireBytesPerCommit}B; commits/s=ops/s*{commitsPerBurst}"),
+                $"3-node parallel fanout gru->(fra+sjc) {commitsPerBurst} commits/op; FsyncCommitLog=false, loopback; wire_b_per_commit={wireBytesPerCommit}B; commits/s=ops/s*{commitsPerBurst}"),
             cancellationToken);
 
         BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, "3-node fanout replication dropped pushes.");
         var commitsPerSec = metrics.OpsPerSec * commitsPerBurst;
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"  -> repl_fanout_3node_throughput: {commitsPerSec:F1} primary commits/s ({commitsPerSec * 2.0:F1} follower-applies/s across fra+sjc) | {wireBytesPerCommit} B/commit"));
+            $"  -> repl_fanout_3node_throughput (FsyncCommitLog=false, loopback): {commitsPerSec:F1} primary commits/s ({commitsPerSec * 2.0:F1} follower-applies/s across fra+sjc) | {wireBytesPerCommit} B/commit"));
     }
 
     private static async Task RunCatchup5000RowsAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
@@ -319,6 +323,7 @@ public static class ReplicationBenchmarks
             [("gru-1", "gru", 1), ("fra-1", "fra", 2)],
             databaseIds,
             rawKey,
+            fsyncCommitLog: false,
             cancellationToken);
 
         var primary = cluster.Nodes[0];
@@ -404,28 +409,36 @@ public static class ReplicationBenchmarks
             () => (long)Math.Round(wireBytesPerRun),
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"cold follower catchup {totalRows} rows ({batchCount}x{rowsPerBatch}); wire={wireBytesPerRun / 1024.0:F1}KiB ({wireBytesPerRow:F1}B/row, +{wireOverheadPct:F1}% over raw payload vs 4KiB page frames); rows/s=ops/s*{totalRows}"),
+                $"cold follower catchup {totalRows} rows ({batchCount}x{rowsPerBatch}); FsyncCommitLog=false, loopback; wire={wireBytesPerRun / 1024.0:F1}KiB ({wireBytesPerRow:F1}B/row, +{wireOverheadPct:F1}% over raw payload vs 4KiB page frames); rows/s=ops/s*{totalRows}"),
             cancellationToken);
 
         BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, "Catchup 5000 rows replication dropped pushes.");
         var rowsPerSec = metrics.OpsPerSec * totalRows;
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"  -> repl_catchup_5000_rows: {rowsPerSec:F0} rows/s | p50={metrics.P50Us / 1000.0:F2}ms for 5000 rows | wire={wireBytesPerRun / 1024.0:F1}KiB ({wireBytesPerRow:F1} B/row)"));
+            $"  -> repl_catchup_5000_rows (FsyncCommitLog=false, loopback): {rowsPerSec:F0} rows/s | p50={metrics.P50Us / 1000.0:F2}ms for 5000 rows | wire={wireBytesPerRun / 1024.0:F1}KiB ({wireBytesPerRow:F1} B/row)"));
     }
 
-    private static async Task RunConcurrent32WritersReplicatedAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
+    private static async Task RunConcurrent32WritersReplicatedAsync(
+        BenchRunnerContext ctx,
+        bool fsyncCommitLog,
+        CancellationToken cancellationToken)
     {
         const int writers = 32;
+        var benchmarkId = fsyncCommitLog
+            ? "repl_concurrent_32_writers_replicated_durable"
+            : "repl_concurrent_32_writers_replicated";
+        var prefix = fsyncCommitLog ? "repl-conc32-durable" : "repl-conc32";
         var databaseId = Ulid.NewUlid();
         var rawKey = RandomNumberGenerator.GetBytes(DatabaseOpenRequest.RawKeyLength);
 
         await using var cluster = await ReplCluster.StartAsync(
             ctx,
-            "repl-conc32",
+            prefix,
             [("gru-1", "gru", 1), ("fra-1", "fra", 2)],
             [databaseId],
             rawKey,
+            fsyncCommitLog,
             cancellationToken);
 
         var primary = cluster.Nodes[0];
@@ -444,9 +457,17 @@ public static class ReplicationBenchmarks
         var lastBookmark = CausalBookmark.Empty;
         var tasks = new Task<SqlWriteResult>[writers];
 
+        var note = fsyncCommitLog
+            ? string.Create(
+                CultureInfo.InvariantCulture,
+                $"32 writers, FsyncCommitLog=true (durable), loopback, mTLS QUIC + ChaCha20 SQLite; replicated_tx/s=ops/s*{writers} vs TursoDB 9,500 TPS published concurrent writes")
+            : string.Create(
+                CultureInfo.InvariantCulture,
+                $"32 concurrent writers + live mTLS QUIC replication gru->fra; FsyncCommitLog=false, loopback; replicated_tx/s=ops/s*{writers} vs TursoDB 9,500 TPS published concurrent writes");
+
         var metrics = await ctx.MeasureAsync(
             Suite,
-            "repl_concurrent_32_writers_replicated",
+            benchmarkId,
             5,
             40,
             async _ =>
@@ -479,23 +500,22 @@ public static class ReplicationBenchmarks
                 RequireBookmarkReached(await followerSession.WaitForBookmarkAsync(maxBookmark, TimeSpan.FromSeconds(20), cancellationToken));
             },
             null,
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"32 concurrent writers + live mTLS QUIC replication gru->fra; replicated_tx/s=ops/s*{writers} vs TursoDB 9,500 TPS published concurrent writes"),
+            note,
             cancellationToken);
 
-        BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, "Concurrent 32-writer replication dropped pushes.");
+        BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, string.Concat(benchmarkId, " dropped pushes."));
         VerifyRowCount(
             RequireRead(await followerSession.ExecuteReadAsync(
                 CountStatement(databaseId, "SELECT COUNT(*) FROM conc_items;", lastBookmark),
                 cancellationToken)),
             Volatile.Read(ref rowId),
-            "repl_concurrent_32_writers_replicated follower count");
+            string.Concat(benchmarkId, " follower count"));
         var effectiveTps = metrics.OpsPerSec * writers;
         var vsTursoRatio = effectiveTps / TursoConcurrentTps;
+        var modeLabel = fsyncCommitLog ? "FsyncCommitLog=true (durable), loopback" : "FsyncCommitLog=false, loopback";
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"  -> repl_concurrent_32_writers_replicated: {effectiveTps:F1} replicated tx/s ({vsTursoRatio:F2}x TursoDB 9,500 TPS)"));
+            $"  -> {benchmarkId} ({modeLabel}): {effectiveTps:F1} replicated tx/s ({vsTursoRatio:F2}x TursoDB 9,500 TPS)"));
     }
 
     private static async Task<SqlWriteResult> ExecuteReplicatedWriteTaskAsync(
@@ -756,6 +776,7 @@ public static class ReplicationBenchmarks
             (string NodeId, string Region, ushort NumericId)[] specs,
             Ulid[] databaseIds,
             ReadOnlyMemory<byte> rawKey,
+            bool fsyncCommitLog,
             CancellationToken cancellationToken)
         {
             var secret = RandomNumberGenerator.GetBytes(32);
@@ -793,7 +814,7 @@ public static class ReplicationBenchmarks
 
                 var storageOptions = new StorageEngineOptions(dir, options.StorageOrigin, numericId, (byte)numericId, new DeltaColumnRegistry())
                 {
-                    FsyncCommitLog = false,
+                    FsyncCommitLog = fsyncCommitLog,
                 };
                 var engine = new SqliteStorageEngine(storageOptions, TimeProvider.System);
                 var sessions = new Dictionary<Ulid, ISqlDatabaseSession>(databaseIds.Length);

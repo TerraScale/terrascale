@@ -254,7 +254,11 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         return new ArchiveObjectsDeleted();
     }
 
-    internal void Forget(Ulid databaseId) => _cache.TryRemove(databaseId, out _);
+    internal void Forget(Ulid databaseId)
+    {
+        _cache.TryRemove(databaseId, out _);
+        _nextRetirementSweep.TryRemove(databaseId, out _);
+    }
 
     private async ValueTask<CachedManifestOutcome> FetchRemoteAsync(Ulid databaseId, CancellationToken cancellationToken)
     {

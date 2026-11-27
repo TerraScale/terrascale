@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 using TerraBase.Storage;
@@ -20,6 +21,8 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
     private static readonly TimeSpan SchemaPoll = TimeSpan.FromMilliseconds(500);
 
     private static readonly TimeSpan SingleRegionBootstrapGrace = TimeSpan.FromSeconds(10);
+
+    private static readonly FrozenSet<string> TelemetryTables = FrozenSet.Create(StringComparer.OrdinalIgnoreCase, "usage_counters", "request_logs");
 
     private static readonly (string Table, string Sql)[] Tables =
     [
@@ -54,7 +57,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         : 0;
 
     public long CatalogGeneration => Volatile.Read(ref _state) is { Session.IsUsable: true } state
-        ? state.CatalogGeneration
+        ? state.Offset + state.Session.FilteredChangeGeneration
         : 0;
 
     public string KeyId => FileText.Read(Path.Combine(options.DataDirectory, KeyIdFile))?.Trim() ?? keyring.ActiveKeyId;
@@ -137,66 +140,27 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         }
 
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, mode, CausalBookmark.Empty);
-        var state = await UsableStateAsync(cancellationToken);
-        var outcome = await coordinator.ExecuteWriteAsync(state.Session, request, cancellationToken);
-        return MapWriteOutcome(outcome, state, notifyNonTelemetry: true);
+        var session = await UsableSessionAsync(cancellationToken);
+        var outcome = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
+        return MapWriteOutcome(outcome);
     }
 
     public ValueTask<SystemWriteOutcome> WriteAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
         WriteAsync([statement], mode, cancellationToken);
 
-    public async ValueTask<SystemWriteOutcome> WriteTelemetryAsync(
-        IReadOnlyList<SqlStatement> statements, ConsistencyMode mode, CancellationToken cancellationToken)
-    {
-        if (!IsOpen)
-        {
-            return Opening;
-        }
-
-        var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, mode, CausalBookmark.Empty);
-        var state = await UsableStateAsync(cancellationToken);
-        state.BeginTelemetryWrite();
-        var bumped = false;
-        try
-        {
-            var outcome = await coordinator.ExecuteWriteAsync(state.Session, request, cancellationToken);
-            bumped = outcome switch
-            {
-                SqlWriteResult { Commit.Sequence: > 0 } => true,
-                SqlWriteResult or SqlError or SerializationConflict or SchemaMismatch or ClusterUnavailable or ClusterTimeout or StorageBusy => false,
-            };
-            return MapWriteOutcome(outcome, state, notifyNonTelemetry: false);
-        }
-        finally
-        {
-            state.EndTelemetryWrite(bumped);
-        }
-    }
+    public ValueTask<SystemWriteOutcome> WriteTelemetryAsync(
+        IReadOnlyList<SqlStatement> statements, ConsistencyMode mode, CancellationToken cancellationToken) =>
+        WriteAsync(statements, mode, cancellationToken);
 
     public ValueTask<SystemWriteOutcome> WriteTelemetryAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
-        WriteTelemetryAsync([statement], mode, cancellationToken);
+        WriteAsync([statement], mode, cancellationToken);
 
     public async ValueTask<SqlWriteOutcome> WriteLocalTelemetryAsync(
         IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, ConsistencyMode.Fast, CausalBookmark.Empty);
-        var state = await UsableStateAsync(cancellationToken);
-        state.BeginTelemetryWrite();
-        var bumped = false;
-        try
-        {
-            var outcome = await state.Session.ExecuteWriteAsync(request, cancellationToken);
-            bumped = outcome switch
-            {
-                SqlWriteResult { Commit.Sequence: > 0 } => true,
-                SqlWriteResult or SqlError or StrongRequired or SchemaMismatch or StorageBusy or StorageTimeout => false,
-            };
-            return outcome;
-        }
-        finally
-        {
-            state.EndTelemetryWrite(bumped);
-        }
+        var session = await UsableSessionAsync(cancellationToken);
+        return await session.ExecuteWriteAsync(request, cancellationToken);
     }
 
     public ValueTask<ISqlDatabaseSession> UsableSessionAsync(CancellationToken cancellationToken) =>
@@ -204,27 +168,17 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             ? ValueTask.FromResult(current)
             : ReopenSessionAsync(cancellationToken);
 
-    private ValueTask<SessionState> UsableStateAsync(CancellationToken cancellationToken) =>
-        Volatile.Read(ref _state) is { Session.IsUsable: true } current
-            ? ValueTask.FromResult(current)
-            : ReopenStateAsync(cancellationToken);
-
-    private async ValueTask<ISqlDatabaseSession> ReopenSessionAsync(CancellationToken cancellationToken) =>
-        (await ReopenStateAsync(cancellationToken)).Session;
-
-    private async ValueTask<SessionState> ReopenStateAsync(CancellationToken cancellationToken)
+    private async ValueTask<ISqlDatabaseSession> ReopenSessionAsync(CancellationToken cancellationToken)
     {
         var reopened = await databases.OpenAsync(Id, KeyId, cancellationToken);
         return reopened switch
         {
-            ISqlDatabaseSession session => AdoptState(session),
-            ResourceNotFound or BackendUnavailable => Volatile.Read(ref _state) ?? throw new InvalidOperationException("the system database is not open"),
+            ISqlDatabaseSession session => Adopt(session),
+            ResourceNotFound or BackendUnavailable => Volatile.Read(ref _state)?.Session ?? throw new InvalidOperationException("the system database is not open"),
         };
     }
 
-    private ISqlDatabaseSession Adopt(ISqlDatabaseSession session) => AdoptState(session).Session;
-
-    private SessionState AdoptState(ISqlDatabaseSession session)
+    private ISqlDatabaseSession Adopt(ISqlDatabaseSession session)
     {
         lock (_stateGate)
         {
@@ -232,26 +186,26 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
             {
                 if (ReferenceEquals(current.Session, session))
                 {
-                    return current;
+                    return current.Session;
                 }
 
-                var previousMax = Math.Max(current.Offset + current.Session.ChangeGeneration, current.CatalogGeneration);
+                var previousMax = Math.Max(current.Offset + current.Session.ChangeGeneration, current.Offset + current.Session.FilteredChangeGeneration);
                 if (previousMax >= _nextEpoch)
                 {
                     _nextEpoch = previousMax + 1;
                 }
             }
 
-            var offset = _nextEpoch;
-            var next = new SessionState(session, offset);
+            session.ConfigureFilteredChangeTables(TelemetryTables);
+            var next = new SessionState(session, _nextEpoch);
             Volatile.Write(ref _state, next);
-            return next;
+            return next.Session;
         }
     }
 
-    private static SystemWriteOutcome MapWriteOutcome(ClusterWriteOutcome outcome, SessionState state, bool notifyNonTelemetry) => outcome switch
+    private static SystemWriteOutcome MapWriteOutcome(ClusterWriteOutcome outcome) => outcome switch
     {
-        SqlWriteResult written => NotifyAndReturn(written, state, notifyNonTelemetry),
+        SqlWriteResult written => written,
         SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new StateConflict(error.Message, "already_exists"),
         SqlError error => new BackendUnavailable(error.Message, "system_catalog_error"),
         SerializationConflict conflict => new StateConflict(conflict.Reason, "serialization_conflict"),
@@ -261,118 +215,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         StorageBusy busy => new BackendUnavailable(busy.Message, "storage_busy"),
     };
 
-    private static SqlWriteResult NotifyAndReturn(SqlWriteResult written, SessionState state, bool notifyNonTelemetry)
-    {
-        if (notifyNonTelemetry)
-        {
-            state.OnNonTelemetryWrite();
-        }
-
-        return written;
-    }
-
-    private sealed class SessionState(ISqlDatabaseSession session, long offset)
-    {
-        private readonly Lock _gate = new();
-        private long _observedSessionGeneration = session.ChangeGeneration;
-        private long _catalogGeneration = offset + session.ChangeGeneration;
-        private int _inFlightTelemetry;
-        private int _availableTelemetryCredits;
-
-        public ISqlDatabaseSession Session { get; } = session;
-
-        public long Offset { get; } = offset;
-
-        public long CatalogGeneration
-        {
-            get
-            {
-                var current = Session.ChangeGeneration;
-                if (current == Volatile.Read(ref _observedSessionGeneration))
-                {
-                    return Volatile.Read(ref _catalogGeneration);
-                }
-
-                lock (_gate)
-                {
-                    ReconcileLocked();
-                    return _catalogGeneration;
-                }
-            }
-        }
-
-        public void OnNonTelemetryWrite()
-        {
-            lock (_gate)
-            {
-                ReconcileLocked();
-                _catalogGeneration++;
-            }
-        }
-
-        public void BeginTelemetryWrite()
-        {
-            lock (_gate)
-            {
-                ReconcileLocked();
-                _inFlightTelemetry++;
-                _availableTelemetryCredits++;
-            }
-        }
-
-        public void EndTelemetryWrite(bool bumpedSessionGeneration)
-        {
-            lock (_gate)
-            {
-                ReconcileLocked();
-                if (_inFlightTelemetry > 0)
-                {
-                    _inFlightTelemetry--;
-                }
-
-                if (!bumpedSessionGeneration)
-                {
-                    if (_availableTelemetryCredits > 0)
-                    {
-                        _availableTelemetryCredits--;
-                    }
-                    else
-                    {
-                        _catalogGeneration++;
-                    }
-                }
-
-                if (_availableTelemetryCredits > _inFlightTelemetry)
-                {
-                    _availableTelemetryCredits = _inFlightTelemetry;
-                }
-            }
-        }
-
-        private void ReconcileLocked()
-        {
-            var latest = Session.ChangeGeneration;
-            if (latest <= _observedSessionGeneration)
-            {
-                return;
-            }
-
-            var delta = latest - _observedSessionGeneration;
-            if (_availableTelemetryCredits > 0)
-            {
-                var absorbed = (int)Math.Min(delta, _availableTelemetryCredits);
-                _availableTelemetryCredits -= absorbed;
-                delta -= absorbed;
-            }
-
-            if (delta > 0)
-            {
-                _catalogGeneration += delta;
-            }
-
-            _observedSessionGeneration = latest;
-        }
-    }
+    private sealed record SessionState(ISqlDatabaseSession Session, long Offset);
 
     private static SystemQueryOutcome Rows(IReadOnlyList<SqlResultSet> sets) =>
         sets.Count == 0 ? new([]) : new(sets[^1].Rows);
@@ -472,8 +315,8 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         IReadOnlyList<SqlStatement> statements, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(Id, statements, SqlAccess.Write, ConsistencyMode.Strong, CausalBookmark.Empty);
-        var state = await UsableStateAsync(cancellationToken);
-        var outcome = await coordinator.ExecuteLocalBootstrapWriteAsync(state.Session, request, cancellationToken);
-        return MapWriteOutcome(outcome, state, notifyNonTelemetry: true);
+        var session = await UsableSessionAsync(cancellationToken);
+        var outcome = await coordinator.ExecuteLocalBootstrapWriteAsync(session, request, cancellationToken);
+        return MapWriteOutcome(outcome);
     }
 }

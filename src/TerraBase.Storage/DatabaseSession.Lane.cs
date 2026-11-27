@@ -777,7 +777,7 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        var outcome = CommitWrite(commits, epoch);
+        var outcome = CommitWrite(commits, epoch, _laneGroupTables.Keys, schemaTouched);
         commits.Clear();
         for (var index = 0; index < completed.Count; index++)
         {
@@ -993,7 +993,6 @@ internal sealed partial class DatabaseSession
         {
             MetaStore.TouchTables(scope, tables);
             MetaStore.SaveVersion(scope, Region, sequence, nextEpoch);
-            tables.Clear();
         }
 
         if (scope.Failed)
@@ -1170,6 +1169,7 @@ internal sealed partial class DatabaseSession
         var finished = FinishLocalFast(context, ref nextSequence, ref epoch, deferMetadata: false, out var metadata, out var itemRows);
         if (!finished.IsOk)
         {
+            _laneItemTables.Clear();
             _ = EndTransaction(context);
             commit.Completion.TrySetResult(finished.ToBusy());
             return true;
@@ -1182,8 +1182,9 @@ internal sealed partial class DatabaseSession
             commits.Add(metadata);
         }
 
-        var committed = CommitWrite(commits, epoch);
+        var committed = CommitWrite(commits, epoch, _laneItemTables.Keys, context.IsSchemaChange);
         commits.Clear();
+        _laneItemTables.Clear();
         if (committed.IsOk)
         {
             _rowsSinceCheckpoint += itemRows;
@@ -1313,7 +1314,11 @@ internal sealed partial class DatabaseSession
         return status;
     }
 
-    private SqliteStatus CommitWrite(List<CommitMetadata> commits, ulong epoch)
+    private SqliteStatus CommitWrite(
+        List<CommitMetadata> commits,
+        ulong epoch,
+        Dictionary<string, HlcTimestamp>.KeyCollection touchedTables,
+        bool schemaTouched)
     {
         if (commits.Count == 0)
         {
@@ -1361,6 +1366,7 @@ internal sealed partial class DatabaseSession
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
         _laneVersionUpdate[0] = new KeyValuePair<string, long>(Region, commits[^1].Sequence);
         _versions.Set(_laneVersionUpdate);
+        RecordFilteredChange(touchedTables, schemaTouched);
         log.SealIfDue();
         return SqliteStatus.Success;
     }

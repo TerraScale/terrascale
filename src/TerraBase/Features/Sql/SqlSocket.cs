@@ -1263,6 +1263,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             if (_sendBuffer.Capacity > MaxRetainedBufferBytes)
             {
                 _sendBuffer = new ArrayBufferWriter<byte>(4096);
+                _sendWriter?.Reset(_sendBuffer);
             }
         }
     }

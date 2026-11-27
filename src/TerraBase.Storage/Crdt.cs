@@ -114,7 +114,13 @@ internal sealed class MetaCache
 
     public bool TryGetTableHlc(string table, out HlcTimestamp hlc) => _knownTableHlcs.TryGetValue(table, out hlc);
 
-    public void SetTableHlc(string table, HlcTimestamp hlc) => _knownTableHlcs[table] = hlc;
+    public void SetTableHlc(string table, HlcTimestamp hlc)
+    {
+        if (hlc > HlcTimestamp.Zero)
+        {
+            _knownTableHlcs[table] = hlc;
+        }
+    }
 
     public void Clear()
     {
@@ -284,7 +290,7 @@ internal static class MetaStore
         var cache = scope.MetaCache;
         foreach (var (table, hlc) in tables)
         {
-            if (cache is not null && cache.TryGetTableHlc(table, out var known))
+            if (cache is not null && cache.TryGetTableHlc(table, out var known) && known > HlcTimestamp.Zero)
             {
                 if (hlc <= known)
                 {

@@ -399,6 +399,14 @@ public interface ISqlDatabaseSession : IAsyncDisposable
 
     long ChangeGeneration => 0;
 
+    long FilteredChangeGeneration => ChangeGeneration;
+
+    long SessionIncarnation => 0;
+
+    void ConfigureFilteredChangeTables(IReadOnlySet<string> excludedTables)
+    {
+    }
+
     ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken);
 
     ValueTask<SqlWriteOutcome> ExecuteWriteAsync(SqlStatementRequest request, CancellationToken cancellationToken);

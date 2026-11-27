@@ -13,6 +13,10 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
     private const int CancelCode = 80877102;
     private const int SslCode = 80877103;
     private const int GssCode = 80877104;
+    private const int InitialParameterBufferBytes = 256;
+    private const int MaxRetainedParameterBytes = 65536;
+    private const int InitialParameterSlices = 16;
+    private const int MaxRetainedParameterSlices = 256;
 
     private static readonly short[] FormatZero = [0];
     private static readonly short[] FormatOne = [1];
@@ -22,8 +26,8 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
     private CancellationTokenSource? _readCts;
     private CancellationToken _registeredToken;
     private CancellationTokenRegistration _closedRegistration;
-    private byte[] _parameterBuffer = new byte[256];
-    private PgParameterSlice[] _parameterSlices = new PgParameterSlice[16];
+    private byte[] _parameterBuffer = new byte[InitialParameterBufferBytes];
+    private PgParameterSlice[] _parameterSlices = new PgParameterSlice[InitialParameterSlices];
 
     public long LastMessageStarted { get; private set; }
 
@@ -121,7 +125,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                 return ValueTask.FromResult<PgMessageRead>(new PgPeerClosed());
             }
 
-            input.AdvanceTo(buffer.Start, buffer.End);
+            input.AdvanceTo(buffer.Start);
         }
 
         return ReadMessageSlowAsync(timeout, ceiling, cancellationToken);
@@ -428,66 +432,81 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
 
     private PgBindMessage? ParseBind(ref PgSpanReader reader)
     {
-        if (!reader.TryCString(out var portal) || !reader.TryCString(out var statement) || !reader.TryInt16(out var formatCount) || formatCount < 0)
+        try
         {
-            return null;
-        }
-
-        if (!TryReadFormats(ref reader, formatCount, out var formats))
-        {
-            return null;
-        }
-
-        if (!reader.TryInt16(out var parameterCount) || parameterCount < 0)
-        {
-            return null;
-        }
-
-        if (parameterCount > _parameterSlices.Length)
-        {
-            _parameterSlices = new PgParameterSlice[Math.Max(_parameterSlices.Length * 2, parameterCount)];
-        }
-
-        var bufferPos = 0;
-        for (var index = 0; index < parameterCount; index++)
-        {
-            if (!reader.TryInt32(out var length) || length < -1)
+            if (!reader.TryCString(out var portal) || !reader.TryCString(out var statement) || !reader.TryInt16(out var formatCount) || formatCount < 0)
             {
                 return null;
             }
 
-            if (length == -1)
-            {
-                _parameterSlices[index] = new PgParameterSlice(0, -1);
-                continue;
-            }
-
-            if (!reader.TrySlice(length, out var slice))
+            if (!TryReadFormats(ref reader, formatCount, out var formats))
             {
                 return null;
             }
 
-            if (bufferPos + length > _parameterBuffer.Length)
+            if (!reader.TryInt16(out var parameterCount) || parameterCount < 0)
             {
-                Array.Resize(ref _parameterBuffer, Math.Max(_parameterBuffer.Length * 2, bufferPos + length));
+                return null;
             }
 
-            slice.CopyTo(_parameterBuffer.AsSpan(bufferPos));
-            _parameterSlices[index] = new PgParameterSlice(bufferPos, length);
-            bufferPos += length;
-        }
+            if (parameterCount > _parameterSlices.Length)
+            {
+                _parameterSlices = new PgParameterSlice[Math.Max(_parameterSlices.Length * 2, parameterCount)];
+            }
 
-        if (!reader.TryInt16(out var resultCount) || resultCount < 0)
+            var bufferPos = 0;
+            for (var index = 0; index < parameterCount; index++)
+            {
+                if (!reader.TryInt32(out var length) || length < -1)
+                {
+                    return null;
+                }
+
+                if (length == -1)
+                {
+                    _parameterSlices[index] = new PgParameterSlice(0, -1);
+                    continue;
+                }
+
+                if (!reader.TrySlice(length, out var slice))
+                {
+                    return null;
+                }
+
+                if (bufferPos + length > _parameterBuffer.Length)
+                {
+                    Array.Resize(ref _parameterBuffer, Math.Max(_parameterBuffer.Length * 2, bufferPos + length));
+                }
+
+                slice.CopyTo(_parameterBuffer.AsSpan(bufferPos));
+                _parameterSlices[index] = new PgParameterSlice(bufferPos, length);
+                bufferPos += length;
+            }
+
+            if (!reader.TryInt16(out var resultCount) || resultCount < 0)
+            {
+                return null;
+            }
+
+            if (!TryReadFormats(ref reader, resultCount, out var results))
+            {
+                return null;
+            }
+
+            return new PgBindMessage(portal, statement, formats, _parameterBuffer, _parameterSlices, parameterCount, results);
+        }
+        finally
         {
-            return null;
-        }
+            if (_parameterBuffer.Length > MaxRetainedParameterBytes)
+            {
+                _parameterBuffer = new byte[InitialParameterBufferBytes];
+            }
 
-        if (!TryReadFormats(ref reader, resultCount, out var results))
-        {
-            return null;
+            if (_parameterSlices.Length > MaxRetainedParameterSlices)
+            {
+                _parameterSlices = new PgParameterSlice[InitialParameterSlices];
+            }
         }
-
-        return new PgBindMessage(portal, statement, formats, _parameterBuffer, _parameterSlices, parameterCount, results);
     }
 
     private static bool TryReadFormats(ref PgSpanReader reader, short count, out short[] formats)

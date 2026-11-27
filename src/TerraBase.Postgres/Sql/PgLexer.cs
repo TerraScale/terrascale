@@ -92,13 +92,17 @@ internal static class PgLexer
     internal static PgError? TryTokenize(string sql, ref PgToken[] buffer, out int count)
     {
         PgToken[]? rented = buffer;
-        var error = TryTokenizeSpan(sql, buffer, ref rented, out count);
-        if (rented is not null)
+        try
         {
-            buffer = rented;
+            return TryTokenizeSpan(sql, buffer, ref rented, out count);
         }
-
-        return error;
+        finally
+        {
+            if (rented is not null)
+            {
+                buffer = rented;
+            }
+        }
     }
 
     private static PgError? TryTokenizeSpan(string sql, Span<PgToken> initial, ref PgToken[]? rented, out int count)
@@ -299,13 +303,13 @@ internal static class PgLexer
             {
                 var grown = ArrayPool<PgToken>.Shared.Rent(destination.Length * 2);
                 destination.CopyTo(grown);
-                if (rented is not null)
-                {
-                    ArrayPool<PgToken>.Shared.Return(rented);
-                }
-
+                var previous = rented;
                 rented = grown;
                 destination = grown;
+                if (previous is not null)
+                {
+                    ArrayPool<PgToken>.Shared.Return(previous);
+                }
             }
 
             destination[count++] = new PgToken(kind, start, index - start);
