@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using TerraBase.Storage;
@@ -12,7 +13,7 @@ public sealed record StrongVoteTally(int Prepared, int Required, IReadOnlyList<S
 
 public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology topology, PeerHealthMonitor health, StrongParticipant participant, QuicRpcClient client, TimeProvider timeProvider)
 {
-    internal async ValueTask<StrongVoteTally> CollectAsync(ISqlDatabaseSession session, StrongPreparePayload payload, StrongTransactionHandle handle, CancellationToken cancellationToken)
+    internal ValueTask<StrongVoteTally> CollectAsync(ISqlDatabaseSession session, StrongPreparePayload payload, StrongTransactionHandle handle, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(payload);
@@ -21,6 +22,84 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         var regions = topology.Regions;
         var regionCount = regions.Count;
         var required = topology.RegionQuorum;
+        return regionCount == 1
+            ? CollectSingleRegionAsync(session, payload, handle, regions[0], required, started, leaseDeadline, cancellationToken)
+            : CollectMultiRegionAsync(session, payload, handle, regions, required, started, leaseDeadline, cancellationToken);
+    }
+
+    private async ValueTask<StrongVoteTally> CollectSingleRegionAsync(
+        ISqlDatabaseSession session,
+        StrongPreparePayload payload,
+        StrongTransactionHandle handle,
+        string region,
+        int required,
+        long started,
+        long leaseDeadline,
+        CancellationToken cancellationToken)
+    {
+        var candidates = topology.StrongCandidates(region, payload.DatabaseId);
+        var ordered = OrderCandidates(candidates);
+        StrongVote last = new ClusterUnavailable("no candidate available in region", "region_unreachable");
+        string? firstRemote = null;
+        List<string>? moreRemotes = null;
+        for (var index = 0; index < ordered.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var candidate = ordered[index];
+            if (!candidate.IsLocal)
+            {
+                handle.DispatchTo(candidate.NodeId);
+                if (firstRemote is null)
+                {
+                    firstRemote = candidate.NodeId;
+                }
+                else if (!string.Equals(firstRemote, candidate.NodeId, StringComparison.Ordinal))
+                {
+                    moreRemotes ??= [firstRemote];
+                    if (!ContainsNode(moreRemotes, candidate.NodeId))
+                    {
+                        moreRemotes.Add(candidate.NodeId);
+                    }
+                }
+            }
+
+            var vote = await VoteAsync(session, payload, candidate, cancellationToken);
+            last = vote;
+            if (!IsRetryable(vote))
+            {
+                break;
+            }
+        }
+
+        var (prepared, unreachable, rejections) = TallySingleVote(last);
+        IReadOnlyList<string> remoteParticipants = moreRemotes is not null
+            ? moreRemotes
+            : firstRemote is not null ? [firstRemote] : [];
+        var withinLease = timeProvider.GetElapsedTime(started) < options.StrongLockLease / 2;
+        return new StrongVoteTally(prepared, required, rejections, unreachable, remoteParticipants, leaseDeadline, withinLease);
+    }
+
+    private static (int Prepared, int Unreachable, IReadOnlyList<StrongPrepareOutcome> Rejections) TallySingleVote(StrongVote vote) => vote switch
+    {
+        Prepared => (1, 0, []),
+        Wounded wounded => (0, 0, [wounded]),
+        ReadSetStale stale => (0, 0, [stale]),
+        SchemaEpochStale epoch => (0, 0, [epoch]),
+        ClusterUnavailable => (0, 1, []),
+    };
+
+    private async ValueTask<StrongVoteTally> CollectMultiRegionAsync(
+        ISqlDatabaseSession session,
+        StrongPreparePayload payload,
+        StrongTransactionHandle handle,
+        IReadOnlyList<string> regions,
+        int required,
+        long started,
+        long leaseDeadline,
+        CancellationToken cancellationToken)
+    {
+        var regionCount = regions.Count;
         var voteCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var dispatch = new VoteDispatchState();
         var votes = new Task<RegionVote>[regionCount];
@@ -34,46 +113,190 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         List<StrongPrepareOutcome>? rejections = null;
         try
         {
-            await foreach (var completed in Task.WhenEach(votes).WithCancellation(cancellationToken))
+            if (regionCount <= 4)
             {
-                var result = await completed;
-                var definitive = result.Vote switch
+                var remaining = regionCount;
+                var completedMask = 0;
+                while (remaining > 0)
                 {
-                    Prepared => Increment(ref prepared),
-                    Wounded wounded => Reject(ref rejections, wounded, definitive: false),
-                    ReadSetStale stale => Reject(ref rejections, stale, definitive: true),
-                    SchemaEpochStale epoch => Reject(ref rejections, epoch, definitive: true),
-                    ClusterUnavailable => Increment(ref unreachable),
-                };
-                var rejectionCount = rejections?.Count ?? 0;
-                if (prepared >= required || definitive || regionCount - rejectionCount - unreachable < required)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var completedIndex = -1;
+                    for (var index = 0; index < regionCount; index++)
+                    {
+                        if ((completedMask & (1 << index)) == 0 && votes[index].IsCompleted)
+                        {
+                            completedIndex = index;
+                            break;
+                        }
+                    }
+
+                    RegionVote result;
+                    if (completedIndex >= 0)
+                    {
+                        completedMask |= 1 << completedIndex;
+                        remaining--;
+                        result = await votes[completedIndex];
+                    }
+                    else if (remaining == 1)
+                    {
+                        var lastIndex = FirstPendingIndex(regionCount, completedMask);
+                        completedMask |= 1 << lastIndex;
+                        remaining = 0;
+                        result = await votes[lastIndex].WaitAsync(cancellationToken);
+                    }
+                    else if (remaining == 2)
+                    {
+                        var firstIndex = FirstPendingIndex(regionCount, completedMask);
+                        var secondIndex = FirstPendingIndex(regionCount, completedMask | (1 << firstIndex));
+                        var finished = await Task.WhenAny(votes[firstIndex], votes[secondIndex]).WaitAsync(cancellationToken);
+                        var finishedIndex = ReferenceEquals(finished, votes[firstIndex]) ? firstIndex : secondIndex;
+                        completedMask |= 1 << finishedIndex;
+                        remaining--;
+                        result = await finished;
+                    }
+                    else
+                    {
+                        Task<RegionVote>[] pendingTasks;
+                        if (remaining == regionCount)
+                        {
+                            pendingTasks = votes;
+                        }
+                        else
+                        {
+                            pendingTasks = new Task<RegionVote>[remaining];
+                            var write = 0;
+                            for (var index = 0; index < regionCount; index++)
+                            {
+                                if ((completedMask & (1 << index)) == 0)
+                                {
+                                    pendingTasks[write++] = votes[index];
+                                }
+                            }
+                        }
+
+                        var finished = await Task.WhenAny(pendingTasks).WaitAsync(cancellationToken);
+                        for (var index = 0; index < regionCount; index++)
+                        {
+                            if ((completedMask & (1 << index)) == 0 && ReferenceEquals(votes[index], finished))
+                            {
+                                completedMask |= 1 << index;
+                                remaining--;
+                                break;
+                            }
+                        }
+
+                        result = await finished;
+                    }
+
+                    if (TallyVote(result.Vote, regionCount, required, ref prepared, ref unreachable, ref rejections))
+                    {
+                        await voteCancel.CancelAsync();
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                await foreach (var completed in Task.WhenEach(votes).WithCancellation(cancellationToken))
                 {
-                    await voteCancel.CancelAsync();
-                    break;
+                    var result = await completed;
+                    if (TallyVote(result.Vote, regionCount, required, ref prepared, ref unreachable, ref rejections))
+                    {
+                        await voteCancel.CancelAsync();
+                        break;
+                    }
                 }
             }
         }
         finally
         {
             await voteCancel.CancelAsync();
-            _ = Task.WhenAll(votes).ContinueWith(
-                static (task, state) =>
+            var allCompleted = true;
+            for (var index = 0; index < votes.Length; index++)
+            {
+                if (!votes[index].IsCompleted)
                 {
-                    _ = task.Exception;
-                    if (state is CancellationTokenSource source)
+                    allCompleted = false;
+                    break;
+                }
+            }
+
+            if (allCompleted)
+            {
+                for (var index = 0; index < votes.Length; index++)
+                {
+                    _ = votes[index].Exception;
+                }
+
+                voteCancel.Dispose();
+            }
+            else
+            {
+                _ = Task.WhenAll(votes).ContinueWith(
+                    static (task, state) =>
                     {
-                        source.Dispose();
-                    }
-                },
-                voteCancel,
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
+                        _ = task.Exception;
+                        if (state is CancellationTokenSource source)
+                        {
+                            source.Dispose();
+                        }
+                    },
+                    voteCancel,
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
         }
 
         var remoteParticipants = dispatch.CloseAndSnapshot();
         var withinLease = timeProvider.GetElapsedTime(started) < options.StrongLockLease / 2;
         return new StrongVoteTally(prepared, required, rejections is not null ? rejections : [], unreachable, remoteParticipants, leaseDeadline, withinLease);
+    }
+
+    private static bool TallyVote(
+        StrongVote vote,
+        int regionCount,
+        int required,
+        ref int prepared,
+        ref int unreachable,
+        ref List<StrongPrepareOutcome>? rejections)
+    {
+        var definitive = vote switch
+        {
+            Prepared => Increment(ref prepared),
+            Wounded wounded => Reject(ref rejections, wounded, definitive: false),
+            ReadSetStale stale => Reject(ref rejections, stale, definitive: true),
+            SchemaEpochStale epoch => Reject(ref rejections, epoch, definitive: true),
+            ClusterUnavailable => Increment(ref unreachable),
+        };
+        var rejectionCount = rejections?.Count ?? 0;
+        return prepared >= required || definitive || regionCount - rejectionCount - unreachable < required;
+    }
+
+    private static int FirstPendingIndex(int regionCount, int completedMask)
+    {
+        for (var index = 0; index < regionCount; index++)
+        {
+            if ((completedMask & (1 << index)) == 0)
+            {
+                return index;
+            }
+        }
+
+        throw new UnreachableException();
+    }
+
+    private static bool ContainsNode(List<string> nodes, string nodeId)
+    {
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            if (string.Equals(nodes[index], nodeId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<RegionVote> VoteRegionAsync(
@@ -232,7 +455,7 @@ public sealed class StrongVoteCollector(ClusterOptions options, ClusterTopology 
         SchemaEpochStale epoch => epoch,
     };
 
-    private async Task<StrongVote> VoteAsync(ISqlDatabaseSession session, StrongPreparePayload payload, StrongParticipantTarget target, CancellationToken cancellationToken)
+    private async ValueTask<StrongVote> VoteAsync(ISqlDatabaseSession session, StrongPreparePayload payload, StrongParticipantTarget target, CancellationToken cancellationToken)
     {
         if (target.IsLocal)
         {

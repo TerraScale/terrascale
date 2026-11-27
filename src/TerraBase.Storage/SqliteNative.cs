@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -109,6 +110,7 @@ internal static unsafe partial class SqliteNative
     public const int LimitVariableNumber = 9;
     public const int LimitTriggerDepth = 10;
 
+    public const int ConfigLookaside = 1001;
     public const int ConfigEnableTrigger = 1003;
     public const int ConfigEnableLoadExtension = 1005;
     public const int ConfigDefensive = 1010;
@@ -134,6 +136,7 @@ internal static unsafe partial class SqliteNative
     public static partial int CloseV2(nint db);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_limit")]
+    [SuppressGCTransition]
     public static partial int Limit(nint db, int id, int value);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_interrupt")]
@@ -326,6 +329,9 @@ internal static unsafe partial class SqliteNative
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_db_config")]
     public static partial int DbConfigFlag(nint db, int option, int value, int* result);
 
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_db_config")]
+    public static partial int DbConfigLookaside(nint db, int option, nint buffer, int slotSize, int slotCount);
+
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_backup_init")]
     public static partial nint BackupInit(nint destination, byte* destinationName, nint source, byte* sourceName);
 
@@ -376,26 +382,68 @@ internal static unsafe partial class SqliteNative
         return SqliteStatus.NonFiniteReal;
     }
 
-    private static SqliteStatus Text(byte* text, int length, out SqlValue result)
+    public static bool TryDecodeUtf8(byte* text, int length, out string decoded, out bool isAscii)
     {
         if (text is null || length == 0)
         {
-            return Read(SqlValue.FromText(string.Empty), out result);
+            decoded = string.Empty;
+            isAscii = true;
+            return true;
         }
 
-        var bytes = new ReadOnlySpan<byte>(text, length);
-        if (Ascii.IsValid(bytes))
+        var asciiOk = false;
+        var candidate = string.Create(length, ((nint)text, (nint)(&asciiOk)), static (destination, state) =>
         {
-            return Read(SqlValue.FromText(Encoding.ASCII.GetString(bytes)), out result);
+            var source = new ReadOnlySpan<byte>((byte*)state.Item1, destination.Length);
+            *(bool*)state.Item2 = Ascii.ToUtf16(source, destination, out _) == OperationStatus.Done;
+        });
+        if (asciiOk)
+        {
+            decoded = candidate;
+            isAscii = true;
+            return true;
         }
 
-        if (!Utf8Text.IsValid(bytes))
+        isAscii = false;
+        return TryDecodeNonAsciiUtf8(new ReadOnlySpan<byte>(text, length), out decoded);
+    }
+
+    private static bool TryDecodeNonAsciiUtf8(ReadOnlySpan<byte> bytes, out string decoded)
+    {
+        char[]? rented = null;
+        Span<char> buffer = bytes.Length <= 512
+            ? stackalloc char[512]
+            : (rented = ArrayPool<char>.Shared.Rent(bytes.Length));
+        try
+        {
+            var status = Utf8Text.ToUtf16(bytes, buffer, out _, out var charsWritten, replaceInvalidSequences: false, isFinalBlock: true);
+            if (status != OperationStatus.Done)
+            {
+                decoded = string.Empty;
+                return false;
+            }
+
+            decoded = new string(buffer[..charsWritten]);
+            return true;
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<char>.Shared.Return(rented);
+            }
+        }
+    }
+
+    private static SqliteStatus Text(byte* text, int length, out SqlValue result)
+    {
+        if (!TryDecodeUtf8(text, length, out var decoded, out _))
         {
             result = SqlValue.Null;
             return SqliteStatus.InvalidUtf8;
         }
 
-        return Read(SqlValue.FromText(Encoding.UTF8.GetString(bytes)), out result);
+        return Read(SqlValue.FromText(decoded), out result);
     }
 
     private static byte[] Blob(void* blob, int length) =>

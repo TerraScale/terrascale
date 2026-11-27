@@ -28,6 +28,19 @@ public static class ClusterQuicBenchmarks
     public static async Task RunAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ctx);
+        var anyCluster = ctx.HasMatchingBenchmark(
+            "cluster",
+            "codec_commits_roundtrip",
+            "strong_lock_table_acquire_release",
+            "delta_replicator_apply_loopback",
+            "raft_single_node_commit",
+            "raft_single_vs_3node_commit");
+        var anyQuic = ctx.HasMatchingBenchmark("quic", "quic_unary_rpc_1kb", "quic_push_stream_16kb");
+        if (!anyCluster && !anyQuic)
+        {
+            return;
+        }
+
         QuicPlatform.EnsureInitialized();
         if (!QuicPlatform.IsSupported)
         {
@@ -36,19 +49,33 @@ public static class ClusterQuicBenchmarks
 
         if (ctx.ShouldRun("cluster"))
         {
-            RunCodecCommitsRoundtrip(ctx, cancellationToken);
-            RunStrongLockTableAcquireRelease(ctx, cancellationToken);
+            if (ctx.ShouldRunBenchmark("cluster", "codec_commits_roundtrip"))
+            {
+                RunCodecCommitsRoundtrip(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("cluster", "strong_lock_table_acquire_release"))
+            {
+                RunStrongLockTableAcquireRelease(ctx, cancellationToken);
+            }
         }
 
-        if (ctx.ShouldRun("quic"))
+        if (anyQuic)
         {
             await RunQuicLoopbackBenchmarksAsync(ctx, cancellationToken);
         }
 
         if (ctx.ShouldRun("cluster"))
         {
-            await RunDeltaReplicatorApplyLoopbackAsync(ctx, cancellationToken);
-            await RunRaftSingleVsThreeNodeCommitAsync(ctx, cancellationToken);
+            if (ctx.ShouldRunBenchmark("cluster", "delta_replicator_apply_loopback"))
+            {
+                await RunDeltaReplicatorApplyLoopbackAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.HasMatchingBenchmark("cluster", "raft_single_node_commit", "raft_single_vs_3node_commit"))
+            {
+                await RunRaftSingleVsThreeNodeCommitAsync(ctx, cancellationToken);
+            }
         }
     }
 
@@ -360,62 +387,68 @@ public static class ClusterQuicBenchmarks
         await using var client = new QuicRpcClient(clientOptions, metrics, TimeProvider.System, NullLogger<QuicRpcClient>.Instance);
         client.UpsertPeer(new QuicPeer("bench-server", "us-east-1", boundEndPoint));
 
-        var unarySeq = 0;
-        await ctx.MeasureAsync(
-            "quic",
-            "quic_unary_rpc_1kb",
-            20,
-            200,
-            async _ =>
-            {
-                var seq = ++unarySeq;
-                var outcome = await client.CallAsync<BlobFrameMessage, BlobFrameMessage>(
-                    "bench-server",
-                    BenchUnaryMessageType,
-                    new BlobFrameMessage(seq, unaryBytes),
-                    cancellationToken);
-                var reply = RequireCallReply(outcome);
-                if (reply.Sequence != seq || reply.Payload.Length != UnaryPayloadBytes)
+        if (ctx.ShouldRunBenchmark("quic", "quic_unary_rpc_1kb"))
+        {
+            var unarySeq = 0;
+            await ctx.MeasureAsync(
+                "quic",
+                "quic_unary_rpc_1kb",
+                20,
+                200,
+                async _ =>
                 {
-                    throw new InvalidOperationException("QUIC unary echo reply did not match request.");
-                }
-            },
-            () => UnaryPayloadBytes,
-            "loopback mTLS QUIC unary RPC 1 KiB echo",
-            cancellationToken);
+                    var seq = ++unarySeq;
+                    var outcome = await client.CallAsync<BlobFrameMessage, BlobFrameMessage>(
+                        "bench-server",
+                        BenchUnaryMessageType,
+                        new BlobFrameMessage(seq, unaryBytes),
+                        cancellationToken);
+                    var reply = RequireCallReply(outcome);
+                    if (reply.Sequence != seq || reply.Payload.Length != UnaryPayloadBytes)
+                    {
+                        throw new InvalidOperationException("QUIC unary echo reply did not match request.");
+                    }
+                },
+                () => UnaryPayloadBytes,
+                "loopback mTLS QUIC unary RPC 1 KiB echo",
+                cancellationToken);
+        }
 
-        var pushSeq = 0;
-        _ = await ctx.MeasureAsync(
-            "quic",
-            "quic_push_stream_16kb",
-            20,
-            200,
-            async _ =>
-            {
-                var seq = ++pushSeq;
-                var arrived = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-                lock (pushGate)
+        if (ctx.ShouldRunBenchmark("quic", "quic_push_stream_16kb"))
+        {
+            var pushSeq = 0;
+            _ = await ctx.MeasureAsync(
+                "quic",
+                "quic_push_stream_16kb",
+                20,
+                200,
+                async _ =>
                 {
-                    expectedPushSeq = seq;
-                    pendingPush = arrived;
-                }
+                    var seq = ++pushSeq;
+                    var arrived = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    lock (pushGate)
+                    {
+                        expectedPushSeq = seq;
+                        pendingPush = arrived;
+                    }
 
-                var pushed = await client.PushAsync(
-                    "bench-server",
-                    BenchPushMessageType,
-                    new BlobFrameMessage(seq, pushBytes),
-                    "bench-stream",
-                    cancellationToken);
-                RequirePushed(pushed);
-                var receivedBytes = await arrived.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-                if (receivedBytes != PushPayloadBytes)
-                {
-                    throw new InvalidOperationException("QUIC push stream server did not receive expected 16 KiB payload.");
-                }
-            },
-            () => PushPayloadBytes,
-            "loopback mTLS QUIC ordered push stream 16 KiB",
-            cancellationToken);
+                    var pushed = await client.PushAsync(
+                        "bench-server",
+                        BenchPushMessageType,
+                        new BlobFrameMessage(seq, pushBytes),
+                        "bench-stream",
+                        cancellationToken);
+                    RequirePushed(pushed);
+                    var receivedBytes = await arrived.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                    if (receivedBytes != PushPayloadBytes)
+                    {
+                        throw new InvalidOperationException("QUIC push stream server did not receive expected 16 KiB payload.");
+                    }
+                },
+                () => PushPayloadBytes,
+                "loopback mTLS QUIC ordered push stream 16 KiB",
+                cancellationToken);
+        }
 
         DisposeCertificates(serverCerts);
         DisposeCertificates(clientCerts);

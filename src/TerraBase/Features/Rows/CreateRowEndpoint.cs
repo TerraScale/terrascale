@@ -21,8 +21,8 @@ internal sealed class CreateRowEndpoint(RowsService rows) : Endpoint<RowInput, C
     public override async ValueTask<CreatedRowResponse> HandleAsync(RowInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var outcome = await rows.RunAsync(HttpContext.Caller, request.Project, request.Database,
-            [new RowCommand(RowAction.Create, request.Table, null, request.Row)], batch: false, cancellationToken);
+        var outcome = await rows.RunSingleAsync(HttpContext.Caller, request.Project, request.Database,
+            new RowCommand(RowAction.Create, request.Table, null, request.Row), cancellationToken);
         return RowsResponses.Created(outcome, HttpContext.Request.Path.ToUriComponent());
     }
 }

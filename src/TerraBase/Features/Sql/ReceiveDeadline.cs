@@ -13,6 +13,7 @@ internal sealed class ReceiveDeadline : IDisposable
     private readonly CancellationTokenSource? _linked;
     private readonly ITimer _timer;
     private long _armedAt;
+    private long _scheduledAt;
     private TimeSpan _budget;
     private bool _partial;
     private bool _armed;
@@ -51,11 +52,11 @@ internal sealed class ReceiveDeadline : IDisposable
             Expiry = Task.CompletedTask;
             if (progress is { } initial && !Advance(initial.Started, initial.Bytes))
             {
-                _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                CancelTimerLocked();
                 return;
             }
 
-            _timer.Change(Due(), Timeout.InfiniteTimeSpan);
+            ScheduleLocked();
         }
     }
 
@@ -84,7 +85,7 @@ internal sealed class ReceiveDeadline : IDisposable
             _armedAt = started;
             _budget = budget;
             Expiry = Task.CompletedTask;
-            _timer.Change(Due(), Timeout.InfiniteTimeSpan);
+            ScheduleLocked();
         }
     }
 
@@ -100,13 +101,13 @@ internal sealed class ReceiveDeadline : IDisposable
             var wasPartial = _partial && _armedAt == started;
             if (!Advance(started, bytes))
             {
-                _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                CancelTimerLocked();
                 return;
             }
 
             if (!wasPartial)
             {
-                _timer.Change(Due(), Timeout.InfiniteTimeSpan);
+                ScheduleLocked();
             }
         }
     }
@@ -127,11 +128,41 @@ internal sealed class ReceiveDeadline : IDisposable
         return true;
     }
 
-    private TimeSpan Due()
+    private void ScheduleLocked()
     {
-        var remaining = _budget - _time.GetElapsedTime(_armedAt);
-        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        var now = _time.GetTimestamp();
+        var remaining = _budget - _time.GetElapsedTime(_armedAt, now);
+        if (remaining <= TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+
+        var target = _budget > TimeSpan.Zero
+            ? _armedAt + ToTimestampTicks(_budget)
+            : now;
+        if (target <= 0)
+        {
+            target = 1;
+        }
+
+        if (_scheduledAt == 0 || target < _scheduledAt)
+        {
+            _scheduledAt = target;
+            _timer.Change(remaining, Timeout.InfiniteTimeSpan);
+        }
     }
+
+    private void CancelTimerLocked()
+    {
+        if (_scheduledAt != 0)
+        {
+            _scheduledAt = 0;
+            _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private long ToTimestampTicks(TimeSpan duration) =>
+        (long)(duration.Ticks * ((double)_time.TimestampFrequency / TimeSpan.TicksPerSecond));
 
     public bool Complete()
     {
@@ -148,10 +179,10 @@ internal sealed class ReceiveDeadline : IDisposable
             }
 
             _armed = false;
-            _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             if (_partial && _budget - _time.GetElapsedTime(_armedAt) <= TimeSpan.Zero)
             {
                 _expired = true;
+                CancelTimerLocked();
                 Expiry = ExpireAsync(true);
                 return false;
             }
@@ -166,6 +197,7 @@ internal sealed class ReceiveDeadline : IDisposable
         {
             _disposed = true;
             _armed = false;
+            _scheduledAt = 0;
             _timer.Dispose();
             _linked?.Dispose();
             _stop.Dispose();
@@ -176,14 +208,18 @@ internal sealed class ReceiveDeadline : IDisposable
     {
         lock (_gate)
         {
+            _scheduledAt = 0;
             if (!_armed || _disposed || _expired)
             {
                 return;
             }
 
-            var remaining = _budget - _time.GetElapsedTime(_armedAt);
+            var now = _time.GetTimestamp();
+            var remaining = _budget - _time.GetElapsedTime(_armedAt, now);
             if (remaining > TimeSpan.Zero)
             {
+                var target = _armedAt + ToTimestampTicks(_budget);
+                _scheduledAt = target > 0 ? target : 1;
                 _timer.Change(remaining, Timeout.InfiniteTimeSpan);
                 return;
             }

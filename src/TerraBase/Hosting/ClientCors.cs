@@ -28,11 +28,8 @@ internal static class ClientCors
         public WebApplication UseTerraBaseClientCors()
         {
             app.UseWhen(
-                context => Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                    && context.Request.Path.Value is { } path
-                    && (path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
-                        || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase)
-                        || path.Equals("/backupz", StringComparison.OrdinalIgnoreCase)),
+                context => IsProbePath(context.Request.Path.Value)
+                    && Listeners.ArrivedOn(context) == TerraBaseListener.Client,
                 branch => branch
                     .Use((context, next) =>
                     {
@@ -42,13 +39,19 @@ internal static class ClientCors
                     })
                     .UseCors(ProbePolicy));
             app.UseWhen(
-                context => context.Request.Headers.ContainsKey(HeaderNames.Origin)
+                context => context.Request.Headers.Origin.Count > 0
                     && Listeners.ArrivedOn(context) == TerraBaseListener.Client
                     && IsDataPath(context.Request.Path.Value.AsSpan()),
                 branch => branch.UseCors(Policy));
             return app;
         }
     }
+
+    private static bool IsProbePath(string? path) =>
+        path is { Length: 7 or 8 }
+        && (path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/readyz", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/backupz", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsDataPath(ReadOnlySpan<char> path)
     {

@@ -80,9 +80,30 @@ public static class ServerLayerBenchmarks
 
     private static readonly byte[] SampleBlob = [0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x23, 0x45, 0x67];
 
+    private static readonly MediaTypeHeaderValue JsonMediaType = new("application/json") { CharSet = "utf-8" };
+
     public static async Task RunAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ctx);
+        if (!ctx.HasMatchingBenchmark(
+            Suite,
+            "auth_jwt_verify",
+            "auth_apikey_find",
+            "catalog_resolve_data",
+            "sql_plan_and_wire_json",
+            "rules_compile_and_enforce",
+            "rows_crud_and_batch",
+            "http_sql_rest_read",
+            "http_sql_rest_write",
+            "http_sql_rest_batch",
+            "http_sql_rest_concurrent_16",
+            "http2_sql_multiplexed_32",
+            "ws_sql_v2_tx_loopback",
+            "ws_sql_v2_sustained_pipeline_16"))
+        {
+            return;
+        }
+
         QuicPlatform.EnsureInitialized();
 
         await using var oidc = await OidcLoopbackHost.StartAsync(cancellationToken);
@@ -96,16 +117,57 @@ public static class ServerLayerBenchmarks
         var endUserId = Ulid.NewUlid(now).ToString();
         var otherUserId = Ulid.NewUlid(now).ToString();
 
-        var seeded = await SeedCatalogAndDataAsync(host, organizationId, projectId, databaseId, ownerUserId, endUserId, otherUserId, now, cancellationToken);
+        var seeded = await SeedCatalogAndDataAsync(host, organizationId, projectId, databaseId, ownerUserId, endUserId, otherUserId, now, nameSuffix: null, cancellationToken);
 
-        await RunJwtVerifyAsync(ctx, host, oidc, organizationId, projectId, ownerUserId, now, cancellationToken);
-        await RunApiKeyFindAsync(ctx, host, seeded.IssuedKey, databaseId, cancellationToken);
-        await RunCatalogResolveDataAsync(ctx, host, seeded.ApiKeyCaller, projectId, databaseId, cancellationToken);
-        RunSqlPlanAndWireJson(ctx);
-        await RunRulesCompileAndEnforceAsync(ctx, host, databaseId, endUserId, seeded.TenantSession, seeded.DeployedRules.Version, cancellationToken);
-        await RunRowsCrudAndBatchAsync(ctx, host, projectId, endUserId, cancellationToken);
-        await RunHttpSqlRestLoopbackAsync(ctx, host, projectId, seeded.IssuedKey.Secret, cancellationToken);
-        await RunWsSqlV2TxLoopbackAsync(ctx, host, projectId, seeded.IssuedKey.Secret, cancellationToken);
+        if (ctx.ShouldRunBenchmark(Suite, "auth_jwt_verify"))
+        {
+            await RunJwtVerifyAsync(ctx, host, oidc, organizationId, projectId, ownerUserId, now, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "auth_apikey_find"))
+        {
+            await RunApiKeyFindAsync(ctx, host, seeded.IssuedKey, databaseId, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "catalog_resolve_data"))
+        {
+            await RunCatalogResolveDataAsync(ctx, host, seeded.ApiKeyCaller, projectId, databaseId, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "sql_plan_and_wire_json"))
+        {
+            RunSqlPlanAndWireJson(ctx);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "rules_compile_and_enforce"))
+        {
+            await RunRulesCompileAndEnforceAsync(ctx, host, databaseId, endUserId, seeded.TenantSession, seeded.DeployedRules.Version, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "rows_crud_and_batch"))
+        {
+            await RunRowsCrudAndBatchAsync(ctx, host, projectId, endUserId, cancellationToken);
+        }
+
+        if (ctx.HasMatchingBenchmark(Suite, "http_sql_rest_read", "http_sql_rest_write", "http_sql_rest_batch", "http_sql_rest_concurrent_16"))
+        {
+            await RunHttpSqlRestLoopbackAsync(ctx, host, projectId, seeded.IssuedKey.Secret, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "http2_sql_multiplexed_32"))
+        {
+            await RunHttp2SqlMultiplexed32Async(ctx, host, ownerUserId, endUserId, otherUserId, now, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "ws_sql_v2_tx_loopback"))
+        {
+            await RunWsSqlV2TxLoopbackAsync(ctx, host, projectId, seeded.IssuedKey.Secret, cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "ws_sql_v2_sustained_pipeline_16"))
+        {
+            await RunWsSqlV2SustainedPipeline16Async(ctx, host, projectId, seeded.IssuedKey.Secret, cancellationToken);
+        }
     }
 
     private static async Task<SeededServerState> SeedCatalogAndDataAsync(
@@ -117,6 +179,7 @@ public static class ServerLayerBenchmarks
         string endUserId,
         string otherUserId,
         DateTimeOffset now,
+        string? nameSuffix,
         CancellationToken cancellationToken)
     {
         var catalog = host.Services.GetRequiredService<CatalogStore>();
@@ -126,8 +189,12 @@ public static class ServerLayerBenchmarks
         var coordinator = host.Services.GetRequiredService<IClusterCoordinator>();
         var rulesStore = host.Services.GetRequiredService<RulesStore>();
 
+        var orgName = nameSuffix is null ? "bench-org" : string.Concat("bench-org-", nameSuffix);
+        var projectName = nameSuffix is null ? "bench-project" : string.Concat("bench-project-", nameSuffix);
+        var keyName = nameSuffix is null ? "bench-key" : string.Concat("bench-key-", nameSuffix);
+
         var orgCreated = await catalog.CreateOrganizationAsync(
-            new OrganizationRecord(organizationId, "bench-org", ownerUserId, now, "enterprise", Suspended: false),
+            new OrganizationRecord(organizationId, orgName, ownerUserId, now, "enterprise", Suspended: false),
             cancellationToken);
         var (organization, orgError) = orgCreated switch
         {
@@ -141,7 +208,7 @@ public static class ServerLayerBenchmarks
         }
 
         var projectCreated = await catalog.CreateProjectAsync(
-            new ProjectRecord(projectId, organizationId, "bench-project", now, "enterprise"),
+            new ProjectRecord(projectId, organizationId, projectName, now, "enterprise"),
             cancellationToken);
         var (project, projectError) = projectCreated switch
         {
@@ -182,7 +249,7 @@ public static class ServerLayerBenchmarks
             throw new InvalidOperationException($"Failed to seed database record: {dbError}");
         }
 
-        var keyCreated = await apiKeys.CreateAsync("bench-key", Scopes.ApiKey, organizationId, projectId, databaseId, expiresAt: null, cancellationToken);
+        var keyCreated = await apiKeys.CreateAsync(keyName, Scopes.ApiKey, organizationId, projectId, databaseId, expiresAt: null, cancellationToken);
         var (issuedKey, keyError) = keyCreated switch
         {
             IssuedApiKey issued => (issued, (string?)null),
@@ -632,77 +699,204 @@ public static class ServerLayerBenchmarks
 
         var executePath = $"/v1/projects/{projectId}/databases/{BenchDatabaseName}/sql/execute";
 
-        await ctx.MeasureAsync(
-            Suite,
-            "http_sql_rest_read",
-            warmup: 20,
-            iterations: 200,
-            async iteration =>
-            {
-                var id = (iteration % 200) + 1;
-                var body = $"{{\"statements\":[{{\"sql\":\"SELECT id, title, score FROM items WHERE id = ?\",\"args\":[{id.ToString(CultureInfo.InvariantCulture)}]}}]}}";
-                await ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 1, expectedFirstRows: 1, expectedFirstAffected: null, cancellationToken);
-            },
-            note: "Kestrel HTTP POST /sql/execute single-row SELECT",
-            cancellationToken: cancellationToken);
+        if (ctx.ShouldRunBenchmark(Suite, "http_sql_rest_read"))
+        {
+            await ctx.MeasureAsync(
+                Suite,
+                "http_sql_rest_read",
+                warmup: 20,
+                iterations: 200,
+                async iteration =>
+                {
+                    var id = (iteration % 200) + 1;
+                    var body = $"{{\"statements\":[{{\"sql\":\"SELECT id, title, score FROM items WHERE id = ?\",\"args\":[{id.ToString(CultureInfo.InvariantCulture)}]}}]}}";
+                    await ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 1, expectedFirstRows: 1, expectedFirstAffected: null, cancellationToken);
+                },
+                note: "Kestrel HTTP POST /sql/execute single-row SELECT",
+                cancellationToken: cancellationToken);
+        }
 
-        await ctx.MeasureAsync(
-            Suite,
-            "http_sql_rest_write",
-            warmup: 20,
-            iterations: 200,
-            async iteration =>
-            {
-                var id = (iteration % 200) + 1;
-                var score = 1000 + iteration;
-                var body = $"{{\"statements\":[{{\"sql\":\"UPDATE items SET score = ? WHERE id = ?\",\"args\":[{score.ToString(CultureInfo.InvariantCulture)},{id.ToString(CultureInfo.InvariantCulture)}]}}]}}";
-                await ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 1, expectedFirstRows: 0, expectedFirstAffected: 1, cancellationToken);
-            },
-            note: "Kestrel HTTP POST /sql/execute single-row UPDATE",
-            cancellationToken: cancellationToken);
+        if (ctx.ShouldRunBenchmark(Suite, "http_sql_rest_write"))
+        {
+            await ctx.MeasureAsync(
+                Suite,
+                "http_sql_rest_write",
+                warmup: 20,
+                iterations: 200,
+                async iteration =>
+                {
+                    var id = (iteration % 200) + 1;
+                    var score = 1000 + iteration;
+                    var body = $"{{\"statements\":[{{\"sql\":\"UPDATE items SET score = ? WHERE id = ?\",\"args\":[{score.ToString(CultureInfo.InvariantCulture)},{id.ToString(CultureInfo.InvariantCulture)}]}}]}}";
+                    await ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 1, expectedFirstRows: 0, expectedFirstAffected: 1, cancellationToken);
+                },
+                note: "Kestrel HTTP POST /sql/execute single-row UPDATE",
+                cancellationToken: cancellationToken);
+        }
 
-        await ctx.MeasureAsync(
-            Suite,
-            "http_sql_rest_batch",
-            warmup: 15,
-            iterations: 150,
-            async iteration =>
-            {
-                var idA = (iteration % 100) + 1;
-                var idB = idA + 100;
-                var score = 2000 + iteration;
-                var body =
-                    "{\"statements\":["
-                    + $"{{\"sql\":\"SELECT id, score FROM items WHERE id = ?\",\"args\":[{idA.ToString(CultureInfo.InvariantCulture)}]}},"
-                    + $"{{\"sql\":\"SELECT id, score FROM items WHERE id = ?\",\"args\":[{idB.ToString(CultureInfo.InvariantCulture)}]}},"
-                    + $"{{\"sql\":\"UPDATE items SET score = ? WHERE id = ?\",\"args\":[{score.ToString(CultureInfo.InvariantCulture)},{idA.ToString(CultureInfo.InvariantCulture)}]}},"
-                    + $"{{\"sql\":\"UPDATE items SET score = ? WHERE id = ?\",\"args\":[{score.ToString(CultureInfo.InvariantCulture)},{idB.ToString(CultureInfo.InvariantCulture)}]}},"
-                    + $"{{\"sql\":\"SELECT count(*) FROM items WHERE id IN (?, ?)\",\"args\":[{idA.ToString(CultureInfo.InvariantCulture)},{idB.ToString(CultureInfo.InvariantCulture)}]}}"
-                    + "]}";
-                await ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 5, expectedFirstRows: 1, expectedFirstAffected: null, cancellationToken);
-            },
-            note: "Kestrel HTTP POST /sql/execute 5-statement mixed read/write batch",
-            cancellationToken: cancellationToken);
+        if (ctx.ShouldRunBenchmark(Suite, "http_sql_rest_batch"))
+        {
+            await ctx.MeasureAsync(
+                Suite,
+                "http_sql_rest_batch",
+                warmup: 15,
+                iterations: 150,
+                async iteration =>
+                {
+                    var idA = (iteration % 100) + 1;
+                    var idB = idA + 100;
+                    var score = 2000 + iteration;
+                    var body =
+                        "{\"statements\":["
+                        + $"{{\"sql\":\"SELECT id, score FROM items WHERE id = ?\",\"args\":[{idA.ToString(CultureInfo.InvariantCulture)}]}},"
+                        + $"{{\"sql\":\"SELECT id, score FROM items WHERE id = ?\",\"args\":[{idB.ToString(CultureInfo.InvariantCulture)}]}},"
+                        + $"{{\"sql\":\"UPDATE items SET score = ? WHERE id = ?\",\"args\":[{score.ToString(CultureInfo.InvariantCulture)},{idA.ToString(CultureInfo.InvariantCulture)}]}},"
+                        + $"{{\"sql\":\"UPDATE items SET score = ? WHERE id = ?\",\"args\":[{score.ToString(CultureInfo.InvariantCulture)},{idB.ToString(CultureInfo.InvariantCulture)}]}},"
+                        + $"{{\"sql\":\"SELECT count(*) FROM items WHERE id IN (?, ?)\",\"args\":[{idA.ToString(CultureInfo.InvariantCulture)},{idB.ToString(CultureInfo.InvariantCulture)}]}}"
+                        + "]}";
+                    await ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 5, expectedFirstRows: 1, expectedFirstAffected: null, cancellationToken);
+                },
+                note: "Kestrel HTTP POST /sql/execute 5-statement mixed read/write batch",
+                cancellationToken: cancellationToken);
+        }
 
+        if (ctx.ShouldRunBenchmark(Suite, "http_sql_rest_concurrent_16"))
+        {
+            await ctx.MeasureAsync(
+                Suite,
+                "http_sql_rest_concurrent_16",
+                warmup: 5,
+                iterations: 40,
+                async iteration =>
+                {
+                    var tasks = new Task[16];
+                    for (var worker = 0; worker < 16; worker++)
+                    {
+                        var id = ((iteration * 16 + worker) % 200) + 1;
+                        var body = $"{{\"statements\":[{{\"sql\":\"SELECT id, title, score FROM items WHERE id = ?\",\"args\":[{id.ToString(CultureInfo.InvariantCulture)}]}}]}}";
+                        tasks[worker] = ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 1, expectedFirstRows: 1, expectedFirstAffected: null, cancellationToken);
+                    }
+
+                    await Task.WhenAll(tasks);
+                },
+                note: "16 concurrent Kestrel HTTP POST /sql/execute reads per iter",
+                cancellationToken: cancellationToken);
+        }
+    }
+
+    private static async Task RunHttp2SqlMultiplexed32Async(
+        BenchRunnerContext ctx,
+        TerraBaseLoopbackHost host,
+        string ownerUserId,
+        string endUserId,
+        string otherUserId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const int Streams = 32;
+        const int TenantCount = 4;
+
+        var executePaths = new string[TenantCount];
+        var authHeaders = new AuthenticationHeaderValue[TenantCount];
+        for (var t = 0; t < TenantCount; t++)
+        {
+            var orgId = Ulid.NewUlid(now);
+            var projId = Ulid.NewUlid(now);
+            var dbId = Ulid.NewUlid(now);
+            var tenantState = await SeedCatalogAndDataAsync(
+                host,
+                orgId,
+                projId,
+                dbId,
+                ownerUserId,
+                endUserId,
+                otherUserId,
+                now,
+                nameSuffix: string.Concat("h2-", t.ToString(CultureInfo.InvariantCulture)),
+                cancellationToken);
+            executePaths[t] = $"/v1/projects/{projId}/databases/{BenchDatabaseName}/sql/execute";
+            authHeaders[t] = new AuthenticationHeaderValue("Bearer", tenantState.IssuedKey.Secret);
+        }
+
+        using var handler = new SocketsHttpHandler
+        {
+            EnableMultipleHttp2Connections = false,
+            MaxConnectionsPerServer = 1,
+        };
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = host.InternalUri,
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            Timeout = TimeSpan.FromSeconds(10),
+        };
+        _ = http.DefaultRequestHeaders.TryAddWithoutValidation(InternalCredential.HeaderName, host.InternalPeerCredential);
+
+        var payloads = new byte[200][];
+        for (var i = 0; i < payloads.Length; i++)
+        {
+            var id = i + 1;
+            payloads[i] = Encoding.UTF8.GetBytes($"{{\"statements\":[{{\"sql\":\"SELECT id, title, score FROM items WHERE id = ?\",\"args\":[{id.ToString(CultureInfo.InvariantCulture)}]}}]}}");
+        }
+
+        var tasks = new Task[Streams];
         await ctx.MeasureAsync(
             Suite,
-            "http_sql_rest_concurrent_16",
+            "http2_sql_multiplexed_32",
             warmup: 5,
             iterations: 40,
             async iteration =>
             {
-                var tasks = new Task[16];
-                for (var worker = 0; worker < 16; worker++)
+                for (var stream = 0; stream < Streams; stream++)
                 {
-                    var id = ((iteration * 16 + worker) % 200) + 1;
-                    var body = $"{{\"statements\":[{{\"sql\":\"SELECT id, title, score FROM items WHERE id = ?\",\"args\":[{id.ToString(CultureInfo.InvariantCulture)}]}}]}}";
-                    tasks[worker] = ExecuteRestAndAssertAsync(http, executePath, body, expectedStatements: 1, expectedFirstRows: 1, expectedFirstAffected: null, cancellationToken);
+                    var tenant = stream % TenantCount;
+                    var payload = payloads[((iteration * Streams) + stream) % payloads.Length];
+                    tasks[stream] = ExecuteHttp2RestAndAssertAsync(http, executePaths[tenant], authHeaders[tenant], payload, cancellationToken);
                 }
 
                 await Task.WhenAll(tasks);
             },
-            note: "16 concurrent Kestrel HTTP POST /sql/execute reads per iter",
-            cancellationToken: cancellationToken);
+            note: "32 multiplexed h2c /sql/execute streams over 1 HTTP/2 connection across 4 tenants",
+            cancellationToken: cancellationToken,
+            unitsPerOp: Streams,
+            unitLabel: "streams");
+    }
+
+    private static async Task ExecuteHttp2RestAndAssertAsync(
+        HttpClient http,
+        string path,
+        AuthenticationHeaderValue authorization,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            Content = new ReadOnlyMemoryContent(payload),
+        };
+        request.Headers.Authorization = authorization;
+        request.Content.Headers.ContentType = JsonMediaType;
+
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException($"HTTP/2 /sql/execute returned {(int)response.StatusCode}: {errorBody}");
+        }
+
+        if (response.Version != HttpVersion.Version20)
+        {
+            throw new InvalidOperationException($"Expected HTTP/2.0 response, got HTTP/{response.Version}");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var results = doc.RootElement.GetProperty("results");
+        if (results.GetArrayLength() != 1 || results[0].GetProperty("rows").GetArrayLength() != 1)
+        {
+            throw new InvalidOperationException("HTTP/2 /sql/execute returned unexpected result shape");
+        }
     }
 
     private static async Task ExecuteRestAndAssertAsync(
@@ -875,6 +1069,173 @@ public static class ServerLayerBenchmarks
                 await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
             }
         }
+    }
+
+    private static async Task RunWsSqlV2SustainedPipeline16Async(
+        BenchRunnerContext ctx,
+        TerraBaseLoopbackHost host,
+        Ulid projectId,
+        string apiKeySecret,
+        CancellationToken cancellationToken)
+    {
+        const int ConnectionCount = 4;
+        const int PipelineDepth = 16;
+        const int TotalOpsPerIter = ConnectionCount * PipelineDepth;
+
+        var wsUri = new UriBuilder("ws", IPAddress.Loopback.ToString(), host.ClientPort, $"/v1/projects/{projectId}/databases/{BenchDatabaseName}/sql/ws").Uri;
+        var cachedIds = new JsonElement[200];
+        for (var i = 0; i < cachedIds.Length; i++)
+        {
+            cachedIds[i] = JsonNumber(i + 1L);
+        }
+
+        var workers = new WsPipelineWorker[ConnectionCount];
+        var connected = 0;
+        try
+        {
+            for (var i = 0; i < ConnectionCount; i++)
+            {
+                var socket = new ClientWebSocket();
+                socket.Options.AddSubProtocol(SqlWsFrameTypes.Subprotocol);
+                socket.Options.SetRequestHeader("Authorization", string.Concat("Bearer ", apiKeySecret));
+                await socket.ConnectAsync(wsUri, cancellationToken);
+                if (!string.Equals(socket.SubProtocol, SqlWsFrameTypes.Subprotocol, StringComparison.Ordinal))
+                {
+                    socket.Dispose();
+                    throw new InvalidOperationException($"Expected WebSocket subprotocol {SqlWsFrameTypes.Subprotocol}, got '{socket.SubProtocol}'");
+                }
+
+                workers[i] = new WsPipelineWorker(socket, (i + 1L) * 1_000_000L);
+                connected++;
+            }
+
+            var tasks = new Task[ConnectionCount];
+            await ctx.MeasureAsync(
+                Suite,
+                "ws_sql_v2_sustained_pipeline_16",
+                warmup: 5,
+                iterations: 50,
+                async iteration =>
+                {
+                    for (var w = 0; w < ConnectionCount; w++)
+                    {
+                        var worker = workers[w];
+                        var offset = (iteration * TotalOpsPerIter) + (w * PipelineDepth);
+                        tasks[w] = RunWorkerPipelineBatchAsync(worker, cachedIds, offset, PipelineDepth, cancellationToken);
+                    }
+
+                    await Task.WhenAll(tasks);
+                },
+                note: "4 concurrent ClientWebSocket x 16 pipelined SQL ops (64 ops/iter); reusable buffers",
+                cancellationToken: cancellationToken,
+                unitsPerOp: TotalOpsPerIter,
+                unitLabel: "ops");
+        }
+        finally
+        {
+            for (var i = 0; i < connected; i++)
+            {
+                var socket = workers[i].Socket;
+                if (socket.State == WebSocketState.Open)
+                {
+                    await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+                }
+
+                socket.Dispose();
+            }
+        }
+    }
+
+    private static async Task RunWorkerPipelineBatchAsync(
+        WsPipelineWorker worker,
+        JsonElement[] cachedIds,
+        int startOffset,
+        int pipelineDepth,
+        CancellationToken cancellationToken)
+    {
+        var baseFrameId = worker.NextFrameId;
+        for (var i = 0; i < pipelineDepth; i++)
+        {
+            var idArg = cachedIds[(startOffset + i) % cachedIds.Length];
+            var frame = new SqlWsClientFrame(
+                SqlWsFrameTypes.Execute,
+                worker.NextFrameId++,
+                [new SqlHttpStatement("SELECT id, title, score FROM items WHERE id = ?", [idArg], null)],
+                Consistency: null,
+                Bookmark: null);
+            worker.SendBuffer.ResetWrittenCount();
+            using (var writer = new Utf8JsonWriter(worker.SendBuffer))
+            {
+                JsonSerializer.Serialize(writer, frame, TerraScaleContractsJsonContext.Default.SqlWsClientFrame);
+            }
+
+            await worker.Socket.SendAsync(worker.SendBuffer.WrittenMemory, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+        }
+
+        for (var i = 0; i < pipelineDepth; i++)
+        {
+            var reply = await ReceiveWsFrameReusableAsync(worker.Socket, worker.ReceiveChunk, worker.AssemblyBuffer, cancellationToken);
+            if (reply.Type != SqlWsFrameTypes.Result
+                || reply.Id != baseFrameId + i
+                || reply.Error is not null
+                || reply.Results is not [{ Rows.Count: 1 }])
+            {
+                throw new InvalidOperationException($"Sustained WS pipeline failed: type={reply.Type}, id={reply.Id.ToString(CultureInfo.InvariantCulture)}, err={reply.Error?.Message}");
+            }
+        }
+    }
+
+    private static async Task<SqlWsServerFrame> ReceiveWsFrameReusableAsync(
+        ClientWebSocket socket,
+        byte[] chunkBuffer,
+        ArrayBufferWriter<byte> assemblyBuffer,
+        CancellationToken cancellationToken)
+    {
+        assemblyBuffer.ResetWrittenCount();
+        while (true)
+        {
+            var received = await socket.ReceiveAsync(chunkBuffer.AsMemory(), cancellationToken);
+            if (received.MessageType == WebSocketMessageType.Close)
+            {
+                throw new InvalidOperationException($"WebSocket closed unexpectedly: {socket.CloseStatus} {socket.CloseStatusDescription}");
+            }
+
+            if (received.EndOfMessage && assemblyBuffer.WrittenCount == 0)
+            {
+                var fastFrame = JsonSerializer.Deserialize(chunkBuffer.AsSpan(0, received.Count), TerraScaleContractsJsonContext.Default.SqlWsServerFrame);
+                if (fastFrame is null)
+                {
+                    throw new InvalidOperationException("WebSocket returned null frame");
+                }
+
+                return fastFrame;
+            }
+
+            assemblyBuffer.Write(chunkBuffer.AsSpan(0, received.Count));
+            if (received.EndOfMessage)
+            {
+                var frame = JsonSerializer.Deserialize(assemblyBuffer.WrittenSpan, TerraScaleContractsJsonContext.Default.SqlWsServerFrame);
+                if (frame is null)
+                {
+                    throw new InvalidOperationException("WebSocket returned null frame");
+                }
+
+                return frame;
+            }
+        }
+    }
+
+    private sealed class WsPipelineWorker(ClientWebSocket socket, long initialFrameId)
+    {
+        public ClientWebSocket Socket { get; } = socket;
+
+        public long NextFrameId { get; set; } = initialFrameId;
+
+        public ArrayBufferWriter<byte> SendBuffer { get; } = new(4096);
+
+        public byte[] ReceiveChunk { get; } = new byte[64 * 1024];
+
+        public ArrayBufferWriter<byte> AssemblyBuffer { get; } = new(8192);
     }
 
     private static JsonElement JsonNumber(long value)
@@ -1086,16 +1447,25 @@ public static class ServerLayerBenchmarks
     {
         private readonly WebApplication _app;
 
-        private TerraBaseLoopbackHost(WebApplication app, int clientPort)
+        private TerraBaseLoopbackHost(WebApplication app, int clientPort, int internalPort, string internalPeerCredential)
         {
             _app = app;
             ClientPort = clientPort;
             ClientUri = new UriBuilder(Uri.UriSchemeHttp, IPAddress.Loopback.ToString(), clientPort).Uri;
+            InternalPort = internalPort;
+            InternalUri = new UriBuilder(Uri.UriSchemeHttp, IPAddress.Loopback.ToString(), internalPort).Uri;
+            InternalPeerCredential = internalPeerCredential;
         }
 
         public int ClientPort { get; }
 
         public Uri ClientUri { get; }
+
+        public int InternalPort { get; }
+
+        public Uri InternalUri { get; }
+
+        public string InternalPeerCredential { get; }
 
         public IServiceProvider Services => _app.Services;
 
@@ -1136,7 +1506,19 @@ public static class ServerLayerBenchmarks
                 throw new InvalidOperationException(formatError);
             }
 
-            var credentialOutcome = InternalCredential.FromProcess(options);
+            var peerSecret = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+            var previousPeerSecret = Environment.GetEnvironmentVariable(InternalCredential.EnvironmentVariable);
+            InternalCredentialOutcome credentialOutcome;
+            try
+            {
+                Environment.SetEnvironmentVariable(InternalCredential.EnvironmentVariable, peerSecret);
+                credentialOutcome = InternalCredential.FromProcess(options);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(InternalCredential.EnvironmentVariable, previousPeerSecret);
+            }
+
             var (credential, credentialError) = credentialOutcome switch
             {
                 InternalCredential ok => (ok, (string?)null),
@@ -1239,7 +1621,7 @@ public static class ServerLayerBenchmarks
                 throw new InvalidOperationException($"TerraBase SystemBootstrap failed: {failure.Message}");
             }
 
-            return new TerraBaseLoopbackHost(app, clientPort);
+            return new TerraBaseLoopbackHost(app, clientPort, internalPort, peerSecret);
         }
 
         public async ValueTask DisposeAsync()

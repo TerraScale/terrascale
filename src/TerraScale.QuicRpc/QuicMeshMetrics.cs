@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using TerraScale.Contracts.Quic;
 
 namespace TerraScale.QuicRpc;
 
@@ -46,6 +48,36 @@ public sealed class QuicMeshMetrics
 {
     public const string MeterName = "TerraScale.QuicRpc";
 
+    private static readonly FrozenDictionary<ushort, object> KnownMessageTypes = new Dictionary<ushort, object>
+    {
+        [QuicMessageType.Ping] = (int)QuicMessageType.Ping,
+        [QuicMessageType.Pong] = (int)QuicMessageType.Pong,
+        [QuicMessageType.StorageHello] = (int)QuicMessageType.StorageHello,
+        [QuicMessageType.DeltaPush] = (int)QuicMessageType.DeltaPush,
+        [QuicMessageType.DeltaAck] = (int)QuicMessageType.DeltaAck,
+        [QuicMessageType.CatchUpRequest] = (int)QuicMessageType.CatchUpRequest,
+        [QuicMessageType.CatchUpResponse] = (int)QuicMessageType.CatchUpResponse,
+        [QuicMessageType.StrongPrepare] = (int)QuicMessageType.StrongPrepare,
+        [QuicMessageType.StrongPrepareResponse] = (int)QuicMessageType.StrongPrepareResponse,
+        [QuicMessageType.StrongCommit] = (int)QuicMessageType.StrongCommit,
+        [QuicMessageType.StrongWound] = (int)QuicMessageType.StrongWound,
+        [QuicMessageType.RaftAppendEntries] = (int)QuicMessageType.RaftAppendEntries,
+        [QuicMessageType.RaftAppendEntriesResponse] = (int)QuicMessageType.RaftAppendEntriesResponse,
+        [QuicMessageType.RaftRequestVote] = (int)QuicMessageType.RaftRequestVote,
+        [QuicMessageType.RaftRequestVoteResponse] = (int)QuicMessageType.RaftRequestVoteResponse,
+        [QuicMessageType.RaftInstallSnapshot] = (int)QuicMessageType.RaftInstallSnapshot,
+        [QuicMessageType.RaftInstallSnapshotResponse] = (int)QuicMessageType.RaftInstallSnapshotResponse,
+        [QuicMessageType.ChangefeedSubscribe] = (int)QuicMessageType.ChangefeedSubscribe,
+        [QuicMessageType.ChangefeedItem] = (int)QuicMessageType.ChangefeedItem,
+        [QuicMessageType.InternalSqlExecute] = (int)QuicMessageType.InternalSqlExecute,
+        [QuicMessageType.InternalSqlResponse] = (int)QuicMessageType.InternalSqlResponse,
+        [QuicMessageType.ControlSnapshotSync] = (int)QuicMessageType.ControlSnapshotSync,
+        [QuicMessageType.ControlSnapshotAck] = (int)QuicMessageType.ControlSnapshotAck,
+        [QuicMessageType.RewindDatabase] = (int)QuicMessageType.RewindDatabase,
+        [QuicMessageType.RewindDatabaseAck] = (int)QuicMessageType.RewindDatabaseAck,
+        [QuicMessageType.StorageFileProbe] = (int)QuicMessageType.StorageFileProbe,
+        [QuicMessageType.StorageFileProbeReply] = (int)QuicMessageType.StorageFileProbeReply,
+    }.ToFrozenDictionary();
     private static readonly ConcurrentDictionary<ushort, object> BoxedMessageTypes = new();
     private static readonly KeyValuePair<string, object?> ClientSideTag = new("quic.side", "client");
     private static readonly KeyValuePair<string, object?> ServerSideTag = new("quic.side", "server");
@@ -84,7 +116,9 @@ public sealed class QuicMeshMetrics
             return;
         }
 
-        var boxedType = BoxedMessageTypes.GetOrAdd(messageType, static id => (int)id);
+        var boxedType = KnownMessageTypes.TryGetValue(messageType, out var known)
+            ? known
+            : BoxedMessageTypes.GetOrAdd(messageType, static id => (int)id);
         var tags = new TagList
         {
             { "quic.side", SideTag(side) },
@@ -94,12 +128,12 @@ public sealed class QuicMeshMetrics
         };
         if (_calls.Enabled)
         {
-            _calls.Add(1, tags);
+            _calls.Add(1, in tags);
         }
 
         if (_duration.Enabled)
         {
-            _duration.Record(elapsed.TotalSeconds, tags);
+            _duration.Record(elapsed.TotalSeconds, in tags);
         }
     }
 

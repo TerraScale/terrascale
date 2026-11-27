@@ -28,6 +28,31 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     public static ListenerMetadata Management { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Client);
 
     public static ListenerMetadata Metrics { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Metrics);
+
+    public IReadOnlyList<TerraBaseListener> Listeners
+    {
+        get;
+        init
+        {
+            field = value;
+            ListenerMask = ComputeMask(value);
+        }
+    } = Listeners;
+
+    internal byte ListenerMask { get; private set; } = ComputeMask(Listeners);
+
+    internal bool Serves(TerraBaseListener listener) => (ListenerMask & (1 << (int)listener)) != 0;
+
+    private static byte ComputeMask(IReadOnlyList<TerraBaseListener> listeners)
+    {
+        byte mask = 0;
+        for (var index = 0; index < listeners.Count; index++)
+        {
+            mask |= (byte)(1 << (int)listeners[index]);
+        }
+
+        return mask;
+    }
 }
 
 internal sealed class ListenerConnections(int limit)
@@ -58,10 +83,31 @@ internal static class Listeners
 
     private static readonly object ListenerKey = typeof(TerraBaseListener);
 
+    private static readonly ListenerTag[] Tags =
+    [
+        new(TerraBaseListener.Internal),
+        new(TerraBaseListener.Client),
+        new(TerraBaseListener.Metrics),
+        new(TerraBaseListener.Postgres),
+    ];
+
     public static TerraBaseListener? ArrivedOn(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        return context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var tag) == true ? tag as TerraBaseListener? : null;
+        if (context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ListenerKey, out var value) == true)
+        {
+            if (value is ListenerTag tag)
+            {
+                return tag.Listener;
+            }
+
+            if (value is TerraBaseListener listener)
+            {
+                return listener;
+            }
+        }
+
+        return null;
     }
 
     public static IPAddress InternalAddress(ClusterOptions cluster, TerraBaseOptions options)
@@ -130,6 +176,7 @@ internal static class Listeners
         public ListenOptions UseTerraBaseListener(TerraBaseListener listener)
         {
             var budget = listener is TerraBaseListener.Client or TerraBaseListener.Postgres ? new ListenerConnections(MaxPublicConnections) : null;
+            var tag = Tags[(int)listener];
             listen.Use(next => async connection =>
             {
                 if (budget is not null && !budget.TryOpen())
@@ -138,7 +185,7 @@ internal static class Listeners
                     return;
                 }
 
-                connection.Items[ListenerKey] = listener;
+                connection.Items[ListenerKey] = tag;
                 var pressure = budget is null ? null : listen.ApplicationServices.GetRequiredService<PressureSignals>();
                 pressure?.ConnectionOpened();
                 try
@@ -161,44 +208,25 @@ internal static class Listeners
         {
             var options = app.Services.GetRequiredService<TerraBaseOptions>();
             var admission = app.Services.GetRequiredService<CallerAdmission>();
-            app.Use(async (context, next) =>
+            app.Use((context, next) =>
             {
                 var arrivedOn = ArrivedOn(context);
-                var endpoint = context.GetEndpoint();
-                var metadata = endpoint?.Metadata.GetMetadata<ListenerMetadata>();
-                var servedBy = metadata?.Listeners ?? [];
                 if (arrivedOn is not { } listener)
                 {
                     context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    return;
+                    return Task.CompletedTask;
                 }
 
-                if (listener == TerraBaseListener.Internal
-                    && !ReferenceEquals(metadata, ListenerMetadata.Probe))
+                var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>();
+                if (listener == TerraBaseListener.Internal && !ReferenceEquals(metadata, ListenerMetadata.Probe))
                 {
-                    if (!await admission.AdmitAsync(context))
-                    {
-                        await ErrorResults.WriteAsync(context, StatusCodes.Status401Unauthorized, "unauthorized",
-                            "the internal listener needs X-TerraBase-Peer-Credential or a valid X-TerraScale-Caller token");
-                        return;
-                    }
-
-                    if (context.Features.Get<AdmittedCaller>() is { Identity: { } identity }
-                        && context.Request.Path.Value is { } path
-                        && !(context.Request.Headers.ContainsKey(CallerAuthentication.UserHeader) && identity.Grants.Contains("act-as")
-                            && CallerAuthenticationExtensions.ActingPathAllowed(path))
-                        && !CallerAuthenticationExtensions.ServicePathAllowed(new ServiceCaller(identity.Key.Caller, identity.Grants), path))
-                    {
-                        await ErrorResults.WriteAsync(context, StatusCodes.Status403Forbidden, "forbidden_caller",
-                            "the service caller does not grant access to this route");
-                        return;
-                    }
+                    return AdmitInternalAsync(context, next, admission, metadata);
                 }
 
-                if (!servedBy.Contains(listener))
+                if (metadata is null || !metadata.Serves(listener))
                 {
                     context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    return;
+                    return Task.CompletedTask;
                 }
 
                 if (listener == TerraBaseListener.Client)
@@ -207,9 +235,43 @@ internal static class Listeners
                     context.Response.Headers.TryAdd("X-TerraBase-Machine", options.MachineId);
                 }
 
-                await next(context);
+                return next(context);
             });
             return app;
         }
+    }
+
+    private static async Task AdmitInternalAsync(HttpContext context, RequestDelegate next, CallerAdmission admission, ListenerMetadata? metadata)
+    {
+        if (!await admission.AdmitAsync(context))
+        {
+            await ErrorResults.WriteAsync(context, StatusCodes.Status401Unauthorized, "unauthorized",
+                "the internal listener needs X-TerraBase-Peer-Credential or a valid X-TerraScale-Caller token");
+            return;
+        }
+
+        if (context.Features.Get<AdmittedCaller>() is { Identity: { } identity }
+            && context.Request.Path.Value is { } path
+            && !(context.Request.Headers.ContainsKey(CallerAuthentication.UserHeader) && identity.Grants.Contains("act-as")
+                && CallerAuthenticationExtensions.ActingPathAllowed(path))
+            && !CallerAuthenticationExtensions.ServicePathAllowed(new ServiceCaller(identity.Key.Caller, identity.Grants), path))
+        {
+            await ErrorResults.WriteAsync(context, StatusCodes.Status403Forbidden, "forbidden_caller",
+                "the service caller does not grant access to this route");
+            return;
+        }
+
+        if (metadata is null || !metadata.Serves(TerraBaseListener.Internal))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        await next(context);
+    }
+
+    private sealed class ListenerTag(TerraBaseListener listener)
+    {
+        public TerraBaseListener Listener { get; } = listener;
     }
 }

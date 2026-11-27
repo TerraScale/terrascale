@@ -115,7 +115,7 @@ internal sealed class TerraBaseDatabaseExecutor(
             }
         }
 
-        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, cancellationToken, RulesEnforcer.Catalog(session));
+        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, session, cancellationToken);
         return enforced switch
         {
             EnforcedSql ready => request with { Statements = ready.Statements },

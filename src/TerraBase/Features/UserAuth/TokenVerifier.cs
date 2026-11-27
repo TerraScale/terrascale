@@ -242,7 +242,11 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                 && now < entry.ExpiresAt
                 && (entry.NotBefore is not { } notBefore || now >= notBefore))
             {
-                Volatile.Write(ref entry.Issuer.LastUsed, ticks);
+                if (ticks - Volatile.Read(ref entry.Issuer.LastUsed) >= time.TimestampFrequency)
+                {
+                    Volatile.Write(ref entry.Issuer.LastUsed, ticks);
+                }
+
                 caller = entry.Caller;
                 return true;
             }

@@ -20,23 +20,88 @@ public static class StorageBenchmarks
 
         if (ctx.ShouldRun("storage"))
         {
-            await RunDbOpenColdAsync(ctx, cancellationToken);
-            await RunDbCreateCloseAsync(ctx, cancellationToken);
-            await RunReadSuiteAsync(ctx, cancellationToken);
-            await RunWriteSingleInsertAsync(ctx, cancellationToken);
-            await RunWriteSingleUpdateHotAsync(ctx, cancellationToken);
-            await RunWriteBatch25Async(ctx, cancellationToken);
-            await RunWriteConcurrent32Async(ctx, cancellationToken);
-            await RunTxInteractiveRwAsync(ctx, cancellationToken);
-            await RunStrongStageCommitAsync(ctx, cancellationToken);
-            await RunBranchLiveAsync(ctx, cancellationToken);
-            await RunSnapshotBackupAsync(ctx, cancellationToken);
+            if (ctx.ShouldRunBenchmark("storage", "db_open_cold"))
+            {
+                await RunDbOpenColdAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "db_create_close"))
+            {
+                await RunDbCreateCloseAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.HasMatchingBenchmark("storage", "read_point", "read_range_100", "read_concurrent_16"))
+            {
+                await RunReadSuiteAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "write_single_insert"))
+            {
+                await RunWriteSingleInsertAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "write_single_update_hot"))
+            {
+                await RunWriteSingleUpdateHotAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "write_batch_25"))
+            {
+                await RunWriteBatch25Async(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "write_concurrent_32"))
+            {
+                await RunWriteConcurrent32Async(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "tx_interactive_rw"))
+            {
+                await RunTxInteractiveRwAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "strong_stage_commit"))
+            {
+                await RunStrongStageCommitAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "branch_live"))
+            {
+                await RunBranchLiveAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "snapshot_backup"))
+            {
+                await RunSnapshotBackupAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "mixed_rw_contention_16r_4w"))
+            {
+                await RunMixedRwContention16R4WAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("storage", "large_blob_rw_64kb"))
+            {
+                await RunLargeBlobRw64KbAsync(ctx, cancellationToken);
+            }
         }
 
         if (ctx.ShouldRun("resources"))
         {
-            await RunMultiDb50OpenRssAsync(ctx, cancellationToken);
-            await RunDiskFootprint1kRowsAsync(ctx, cancellationToken);
+            if (ctx.ShouldRunBenchmark("resources", "multi_db_50_open_rss_kib"))
+            {
+                await RunMultiDb50OpenRssAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("resources", "multi_db_200_active_density"))
+            {
+                await RunMultiDb200ActiveDensityAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("resources", "disk_footprint_1k_rows"))
+            {
+                await RunDiskFootprint1kRowsAsync(ctx, cancellationToken);
+            }
         }
     }
 
@@ -110,82 +175,91 @@ public static class StorageBenchmarks
         var seededCount = await CountRowsAsync(session, dbId, "items", cancellationToken);
         BenchRunnerContext.AssertCondition(seededCount == RowCount, string.Create(CultureInfo.InvariantCulture, $"read_suite expected {RowCount} rows, got {seededCount}"));
 
-        _ = await ctx.MeasureAsync(
-            "storage",
-            "read_point",
-            warmup: 50,
-            iterations: 2000,
-            async index =>
-            {
-                var targetId = (index % RowCount) + 1L;
-                var result = await ExecuteReadAsync(
-                    session,
-                    dbId,
-                    [Statement("SELECT id, name, score, payload FROM items WHERE id = ?1", SqlValue.FromIntegral(targetId))],
-                    cancellationToken);
-                var rows = result.ResultSets[0].Rows;
-                BenchRunnerContext.AssertCondition(
-                    rows.Count == 1 && rows[0][0].TryGetIntegral(out var id) && id == targetId,
-                    string.Create(CultureInfo.InvariantCulture, $"read_point failed for id {targetId}"));
-            },
-            diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
-            note: "10k rows",
-            cancellationToken: cancellationToken);
-
-        _ = await ctx.MeasureAsync(
-            "storage",
-            "read_range_100",
-            warmup: 20,
-            iterations: 500,
-            async index =>
-            {
-                var startId = (index % (RowCount - 100)) + 1L;
-                var endId = startId + 100L;
-                var result = await ExecuteReadAsync(
-                    session,
-                    dbId,
-                    [Statement("SELECT id, name, score, payload FROM items WHERE id >= ?1 AND id < ?2 ORDER BY id", SqlValue.FromIntegral(startId), SqlValue.FromIntegral(endId))],
-                    cancellationToken);
-                var rows = result.ResultSets[0].Rows;
-                BenchRunnerContext.AssertCondition(
-                    rows.Count == 100 && rows[0][0].TryGetIntegral(out var firstId) && firstId == startId,
-                    string.Create(CultureInfo.InvariantCulture, $"read_range_100 expected 100 rows from {startId}, got {rows.Count}"));
-            },
-            diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
-            note: "100 rows/scan",
-            cancellationToken: cancellationToken);
-
-        _ = await ctx.MeasureAsync(
-            "storage",
-            "read_concurrent_16",
-            warmup: 10,
-            iterations: 200,
-            async index =>
-            {
-                var tasks = new Task<SqlReadResult>[16];
-                for (var worker = 0; worker < tasks.Length; worker++)
+        if (ctx.ShouldRunBenchmark("storage", "read_point"))
+        {
+            _ = await ctx.MeasureAsync(
+                "storage",
+                "read_point",
+                warmup: 50,
+                iterations: 2000,
+                async index =>
                 {
-                    var targetId = (((index * 16) + worker) % RowCount) + 1L;
-                    tasks[worker] = ExecuteReadAsync(
+                    var targetId = (index % RowCount) + 1L;
+                    var result = await ExecuteReadAsync(
                         session,
                         dbId,
                         [Statement("SELECT id, name, score, payload FROM items WHERE id = ?1", SqlValue.FromIntegral(targetId))],
-                        cancellationToken).AsTask();
-                }
-
-                var results = await Task.WhenAll(tasks);
-                for (var worker = 0; worker < results.Length; worker++)
-                {
-                    var targetId = (((index * 16) + worker) % RowCount) + 1L;
-                    var rows = results[worker].ResultSets[0].Rows;
+                        cancellationToken);
+                    var rows = result.ResultSets[0].Rows;
                     BenchRunnerContext.AssertCondition(
                         rows.Count == 1 && rows[0][0].TryGetIntegral(out var id) && id == targetId,
-                        string.Create(CultureInfo.InvariantCulture, $"read_concurrent_16 mismatch on worker {worker}"));
-                }
-            },
-            diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
-            note: "16 concurrent reads/op",
-            cancellationToken: cancellationToken);
+                        string.Create(CultureInfo.InvariantCulture, $"read_point failed for id {targetId}"));
+                },
+                diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
+                note: "10k rows",
+                cancellationToken: cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark("storage", "read_range_100"))
+        {
+            _ = await ctx.MeasureAsync(
+                "storage",
+                "read_range_100",
+                warmup: 20,
+                iterations: 500,
+                async index =>
+                {
+                    var startId = (index % (RowCount - 100)) + 1L;
+                    var endId = startId + 100L;
+                    var result = await ExecuteReadAsync(
+                        session,
+                        dbId,
+                        [Statement("SELECT id, name, score, payload FROM items WHERE id >= ?1 AND id < ?2 ORDER BY id", SqlValue.FromIntegral(startId), SqlValue.FromIntegral(endId))],
+                        cancellationToken);
+                    var rows = result.ResultSets[0].Rows;
+                    BenchRunnerContext.AssertCondition(
+                        rows.Count == 100 && rows[0][0].TryGetIntegral(out var firstId) && firstId == startId,
+                        string.Create(CultureInfo.InvariantCulture, $"read_range_100 expected 100 rows from {startId}, got {rows.Count}"));
+                },
+                diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
+                note: "100 rows/scan",
+                cancellationToken: cancellationToken);
+        }
+
+        if (ctx.ShouldRunBenchmark("storage", "read_concurrent_16"))
+        {
+            _ = await ctx.MeasureAsync(
+                "storage",
+                "read_concurrent_16",
+                warmup: 10,
+                iterations: 200,
+                async index =>
+                {
+                    var tasks = new Task<SqlReadResult>[16];
+                    for (var worker = 0; worker < tasks.Length; worker++)
+                    {
+                        var targetId = (((index * 16) + worker) % RowCount) + 1L;
+                        tasks[worker] = ExecuteReadAsync(
+                            session,
+                            dbId,
+                            [Statement("SELECT id, name, score, payload FROM items WHERE id = ?1", SqlValue.FromIntegral(targetId))],
+                            cancellationToken).AsTask();
+                    }
+
+                    var results = await Task.WhenAll(tasks);
+                    for (var worker = 0; worker < results.Length; worker++)
+                    {
+                        var targetId = (((index * 16) + worker) % RowCount) + 1L;
+                        var rows = results[worker].ResultSets[0].Rows;
+                        BenchRunnerContext.AssertCondition(
+                            rows.Count == 1 && rows[0][0].TryGetIntegral(out var id) && id == targetId,
+                            string.Create(CultureInfo.InvariantCulture, $"read_concurrent_16 mismatch on worker {worker}"));
+                    }
+                },
+                diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
+                note: "16 concurrent reads/op",
+                cancellationToken: cancellationToken);
+        }
     }
 
     private static async Task RunWriteSingleInsertAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
@@ -524,9 +598,155 @@ public static class StorageBenchmarks
             cancellationToken: cancellationToken);
     }
 
+    private static async Task RunMixedRwContention16R4WAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
+    {
+        const int RowCount = 10_000;
+        const int Readers = 16;
+        const int Writers = 4;
+        var dir = ctx.RunDir("mixed_rw_contention_16r_4w");
+        var key = CreateRawKey();
+        var dbId = Ulid.NewUlid();
+        await using var engine = CreateEngine(dir, fsyncCommitLog: true);
+        await using var session = await CreateDatabaseAsync(engine, dbId, key, cancellationToken);
+
+        await CreateItemsTableAsync(session, dbId, cancellationToken);
+        await SeedItemsAsync(session, dbId, RowCount, batchSize: 200, cancellationToken);
+
+        var readTasks = new Task<SqlReadResult>[Readers];
+        var writeTasks = new Task<SqlWriteResult>[Writers];
+
+        _ = await ctx.MeasureAsync(
+            "storage",
+            "mixed_rw_contention_16r_4w",
+            warmup: 5,
+            iterations: 40,
+            async index =>
+            {
+                for (var reader = 0; reader < Readers; reader++)
+                {
+                    var targetId = (((index * Readers) + reader) % RowCount) + 1L;
+                    readTasks[reader] = ExecuteReadAsync(
+                        session,
+                        dbId,
+                        [Statement("SELECT id, name, score, payload FROM items WHERE id = ?1", SqlValue.FromIntegral(targetId))],
+                        cancellationToken).AsTask();
+                }
+
+                for (var writer = 0; writer < Writers; writer++)
+                {
+                    var targetId = (((index * Writers) + writer) % RowCount) + 1L;
+                    var score = ((index + 1L) * 100L) + writer;
+                    writeTasks[writer] = ExecuteWriteAsync(
+                        session,
+                        dbId,
+                        [Statement(
+                            "UPDATE items SET score = ?1, name = ?2 WHERE id = ?3",
+                            SqlValue.FromIntegral(score),
+                            SqlValue.FromText(string.Create(CultureInfo.InvariantCulture, $"mixed-{score}")),
+                            SqlValue.FromIntegral(targetId))],
+                        ConsistencyMode.Fast,
+                        cancellationToken).AsTask();
+                }
+
+                var reads = await Task.WhenAll(readTasks);
+                var writes = await Task.WhenAll(writeTasks);
+
+                for (var reader = 0; reader < reads.Length; reader++)
+                {
+                    var targetId = (((index * Readers) + reader) % RowCount) + 1L;
+                    var rows = reads[reader].ResultSets[0].Rows;
+                    BenchRunnerContext.AssertCondition(
+                        rows.Count == 1 && rows[0][0].TryGetIntegral(out var id) && id == targetId,
+                        string.Create(CultureInfo.InvariantCulture, $"mixed_rw_contention_16r_4w read mismatch on worker {reader}"));
+                }
+
+                for (var writer = 0; writer < writes.Length; writer++)
+                {
+                    BenchRunnerContext.AssertCondition(
+                        writes[writer].ResultSets[0].RowsAffected == 1 && writes[writer].Commit.Sequence > 0,
+                        string.Create(CultureInfo.InvariantCulture, $"mixed_rw_contention_16r_4w write failed on worker {writer}"));
+                }
+            },
+            diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
+            note: "16 readers + 4 writers/op; 10k rows; FsyncCommitLog=true",
+            cancellationToken: cancellationToken,
+            unitsPerOp: Readers + Writers,
+            unitLabel: "ops");
+    }
+
+    private static async Task RunLargeBlobRw64KbAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
+    {
+        const int BlobBytes = 64 * 1024;
+        const int PoolSize = 16;
+        var dir = ctx.RunDir("large_blob_rw_64kb");
+        var key = CreateRawKey();
+        var dbId = Ulid.NewUlid();
+        await using var engine = CreateEngine(dir, fsyncCommitLog: true);
+        await using var session = await CreateDatabaseAsync(engine, dbId, key, cancellationToken);
+
+        var ddl = await ExecuteWriteAsync(
+            session,
+            dbId,
+            [Statement("CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB NOT NULL)")],
+            ConsistencyMode.Strong,
+            cancellationToken);
+        BenchRunnerContext.AssertCondition(ddl.Commit.Sequence > 0, "large_blob_rw_64kb DDL failed");
+
+        var blobs = new byte[PoolSize][];
+        for (var i = 0; i < PoolSize; i++)
+        {
+            blobs[i] = new byte[BlobBytes];
+            RandomNumberGenerator.Fill(blobs[i]);
+        }
+
+        var writtenCount = 0L;
+        _ = await ctx.MeasureAsync(
+            "storage",
+            "large_blob_rw_64kb",
+            warmup: 5,
+            iterations: 60,
+            async index =>
+            {
+                var id = index + 1L;
+                var expected = blobs[index % PoolSize];
+                var written = await ExecuteWriteAsync(
+                    session,
+                    dbId,
+                    [Statement("INSERT INTO blobs (id, data) VALUES (?1, ?2)", SqlValue.FromIntegral(id), SqlValue.FromBlob(expected))],
+                    ConsistencyMode.Fast,
+                    cancellationToken);
+                BenchRunnerContext.AssertCondition(
+                    written.ResultSets[0].RowsAffected == 1 && written.Commit.Sequence > 0,
+                    "large_blob_rw_64kb insert failed");
+
+                var read = await ExecuteReadAsync(
+                    session,
+                    dbId,
+                    [Statement("SELECT data FROM blobs WHERE id = ?1", SqlValue.FromIntegral(id))],
+                    cancellationToken);
+                var rows = read.ResultSets[0].Rows;
+                BenchRunnerContext.AssertCondition(
+                    rows.Count == 1
+                    && rows[0][0].TryGetBlob(out var actual)
+                    && actual.Length == BlobBytes
+                    && actual.Span.SequenceEqual(expected),
+                    string.Create(CultureInfo.InvariantCulture, $"large_blob_rw_64kb verification failed for id {id}"));
+                writtenCount++;
+            },
+            diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
+            note: "64KiB random BLOB write+read+verify; FsyncCommitLog=true",
+            cancellationToken: cancellationToken,
+            unitsPerOp: 2,
+            unitLabel: "rw");
+
+        var count = await CountRowsAsync(session, dbId, "blobs", cancellationToken);
+        BenchRunnerContext.AssertCondition(count == writtenCount, string.Create(CultureInfo.InvariantCulture, $"large_blob_rw_64kb row count {count} != {writtenCount}"));
+    }
+
     private static async Task RunMultiDb50OpenRssAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
     {
         const int DatabaseCount = 50;
+        const double BytesPerMiB = 1024.0 * 1024.0;
         var dir = ctx.RunDir("multi_db_50_open_rss_kib");
         var key = CreateRawKey();
         var ids = new Ulid[DatabaseCount];
@@ -544,8 +764,7 @@ public static class StorageBenchmarks
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
-        var rssBefore = BenchRunnerContext.ReadRssBytes();
-        var fdsBefore = BenchRunnerContext.ReadOpenFdCount();
+        var before = ctx.CaptureSnapshot();
         var sessions = new List<ISqlDatabaseSession>(DatabaseCount);
         try
         {
@@ -557,23 +776,145 @@ public static class StorageBenchmarks
                 BenchRunnerContext.AssertCondition(count == 10, string.Create(CultureInfo.InvariantCulture, $"multi_db_50_open_rss_kib db {i} expected 10 rows, got {count}"));
             }
 
-            var rssAfter = BenchRunnerContext.ReadRssBytes();
-            var fdsAfter = BenchRunnerContext.ReadOpenFdCount();
-            var rssDeltaKiB = (rssAfter - rssBefore) / 1024.0;
+            var after = ctx.CaptureSnapshot();
+            var rssDeltaKiB = (after.RssBytes - before.RssBytes) / 1024.0;
             var rssKiBPerDb = rssDeltaKiB / DatabaseCount;
-            var fdDelta = fdsAfter - fdsBefore;
+            var fdDelta = after.OpenFdCount - before.OpenFdCount;
             var fdsPerDb = (double)fdDelta / DatabaseCount;
+            var managedHeapMiB = after.ManagedHeapBytes / BytesPerMiB;
+            var nativeRssMiB = Math.Max(0.0, (after.RssBytes - after.ManagedHeapBytes) / BytesPerMiB);
             var diskBytes = BenchRunnerContext.DirectorySizeBytes(dir);
 
             _ = ctx.RecordSnapshotMetric(
                 "resources",
                 "multi_db_50_open_rss_kib",
                 meanUs: rssKiBPerDb,
-                workingSetMiB: rssAfter / (1024.0 * 1024.0),
+                workingSetMiB: after.RssBytes / BytesPerMiB,
                 diskBytes: diskBytes,
                 note: string.Create(
                     CultureInfo.InvariantCulture,
-                    $"dbs={DatabaseCount} rss_delta_kib={rssDeltaKiB:F1} rss_kib_per_db={rssKiBPerDb:F1} fd_delta={fdDelta} fds_per_db={fdsPerDb:F2}"));
+                    $"dbs={DatabaseCount} rss_delta_kib={rssDeltaKiB:F1} rss_kib_per_db={rssKiBPerDb:F1} fd_delta={fdDelta} fds_per_db={fdsPerDb:F2}"),
+                managedHeapMiB: managedHeapMiB,
+                nativeRssMiB: nativeRssMiB,
+                openFdCount: after.OpenFdCount,
+                openFdDelta: fdDelta,
+                unitLabel: "kib/db");
+        }
+        finally
+        {
+            foreach (var session in sessions)
+            {
+                await session.DisposeAsync();
+            }
+        }
+    }
+
+    private static async Task RunMultiDb200ActiveDensityAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
+    {
+        const int DatabaseCount = 200;
+        const double BytesPerMiB = 1024.0 * 1024.0;
+        var dir = ctx.RunDir("multi_db_200_active_density");
+        var key = CreateRawKey();
+        var ids = new Ulid[DatabaseCount];
+        await using var engine = CreateEngine(dir, fsyncCommitLog: false);
+
+        for (var i = 0; i < DatabaseCount; i++)
+        {
+            ids[i] = Ulid.NewUlid();
+            await using var created = await CreateDatabaseAsync(engine, ids[i], key, cancellationToken);
+            await CreateItemsTableAsync(created, ids[i], cancellationToken);
+            await SeedItemsAsync(created, ids[i], 10, batchSize: 10, cancellationToken);
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        var before = ctx.CaptureSnapshot();
+        var sessions = new List<ISqlDatabaseSession>(DatabaseCount);
+        try
+        {
+            for (var i = 0; i < DatabaseCount; i++)
+            {
+                var session = await OpenDatabaseAsync(engine, ids[i], key, cancellationToken);
+                sessions.Add(session);
+            }
+
+            var activeOps = 0;
+            var activeStart = Stopwatch.GetTimestamp();
+            for (var i = 0; i < DatabaseCount; i++)
+            {
+                var session = sessions[i];
+                var dbId = ids[i];
+                var targetId = (i % 10) + 1L;
+                var updatedScore = 1000L + i;
+
+                var readBefore = await ExecuteReadAsync(
+                    session,
+                    dbId,
+                    [Statement("SELECT id, score FROM items WHERE id = ?1", SqlValue.FromIntegral(targetId))],
+                    cancellationToken);
+                BenchRunnerContext.AssertCondition(readBefore.ResultSets[0].Rows.Count == 1, "multi_db_200_active_density read failed");
+                activeOps++;
+
+                var written = await ExecuteWriteAsync(
+                    session,
+                    dbId,
+                    [Statement(
+                        "UPDATE items SET score = ?1, name = ?2 WHERE id = ?3",
+                        SqlValue.FromIntegral(updatedScore),
+                        SqlValue.FromText(string.Create(CultureInfo.InvariantCulture, $"active-{i}")),
+                        SqlValue.FromIntegral(targetId))],
+                    ConsistencyMode.Fast,
+                    cancellationToken);
+                BenchRunnerContext.AssertCondition(written.ResultSets[0].RowsAffected == 1 && written.Commit.Sequence > 0, "multi_db_200_active_density write failed");
+                activeOps++;
+
+                var readAfter = await ExecuteReadAsync(
+                    session,
+                    dbId,
+                    [Statement("SELECT score FROM items WHERE id = ?1", SqlValue.FromIntegral(targetId))],
+                    cancellationToken);
+                BenchRunnerContext.AssertCondition(
+                    readAfter.ResultSets[0].Rows.Count == 1
+                    && readAfter.ResultSets[0].Rows[0][0].TryGetIntegral(out var stored)
+                    && stored == updatedScore,
+                    "multi_db_200_active_density verify failed");
+                activeOps++;
+            }
+
+            var activeElapsed = Stopwatch.GetElapsedTime(activeStart).TotalSeconds;
+            var activeOpsPerSec = activeElapsed > 0 ? activeOps / activeElapsed : 0.0;
+
+            var after = ctx.CaptureSnapshot();
+            var rssDeltaKiB = (after.RssBytes - before.RssBytes) / 1024.0;
+            var rssKiBPerDb = rssDeltaKiB / DatabaseCount;
+            var managedDeltaKiB = (after.ManagedHeapBytes - before.ManagedHeapBytes) / 1024.0;
+            var managedKiBPerDb = managedDeltaKiB / DatabaseCount;
+            var nativeBefore = Math.Max(0L, before.RssBytes - before.ManagedHeapBytes);
+            var nativeAfter = Math.Max(0L, after.RssBytes - after.ManagedHeapBytes);
+            var nativeDeltaKiB = (nativeAfter - nativeBefore) / 1024.0;
+            var nativeKiBPerDb = nativeDeltaKiB / DatabaseCount;
+            var fdDelta = after.OpenFdCount - before.OpenFdCount;
+            var fdsPerDb = (double)fdDelta / DatabaseCount;
+            var diskBytes = BenchRunnerContext.DirectorySizeBytes(dir);
+
+            _ = ctx.RecordSnapshotMetric(
+                "resources",
+                "multi_db_200_active_density",
+                opsPerSec: activeOpsPerSec,
+                meanUs: rssKiBPerDb,
+                workingSetMiB: after.RssBytes / BytesPerMiB,
+                diskBytes: diskBytes,
+                note: string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"dbs={DatabaseCount} rss_kib_per_db={rssKiBPerDb:F1} managed_kib_per_db={managedKiBPerDb:F1} native_kib_per_db={nativeKiBPerDb:F1} fd_delta={fdDelta} fds_per_db={fdsPerDb:F2} active_ops={activeOps}"),
+                managedHeapMiB: after.ManagedHeapBytes / BytesPerMiB,
+                nativeRssMiB: nativeAfter / BytesPerMiB,
+                openFdCount: after.OpenFdCount,
+                openFdDelta: fdDelta,
+                unitsPerOp: DatabaseCount,
+                unitLabel: "kib/db");
         }
         finally
         {
@@ -631,7 +972,8 @@ public static class StorageBenchmarks
             diskBytes: totalBytes,
             note: string.Create(
                 CultureInfo.InvariantCulture,
-                $"rows={RowCount} db_b={dbBytes} wal_b={walBytes} log_b={logBytes} b_per_row={totalBytes / (double)RowCount:F1}"));
+                $"rows={RowCount} db_b={dbBytes} wal_b={walBytes} log_b={logBytes} b_per_row={totalBytes / (double)RowCount:F1}"),
+            unitLabel: "bytes");
     }
 
     internal static byte[] CreateRawKey()

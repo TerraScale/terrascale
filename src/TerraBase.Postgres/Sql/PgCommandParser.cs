@@ -54,7 +54,8 @@ internal static class PgCommandParser
 
         if (!hasSemicolon)
         {
-            var editor = PgTokenEditor.Create(sql, tokens);
+            using var pooled = PgTokenEditor.CreatePooled(sql, tokens);
+            var editor = pooled.Editor;
             if (editor.Count == 0)
             {
                 return new PgParseResult(EmptyCommands);
@@ -75,7 +76,8 @@ internal static class PgCommandParser
         List<PgCommand> commands = [];
         foreach (var (start, length) in Split(sql, tokens))
         {
-            var editor = PgTokenEditor.Create(sql, tokens.Slice(start, length));
+            using var pooled = PgTokenEditor.CreatePooled(sql, tokens.Slice(start, length));
+            var editor = pooled.Editor;
             if (editor.Count == 0)
             {
                 continue;
@@ -680,9 +682,15 @@ internal static class PgCommandParser
         var lexed = PgLexer.Tokenize(sql);
         return lexed switch
         {
-            PgToken[] lexedTokens => BuildSql(PgTokenEditor.Create(sql, lexedTokens), context, "TRUNCATE TABLE"),
+            PgToken[] lexedTokens => BuildTruncate(sql, lexedTokens, context),
             PgError error => error,
         };
+    }
+
+    private static PgStatementParseResult BuildTruncate(string sql, PgToken[] lexedTokens, PgRewriteContext context)
+    {
+        using var pooled = PgTokenEditor.CreatePooled(sql, lexedTokens);
+        return BuildSql(pooled.Editor, context, "TRUNCATE TABLE");
     }
 
     private static PgStatementParseResult ParseSet(PgTokenEditor tokens)

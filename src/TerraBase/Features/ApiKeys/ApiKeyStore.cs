@@ -7,6 +7,7 @@ using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.ControlPlane;
 using TerraBase.Hosting;
+using CallerScopes = TerraBase.Features.Callers.Scopes;
 
 namespace TerraBase.Features.ApiKeys;
 
@@ -19,12 +20,112 @@ internal readonly union ApiKeyLookup(ApiKeyRecord, ResourceNotFound, BackendUnav
 public sealed record ApiKeyRecord(
     string Id, string Name, IReadOnlyList<string> Scopes, Ulid OrganizationId, Ulid? ProjectId, Ulid? DatabaseId, DateTimeOffset? ExpiresAt)
 {
-    public bool Grants(string scope) => Scopes.Contains(scope, StringComparer.Ordinal);
+    private const byte SqlReadBit = 1 << 0;
+
+    private const byte SqlWriteBit = 1 << 1;
+
+    private const byte DatabasesReadBit = 1 << 2;
+
+    private const byte DatabasesWriteBit = 1 << 3;
+
+    private const byte UnknownScopeBit = 1 << 7;
+
+    private ApiKeyCaller? _caller;
+
+    public IReadOnlyList<string> Scopes
+    {
+        get;
+        init
+        {
+            field = value;
+            ScopeMask = ComputeScopeMask(value);
+        }
+    } = Scopes;
+
+    internal byte ScopeMask { get; private set; } = ComputeScopeMask(Scopes);
+
+    internal ApiKeyCaller Caller
+    {
+        get
+        {
+            var cached = Volatile.Read(ref _caller);
+            if (cached is not null)
+            {
+                return cached;
+            }
+
+            var created = new ApiKeyCaller(this);
+            return Interlocked.CompareExchange(ref _caller, created, null) ?? created;
+        }
+    }
+
+    private ApiKeyRecord(ApiKeyRecord original)
+    {
+        Id = original.Id;
+        Name = original.Name;
+        Scopes = original.Scopes;
+        OrganizationId = original.OrganizationId;
+        ProjectId = original.ProjectId;
+        DatabaseId = original.DatabaseId;
+        ExpiresAt = original.ExpiresAt;
+    }
+
+    public bool Grants(string scope) => scope switch
+    {
+        CallerScopes.SqlRead => (ScopeMask & SqlReadBit) != 0,
+        CallerScopes.SqlWrite => (ScopeMask & SqlWriteBit) != 0,
+        CallerScopes.DatabasesRead => (ScopeMask & DatabasesReadBit) != 0,
+        CallerScopes.DatabasesWrite => (ScopeMask & DatabasesWriteBit) != 0,
+        _ => (ScopeMask & UnknownScopeBit) != 0 && ContainsScope(Scopes, scope),
+    };
 
     public bool Reaches(ProjectRecord project, DatabaseRecord? database) =>
         project.OrganizationId == OrganizationId
         && (ProjectId is not { } projectId || projectId == project.Id)
         && (DatabaseId is not { } databaseId || (database is not null && databaseId == database.Id));
+
+    public bool Equals(ApiKeyRecord? other) =>
+        other is not null
+        && string.Equals(Id, other.Id, StringComparison.Ordinal)
+        && string.Equals(Name, other.Name, StringComparison.Ordinal)
+        && EqualityComparer<IReadOnlyList<string>>.Default.Equals(Scopes, other.Scopes)
+        && OrganizationId == other.OrganizationId
+        && ProjectId == other.ProjectId
+        && DatabaseId == other.DatabaseId
+        && ExpiresAt == other.ExpiresAt;
+
+    public override int GetHashCode() => HashCode.Combine(Id, Name, Scopes, OrganizationId, ProjectId, DatabaseId, ExpiresAt);
+
+    private static byte ComputeScopeMask(IReadOnlyList<string> scopes)
+    {
+        byte mask = 0;
+        for (var index = 0; index < scopes.Count; index++)
+        {
+            mask |= scopes[index] switch
+            {
+                CallerScopes.SqlRead => SqlReadBit,
+                CallerScopes.SqlWrite => SqlWriteBit,
+                CallerScopes.DatabasesRead => DatabasesReadBit,
+                CallerScopes.DatabasesWrite => DatabasesWriteBit,
+                _ => UnknownScopeBit,
+            };
+        }
+
+        return mask;
+    }
+
+    private static bool ContainsScope(IReadOnlyList<string> scopes, string scope)
+    {
+        for (var index = 0; index < scopes.Count; index++)
+        {
+            if (string.Equals(scopes[index], scope, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 public sealed record IssuedApiKey(ApiKeyRecord Key, string Secret);

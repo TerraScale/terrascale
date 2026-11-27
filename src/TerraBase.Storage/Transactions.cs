@@ -9,6 +9,9 @@ internal readonly union TransactionStartOutcome(TransactionStarted, StorageBusy)
 internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOptions options, Ulid txId) : ISqlTransaction
 {
     private readonly Channel<Command> _commands = Channel.CreateUnbounded<Command>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Lock _timerGate = new();
+    private ITimer? _idleTimer;
+    private bool _timerDisposed;
     private Command? _current;
     private int _statements;
     private int _finished;
@@ -25,7 +28,23 @@ internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOp
     public void Abandon()
     {
         Volatile.Write(ref _abandoned, 1);
+        DisposeIdleTimer();
         _commands.Writer.TryComplete();
+    }
+
+    public void DisposeIdleTimer()
+    {
+        lock (_timerGate)
+        {
+            if (_timerDisposed)
+            {
+                return;
+            }
+
+            _timerDisposed = true;
+            _idleTimer?.Dispose();
+            _idleTimer = null;
+        }
     }
 
     public void Fault(StorageBusy busy)
@@ -56,47 +75,70 @@ internal sealed class WriteTransaction(DatabaseSession session, SqlTransactionOp
             return immediate;
         }
 
-        if (idleTimeout == Timeout.InfiniteTimeSpan)
+        if (idleTimeout != Timeout.InfiniteTimeSpan && idleTimeout <= TimeSpan.Zero)
+        {
+            Volatile.Write(ref _current, null);
+            Abandon();
+            return null;
+        }
+
+        var armed = false;
+        if (idleTimeout != Timeout.InfiniteTimeSpan)
+        {
+            ArmIdleTimer(idleTimeout, time);
+            armed = true;
+        }
+
+        try
         {
             if (await _commands.Reader.WaitToReadAsync() && _commands.Reader.TryRead(out var next))
             {
                 Volatile.Write(ref _current, next);
                 return next;
             }
-
-            Volatile.Write(ref _current, null);
-            Abandon();
-            return null;
         }
-
-        using var cancellation = new CancellationTokenSource();
-        var wait = _commands.Reader.WaitToReadAsync(cancellation.Token);
-        if (wait.IsCompletedSuccessfully)
+        finally
         {
-            if (await wait && _commands.Reader.TryRead(out var readyCommand))
+            if (armed)
             {
-                Volatile.Write(ref _current, readyCommand);
-                return readyCommand;
+                DisarmIdleTimer();
             }
-
-            Volatile.Write(ref _current, null);
-            Abandon();
-            return null;
-        }
-
-        var ready = wait.AsTask();
-        var delay = Task.Delay(idleTimeout, time, cancellation.Token);
-        var winner = await Task.WhenAny(ready, delay);
-        await cancellation.CancelAsync();
-        if (winner == ready && await ready && _commands.Reader.TryRead(out var command))
-        {
-            Volatile.Write(ref _current, command);
-            return command;
         }
 
         Volatile.Write(ref _current, null);
         Abandon();
         return null;
+    }
+
+    private void ArmIdleTimer(TimeSpan idleTimeout, TimeProvider time)
+    {
+        lock (_timerGate)
+        {
+            if (_timerDisposed)
+            {
+                return;
+            }
+
+            _idleTimer ??= time.CreateTimer(static state =>
+            {
+                if (state is WriteTransaction transaction)
+                {
+                    transaction.Abandon();
+                }
+            }, this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _ = _idleTimer.Change(idleTimeout, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void DisarmIdleTimer()
+    {
+        lock (_timerGate)
+        {
+            if (!_timerDisposed && _idleTimer is not null)
+            {
+                _ = _idleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            }
+        }
     }
 
     public async ValueTask<TransactionExecuteResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken)
@@ -232,7 +274,7 @@ internal sealed class ReadTransaction : ISqlTransaction
             else
             {
                 _ = _idleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-                var executed = DatabaseSession.ExecuteOnReader(_reader, statement, _statements++, _info, ReadTables, limitResults: true, cancellationToken);
+                var executed = _session.ExecuteOnReader(_reader, statement, _statements++, _info, ReadTables, limitResults: true, cancellationToken);
                 outcome = executed switch
                 {
                     SqlResultSet result => Record(result),
@@ -279,7 +321,7 @@ internal sealed class ReadTransaction : ISqlTransaction
         var info = new StatementInfo();
         for (var index = 0; index < statements.Count; index++)
         {
-            var executed = DatabaseSession.ExecuteOnReader(_reader, statements[index], index, info, null, limitResults: true, cancellationToken);
+            var executed = _session.ExecuteOnReader(_reader, statements[index], index, info, null, limitResults: true, cancellationToken);
             var failure = executed switch
             {
                 SqlResultSet result => Collect(results, result),

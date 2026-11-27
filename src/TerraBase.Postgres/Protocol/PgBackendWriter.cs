@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.IO.Pipelines;
+using System.Runtime.InteropServices;
 using TerraBase.Postgres.Hosting;
 
 namespace TerraBase.Postgres.Protocol;
@@ -164,32 +165,147 @@ internal sealed class PgBackendWriter(PipeWriter output, TimeProvider timeProvid
         _buffer.End();
     }
 
+    public static void FillBinaryFlags(IReadOnlyList<PgColumn> columns, IReadOnlyList<short> formats, Span<bool> binaryFlags)
+    {
+        var formatCount = formats.Count;
+        if (formatCount == 0)
+        {
+            binaryFlags.Clear();
+            return;
+        }
+
+        var columnCount = columns.Count;
+        if (formatCount == 1)
+        {
+            if (formats[0] != 1)
+            {
+                binaryFlags.Clear();
+                return;
+            }
+
+            for (var index = 0; index < columnCount; index++)
+            {
+                binaryFlags[index] = PgValueCodec.SupportsBinary(columns[index].Oid);
+            }
+
+            return;
+        }
+
+        for (var index = 0; index < columnCount; index++)
+        {
+            var format = formats[Math.Min(index, formatCount - 1)];
+            binaryFlags[index] = format == 1 && PgValueCodec.SupportsBinary(columns[index].Oid);
+        }
+    }
+
+    public PgError? WriteRows(
+        IReadOnlyList<IReadOnlyList<SqlValue>> rows,
+        int startIndex,
+        int endIndex,
+        IReadOnlyList<PgColumn> columns,
+        IReadOnlyList<short> formats,
+        bool stopWhenFull,
+        out int nextIndex)
+    {
+        var columnCount = columns.Count;
+        Span<bool> binaryFlags = columnCount <= 128 ? stackalloc bool[columnCount] : new bool[columnCount];
+        FillBinaryFlags(columns, formats, binaryFlags);
+        for (var index = startIndex; index < endIndex; index++)
+        {
+            if (DataRow(rows[index], columns, binaryFlags) is { } error)
+            {
+                nextIndex = index;
+                return error;
+            }
+
+            if (stopWhenFull && ShouldFlush)
+            {
+                nextIndex = index + 1;
+                return null;
+            }
+        }
+
+        nextIndex = endIndex;
+        return null;
+    }
+
     public PgError? DataRow(IReadOnlyList<SqlValue> row, IReadOnlyList<PgColumn> columns, IReadOnlyList<short> formats)
     {
+        var columnCount = columns.Count;
+        Span<bool> binaryFlags = columnCount <= 128 ? stackalloc bool[columnCount] : new bool[columnCount];
+        FillBinaryFlags(columns, formats, binaryFlags);
+        return DataRow(row, columns, binaryFlags);
+    }
+
+    public PgError? DataRow(IReadOnlyList<SqlValue> row, IReadOnlyList<PgColumn> columns, ReadOnlySpan<bool> binaryFlags) =>
+        row switch
+        {
+            SqlValue[] array => DataRowSpan(array, columns, binaryFlags),
+            List<SqlValue> list => DataRowSpan(CollectionsMarshal.AsSpan(list), columns, binaryFlags),
+            _ => DataRowSlow(row, columns, binaryFlags),
+        };
+
+    private PgError? DataRowSpan(ReadOnlySpan<SqlValue> row, IReadOnlyList<PgColumn> columns, ReadOnlySpan<bool> binaryFlags)
+    {
         var start = _buffer.Begin('D');
-        var count = row.Count;
+        var count = row.Length;
         var columnCount = columns.Count;
         _buffer.WriteInt16((short)count);
-        var formatCount = formats.Count;
-        var singleBinary = formatCount == 1 && formats[0] == 1;
-        for (var index = 0; index < count; index++)
+        if (columns is PgColumn[] columnArray)
         {
-            var oid = index < columnCount ? columns[index].Oid : PgOid.Text;
-            var binary = formatCount == 0
-                ? false
-                : formatCount == 1
-                    ? singleBinary && PgValueCodec.SupportsBinary(oid)
-                    : PgValueCodec.ResultFormat(formats, index, oid) == 1;
-            if (!PgValueCodec.TryWrite(_buffer, row[index], oid, binary))
+            for (var index = 0; index < count; index++)
             {
-                _buffer.Truncate(start);
-                var name = index < columnCount ? columns[index].Name : (index + 1).ToString(CultureInfo.InvariantCulture);
-                return new PgError(PgValueCodec.EncodeFailureState(row[index], oid), $"value of column \"{name}\" cannot be represented as {PgOid.FormatName(oid)}");
+                var oid = index < columnCount ? columnArray[index].Oid : PgOid.Text;
+                var binary = index < binaryFlags.Length && binaryFlags[index];
+                if (!PgValueCodec.TryWrite(_buffer, row[index], oid, binary))
+                {
+                    return DataRowError(start, row[index], columns, index, oid);
+                }
+            }
+        }
+        else
+        {
+            for (var index = 0; index < count; index++)
+            {
+                var oid = index < columnCount ? columns[index].Oid : PgOid.Text;
+                var binary = index < binaryFlags.Length && binaryFlags[index];
+                if (!PgValueCodec.TryWrite(_buffer, row[index], oid, binary))
+                {
+                    return DataRowError(start, row[index], columns, index, oid);
+                }
             }
         }
 
         _buffer.End();
         return null;
+    }
+
+    private PgError? DataRowSlow(IReadOnlyList<SqlValue> row, IReadOnlyList<PgColumn> columns, ReadOnlySpan<bool> binaryFlags)
+    {
+        var start = _buffer.Begin('D');
+        var count = row.Count;
+        var columnCount = columns.Count;
+        _buffer.WriteInt16((short)count);
+        for (var index = 0; index < count; index++)
+        {
+            var oid = index < columnCount ? columns[index].Oid : PgOid.Text;
+            var binary = index < binaryFlags.Length && binaryFlags[index];
+            var value = row[index];
+            if (!PgValueCodec.TryWrite(_buffer, value, oid, binary))
+            {
+                return DataRowError(start, value, columns, index, oid);
+            }
+        }
+
+        _buffer.End();
+        return null;
+    }
+
+    private PgError DataRowError(int start, SqlValue value, IReadOnlyList<PgColumn> columns, int index, int oid)
+    {
+        _buffer.Truncate(start);
+        var name = index < columns.Count ? columns[index].Name : (index + 1).ToString(CultureInfo.InvariantCulture);
+        return new PgError(PgValueCodec.EncodeFailureState(value, oid), $"value of column \"{name}\" cannot be represented as {PgOid.FormatName(oid)}");
     }
 
     public void Error(PgError error) => Fields('E', error.Fatal ? "FATAL" : "ERROR", error.SqlState, error.Message, error.Detail, error.Hint);

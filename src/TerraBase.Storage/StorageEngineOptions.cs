@@ -66,12 +66,28 @@ internal sealed class VersionVector
 
     public long Generation => Volatile.Read(ref _generation);
 
-    public long Get(string origin)
+    public long Get(string origin) => Volatile.Read(ref _snapshot).Get(origin);
+
+    public void AdvanceSingle(string origin, long sequence, CausalBookmark precomputedSnapshot)
     {
+        TaskCompletionSource signal;
         lock (_gate)
         {
-            return _watermarks.GetValueOrDefault(origin);
+            if (sequence > _watermarks.GetValueOrDefault(origin))
+            {
+                _watermarks[origin] = sequence;
+                var nextSnapshot = _watermarks.Count == precomputedSnapshot.Entries.Count
+                    ? precomputedSnapshot
+                    : _snapshot.With(origin, sequence);
+                Volatile.Write(ref _snapshot, nextSnapshot);
+                _ = Interlocked.Increment(ref _generation);
+            }
+
+            signal = _changed;
+            _changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
+
+        signal.TrySetResult();
     }
 
     public void Set(IEnumerable<KeyValuePair<string, long>> watermarks)

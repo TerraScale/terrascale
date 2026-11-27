@@ -184,7 +184,7 @@ internal sealed partial class PostgresConnection
 
     private async ValueTask<PgOutcome> CopyToAsync(PgCopyToCommand command, IReadOnlyList<SqlValue> parameters, CancellationToken cancellationToken)
     {
-        var outcome = await ExecuteSqlAsync(command.Query, parameters, null, cancellationToken);
+        var outcome = await ExecuteSqlAsync(command.Query, parameters, null, cacheEntry: null, cancellationToken);
         return outcome switch
         {
             PgResult result => await StreamCopyAsync(command.Options, result),

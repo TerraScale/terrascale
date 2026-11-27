@@ -78,9 +78,20 @@ public static class PostgresBenchmarks
     public static async Task RunAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ctx);
-        RunLexerAndRewriter(ctx);
-        RunValueCodec(ctx);
-        await RunWireLoopbackAsync(ctx, cancellationToken);
+        if (ctx.ShouldRunBenchmark(Suite, "lexer_and_rewriter"))
+        {
+            RunLexerAndRewriter(ctx);
+        }
+
+        if (ctx.ShouldRunBenchmark(Suite, "value_codec_text_and_binary"))
+        {
+            RunValueCodec(ctx);
+        }
+
+        if (ctx.HasMatchingBenchmark(Suite, "wire_simple_and_extended_loopback", "pg_pipelined_prepared_16"))
+        {
+            await RunWireLoopbackAsync(ctx, cancellationToken);
+        }
     }
 
     private static void RunLexerAndRewriter(BenchRunnerContext ctx)
@@ -283,36 +294,66 @@ public static class PostgresBenchmarks
                     }
                 }
 
-                await ctx.MeasureAsync(
-                    Suite,
-                    "wire_simple_and_extended_loopback",
-                    warmup: 25,
-                    iterations: 250,
-                    async iteration =>
-                    {
-                        var targetId = (iteration % 200) + 1;
-                        var simple = await client.SimpleQueryAsync(
-                            $"SELECT id, name, score FROM items WHERE id = {targetId.ToString(CultureInfo.InvariantCulture)}",
-                            cancellationToken);
-                        if (simple.RowCount != 1 || simple.CommandTag != "SELECT 1")
+                if (ctx.ShouldRunBenchmark(Suite, "wire_simple_and_extended_loopback"))
+                {
+                    await ctx.MeasureAsync(
+                        Suite,
+                        "wire_simple_and_extended_loopback",
+                        warmup: 25,
+                        iterations: 250,
+                        async iteration =>
                         {
-                            throw new InvalidOperationException($"Simple query returned {simple.RowCount.ToString(CultureInfo.InvariantCulture)} rows ({simple.CommandTag})");
-                        }
+                            var targetId = (iteration % 200) + 1;
+                            var simple = await client.SimpleQueryAsync(
+                                $"SELECT id, name, score FROM items WHERE id = {targetId.ToString(CultureInfo.InvariantCulture)}",
+                                cancellationToken);
+                            if (simple.RowCount != 1 || simple.CommandTag != "SELECT 1")
+                            {
+                                throw new InvalidOperationException($"Simple query returned {simple.RowCount.ToString(CultureInfo.InvariantCulture)} rows ({simple.CommandTag})");
+                            }
 
-                        var extendedSelect = await client.ExtendedSelectByIdAsync(targetId, cancellationToken);
-                        if (extendedSelect.RowCount != 1 || extendedSelect.CommandTag != "SELECT 1")
-                        {
-                            throw new InvalidOperationException($"Extended SELECT returned {extendedSelect.RowCount.ToString(CultureInfo.InvariantCulture)} rows ({extendedSelect.CommandTag})");
-                        }
+                            var extendedSelect = await client.ExtendedSelectByIdAsync(targetId, cancellationToken);
+                            if (extendedSelect.RowCount != 1 || extendedSelect.CommandTag != "SELECT 1")
+                            {
+                                throw new InvalidOperationException($"Extended SELECT returned {extendedSelect.RowCount.ToString(CultureInfo.InvariantCulture)} rows ({extendedSelect.CommandTag})");
+                            }
 
-                        var extendedUpdate = await client.ExtendedUpdateScoreAsync(targetId, (iteration % 1000) + 1, cancellationToken);
-                        if (extendedUpdate.CommandTag != "UPDATE 1")
+                            var extendedUpdate = await client.ExtendedUpdateScoreAsync(targetId, (iteration % 1000) + 1, cancellationToken);
+                            if (extendedUpdate.CommandTag != "UPDATE 1")
+                            {
+                                throw new InvalidOperationException($"Extended UPDATE returned {extendedUpdate.CommandTag}");
+                            }
+                        },
+                        note: "TCP loopback Kestrel PostgresConnectionHandler: Simple SELECT + Extended Parse/Bind/Execute/Sync SELECT & UPDATE",
+                        cancellationToken: cancellationToken);
+                }
+
+                if (ctx.ShouldRunBenchmark(Suite, "pg_pipelined_prepared_16"))
+                {
+                    await client.PrepareStatementAsync(
+                        "sel_item",
+                        "SELECT id, name, score FROM items WHERE id = $1::int8",
+                        [PgOid.Int8],
+                        cancellationToken);
+
+                    await ctx.MeasureAsync(
+                        Suite,
+                        "pg_pipelined_prepared_16",
+                        warmup: 25,
+                        iterations: 250,
+                        async iteration =>
                         {
-                            throw new InvalidOperationException($"Extended UPDATE returned {extendedUpdate.CommandTag}");
-                        }
-                    },
-                    note: "TCP loopback Kestrel PostgresConnectionHandler: Simple SELECT + Extended Parse/Bind/Execute/Sync SELECT & UPDATE",
-                    cancellationToken: cancellationToken);
+                            var summary = await client.ExecutePipelinedPreparedAsync("sel_item", (iteration * 16L) % 200L, 200, 16, cancellationToken);
+                            if (summary.RowCount != 16 || summary.CommandTag != "SELECT 1")
+                            {
+                                throw new InvalidOperationException($"Pipelined prepared SELECT returned {summary.RowCount.ToString(CultureInfo.InvariantCulture)} rows ({summary.CommandTag})");
+                            }
+                        },
+                        note: "16 pipelined Bind+Execute + single Sync on named prepared statement sel_item",
+                        cancellationToken: cancellationToken,
+                        unitsPerOp: 16,
+                        unitLabel: "queries");
+                }
             }
             finally
             {
@@ -530,6 +571,101 @@ public static class PostgresBenchmarks
 
             await FlushOutboundAsync(cancellationToken);
             return await ReadUntilReadyAsync(expectParseComplete: true, expectBindComplete: true, cancellationToken);
+        }
+
+        public async Task PrepareStatementAsync(string name, string sql, int[] parameterOids, CancellationToken cancellationToken)
+        {
+            _outbound.Clear();
+            _outbound.Begin('P');
+            _outbound.WriteCString(name);
+            _outbound.WriteCString(sql);
+            _outbound.WriteInt16((short)parameterOids.Length);
+            for (var i = 0; i < parameterOids.Length; i++)
+            {
+                _outbound.WriteInt32(parameterOids[i]);
+            }
+
+            _outbound.End();
+
+            _outbound.Begin('S');
+            _outbound.End();
+
+            await FlushOutboundAsync(cancellationToken);
+            _ = await ReadUntilReadyAsync(expectParseComplete: true, expectBindComplete: false, cancellationToken);
+        }
+
+        public async Task<PgQuerySummary> ExecutePipelinedPreparedAsync(
+            string statementName,
+            long startOffset,
+            int rowCount,
+            int pipelineDepth,
+            CancellationToken cancellationToken)
+        {
+            _outbound.Clear();
+            for (var i = 0; i < pipelineDepth; i++)
+            {
+                var id = ((startOffset + i) % rowCount) + 1L;
+                _outbound.Begin('B');
+                _outbound.WriteCString(string.Empty);
+                _outbound.WriteCString(statementName);
+                _outbound.WriteInt16(1);
+                _outbound.WriteInt16(1);
+                _outbound.WriteInt16(1);
+                _outbound.WriteInt32(8);
+                _outbound.WriteInt64(id);
+                _outbound.WriteInt16(1);
+                _outbound.WriteInt16(1);
+                _outbound.End();
+
+                _outbound.Begin('E');
+                _outbound.WriteCString(string.Empty);
+                _outbound.WriteInt32(0);
+                _outbound.End();
+            }
+
+            _outbound.Begin('S');
+            _outbound.End();
+
+            await FlushOutboundAsync(cancellationToken);
+
+            var rows = 0;
+            var binds = 0;
+            var completes = 0;
+            var lastTag = string.Empty;
+            while (true)
+            {
+                var (type, length) = await ReadFrameAsync(cancellationToken);
+                switch (type)
+                {
+                    case '2':
+                        binds++;
+                        break;
+                    case 'D':
+                        rows++;
+                        break;
+                    case 'C':
+                        completes++;
+                        lastTag = length > 0 && _payload[length - 1] == 0
+                            ? Encoding.UTF8.GetString(_payload, 0, length - 1)
+                            : Encoding.UTF8.GetString(_payload, 0, length);
+                        break;
+                    case 'E':
+                        throw new InvalidOperationException($"Postgres pipelined error: {DecodeError(length)}");
+                    case 'Z':
+                        if (binds != pipelineDepth || completes != pipelineDepth)
+                        {
+                            throw new InvalidOperationException($"Expected {pipelineDepth.ToString(CultureInfo.InvariantCulture)} pipelined binds/completes, got binds={binds.ToString(CultureInfo.InvariantCulture)} completes={completes.ToString(CultureInfo.InvariantCulture)}");
+                        }
+
+                        var status = length == 1 ? (char)_payload[0] : '?';
+                        if (status != 'I')
+                        {
+                            throw new InvalidOperationException($"Unexpected ReadyForQuery status '{status}'");
+                        }
+
+                        return new PgQuerySummary(rows, lastTag, status);
+                }
+            }
         }
 
         public async ValueTask DisposeAsync()

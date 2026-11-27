@@ -15,16 +15,43 @@ public static class CrdtCommitLogBenchmarks
 
         if (ctx.ShouldRun("crdt"))
         {
-            await RunPreupdateAndStamp100Async(ctx, cancellationToken);
-            await RunApplyRemoteBatch50Async(ctx, cancellationToken);
-            RunMutationCodecRoundtrip(ctx, cancellationToken);
+            if (ctx.ShouldRunBenchmark("crdt", "preupdate_and_stamp_100"))
+            {
+                await RunPreupdateAndStamp100Async(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("crdt", "apply_remote_batch_50"))
+            {
+                await RunApplyRemoteBatch50Async(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("crdt", "apply_remote_conflict_merge_50"))
+            {
+                await RunApplyRemoteConflictMerge50Async(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("crdt", "mutation_codec_roundtrip"))
+            {
+                RunMutationCodecRoundtrip(ctx, cancellationToken);
+            }
         }
 
         if (ctx.ShouldRun("commitlog"))
         {
-            await RunCommitLogFrameSealOpenAsync(ctx, cancellationToken);
-            await RunCommitLogAppendReadTailAsync(ctx, cancellationToken);
-            await RunVersionVectorSnapshotSatisfiesAsync(ctx, cancellationToken);
+            if (ctx.ShouldRunBenchmark("commitlog", "commitlog_frame_seal_open"))
+            {
+                await RunCommitLogFrameSealOpenAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("commitlog", "commitlog_append_read_tail"))
+            {
+                await RunCommitLogAppendReadTailAsync(ctx, cancellationToken);
+            }
+
+            if (ctx.ShouldRunBenchmark("commitlog", "version_vector_snapshot_satisfies"))
+            {
+                await RunVersionVectorSnapshotSatisfiesAsync(ctx, cancellationToken);
+            }
         }
     }
 
@@ -141,6 +168,94 @@ public static class CrdtCommitLogBenchmarks
 
         var count = await StorageBenchmarks.CountRowsAsync(session, dbId, "items", cancellationToken);
         BenchRunnerContext.AssertCondition(count == totalApplied, string.Create(CultureInfo.InvariantCulture, $"apply_remote_batch_50 row count {count} != {totalApplied}"));
+    }
+
+    private static async Task RunApplyRemoteConflictMerge50Async(BenchRunnerContext ctx, CancellationToken cancellationToken)
+    {
+        const int RowCount = 50;
+        const long DeltaStep = 3L;
+        const string RemoteOrigin = "gru";
+        const string LocalOrigin = "iad";
+        var dir = ctx.RunDir("apply_remote_conflict_merge_50");
+        var key = StorageBenchmarks.CreateRawKey();
+        var dbId = Ulid.NewUlid();
+        var deltaColumns = new DeltaColumnRegistry();
+        deltaColumns.Register(dbId, "items", "score");
+        await using var engine = StorageBenchmarks.CreateEngine(dir, fsyncCommitLog: false, region: LocalOrigin, nodeId: 2, deltaColumns: deltaColumns);
+        await using var session = await StorageBenchmarks.CreateDatabaseAsync(engine, dbId, key, cancellationToken);
+        await StorageBenchmarks.CreateItemsTableAsync(session, dbId, cancellationToken);
+        await StorageBenchmarks.SeedItemsAsync(session, dbId, RowCount, batchSize: RowCount, cancellationToken);
+
+        var basePhysicalMs = engine.Clock.Tick().WallMs;
+        var schemaEpoch = session.SchemaEpoch;
+        var nextSequence = 1L;
+        var totalIterations = 0L;
+
+        _ = await ctx.MeasureAsync(
+            "crdt",
+            "apply_remote_conflict_merge_50",
+            warmup: 3,
+            iterations: 40,
+            async iteration =>
+            {
+                var commits = new CommitMetadata[RowCount];
+                for (var item = 0; item < RowCount; item++)
+                {
+                    var rowId = item + 1L;
+                    var seq = nextSequence++;
+                    var higherHlc = ((item + iteration) & 1) == 0;
+                    var commitHlc = higherHlc
+                        ? new HlcTimestamp(basePhysicalMs + 10_000L + seq, 0, 1)
+                        : new HlcTimestamp(Math.Max(1L, basePhysicalMs - 10_000L), (ushort)(item + 1), 1);
+
+                    var mutation = new RowMutation(
+                        "items",
+                        MutationOp.Update,
+                        1,
+                        [SqlValue.FromIntegral(rowId)],
+                        [
+                            new ColumnChange("name", ChangeKind.Assign, 0, SqlValue.FromText(string.Create(CultureInfo.InvariantCulture, $"merge-{seq}")), 0),
+                            new ColumnChange("score", ChangeKind.DeltaOp, 0, SqlValue.Null, DeltaStep),
+                            new ColumnChange("payload", ChangeKind.Assign, 0, SqlValue.FromText(PayloadText), 0),
+                        ]);
+                    var payload = MutationBatchCodec.Encode(new DeltaBatch([], [mutation]));
+                    commits[item] = new CommitMetadata(
+                        Ulid.NewUlid(),
+                        RemoteOrigin,
+                        seq,
+                        commitHlc,
+                        schemaEpoch,
+                        ConsistencyMode.Fast,
+                        CausalBookmark.ForRegion(RemoteOrigin, seq),
+                        payload);
+                }
+
+                var applied = await ApplyRemoteBatchAsync(session, new RemoteCommitBatch(dbId, commits), cancellationToken);
+                BenchRunnerContext.AssertCondition(
+                    applied.Applied == RowCount && applied.Duplicates == 0 && applied.Buffered == 0 && applied.Quarantined == 0,
+                    string.Create(CultureInfo.InvariantCulture, $"apply_remote_conflict_merge_50 expected 50 applied, got applied={applied.Applied} dup={applied.Duplicates} buf={applied.Buffered} quar={applied.Quarantined}"));
+                totalIterations++;
+            },
+            diskBytes: () => BenchRunnerContext.DirectorySizeBytes(dir),
+            note: "50 rows Assign+DeltaOp alternating HLC conflict merge; FsyncCommitLog=false",
+            cancellationToken: cancellationToken,
+            unitsPerOp: RowCount,
+            unitLabel: "merges");
+
+        var count = await StorageBenchmarks.CountRowsAsync(session, dbId, "items", cancellationToken);
+        BenchRunnerContext.AssertCondition(count == RowCount, string.Create(CultureInfo.InvariantCulture, $"apply_remote_conflict_merge_50 row count {count} != {RowCount}"));
+
+        var expectedScore = 10L + (totalIterations * DeltaStep);
+        var check = await StorageBenchmarks.ExecuteReadAsync(
+            session,
+            dbId,
+            [StorageBenchmarks.Statement("SELECT score FROM items WHERE id = 1")],
+            cancellationToken);
+        BenchRunnerContext.AssertCondition(
+            check.ResultSets[0].Rows.Count == 1
+            && check.ResultSets[0].Rows[0][0].TryGetIntegral(out var actualScore)
+            && actualScore == expectedScore,
+            string.Create(CultureInfo.InvariantCulture, $"apply_remote_conflict_merge_50 delta score mismatch, expected {expectedScore}"));
     }
 
     private static void RunMutationCodecRoundtrip(BenchRunnerContext ctx, CancellationToken cancellationToken)

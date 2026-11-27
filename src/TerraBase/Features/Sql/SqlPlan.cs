@@ -86,6 +86,18 @@ internal static class SqlPlan
 
     private static int _cacheCount;
 
+    public static bool TryClassifyCached(string sql, out StatementKind kind)
+    {
+        if (sql is { Length: > 0 and <= MaxCachedSqlLength } && Cache.TryGetValue(sql, out var cached))
+        {
+            kind = cached.Kind;
+            return true;
+        }
+
+        kind = default;
+        return false;
+    }
+
     public static StatementPlan Classify(SqlStatement statement, int index)
     {
         ArgumentNullException.ThrowIfNull(statement);

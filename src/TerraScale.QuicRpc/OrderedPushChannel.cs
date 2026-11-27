@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Net.Quic;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
+using System.Threading.Tasks.Sources;
 using TerraScale.Contracts.Quic;
 
 namespace TerraScale.QuicRpc;
@@ -15,52 +17,125 @@ internal sealed record TurnGranted;
 
 internal readonly union TurnOutcome(TurnGranted, QuicFault);
 
-internal sealed class PendingTurn
+internal sealed class PendingTurn : IValueTaskSource<TurnOutcome>
 {
     private const int Queued = 0;
     private const int Claimed = 1;
     private const int Abandoned = 2;
+    private const int MaxPoolSize = 64;
 
     private static readonly TurnGranted Granted = new();
+    private static readonly ConcurrentQueue<PendingTurn> Pool = new();
+    private static int PoolCount;
 
-    private readonly TaskCompletionSource<TurnOutcome> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    [ThreadStatic]
+    private static PendingTurn? ThreadLocal;
+
+    private ManualResetValueTaskSourceCore<TurnOutcome> _core;
+    private CallScope _scope;
     private int _state;
+    private int _refs;
 
-    public Task<TurnOutcome> Completion => _completion.Task;
+    private PendingTurn()
+    {
+        _core.RunContinuationsAsynchronously = true;
+    }
+
+    public short Version => _core.Version;
+
+    public static PendingTurn Rent(CallScope scope)
+    {
+        var turn = ThreadLocal;
+        if (turn is not null)
+        {
+            ThreadLocal = null;
+        }
+        else if (Pool.TryDequeue(out turn))
+        {
+            Interlocked.Decrement(ref PoolCount);
+        }
+        else
+        {
+            turn = new PendingTurn();
+        }
+
+        turn._scope = scope;
+        Volatile.Write(ref turn._state, Queued);
+        Volatile.Write(ref turn._refs, 2);
+        return turn;
+    }
+
+    public ValueTask<TurnOutcome> WaitAsync(short version) => new(this, version);
 
     public bool TryGrant()
     {
-        if (Interlocked.CompareExchange(ref _state, Claimed, Queued) != Queued)
+        var won = Interlocked.CompareExchange(ref _state, Claimed, Queued) == Queued;
+        if (won)
         {
-            return false;
+            _core.SetResult(Granted);
         }
 
-        _completion.TrySetResult(Granted);
-        return true;
+        ReleaseRef();
+        return won;
     }
 
     public void Fail(QuicFault fault)
     {
         if (Interlocked.CompareExchange(ref _state, Claimed, Queued) == Queued)
         {
-            _completion.TrySetResult(fault);
+            _core.SetResult(fault);
         }
+
+        ReleaseRef();
     }
 
-    public void Abandon(CallScope scope)
+    public void Abandon()
     {
         if (Interlocked.CompareExchange(ref _state, Abandoned, Queued) != Queued)
         {
             return;
         }
 
-        if (scope.Caller.IsCancellationRequested)
+        if (_scope.Caller.IsCancellationRequested)
         {
-            _completion.TrySetCanceled(scope.Caller);
+            _core.SetException(new OperationCanceledException(_scope.Caller));
             return;
         }
 
-        _completion.TrySetResult(scope.Interrupted());
+        _core.SetResult(_scope.Interrupted());
+    }
+
+    public void ReleaseAwaiter() => ReleaseRef();
+
+    public TurnOutcome GetResult(short token) => _core.GetResult(token);
+
+    public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
+
+    public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) =>
+        _core.OnCompleted(continuation, state, token, flags);
+
+    private void ReleaseRef()
+    {
+        if (Interlocked.Decrement(ref _refs) != 0)
+        {
+            return;
+        }
+
+        _scope = default;
+        _core.Reset();
+
+        if (ThreadLocal is null)
+        {
+            ThreadLocal = this;
+        }
+        else if (Interlocked.Increment(ref PoolCount) <= MaxPoolSize)
+        {
+            Pool.Enqueue(this);
+        }
+        else
+        {
+            Interlocked.Decrement(ref PoolCount);
+        }
     }
 }
 
@@ -70,6 +145,13 @@ internal sealed class PendingTurn
 internal sealed class OrderedPushChannel : IAsyncDisposable
 {
     private static readonly ChannelEvicted Evicted = new();
+    private static readonly Action<object?> CancelTurnCallback = static state =>
+    {
+        if (state is PendingTurn pending)
+        {
+            pending.Abandon();
+        }
+    };
 
     private readonly QuicConnectionPool _pool;
     private readonly PeerSlot _slot;
@@ -81,6 +163,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _stop;
     private readonly ITimer _idleTimer;
+    private ReusableCallScope _writeScope;
     private StreamLease? _lease;
     private QuicStream? _activeStream;
     private long _lastActivityTicks;
@@ -99,6 +182,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         _key = key;
         _lastActivityTicks = pool.TimeProvider.GetTimestamp();
         _stop = CancellationTokenSource.CreateLinkedTokenSource(pool.ShutdownToken);
+        _writeScope = ReusableCallScope.Create(pool.TimeProvider, _stop.Token);
         _idleTimer = pool.TimeProvider.CreateTimer(
             static state =>
             {
@@ -113,15 +197,19 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         _idleTimerScheduled = true;
     }
 
+    public string Key => _key;
+
+    public bool IsEvicted => Volatile.Read(ref _evicted);
+
     public Task Completion => _completion.Task;
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<OrderedPushOutcome>))]
-    public async ValueTask<OrderedPushOutcome> PushAsync(ReadOnlyMemory<byte> frame, CallScope scope)
+    public async ValueTask<OrderedPushOutcome> PushAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
     {
-        if (scope.Token.IsCancellationRequested)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_pool.ShutdownToken.IsCancellationRequested)
         {
-            scope.Caller.ThrowIfCancellationRequested();
-            return scope.Interrupted();
+            return new TransportShutdown("The QUIC transport is shutting down.");
         }
 
         var acquiredDirectly = false;
@@ -143,12 +231,13 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
         if (!acquiredDirectly)
         {
-            return await PushContendedAsync(frame, scope);
+            return await PushContendedAsync(frame, cancellationToken);
         }
 
         QuicFault? failure = null;
         var delivered = false;
         var writeCompleted = false;
+        var scopeActive = false;
         var lease = _lease;
         try
         {
@@ -157,6 +246,9 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 failure = new TransportShutdown("The ordered push channel is closed.");
                 return failure;
             }
+
+            var scope = _writeScope.Begin(QuicMeshLimits.CallTimeout, _pool.TimeProvider, cancellationToken);
+            scopeActive = true;
 
             if (lease is not null && ReferenceEquals(_slot.Current(), lease.Connection))
             {
@@ -227,6 +319,11 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         }
         finally
         {
+            if (scopeActive)
+            {
+                _writeScope.End(_pool.TimeProvider);
+            }
+
             if (!writeCompleted && lease is not null && ReferenceEquals(_lease, lease))
             {
                 Retire(lease);
@@ -280,7 +377,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 return false;
             }
 
-            _evicted = true;
+            Volatile.Write(ref _evicted, true);
             _completing = true;
             _closingStarted = true;
             _writing = true;
@@ -304,9 +401,11 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         DisposeResources();
     }
 
-    private async ValueTask<OrderedPushOutcome> PushContendedAsync(ReadOnlyMemory<byte> frame, CallScope scope)
+    private async ValueTask<OrderedPushOutcome> PushContendedAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
     {
+        using var scope = CallScope.Create(QuicMeshLimits.CallTimeout, _pool.TimeProvider, _pool.ShutdownToken, cancellationToken);
         PendingTurn? turn = null;
+        short version = 0;
         while (true)
         {
             TaskCompletionSource<bool>? capacityWaiter = null;
@@ -316,7 +415,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 if (_completing)
                 {
                     return _evicted
-                        ? new ChannelEvicted()
+                        ? Evicted
                         : new TransportShutdown("The ordered push channel is closed.");
                 }
 
@@ -327,7 +426,8 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 }
                 else if (_waiters.Count < QuicMeshLimits.OrderedPushQueueCapacity)
                 {
-                    turn = new PendingTurn();
+                    turn = PendingTurn.Rent(scope);
+                    version = turn.Version;
                     _waiters.Enqueue(turn);
                 }
                 else
@@ -353,7 +453,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
                 await ((Task)wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                 if (!wait.IsCompletedSuccessfully)
                 {
-                    if (!capacityWaiter.TrySetCanceled()
+                    if (!capacityWaiter.TrySetCanceled(CancellationToken.None)
                         && capacityWaiter.Task.IsCompletedSuccessfully
                         && await capacityWaiter.Task)
                     {
@@ -378,17 +478,14 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
         }
 
         TurnOutcome waited;
-        using (var registration = scope.Token.UnsafeRegister(
-            static state =>
-            {
-                if (state is (PendingTurn pending, CallScope cancelScope))
-                {
-                    pending.Abandon(cancelScope);
-                }
-            },
-            (turn, scope)))
+        try
         {
-            waited = await turn.Completion;
+            using var registration = scope.Token.UnsafeRegister(CancelTurnCallback, turn);
+            waited = await turn.WaitAsync(version);
+        }
+        finally
+        {
+            turn.ReleaseAwaiter();
         }
 
         return waited switch
@@ -658,6 +755,7 @@ internal sealed class OrderedPushChannel : IAsyncDisposable
 
             _stopDisposed = true;
             _idleTimer.Dispose();
+            _writeScope.Dispose();
             _stop.Dispose();
         }
     }

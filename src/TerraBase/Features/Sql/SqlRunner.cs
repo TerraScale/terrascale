@@ -104,11 +104,47 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
             return new SqlRefusal("tenant_busy", "the database has too many requests in flight; retry", "53300", 0, StatusCodes.Status429TooManyRequests, TimeSpan.FromSeconds(1));
         }
 
+        if (statements is [var single]
+            && target.EndUser is null
+            && SqlPlan.TryClassifyCached(single.Sql, out var kind)
+            && kind is not (StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback))
+        {
+            var writes = kind is StatementKind.Write or StatementKind.Schema;
+            if (writes && !target.CanWrite)
+            {
+                return SqlRefusal.ForbiddenScope(0);
+            }
+
+            var mode = causality.Mode ?? target.Database.DefaultConsistency;
+            return await RunDirectAsync(target, statements, writes, mode, causality.After, serviceRead, cancellationToken);
+        }
+
         return SqlPlan.Batch(statements, allowTransactionControl: false) switch
         {
             SqlBatch batch => await RunBatchAsync(target, batch, causality, serviceRead, cancellationToken),
             SqlRefusal refusal => refusal,
         };
+    }
+
+    public async ValueTask<SqlRunOutcome> RunSingleAutocommitAsync(
+        ResolvedDatabase target, IReadOnlyList<SqlStatement> statements, StatementKind kind, ConsistencyMode mode, CausalBookmark after, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(statements);
+        ArgumentNullException.ThrowIfNull(after);
+        using var lease = await qos.AdmitAsync(target.Database.Id, cancellationToken);
+        if (!lease.IsAcquired)
+        {
+            return new SqlRefusal("tenant_busy", "the database has too many requests in flight; retry", "53300", 0, StatusCodes.Status429TooManyRequests, TimeSpan.FromSeconds(1));
+        }
+
+        var writes = kind is StatementKind.Write or StatementKind.Schema;
+        if (writes && !target.CanWrite)
+        {
+            return SqlRefusal.ForbiddenScope(0);
+        }
+
+        return await RunDirectAsync(target, statements, writes, mode, after, serviceRead: false, cancellationToken);
     }
 
     public async ValueTask<SqlRunOutcome> RunPlannedAsync(
@@ -210,6 +246,21 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     public static string Describe(CommitMetadata commit) =>
         string.Concat(commit.OriginRegion, ":", commit.Sequence.ToString(CultureInfo.InvariantCulture));
 
+    private async ValueTask<SqlRunOutcome> RunDirectAsync(
+        ResolvedDatabase target, IReadOnlyList<SqlStatement> statements, bool writes, ConsistencyMode mode, CausalBookmark after, bool serviceRead, CancellationToken cancellationToken)
+    {
+        var waited = await WaitAsync(target, after, cancellationToken);
+        return waited switch
+        {
+            Completed => await access.OpenAsync(target.Database, cancellationToken) switch
+            {
+                ISqlDatabaseSession session => await ExecuteAsync(target, session, statements, writes, mode, after, null, serviceRead, cancellationToken),
+                BackendUnavailable unavailable => SqlRefusal.From(unavailable),
+            },
+            SqlRefusal refusal => refusal,
+        };
+    }
+
     private async ValueTask<SqlRunOutcome> RunBatchAsync(
         ResolvedDatabase target, SqlBatch batch, SqlCausality causality, bool serviceRead, CancellationToken cancellationToken)
     {
@@ -250,7 +301,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
                 : await session.ExecuteReadAsync(request, cancellationToken);
             return result switch
             {
-                SqlReadResult read => Finish(target, read.ResultSets, after.Merge(read.Observed), mode, wrote: false, rulesVersion),
+                SqlReadResult read => Finish(target, read.ResultSets, after.IsEmpty ? read.Observed : after.Merge(read.Observed), mode, wrote: false, rulesVersion),
                 SqlError error => SqlRefusal.From(error),
                 StorageBusy busy => SqlRefusal.From(busy),
                 StorageTimeout timeout => SqlRefusal.From(timeout),
@@ -260,7 +311,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         var outcome = await coordinator.ExecuteWriteAsync(session, request, cancellationToken);
         return outcome switch
         {
-            SqlWriteResult written => Finish(target, written.ResultSets, after.Merge(written.Commit.Bookmark).Merge(session.CurrentBookmark), written.Commit.Mode, wrote: true, rulesVersion),
+            SqlWriteResult written => Finish(target, written.ResultSets, MergeWriteBookmark(after, written.Commit.Bookmark, session.CurrentBookmark), written.Commit.Mode, wrote: true, rulesVersion),
             SqlError error => SqlRefusal.From(error),
             SerializationConflict conflict => SqlRefusal.From(conflict),
             SchemaMismatch mismatch => SqlRefusal.From(mismatch),
@@ -274,6 +325,12 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     {
         Meter(target, results, wrote, mode);
         return new SqlRun(results, bookmark, mode, rulesVersion);
+    }
+
+    private static CausalBookmark MergeWriteBookmark(CausalBookmark after, CausalBookmark committed, CausalBookmark current)
+    {
+        var merged = after.IsEmpty ? committed : after.Merge(committed);
+        return ReferenceEquals(merged, current) || current.IsEmpty ? merged : merged.Merge(current);
     }
 
     private static SqlStatement[] ExtractStatements(IReadOnlyList<PlannedStatement> statements)

@@ -441,12 +441,7 @@ internal ref struct WireReader(ReadOnlySpan<byte> source)
     public string String()
     {
         var bytes = Bytes();
-        if (Failed || bytes.IsEmpty)
-        {
-            return string.Empty;
-        }
-
-        return Ascii.IsValid(bytes) ? Encoding.ASCII.GetString(bytes) : Encoding.UTF8.GetString(bytes);
+        return Failed || bytes.IsEmpty ? string.Empty : Encoding.UTF8.GetString(bytes);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -642,6 +637,23 @@ internal static class PrimaryKeyCodec
     }
 
     public static string ToKeyString(ReadOnlySpan<byte> encoded) => Base64Url.EncodeToString(encoded);
+
+    public static bool TryDecodeKeyString(string key, Span<byte> destination, out int written)
+    {
+        if (key.Length == 0)
+        {
+            written = 0;
+            return false;
+        }
+
+        if (Base64Url.DecodeFromChars(key, destination, out _, out written) == OperationStatus.Done)
+        {
+            return true;
+        }
+
+        written = 0;
+        return false;
+    }
 
     public static bool TryDecodeKeyString(string key, out byte[] encoded)
     {

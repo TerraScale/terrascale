@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.IO.Hashing;
 using System.Text;
@@ -10,20 +11,27 @@ public sealed record StrongParticipantTarget(string Region, string NodeId, bool 
 
 public sealed class ClusterTopology
 {
+    private const int MaxOriginCacheEntries = 1024;
+    private const int MaxStrongCandidatesCache = 4096;
+
     private static readonly SearchValues<char> Hex = SearchValues.Create("0123456789abcdefABCDEF");
+    private static readonly SearchValues<byte> HexUtf8 = SearchValues.Create("0123456789abcdefABCDEF"u8);
 
     private readonly ClusterOptions _options;
     private readonly FrozenDictionary<string, PeerNodeInfo> _peers;
-    private readonly FrozenDictionary<(string Node, string Region), string> _origins;
+    private readonly FrozenDictionary<string, PeerOriginSlot> _peerOrigins;
     private readonly OriginEntry[] _originEntries;
     private readonly FrozenDictionary<string, RegionCandidates> _candidatesByRegion;
+    private readonly ConcurrentDictionary<(string NodeId, string Origin), bool> _peerOriginCache = new();
+    private readonly ConcurrentDictionary<(string Region, Ulid DatabaseId), StrongParticipantTarget[]> _strongCandidatesCache = new();
 
     public ClusterTopology(ClusterOptions options)
     {
         _options = options;
         _peers = options.Peers.ToFrozenDictionary(static peer => peer.NodeId, StringComparer.Ordinal);
-        _origins = BuildOrigins(options);
-        _originEntries = [.. _origins.Select(static entry => new OriginEntry(entry.Key.Node, entry.Key.Region, entry.Value))];
+        var origins = BuildOrigins(options);
+        _originEntries = [.. origins.Select(static entry => new OriginEntry(entry.Key.Node, entry.Key.Region, entry.Value, Encoding.UTF8.GetBytes(entry.Value)))];
+        _peerOrigins = BuildPeerOrigins(_originEntries);
         RegionPeers = options.RegionPeers;
         RemotePeers = options.RemotePeers;
         Regions = options.Regions;
@@ -61,7 +69,47 @@ public sealed class ClusterTopology
 
     internal bool IsPeerOrigin(QuicCallContext context, string origin)
     {
-        if (!_origins.TryGetValue((context.RemoteNodeId, context.RemoteRegion), out var expected) || !MatchesOrigin(expected, origin))
+        if (!_peerOrigins.TryGetValue(context.RemoteNodeId, out var slot)
+            || !string.Equals(slot.Region, context.RemoteRegion, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(Volatile.Read(ref slot.LastVerifiedOrigin), origin))
+        {
+            return true;
+        }
+
+        var cacheKey = (context.RemoteNodeId, origin);
+        if (_peerOriginCache.TryGetValue(cacheKey, out var cached))
+        {
+            if (cached)
+            {
+                Volatile.Write(ref slot.LastVerifiedOrigin, origin);
+            }
+
+            return cached;
+        }
+
+        var allowed = ComputePeerOrigin(context.RemoteNodeId, slot.BaseOrigin, origin);
+        if (_peerOriginCache.Count < MaxOriginCacheEntries)
+        {
+            _ = _peerOriginCache.TryAdd(cacheKey, allowed);
+        }
+
+        if (allowed)
+        {
+            Volatile.Write(ref slot.LastVerifiedOrigin, origin);
+        }
+
+        return allowed;
+    }
+
+    internal bool IsPeerOrigin(QuicCallContext context, ReadOnlySpan<byte> originUtf8)
+    {
+        if (!_peerOrigins.TryGetValue(context.RemoteNodeId, out var slot)
+            || !string.Equals(slot.Region, context.RemoteRegion, StringComparison.Ordinal)
+            || !MatchesOriginUtf8(slot.BaseOriginUtf8, originUtf8))
         {
             return false;
         }
@@ -69,7 +117,7 @@ public sealed class ClusterTopology
         for (var index = 0; index < _originEntries.Length; index++)
         {
             var entry = _originEntries[index];
-            if (!string.Equals(entry.Node, context.RemoteNodeId, StringComparison.Ordinal) && MatchesOrigin(entry.BaseOrigin, origin))
+            if (!string.Equals(entry.Node, context.RemoteNodeId, StringComparison.Ordinal) && MatchesOriginUtf8(entry.BaseOriginUtf8, originUtf8))
             {
                 return false;
             }
@@ -84,6 +132,20 @@ public sealed class ClusterTopology
         {
             var entry = _originEntries[index];
             if (string.Equals(region, entry.Region, StringComparison.Ordinal) && MatchesOrigin(entry.BaseOrigin, origin))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal bool IsRegionOrigin(string region, ReadOnlySpan<byte> originUtf8)
+    {
+        for (var index = 0; index < _originEntries.Length; index++)
+        {
+            var entry = _originEntries[index];
+            if (string.Equals(region, entry.Region, StringComparison.Ordinal) && MatchesOriginUtf8(entry.BaseOriginUtf8, originUtf8))
             {
                 return true;
             }
@@ -117,6 +179,12 @@ public sealed class ClusterTopology
             return single;
         }
 
+        var cacheKey = (region, databaseId);
+        if (_strongCandidatesCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
         var count = group.Nodes.Length;
         Span<byte> dbBytes = stackalloc byte[16];
         _ = databaseId.TryWriteBytes(dbBytes);
@@ -145,7 +213,31 @@ public sealed class ClusterTopology
             ordered[position + 1] = keyTarget;
         }
 
-        return ordered;
+        if (_strongCandidatesCache.Count >= MaxStrongCandidatesCache)
+        {
+            _strongCandidatesCache.Clear();
+        }
+
+        return _strongCandidatesCache.GetOrAdd(cacheKey, ordered);
+    }
+
+    private bool ComputePeerOrigin(string remoteNodeId, string expectedBaseOrigin, string origin)
+    {
+        if (!MatchesOrigin(expectedBaseOrigin, origin))
+        {
+            return false;
+        }
+
+        for (var index = 0; index < _originEntries.Length; index++)
+        {
+            var entry = _originEntries[index];
+            if (!string.Equals(entry.Node, remoteNodeId, StringComparison.Ordinal) && MatchesOrigin(entry.BaseOrigin, origin))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static FrozenDictionary<(string Node, string Region), string> BuildOrigins(ClusterOptions options) =>
@@ -154,6 +246,18 @@ public sealed class ClusterTopology
             .GroupBy(static member => member.Region, StringComparer.Ordinal)
             .SelectMany(static region => region.Select(member => KeyValuePair.Create(member, region.Count() == 1 ? region.Key : ClusterOptions.OriginFor(member.Node))))
             .ToFrozenDictionary();
+
+    private static FrozenDictionary<string, PeerOriginSlot> BuildPeerOrigins(OriginEntry[] entries)
+    {
+        var map = new Dictionary<string, PeerOriginSlot>(entries.Length, StringComparer.Ordinal);
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var entry = entries[index];
+            map[entry.Node] = new PeerOriginSlot(entry.Region, entry.BaseOrigin, entry.BaseOriginUtf8);
+        }
+
+        return map.ToFrozenDictionary(StringComparer.Ordinal);
+    }
 
     private static FrozenDictionary<string, RegionCandidates> BuildRegionCandidates(ClusterOptions options, IReadOnlyList<string> regions)
     {
@@ -204,6 +308,24 @@ public sealed class ClusterTopology
             && !origin.AsSpan(separator + 1).ContainsAnyExcept(Hex);
     }
 
+    private static bool MatchesOriginUtf8(ReadOnlySpan<byte> baseOrigin, ReadOnlySpan<byte> origin)
+    {
+        if (origin.SequenceEqual(baseOrigin))
+        {
+            return true;
+        }
+
+        var separator = origin.LastIndexOf((byte)'-');
+        if (separator <= 0 || origin.Length - separator - 1 is < 8 or > 16 || origin.Length > 63)
+        {
+            return false;
+        }
+
+        var maxBaseLength = 63 - (origin.Length - separator);
+        return origin[..separator].SequenceEqual(baseOrigin[..Math.Min(maxBaseLength, baseOrigin.Length)])
+            && !origin[(separator + 1)..].ContainsAnyExcept(HexUtf8);
+    }
+
     private static ulong Weight(ReadOnlySpan<byte> dbBytes, byte[] nodeUtf8)
     {
         var total = 16 + nodeUtf8.Length;
@@ -213,7 +335,18 @@ public sealed class ClusterTopology
         return XxHash64.HashToUInt64(buffer);
     }
 
-    private readonly record struct OriginEntry(string Node, string Region, string BaseOrigin);
+    private sealed class PeerOriginSlot(string region, string baseOrigin, byte[] baseOriginUtf8)
+    {
+        public string Region { get; } = region;
+
+        public string BaseOrigin { get; } = baseOrigin;
+
+        public byte[] BaseOriginUtf8 { get; } = baseOriginUtf8;
+
+        public string? LastVerifiedOrigin;
+    }
+
+    private readonly record struct OriginEntry(string Node, string Region, string BaseOrigin, byte[] BaseOriginUtf8);
 
     private readonly record struct CandidateNode(StrongParticipantTarget Target, byte[] NodeIdUtf8);
 

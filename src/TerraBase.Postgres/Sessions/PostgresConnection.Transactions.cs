@@ -332,11 +332,11 @@ internal sealed partial class PostgresConnection
     {
         if (command.Name is null)
         {
-            session.Statements.Clear();
+            session.ClearStatements();
             return PgResult.Command("DEALLOCATE ALL");
         }
 
-        return session.Statements.Remove(command.Name)
+        return session.RemoveStatement(command.Name)
             ? PgResult.Command("DEALLOCATE")
             : new PgError("26000", $"prepared statement \"{command.Name}\" does not exist");
     }
@@ -348,8 +348,8 @@ internal sealed partial class PostgresConnection
             return new PgError("25001", "DISCARD ALL cannot run inside a transaction block");
         }
 
-        session.Statements.Clear();
-        session.Portals.Clear();
+        session.ClearStatements();
+        session.ClearPortals();
         session.InvalidateSchemaCache();
         await StopListeningAsync(session);
         foreach (var change in session.Settings.ResetAll())

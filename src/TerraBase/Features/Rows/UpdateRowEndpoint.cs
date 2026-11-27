@@ -22,8 +22,8 @@ internal sealed class UpdateRowEndpoint(RowsService rows) : Endpoint<RowInput, R
         ArgumentNullException.ThrowIfNull(request);
         return RowsService.Key(request.Key) switch
         {
-            long key => RowsResponses.Single(await rows.RunAsync(HttpContext.Caller, request.Project, request.Database,
-                [new RowCommand(RowAction.Update, request.Table, key, request.Row)], batch: false, cancellationToken)),
+            long key => RowsResponses.Single(await rows.RunSingleAsync(HttpContext.Caller, request.Project, request.Database,
+                new RowCommand(RowAction.Update, request.Table, key, request.Row), cancellationToken)),
             InvalidInput invalid => invalid,
         };
     }

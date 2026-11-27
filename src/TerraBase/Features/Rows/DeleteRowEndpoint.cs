@@ -22,8 +22,8 @@ internal sealed class DeleteRowEndpoint(RowsService rows) : Endpoint<RowInput, D
         ArgumentNullException.ThrowIfNull(request);
         return RowsService.Key(request.Key) switch
         {
-            long key => RowsResponses.Deleted(await rows.RunAsync(HttpContext.Caller, request.Project, request.Database,
-                [new RowCommand(RowAction.Delete, request.Table, key, request.Row)], batch: false, cancellationToken)),
+            long key => RowsResponses.Deleted(await rows.RunSingleAsync(HttpContext.Caller, request.Project, request.Database,
+                new RowCommand(RowAction.Delete, request.Table, key, request.Row), cancellationToken)),
             InvalidInput invalid => invalid,
         };
     }

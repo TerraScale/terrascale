@@ -27,7 +27,8 @@ internal sealed record PgRewrite(
     IReadOnlyList<string> ReferencedNames,
     bool UsesCatalog,
     IReadOnlyList<SqlValue> LiftedLiterals,
-    bool DependsOnSettings = false)
+    bool DependsOnSettings = false,
+    bool DependsOnSessionIdentity = false)
 {
     private const int MaxStatementBytes = 16 * 1024;
     private const string ProbePrefix = "SELECT * FROM (";

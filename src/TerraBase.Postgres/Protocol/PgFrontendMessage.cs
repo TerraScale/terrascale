@@ -1,3 +1,5 @@
+using TerraBase.Postgres.Sessions;
+
 namespace TerraBase.Postgres.Protocol;
 
 internal closed record class PgStartupPacket;
@@ -16,24 +18,117 @@ internal closed record class PgFrontendMessage;
 
 internal sealed record PgPasswordMessage(string Password) : PgFrontendMessage;
 
-internal sealed record PgQueryMessage(string Sql) : PgFrontendMessage;
+internal sealed record PgQueryMessage : PgFrontendMessage
+{
+    public string Sql { get; private set; } = string.Empty;
 
-internal sealed record PgParseMessage(string Name, string Sql, int[] ParameterOids) : PgFrontendMessage;
+    public CachedParseEntry? CachedEntry { get; private set; }
 
-internal sealed record PgBindMessage(
-    string Portal,
-    string Statement,
-    short[] ParameterFormats,
-    byte[] ParameterBuffer,
-    PgParameterSlice[] Parameters,
-    int ParameterCount,
-    short[] ResultFormats) : PgFrontendMessage;
+    public PgQueryMessage Reset(string sql, CachedParseEntry? cachedEntry)
+    {
+        Sql = sql;
+        CachedEntry = cachedEntry;
+        return this;
+    }
+}
 
-internal sealed record PgDescribeMessage(char Target, string Name) : PgFrontendMessage;
+internal sealed record PgParseMessage : PgFrontendMessage
+{
+    public string Name { get; private set; } = string.Empty;
 
-internal sealed record PgExecuteMessage(string Portal, int MaxRows) : PgFrontendMessage;
+    public string Sql { get; private set; } = string.Empty;
 
-internal sealed record PgCloseMessage(char Target, string Name) : PgFrontendMessage;
+    public int[] ParameterOids { get; private set; } = [];
+
+    public CachedParseEntry? CachedEntry { get; private set; }
+
+    public PgParseMessage Reset(string name, string sql, int[] parameterOids, CachedParseEntry? cachedEntry)
+    {
+        Name = name;
+        Sql = sql;
+        ParameterOids = parameterOids;
+        CachedEntry = cachedEntry;
+        return this;
+    }
+}
+
+internal sealed record PgBindMessage : PgFrontendMessage
+{
+    public string Portal { get; private set; } = string.Empty;
+
+    public string Statement { get; private set; } = string.Empty;
+
+    public short[] ParameterFormats { get; private set; } = [];
+
+    public byte[] ParameterBuffer { get; private set; } = [];
+
+    public PgParameterSlice[] Parameters { get; private set; } = [];
+
+    public int ParameterCount { get; private set; }
+
+    public short[] ResultFormats { get; private set; } = [];
+
+    public PgBindMessage Reset(
+        string portal,
+        string statement,
+        short[] parameterFormats,
+        byte[] parameterBuffer,
+        PgParameterSlice[] parameters,
+        int parameterCount,
+        short[] resultFormats)
+    {
+        Portal = portal;
+        Statement = statement;
+        ParameterFormats = parameterFormats;
+        ParameterBuffer = parameterBuffer;
+        Parameters = parameters;
+        ParameterCount = parameterCount;
+        ResultFormats = resultFormats;
+        return this;
+    }
+}
+
+internal sealed record PgDescribeMessage : PgFrontendMessage
+{
+    public char Target { get; private set; }
+
+    public string Name { get; private set; } = string.Empty;
+
+    public PgDescribeMessage Reset(char target, string name)
+    {
+        Target = target;
+        Name = name;
+        return this;
+    }
+}
+
+internal sealed record PgExecuteMessage : PgFrontendMessage
+{
+    public string Portal { get; private set; } = string.Empty;
+
+    public int MaxRows { get; private set; }
+
+    public PgExecuteMessage Reset(string portal, int maxRows)
+    {
+        Portal = portal;
+        MaxRows = maxRows;
+        return this;
+    }
+}
+
+internal sealed record PgCloseMessage : PgFrontendMessage
+{
+    public char Target { get; private set; }
+
+    public string Name { get; private set; } = string.Empty;
+
+    public PgCloseMessage Reset(char target, string name)
+    {
+        Target = target;
+        Name = name;
+        return this;
+    }
+}
 
 internal sealed record PgSyncMessage : PgFrontendMessage
 {

@@ -146,9 +146,8 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
         }
 
         var shard = shards[ShardOf(databaseId)];
-        var payload = new ReplicatedCommit(databaseId, commit).Encode();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(options.RaftCommitTimeout);
+        var payload = ReplicatedCommit.Encode(databaseId, commit);
+        using var deadline = PooledRaftCts.CreateLinkedWithTimeout(options.RaftCommitTimeout, cancellationToken);
         for (var attempt = 0; attempt < 3; attempt++)
         {
             var leader = await RaftBoundary.LeaderAsync(shard, options.RaftCommitTimeout, cancellationToken);
@@ -284,12 +283,12 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
             }
 
             var payload = message.Entries[0].Payload;
-            if (ReplicatedCommit.Decode(payload.Span) is not { } proposed || ShardOf(proposed.DatabaseId) != message.Shard)
+            if (!ReplicatedCommit.TryValidateAndPeek(payload.Span, out var databaseId, out var originUtf8) || ShardOf(databaseId) != message.Shard)
             {
                 return new QuicRemoteError(QuicRemoteError.MalformedRequest, "raft proposal is not a commit for this shard");
             }
 
-            if (!topology.IsPeerOrigin(context, proposed.Commit.OriginRegion))
+            if (!topology.IsPeerOrigin(context, originUtf8))
             {
                 return ClusterTopology.PeerForbidden();
             }
@@ -338,8 +337,8 @@ public sealed class InRegionRaftRouter(ClusterOptions options, ClusterTopology t
     }
 
     private bool IsRegionEntry(ushort shard, RaftWireEntry entry) =>
-        entry.IsConfiguration || entry.Payload.IsEmpty || (ReplicatedCommit.Decode(entry.Payload.Span) is { } replicated
-            && ShardOf(replicated.DatabaseId) == shard && topology.IsRegionOrigin(options.Region, replicated.Commit.OriginRegion));
+        entry.IsConfiguration || entry.Payload.IsEmpty || (ReplicatedCommit.TryValidateAndPeek(entry.Payload.Span, out var databaseId, out var originUtf8)
+            && ShardOf(databaseId) == shard && topology.IsRegionOrigin(options.Region, originUtf8));
 
     private static QuicRemoteError NotReady() => new("raft_not_ready", "in-region raft shard is not started on this node");
 }

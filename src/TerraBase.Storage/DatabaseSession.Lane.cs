@@ -17,6 +17,9 @@ internal sealed partial class DatabaseSession
     private static readonly TimeSpan CheckpointMinInterval = TimeSpan.FromSeconds(10);
 
     private readonly MetaCache _metaCache = new();
+    private readonly WriteContext _laneWriteContext = new(ConsistencyMode.Fast, analyzeReads: false, CancellationToken.None);
+    private readonly List<LaneRequest> _laneDrained = [];
+    private readonly List<LaneRequest> _laneGroup = [];
     private readonly List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> _laneCompleted = [];
     private readonly List<CommitMetadata> _laneCommits = [];
     private readonly List<NetChange> _laneChanges = [];
@@ -24,10 +27,15 @@ internal sealed partial class DatabaseSession
     private readonly Dictionary<string, HlcTimestamp> _laneItemTables = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HlcTimestamp> _laneGroupTables = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (long Sequence, ulong SchemaEpoch)> _laneRemoteVersions = new(StringComparer.Ordinal);
-    private readonly KeyValuePair<string, long>[] _laneVersionUpdate = new KeyValuePair<string, long>[1];
     private WriteScope? _laneScope;
     private int _rowsSinceCheckpoint;
     private long _lastCheckpointTimestamp;
+
+    private WriteContext ResetLaneWriteContext(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
+    {
+        _laneWriteContext.Reset(mode, analyzeReads, cancellationToken);
+        return _laneWriteContext;
+    }
 
     private closed record class LaneRequest;
 
@@ -231,7 +239,7 @@ internal sealed partial class DatabaseSession
             false,
             [.. transaction.Results],
             ReadOnlyMemory<byte>.Empty);
-        RegisterStaged(new StagedDescriptor(staged, [], _context.Time.GetUtcNow()));
+        RegisterStaged(new StagedDescriptor(staged, [], _context.Time.GetUtcNow(), DeltaBatch.Empty));
         return staged;
     }
 
@@ -250,11 +258,12 @@ internal sealed partial class DatabaseSession
         Volatile.Write(ref _laneFaulted, 1);
         _requests.Writer.TryComplete();
         var faulted = LaneFaulted();
-        foreach (var request in Volatile.Read(ref _inFlight))
+        for (var index = 0; index < _laneDrained.Count; index++)
         {
-            _ = Fail(request, faulted);
+            _ = Fail(_laneDrained[index], faulted);
         }
 
+        _laneDrained.Clear();
         Volatile.Read(ref _activeTransaction)?.Fault(faulted);
         while (_requests.Reader.TryRead(out var queued))
         {
@@ -265,13 +274,14 @@ internal sealed partial class DatabaseSession
         _capture.End();
         _metaCache.Clear();
         _ = _writer.RollbackOpenTransaction();
+        _ = _writer.SetApplyMode(false);
     }
 
     private async Task RunLaneAsync()
     {
         var reader = _requests.Reader;
-        var drained = new List<LaneRequest>(Options.MaxBatchSize);
-        var group = new List<LaneRequest>(Options.MaxBatchSize);
+        var drained = _laneDrained;
+        var group = _laneGroup;
         var remoteGroup = _laneRemoteGroup;
         while (await reader.WaitToReadAsync(CancellationToken.None))
         {
@@ -281,10 +291,10 @@ internal sealed partial class DatabaseSession
                 drained.Add(request);
             }
 
-            Volatile.Write(ref _inFlight, [.. drained]);
             group.Clear();
             remoteGroup.Clear();
-            for (var index = 0; index < drained.Count; index++)
+            var initialCount = drained.Count;
+            for (var index = 0; index < initialCount; index++)
             {
                 var request = drained[index];
                 if (IsGroupable(request))
@@ -338,7 +348,7 @@ internal sealed partial class DatabaseSession
                 remoteGroup.Clear();
             }
 
-            Volatile.Write(ref _inFlight, []);
+            drained.Clear();
             if (_rowsSinceCheckpoint >= CheckpointRowThreshold
                 && reader.Count == 0
                 && _context.Time.GetElapsedTime(_lastCheckpointTimestamp) >= CheckpointMinInterval)
@@ -380,8 +390,62 @@ internal sealed partial class DatabaseSession
             TransactionRequest transaction => await RunTransactionAsync(transaction.Transaction),
             RemoteApplyRequest remote => remote.Completion.TrySetResult(remote.CancellationToken.IsCancellationRequested ? Closing() : ApplyRemote(remote.Commits, remote.IsReplay)),
             CommitStagedRequest staged => staged.Completion.TrySetResult(CommitStaged(staged.Descriptor, staged.CommitHlc, staged.LeaseDeadline)),
-            LocalWriteRequest or StageRequest => ProcessGroupWithSavepoints([request]),
+            StageRequest stage => RunSerialStage(stage),
+            LocalWriteRequest => ProcessGroupWithSavepoints([request]),
         };
+    }
+
+    private bool RunSerialStage(StageRequest stage)
+    {
+        if (stage.CancellationToken.IsCancellationRequested)
+        {
+            stage.Completion.TrySetCanceled(stage.CancellationToken);
+            return true;
+        }
+
+        var begun = BeginWrite(applying: false);
+        if (!begun.IsOk)
+        {
+            stage.Completion.TrySetResult(begun.ToBusy());
+            return false;
+        }
+
+        var context = ResetLaneWriteContext(ConsistencyMode.Strong, analyzeReads: true, stage.CancellationToken);
+        _capture.Begin();
+        for (var index = 0; index < stage.Request.Statements.Count; index++)
+        {
+            SqlError? failure = ExecuteStatement(context, stage.Request.Statements[index], index) switch
+            {
+                SqlResultSet => null,
+                SqlError error => error,
+                StrongRequired strong => new SqlError("strong_required", ReasonText(strong.Reason), "XX000", index, 0),
+            };
+            if (failure is not null)
+            {
+                _capture.End();
+                var reverted = RollbackItemSchema(context, useSavepoint: false, clearMetaCache: context.IsSchemaChange);
+                stage.Completion.TrySetResult(reverted.IsOk ? failure : reverted.ToSqlError(-1));
+                return false;
+            }
+        }
+
+        var finished = FinishStage(context, out var descriptor);
+        var rolledBack = RollbackItemSchema(context, useSavepoint: false, clearMetaCache: context.IsSchemaChange);
+        if (!rolledBack.IsOk)
+        {
+            stage.Completion.TrySetResult(rolledBack.ToSqlError(-1));
+            return false;
+        }
+
+        if (!finished.IsOk || descriptor is null)
+        {
+            stage.Completion.TrySetResult(finished.ToSqlError(-1));
+            return false;
+        }
+
+        RegisterStaged(descriptor);
+        stage.Completion.TrySetResult(descriptor.Staged);
+        return true;
     }
 
     private bool ProcessGroup(List<LaneRequest> group, bool allowGreedyDrain)
@@ -439,7 +503,7 @@ internal sealed partial class DatabaseSession
                 continue;
             }
 
-            var context = new WriteContext(local.Request.Mode, analyzeReads: false, local.CancellationToken);
+            var context = ResetLaneWriteContext(local.Request.Mode, analyzeReads: false, local.CancellationToken);
             _capture.Begin();
             var executed = ExecuteStatements(context, local.Request.Statements);
             var (outcome, itemRows) = FinishOptimistic(executed, context, ref nextSequence, ref epoch, ref lastCommittedSequence, groupBytes);
@@ -471,19 +535,13 @@ internal sealed partial class DatabaseSession
 
             if (allowGreedyDrain && index + 1 == group.Count && group.Count < Options.MaxBatchSize)
             {
-                var added = false;
                 while (group.Count < Options.MaxBatchSize
                     && reader.TryPeek(out var peeked)
                     && IsGroupable(peeked)
                     && reader.TryRead(out var extra))
                 {
                     group.Add(extra);
-                    added = true;
-                }
-
-                if (added)
-                {
-                    Volatile.Write(ref _inFlight, [.. group]);
+                    _laneDrained.Add(extra);
                 }
             }
         }
@@ -493,6 +551,11 @@ internal sealed partial class DatabaseSession
             if (_writer.InTransaction)
             {
                 _ = _writer.Exec("ROLLBACK;");
+            }
+
+            if (schemaTouched)
+            {
+                BumpSchemaGeneration();
             }
 
             _writeGroupBroken = false;
@@ -522,7 +585,7 @@ internal sealed partial class DatabaseSession
             ref long bytes,
             ref int totalRows)
         {
-            completedList.Add((request, ctx.Results, prepared.Commit));
+            completedList.Add((request, ctx.DetachResults(), prepared.Commit));
             bytes += prepared.EncodedBytes;
             totalRows += rows;
             return 0;
@@ -656,8 +719,7 @@ internal sealed partial class DatabaseSession
             var (touched, groupFull) = request switch
             {
                 LocalWriteRequest local => RunLocalItem(local, completed, useSavepoint, ref nextSequence, ref epoch, ref lastCommittedSequence, ref groupBytes, ref groupRows),
-                StageRequest stage => (RunStageItem(stage), false),
-                TransactionRequest or RemoteApplyRequest or CommitStagedRequest => (RejectFromGroup(request), false),
+                StageRequest or TransactionRequest or RemoteApplyRequest or CommitStagedRequest => (RejectFromGroup(request), false),
             };
             schemaTouched |= touched;
 
@@ -672,6 +734,11 @@ internal sealed partial class DatabaseSession
                 if (_writer.InTransaction)
                 {
                     _ = _writer.Exec("ROLLBACK;");
+                }
+
+                if (schemaTouched)
+                {
+                    BumpSchemaGeneration();
                 }
 
                 _writeGroupBroken = false;
@@ -750,6 +817,11 @@ internal sealed partial class DatabaseSession
                     _ = _writer.Exec("ROLLBACK;");
                 }
 
+                if (schemaTouched)
+                {
+                    BumpSchemaGeneration();
+                }
+
                 _metaCache.Clear();
                 _writer.InvalidateSchemaCache();
                 var error = scope.Failure.ToSqlError(-1);
@@ -826,7 +898,7 @@ internal sealed partial class DatabaseSession
         static bool Prepared(List<(LocalWriteRequest Request, List<SqlResultSet> Results, CommitMetadata? Commit)> completed,
             LocalWriteRequest local, WriteContext context, LocalItemPrepared prepared, int itemRows, ref long groupBytes, ref int groupRows)
         {
-            completed.Add((local, context.Results, prepared.Commit));
+            completed.Add((local, context.DetachResults(), prepared.Commit));
             groupBytes += prepared.EncodedBytes;
             groupRows += itemRows;
             return false;
@@ -839,19 +911,6 @@ internal sealed partial class DatabaseSession
         }
     }
 
-    private bool RunStageItem(StageRequest stage)
-    {
-        if (stage.CancellationToken.IsCancellationRequested)
-        {
-            stage.Completion.TrySetCanceled(stage.CancellationToken);
-            return false;
-        }
-
-        var (outcome, schemaTouched) = RunStage(stage.Request, stage.CancellationToken);
-        stage.Completion.TrySetResult(outcome);
-        return schemaTouched;
-    }
-
     private (LocalItemOutcome Outcome, WriteContext Context, int ItemRows) RunLocal(
         SqlStatementRequest request,
         bool useSavepoint,
@@ -861,7 +920,7 @@ internal sealed partial class DatabaseSession
         long groupBytes,
         CancellationToken cancellationToken)
     {
-        var context = new WriteContext(request.Mode, analyzeReads: false, cancellationToken);
+        var context = ResetLaneWriteContext(request.Mode, analyzeReads: false, cancellationToken);
         if (useSavepoint)
         {
             var savepoint = _writer.Exec(ItemSavepoint);
@@ -974,7 +1033,7 @@ internal sealed partial class DatabaseSession
             return status;
         }
 
-        if (changes.Count == 0 && context.Ddl.Count == 0)
+        if (changes.Count == 0 && !context.IsSchemaChange)
         {
             return SqliteStatus.Success;
         }
@@ -985,7 +1044,7 @@ internal sealed partial class DatabaseSession
         scope.Reset();
         var tables = _laneItemTables;
         tables.Clear();
-        var mutations = LocalStamper.Stamp(scope, changes, ref hlc, persist: true, observed: null, tables);
+        var payload = LocalStamper.StampAndEncode(scope, changes, context.DdlView, ref hlc, tables);
         changes.Clear();
         _context.Clock.Restore(hlc);
         var sequence = nextSequence;
@@ -1001,7 +1060,6 @@ internal sealed partial class DatabaseSession
             return scope.Failure;
         }
 
-        var payload = MutationBatchCodec.Encode(new DeltaBatch(context.Ddl, mutations));
         commit = new CommitMetadata(Ulid.NewUlid(_context.Time.GetUtcNow()), Region, sequence, hlc, nextEpoch, context.Mode, BookmarkWith(Region, sequence), payload);
         nextSequence = sequence + 1;
         epoch = nextEpoch;
@@ -1032,89 +1090,55 @@ internal sealed partial class DatabaseSession
         return last;
     }
 
-    private (StageWriteOutcome Outcome, bool SchemaTouched) RunStage(SqlStatementRequest request, CancellationToken cancellationToken)
-    {
-        var context = new WriteContext(ConsistencyMode.Strong, analyzeReads: true, cancellationToken);
-        var savepoint = _writer.Exec(ItemSavepoint);
-        if (!savepoint.IsOk)
-        {
-            return (savepoint.ToSqlError(-1), false);
-        }
-
-        _capture.Begin();
-        for (var index = 0; index < request.Statements.Count; index++)
-        {
-            SqlError? failure = ExecuteStatement(context, request.Statements[index], index) switch
-            {
-                SqlResultSet => null,
-                SqlError error => error,
-                StrongRequired strong => new SqlError("strong_required", ReasonText(strong.Reason), "XX000", index, 0),
-            };
-            if (failure is not null)
-            {
-                _capture.End();
-                var reverted = RollbackItemSchema(context, useSavepoint: true);
-                return (reverted.IsOk ? failure : reverted.ToSqlError(-1), context.IsSchemaChange);
-            }
-        }
-
-        var finished = FinishStage(context, out var descriptor);
-        var rolledBack = RollbackItemSchema(context, useSavepoint: true);
-        if (!rolledBack.IsOk)
-        {
-            return (rolledBack.ToSqlError(-1), context.IsSchemaChange);
-        }
-
-        if (!finished.IsOk || descriptor is null)
-        {
-            return (finished.ToSqlError(-1), context.IsSchemaChange);
-        }
-
-        RegisterStaged(descriptor);
-        return (descriptor.Staged, context.IsSchemaChange);
-    }
-
     private async Task<bool> RunTransactionAsync(WriteTransaction transaction)
     {
         if (transaction.IsAbandoned || IsClosed)
         {
+            transaction.DisposeIdleTimer();
             return transaction.Started.TrySetResult(Closing());
         }
 
         var begun = BeginWrite(applying: false);
         if (!begun.IsOk)
         {
+            transaction.DisposeIdleTimer();
             return transaction.Started.TrySetResult(begun.ToBusy());
         }
 
-        var context = new WriteContext(transaction.Options.Mode, analyzeReads: transaction.Options.Mode == ConsistencyMode.Strong, CancellationToken.None);
+        var context = ResetLaneWriteContext(transaction.Options.Mode, analyzeReads: transaction.Options.Mode == ConsistencyMode.Strong, CancellationToken.None);
         _capture.Begin();
         _ = Interlocked.Exchange(ref _activeTransaction, transaction);
-        if (IsClosed)
+        try
         {
-            _ = EndTransaction(context);
-            _ = Interlocked.Exchange(ref _activeTransaction, null);
-            transaction.Abandon();
-            return transaction.Started.TrySetResult(Closing());
-        }
-
-        transaction.Started.TrySetResult(new TransactionStarted());
-        var finished = false;
-        while (!finished)
-        {
-            var command = await transaction.NextCommandAsync(Options.TransactionIdleTimeout, _context.Time);
-            finished = command switch
+            if (IsClosed)
             {
-                null => EndTransaction(context),
-                WriteTransaction.ExecuteCommand execute => ExecuteInTransaction(context, execute),
-                WriteTransaction.CommitCommand commit => CommitTransaction(context, commit),
-                WriteTransaction.StageCommand stage => StageTransaction(context, stage),
-                WriteTransaction.RollbackCommand rollback => RollbackTransaction(context, rollback),
-            };
-        }
+                _ = EndTransaction(context);
+                transaction.Abandon();
+                return transaction.Started.TrySetResult(Closing());
+            }
 
-        Volatile.Write(ref _activeTransaction, null);
-        return true;
+            transaction.Started.TrySetResult(new TransactionStarted());
+            var finished = false;
+            while (!finished)
+            {
+                var command = await transaction.NextCommandAsync(Options.TransactionIdleTimeout, _context.Time);
+                finished = command switch
+                {
+                    null => EndTransaction(context),
+                    WriteTransaction.ExecuteCommand execute => ExecuteInTransaction(context, execute),
+                    WriteTransaction.CommitCommand commit => CommitTransaction(context, commit),
+                    WriteTransaction.StageCommand stage => StageTransaction(context, stage),
+                    WriteTransaction.RollbackCommand rollback => RollbackTransaction(context, rollback),
+                };
+            }
+
+            return true;
+        }
+        finally
+        {
+            transaction.DisposeIdleTimer();
+            Volatile.Write(ref _activeTransaction, null);
+        }
     }
 
     private bool ExecuteInTransaction(WriteContext context, WriteTransaction.ExecuteCommand execute)
@@ -1232,6 +1256,7 @@ internal sealed partial class DatabaseSession
 
         if (context.IsSchemaChange)
         {
+            BumpSchemaGeneration();
             _writer.InvalidateSchemaCache();
             _metaCache.Clear();
         }
@@ -1239,9 +1264,8 @@ internal sealed partial class DatabaseSession
         return true;
     }
 
-    private SqliteStatus RollbackItemSchema(WriteContext context, bool useSavepoint)
+    private SqliteStatus RollbackItemSchema(WriteContext context, bool useSavepoint, bool clearMetaCache = true)
     {
-        _metaCache.Clear();
         SqliteStatus rolledBack;
         if (!_writer.InTransaction)
         {
@@ -1267,8 +1291,14 @@ internal sealed partial class DatabaseSession
             _writeGroupBroken |= _writer.InTransaction;
         }
 
+        if (clearMetaCache || !rolledBack.IsOk)
+        {
+            _metaCache.Clear();
+        }
+
         if (context.IsSchemaChange)
         {
+            BumpSchemaGeneration();
             _writer.InvalidateSchemaCache();
         }
 
@@ -1363,11 +1393,16 @@ internal sealed partial class DatabaseSession
             return truncated ? committed : UntruncatableLog(committed);
         }
 
+        if (schemaTouched)
+        {
+            BumpSchemaGeneration();
+        }
+
         log.MarkCommitted();
         RecordFilteredChange(touchedTables, schemaTouched);
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
-        _laneVersionUpdate[0] = new KeyValuePair<string, long>(Region, commits[^1].Sequence);
-        _versions.Set(_laneVersionUpdate);
+        var lastCommit = commits[^1];
+        _versions.AdvanceSingle(Region, lastCommit.Sequence, lastCommit.Bookmark);
         log.SealIfDue();
         return SqliteStatus.Success;
     }

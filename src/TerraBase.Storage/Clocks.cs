@@ -63,9 +63,11 @@ public sealed class HlcClock(ushort nodeId, TimeProvider time)
         }
     }
 
-    public HlcTimestamp Observe(HlcTimestamp remote)
+    public HlcTimestamp Observe(HlcTimestamp remote) => Observe(remote, Now());
+
+    public HlcTimestamp Observe(HlcTimestamp remote, long nowMs)
     {
-        var wall = Now();
+        var wall = Math.Clamp(nowMs, 0, HlcTimestamp.MaxWallMs);
         var maxWall = Math.Min(wall + MaxFutureSkewMs, HlcTimestamp.MaxWallMs);
         var clamped = remote.WallMs > maxWall || remote.WallMs < 0;
         var remoteWall = clamped ? Math.Clamp(remote.WallMs, 0, maxWall) : remote.WallMs;
