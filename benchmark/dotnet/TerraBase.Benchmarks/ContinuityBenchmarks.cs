@@ -248,7 +248,7 @@ public static class ContinuityBenchmarks
         var ddl = RequireWrite(await session.ExecuteWriteAsync(
             new SqlStatementRequest(
                 databaseId,
-                [new SqlStatement("CREATE TABLE feed (id INTEGER PRIMARY KEY, data TEXT);", [], NoNamedParams)],
+                [new SqlStatement("CREATE TABLE events (id INTEGER PRIMARY KEY, data TEXT);", [], NoNamedParams)],
                 SqlAccess.Write,
                 ConsistencyMode.Strong,
                 CausalBookmark.Empty),

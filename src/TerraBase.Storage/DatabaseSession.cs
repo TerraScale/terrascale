@@ -885,7 +885,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
     }
 
-    private void RecordFilteredChange(Dictionary<string, HlcTimestamp>.KeyCollection touchedTables, bool hasDdl)
+    private void RecordFilteredChange(Dictionary<string, HlcTimestamp> touchedTables, bool hasDdl)
     {
         if (hasDdl)
         {
@@ -904,9 +904,9 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return;
         }
 
-        foreach (var table in touchedTables)
+        foreach (var entry in touchedTables)
         {
-            if (!excluded.Contains(table))
+            if (!excluded.Contains(entry.Key))
             {
                 _ = Interlocked.Increment(ref _filteredChangeGeneration);
                 return;

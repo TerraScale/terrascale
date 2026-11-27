@@ -17,8 +17,8 @@ namespace TerraBase.Benchmarks;
 public static class ReplicationBenchmarks
 {
     private const string Suite = "replication";
-    private const double TursoPageFrameBytes = 4096.0;
-    private const double TursoConcurrentTps = 9500.0;
+    private const double PageFrameBytes = 4096.0;
+    private const double ReferenceConcurrentTps = 9500.0;
 
     private static readonly IReadOnlyDictionary<string, SqlValue> NoNamedParams = FrozenDictionary<string, SqlValue>.Empty;
     private static readonly string SamplePayload = new('r', 128);
@@ -110,7 +110,7 @@ public static class ReplicationBenchmarks
             () => measuredCommits > 0 ? totalWireBytes / measuredCommits : wireBytesPerCommit,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"2-node mTLS QUIC gru->fra write+push+apply+SELECT; FsyncCommitLog=false, loopback; wire_b_per_commit={wireBytesPerCommit}B vs TursoDB ~1-5ms LAN / periodic pull sync"),
+                $"2-node mTLS QUIC gru->fra write+push+apply+SELECT; FsyncCommitLog=false, loopback; wire_b_per_commit={wireBytesPerCommit}B vs ~1-5ms LAN / periodic pull sync"),
             cancellationToken);
 
         BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, "Single-commit E2E replication dropped pushes.");
@@ -167,7 +167,7 @@ public static class ReplicationBenchmarks
 
         RequireBookmarkReached(await followerSession.WaitForBookmarkAsync(probeCommits[^1].Bookmark, TimeSpan.FromSeconds(15), cancellationToken));
         var wireBytesPerCommit = MeasureWireBytes(databaseId, primary.NodeId, probeCommits) / (double)probeCommits.Length;
-        var compressionVsTurso = TursoPageFrameBytes / Math.Max(1.0, wireBytesPerCommit);
+        var compressionVsPageFrame = PageFrameBytes / Math.Max(1.0, wireBytesPerCommit);
 
         var totalPayloadBytes = 0L;
         var totalCommits = 0L;
@@ -203,14 +203,14 @@ public static class ReplicationBenchmarks
             () => totalCommits > 0 ? totalPayloadBytes / totalCommits : (long)Math.Round(wireBytesPerCommit),
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{commitsPerBurst} commits/op (1000/round) gru->fra mTLS QUIC; FsyncCommitLog=false, loopback; wire_b_per_commit={wireBytesPerCommit:F1}B ({compressionVsTurso:F1}x smaller than TursoDB 4096B page); commits/s=ops/s*{commitsPerBurst}"),
+                $"{commitsPerBurst} commits/op (1000/round) gru->fra mTLS QUIC; FsyncCommitLog=false, loopback; wire_b_per_commit={wireBytesPerCommit:F1}B ({compressionVsPageFrame:F1}x smaller than 4096B page frame); commits/s=ops/s*{commitsPerBurst}"),
             cancellationToken);
 
         BenchRunnerContext.AssertCondition(primary.Replicator.DroppedPushes == 0, "Streaming replication dropped pushes.");
         var commitsPerSec = metrics.OpsPerSec * commitsPerBurst;
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"  -> repl_stream_1000_commits_throughput (FsyncCommitLog=false, loopback): {commitsPerSec:F1} commits/s | {wireBytesPerCommit:F1} B/commit ({compressionVsTurso:F1}x smaller than TursoDB 4096B page)"));
+            $"  -> repl_stream_1000_commits_throughput (FsyncCommitLog=false, loopback): {commitsPerSec:F1} commits/s | {wireBytesPerCommit:F1} B/commit ({compressionVsPageFrame:F1}x smaller than 4096B page frame)"));
     }
 
     private static async Task RunFanout3NodeThroughputAsync(BenchRunnerContext ctx, CancellationToken cancellationToken)
@@ -460,10 +460,10 @@ public static class ReplicationBenchmarks
         var note = fsyncCommitLog
             ? string.Create(
                 CultureInfo.InvariantCulture,
-                $"32 writers, FsyncCommitLog=true (durable), loopback, mTLS QUIC + ChaCha20 SQLite; replicated_tx/s=ops/s*{writers} vs TursoDB 9,500 TPS published concurrent writes")
+                $"32 writers, FsyncCommitLog=true (durable), loopback, mTLS QUIC + ChaCha20 SQLite; replicated_tx/s=ops/s*{writers} vs 9,500 TPS reference concurrent writes")
             : string.Create(
                 CultureInfo.InvariantCulture,
-                $"32 concurrent writers + live mTLS QUIC replication gru->fra; FsyncCommitLog=false, loopback; replicated_tx/s=ops/s*{writers} vs TursoDB 9,500 TPS published concurrent writes");
+                $"32 concurrent writers + live mTLS QUIC replication gru->fra; FsyncCommitLog=false, loopback; replicated_tx/s=ops/s*{writers} vs 9,500 TPS reference concurrent writes");
 
         var metrics = await ctx.MeasureAsync(
             Suite,
@@ -511,11 +511,11 @@ public static class ReplicationBenchmarks
             Volatile.Read(ref rowId),
             string.Concat(benchmarkId, " follower count"));
         var effectiveTps = metrics.OpsPerSec * writers;
-        var vsTursoRatio = effectiveTps / TursoConcurrentTps;
+        var vsReferenceRatio = effectiveTps / ReferenceConcurrentTps;
         var modeLabel = fsyncCommitLog ? "FsyncCommitLog=true (durable), loopback" : "FsyncCommitLog=false, loopback";
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"  -> {benchmarkId} ({modeLabel}): {effectiveTps:F1} replicated tx/s ({vsTursoRatio:F2}x TursoDB 9,500 TPS)"));
+            $"  -> {benchmarkId} ({modeLabel}): {effectiveTps:F1} replicated tx/s ({vsReferenceRatio:F2}x 9,500 TPS reference)"));
     }
 
     private static async Task<SqlWriteResult> ExecuteReplicatedWriteTaskAsync(

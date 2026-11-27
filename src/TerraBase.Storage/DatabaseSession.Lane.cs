@@ -777,7 +777,7 @@ internal sealed partial class DatabaseSession
             }
         }
 
-        var outcome = CommitWrite(commits, epoch, _laneGroupTables.Keys, schemaTouched);
+        var outcome = CommitWrite(commits, epoch, _laneGroupTables, schemaTouched);
         commits.Clear();
         for (var index = 0; index < completed.Count; index++)
         {
@@ -1182,7 +1182,7 @@ internal sealed partial class DatabaseSession
             commits.Add(metadata);
         }
 
-        var committed = CommitWrite(commits, epoch, _laneItemTables.Keys, context.IsSchemaChange);
+        var committed = CommitWrite(commits, epoch, _laneItemTables, context.IsSchemaChange);
         commits.Clear();
         _laneItemTables.Clear();
         if (committed.IsOk)
@@ -1317,7 +1317,7 @@ internal sealed partial class DatabaseSession
     private SqliteStatus CommitWrite(
         List<CommitMetadata> commits,
         ulong epoch,
-        Dictionary<string, HlcTimestamp>.KeyCollection touchedTables,
+        Dictionary<string, HlcTimestamp> touchedTables,
         bool schemaTouched)
     {
         if (commits.Count == 0)
