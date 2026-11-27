@@ -49,17 +49,17 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("The change is too large. Send at most " + MaxEdits + " edits at a time.");
         }
 
-        using var document = FormRequests.TryParseJson(payload, Options);
-        if (document is not { RootElement.ValueKind: JsonValueKind.Object })
+        using var json = FormRequests.TryParseJson(payload, Options);
+        if (json is not { RootElement.ValueKind: JsonValueKind.Object })
         {
             return new TableRowPayloadInvalid("The change payload must be a JSON object.");
         }
 
         return operation switch
         {
-            "update" => Update(table, document.RootElement),
-            "insert" => Insert(table, document.RootElement),
-            "delete" => Delete(table, document.RootElement),
+            "update" => Update(table, json.RootElement),
+            "insert" => Insert(table, json.RootElement),
+            "delete" => Delete(table, json.RootElement),
             _ => new TableRowPayloadInvalid("Choose update, insert or delete."),
         };
     }
