@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
@@ -7,25 +8,18 @@ using TerraScale.QuicRpc;
 
 namespace TerraBase.Cluster;
 
-internal closed record class OutboundMessage(Ulid DatabaseId);
-
-internal sealed record class OutboundDelta(Ulid DatabaseId, DeltaPushMessage Message) : OutboundMessage(DatabaseId);
-
-internal sealed record class OutboundStrongCommit(Ulid DatabaseId, StrongCommitMessage Message) : OutboundMessage(DatabaseId);
-
-internal sealed record class OutboundStrongRelease(Ulid DatabaseId, StrongWoundMessage Message) : OutboundMessage(DatabaseId);
-
-internal sealed record class OutboundDeltaAck(Ulid DatabaseId, DeltaAckMessage Message) : OutboundMessage(DatabaseId);
-
 public readonly union RemoteReplicationOutcome(RemoteApplyOutcome, DatabaseNotFound, SchemaMismatch, StorageCorrupted, StorageBusy, ClusterUnavailable);
 
 public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient client, ClusterDatabases databases, ChangefeedPublisher changefeed, StrongLockTable locks, TimeProvider timeProvider, ILogger<DeltaReplicator> logger) : IAsyncDisposable
 {
     private const int OutboundCapacity = 16384;
+    private const int MaxCoalescedCommits = 64;
+    private const int MaxCoalescedBytes = 1024 * 1024;
 
     private readonly Lock _outboxGate = new();
     private readonly ConcurrentDictionary<string, PeerOutbox> _outboxes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<(Ulid DatabaseId, string NodeId), CausalBookmark> _acknowledged = new();
+    private readonly ConcurrentDictionary<Ulid, string> _channelKeys = new();
     private readonly CancellationTokenSource _shutdown = new();
     private long _dropped;
     private long _applied;
@@ -54,31 +48,70 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             return;
         }
 
-        var message = new DeltaPushMessage(databaseId, topology.LocalNodeId, [commit], ackRequested);
         var peers = topology.RegionPeers.Count < 2 ? topology.Peers : topology.RemotePeers;
-        foreach (var peer in peers)
+        if (peers.Count == 0)
         {
-            Enqueue(peer.NodeId, new OutboundDelta(databaseId, message));
+            return;
+        }
+
+        var item = OutboundItem.ForDelta(databaseId, commit, ackRequested);
+        for (var index = 0; index < peers.Count; index++)
+        {
+            Enqueue(peers[index].NodeId, item);
         }
     }
 
     public void BroadcastStrongCommit(Ulid databaseId, CommitMetadata commit)
     {
         ArgumentNullException.ThrowIfNull(commit);
-        var message = new StrongCommitMessage(new StrongCommitPayload(databaseId, commit), topology.LocalNodeId);
-        foreach (var peer in topology.Peers)
+        var peers = topology.Peers;
+        if (peers.Count == 0)
         {
-            Enqueue(peer.NodeId, new OutboundStrongCommit(databaseId, message));
+            return;
+        }
+
+        var message = new StrongCommitMessage(new StrongCommitPayload(databaseId, commit), topology.LocalNodeId);
+        var item = OutboundItem.ForStrongCommit(databaseId, message);
+        for (var index = 0; index < peers.Count; index++)
+        {
+            Enqueue(peers[index].NodeId, item);
         }
     }
 
     public void BroadcastStrongRelease(Ulid databaseId, Ulid txId, Ulid woundedBy, HlcTimestamp winnerPriority, IEnumerable<string> nodeIds)
     {
         ArgumentNullException.ThrowIfNull(nodeIds);
+        if (nodeIds is IReadOnlyCollection<string> { Count: 0 })
+        {
+            return;
+        }
+
         var message = new StrongWoundMessage(new StrongWoundPayload(databaseId, txId, woundedBy, winnerPriority));
+        var item = OutboundItem.ForStrongRelease(databaseId, message);
+        if (nodeIds is IReadOnlyList<string> list)
+        {
+            if (list.Count == 1)
+            {
+                Enqueue(list[0], item);
+                return;
+            }
+
+            HashSet<string> seen = new(list.Count, StringComparer.Ordinal);
+            for (var index = 0; index < list.Count; index++)
+            {
+                var nodeId = list[index];
+                if (seen.Add(nodeId))
+                {
+                    Enqueue(nodeId, item);
+                }
+            }
+
+            return;
+        }
+
         foreach (var nodeId in nodeIds.Distinct(StringComparer.Ordinal))
         {
-            Enqueue(nodeId, new OutboundStrongRelease(databaseId, message));
+            Enqueue(nodeId, item);
         }
     }
 
@@ -101,8 +134,8 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(commits);
-        var foreign = commits.Where(commit => !string.Equals(commit.OriginRegion, topology.StorageOrigin, StringComparison.Ordinal) && commit.Sequence > 0).ToArray();
-        if (foreign.Length == 0)
+        var foreign = FilterForeign(commits, topology.StorageOrigin);
+        if (foreign.Count == 0)
         {
             return new RemoteApplyOutcome(0, commits.Count, 0, session.CurrentBookmark, 0);
         }
@@ -141,6 +174,44 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         _shutdown.Dispose();
     }
 
+    private static IReadOnlyList<CommitMetadata> FilterForeign(IReadOnlyList<CommitMetadata> commits, string storageOrigin)
+    {
+        var count = commits.Count;
+        if (count == 0)
+        {
+            return [];
+        }
+
+        var allForeign = true;
+        for (var index = 0; index < count; index++)
+        {
+            var commit = commits[index];
+            if (string.Equals(commit.OriginRegion, storageOrigin, StringComparison.Ordinal) || commit.Sequence <= 0)
+            {
+                allForeign = false;
+                break;
+            }
+        }
+
+        if (allForeign)
+        {
+            return commits;
+        }
+
+        List<CommitMetadata>? filtered = null;
+        for (var index = 0; index < count; index++)
+        {
+            var commit = commits[index];
+            if (!string.Equals(commit.OriginRegion, storageOrigin, StringComparison.Ordinal) && commit.Sequence > 0)
+            {
+                filtered ??= new List<CommitMetadata>(count);
+                filtered.Add(commit);
+            }
+        }
+
+        return filtered is not null ? filtered : [];
+    }
+
     private async ValueTask<RemoteReplicationOutcome> ApplyLeasedAsync(ISqlDatabaseSession session, IReadOnlyList<CommitMetadata> commits, CancellationToken cancellationToken)
     {
         await using (session)
@@ -149,7 +220,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         }
     }
 
-    private async ValueTask<RemoteReplicationOutcome> AppliedAsync(Ulid databaseId, CommitMetadata[] commits, CausalBookmark before, RemoteApplyOutcome outcome, bool requestCatchUpOnBuffered, CancellationToken cancellationToken)
+    private async ValueTask<RemoteReplicationOutcome> AppliedAsync(Ulid databaseId, IReadOnlyList<CommitMetadata> commits, CausalBookmark before, RemoteApplyOutcome outcome, bool requestCatchUpOnBuffered, CancellationToken cancellationToken)
     {
         databases.Observe(databaseId, outcome.Bookmark);
         Interlocked.Add(ref _applied, outcome.Applied);
@@ -158,8 +229,9 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             ClusterLog.RemoteCommitsQuarantined(logger, databaseId, outcome.Quarantined, outcome.Bookmark);
         }
 
-        foreach (var commit in commits)
+        for (var index = 0; index < commits.Count; index++)
         {
+            var commit = commits[index];
             if (commit.Mode == ConsistencyMode.Strong && commit.Sequence <= outcome.Bookmark.Get(commit.OriginRegion))
             {
                 _ = locks.Release(databaseId, commit.TxId);
@@ -187,12 +259,21 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
     private async ValueTask<PushDispatchOutcome> HandleDeltaPushAsync(QuicCallContext context, DeltaPushMessage message, CancellationToken cancellationToken)
     {
-        if (!topology.IsPeer(context, message.SenderNodeId) || message.Commits.Any(commit => !topology.IsPeerOrigin(context, commit.OriginRegion)))
+        if (!topology.IsPeer(context, message.SenderNodeId))
         {
             return ClusterTopology.PeerForbidden();
         }
 
-        var applied = await ApplyAsync(message.DatabaseId, message.Commits, cancellationToken);
+        var commits = message.Commits;
+        for (var index = 0; index < commits.Count; index++)
+        {
+            if (!topology.IsPeerOrigin(context, commits[index].OriginRegion))
+            {
+                return ClusterTopology.PeerForbidden();
+            }
+        }
+
+        var applied = await ApplyAsync(message.DatabaseId, commits, cancellationToken);
         var bookmark = applied switch
         {
             RemoteApplyOutcome outcome => outcome.Bookmark,
@@ -201,13 +282,13 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (bookmark is null)
         {
             ClusterLog.RemoteApplyDeferred(logger, message.DatabaseId, context.RemoteNodeId, Describe(applied));
-            _ = databases.RequestCatchUp(message.DatabaseId, FrontierOf(message.Commits));
+            _ = databases.RequestCatchUp(message.DatabaseId, FrontierOf(commits));
             return new QuicSent();
         }
 
         if (message.AckRequested)
         {
-            Enqueue(context.RemoteNodeId, new OutboundDeltaAck(message.DatabaseId, new DeltaAckMessage(message.DatabaseId, topology.LocalNodeId, bookmark)));
+            Enqueue(context.RemoteNodeId, OutboundItem.ForDeltaAck(message.DatabaseId, bookmark));
         }
 
         return new QuicSent();
@@ -220,7 +301,11 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             return ValueTask.FromResult<PushDispatchOutcome>(ClusterTopology.PeerForbidden());
         }
 
-        _ = _acknowledged.AddOrUpdate((message.DatabaseId, context.RemoteNodeId), message.Bookmark, (_, existing) => existing.Merge(message.Bookmark));
+        _ = _acknowledged.AddOrUpdate(
+            (message.DatabaseId, context.RemoteNodeId),
+            static (_, incoming) => incoming,
+            static (_, existing, incoming) => existing.Dominates(incoming) ? existing : incoming.Dominates(existing) ? incoming : existing.Merge(incoming),
+            message.Bookmark);
         return ValueTask.FromResult<PushDispatchOutcome>(new QuicSent());
     }
 
@@ -233,7 +318,8 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             return ClusterTopology.PeerForbidden();
         }
 
-        var applied = await ApplyAsync(payload.DatabaseId, [payload.Commit], cancellationToken);
+        CommitMetadata[] single = [payload.Commit];
+        var applied = await ApplyAsync(payload.DatabaseId, single, cancellationToken);
         var failure = applied switch
         {
             RemoteApplyOutcome => null,
@@ -242,7 +328,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (failure is not null)
         {
             ClusterLog.RemoteApplyDeferred(logger, payload.DatabaseId, context.RemoteNodeId, failure);
-            _ = databases.RequestCatchUp(payload.DatabaseId, FrontierOf([payload.Commit]));
+            _ = databases.RequestCatchUp(payload.DatabaseId, FrontierOf(single));
         }
 
         return new QuicSent();
@@ -275,7 +361,10 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         ClusterUnavailable unavailable => unavailable.Message,
     };
 
-    private void Enqueue(string nodeId, OutboundMessage message)
+    private string ChannelKey(Ulid databaseId) =>
+        _channelKeys.GetOrAdd(databaseId, static id => id.ToString());
+
+    private void Enqueue(string nodeId, in OutboundItem item)
     {
         if (!_outboxes.TryGetValue(nodeId, out var outbox))
         {
@@ -290,16 +379,16 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             }
         }
 
-        if (!outbox.Queue.Writer.TryWrite(message))
+        if (!outbox.Queue.Writer.TryWrite(item))
         {
             Interlocked.Increment(ref _dropped);
-            _ = databases.RequestCatchUp(message.DatabaseId);
+            _ = databases.RequestCatchUp(item.DatabaseId);
         }
     }
 
     private PeerOutbox CreateOutbox(string nodeId)
     {
-        var queue = Channel.CreateBounded<OutboundMessage>(new BoundedChannelOptions(OutboundCapacity)
+        var queue = Channel.CreateBounded<OutboundItem>(new BoundedChannelOptions(OutboundCapacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
@@ -310,37 +399,96 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         return new PeerOutbox(queue, pump);
     }
 
-    private async Task PumpAsync(string nodeId, ChannelReader<OutboundMessage> reader, CancellationToken cancellationToken)
+    private async Task PumpAsync(string nodeId, ChannelReader<OutboundItem> reader, CancellationToken cancellationToken)
     {
-        await foreach (var message in reader.ReadAllAsync(cancellationToken))
+        List<CommitMetadata> deltaBatch = new(MaxCoalescedCommits);
+        while (await reader.WaitToReadAsync(cancellationToken))
         {
-            var sent = false;
-            try
+            while (reader.TryRead(out var item))
             {
-                await SendAsync(nodeId, message, cancellationToken);
-                sent = true;
-            }
-            finally
-            {
-                if (!sent && !cancellationToken.IsCancellationRequested)
+                var sent = false;
+                try
                 {
-                    Interlocked.Increment(ref _dropped);
-                    _ = databases.RequestCatchUp(message.DatabaseId);
+                    if (item.Kind == OutboundKind.Delta && item.Commit is { } firstCommit)
+                    {
+                        deltaBatch.Clear();
+                        deltaBatch.Add(firstCommit);
+                        var batchBytes = firstCommit.DeltaPayload.Length;
+                        var ackRequested = item.AckRequested;
+                        while (deltaBatch.Count < MaxCoalescedCommits
+                            && reader.TryPeek(out var next)
+                            && next.Kind == OutboundKind.Delta
+                            && next.DatabaseId == item.DatabaseId
+                            && next.Commit is { } nextCommit)
+                        {
+                            var nextBytes = nextCommit.DeltaPayload.Length;
+                            if (batchBytes + nextBytes > MaxCoalescedBytes)
+                            {
+                                break;
+                            }
+
+                            _ = reader.TryRead(out next);
+                            deltaBatch.Add(nextCommit);
+                            batchBytes += nextBytes;
+                            ackRequested |= next.AckRequested;
+                        }
+
+                        var push = new DeltaPushMessage(item.DatabaseId, topology.LocalNodeId, deltaBatch, ackRequested);
+                        await SendPushAsync(nodeId, item.DatabaseId, QuicMessageType.DeltaPush, push, cancellationToken);
+                        deltaBatch.Clear();
+                        sent = true;
+                        continue;
+                    }
+
+                    if (item.Kind == OutboundKind.DeltaAck && item.Bookmark is { } firstBookmark)
+                    {
+                        var merged = firstBookmark;
+                        while (reader.TryPeek(out var next)
+                            && next.Kind == OutboundKind.DeltaAck
+                            && next.DatabaseId == item.DatabaseId
+                            && next.Bookmark is { } nextBookmark)
+                        {
+                            _ = reader.TryRead(out next);
+                            if (!merged.Dominates(nextBookmark))
+                            {
+                                merged = nextBookmark.Dominates(merged) ? nextBookmark : merged.Merge(nextBookmark);
+                            }
+                        }
+
+                        var ack = new DeltaAckMessage(item.DatabaseId, topology.LocalNodeId, merged);
+                        await SendPushAsync(nodeId, item.DatabaseId, QuicMessageType.DeltaAck, ack, cancellationToken);
+                        sent = true;
+                        continue;
+                    }
+
+                    await SendControlAsync(nodeId, item, cancellationToken);
+                    sent = true;
+                }
+                finally
+                {
+                    deltaBatch.Clear();
+                    if (!sent && !cancellationToken.IsCancellationRequested)
+                    {
+                        Interlocked.Increment(ref _dropped);
+                        _ = databases.RequestCatchUp(item.DatabaseId);
+                    }
                 }
             }
         }
     }
 
-    private async ValueTask SendAsync(string nodeId, OutboundMessage message, CancellationToken cancellationToken)
+    private ValueTask SendControlAsync(string nodeId, in OutboundItem item, CancellationToken cancellationToken) => item.Kind switch
     {
-        var channel = message.DatabaseId.ToString();
-        var sent = message switch
-        {
-            OutboundDelta delta => await client.PushAsync(nodeId, QuicMessageType.DeltaPush, delta.Message, channel, cancellationToken),
-            OutboundStrongCommit commit => await client.PushAsync(nodeId, QuicMessageType.StrongCommit, commit.Message, channel, cancellationToken),
-            OutboundStrongRelease release => await client.PushAsync(nodeId, QuicMessageType.StrongWound, release.Message, channel, cancellationToken),
-            OutboundDeltaAck ack => await client.PushAsync(nodeId, QuicMessageType.DeltaAck, ack.Message, channel, cancellationToken),
-        };
+        OutboundKind.StrongCommit when item.StrongCommit is { } commit => SendPushAsync(nodeId, item.DatabaseId, QuicMessageType.StrongCommit, commit, cancellationToken),
+        OutboundKind.StrongRelease when item.StrongRelease is { } release => SendPushAsync(nodeId, item.DatabaseId, QuicMessageType.StrongWound, release, cancellationToken),
+        _ => throw new UnreachableException(),
+    };
+
+    private async ValueTask SendPushAsync<TMessage>(string nodeId, Ulid databaseId, ushort messageType, TMessage message, CancellationToken cancellationToken)
+        where TMessage : IBinaryMessage<TMessage>
+    {
+        var channel = ChannelKey(databaseId);
+        var sent = await client.PushAsync(nodeId, messageType, message, channel, cancellationToken);
         var failure = sent switch
         {
             QuicSent => null,
@@ -350,10 +498,64 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (failure is not null)
         {
             Interlocked.Increment(ref _dropped);
-            _ = databases.RequestCatchUp(message.DatabaseId);
+            _ = databases.RequestCatchUp(databaseId);
             ClusterLog.PushFailed(logger, nodeId, failure);
         }
     }
 
-    private sealed record PeerOutbox(Channel<OutboundMessage> Queue, Task Pump);
+    private enum OutboundKind : byte
+    {
+        Delta = 0,
+        StrongCommit = 1,
+        StrongRelease = 2,
+        DeltaAck = 3,
+    }
+
+    private readonly struct OutboundItem
+    {
+        public OutboundKind Kind { get; init; }
+
+        public Ulid DatabaseId { get; init; }
+
+        public CommitMetadata? Commit { get; init; }
+
+        public StrongCommitMessage? StrongCommit { get; init; }
+
+        public StrongWoundMessage? StrongRelease { get; init; }
+
+        public CausalBookmark? Bookmark { get; init; }
+
+        public bool AckRequested { get; init; }
+
+        public static OutboundItem ForDelta(Ulid databaseId, CommitMetadata commit, bool ackRequested) => new()
+        {
+            Kind = OutboundKind.Delta,
+            DatabaseId = databaseId,
+            Commit = commit,
+            AckRequested = ackRequested,
+        };
+
+        public static OutboundItem ForStrongCommit(Ulid databaseId, StrongCommitMessage message) => new()
+        {
+            Kind = OutboundKind.StrongCommit,
+            DatabaseId = databaseId,
+            StrongCommit = message,
+        };
+
+        public static OutboundItem ForStrongRelease(Ulid databaseId, StrongWoundMessage message) => new()
+        {
+            Kind = OutboundKind.StrongRelease,
+            DatabaseId = databaseId,
+            StrongRelease = message,
+        };
+
+        public static OutboundItem ForDeltaAck(Ulid databaseId, CausalBookmark bookmark) => new()
+        {
+            Kind = OutboundKind.DeltaAck,
+            DatabaseId = databaseId,
+            Bookmark = bookmark,
+        };
+    }
+
+    private sealed record PeerOutbox(Channel<OutboundItem> Queue, Task Pump);
 }

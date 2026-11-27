@@ -27,12 +27,11 @@ internal sealed class SessionArchiver(
     {
         SqliteStorageEngine.SealCommittedLogs(session);
         var snapshotFloor = ArchiveRetention.SnapshotFloor(manifest);
-        var archivedThrough = manifest.ArchivedThrough(snapshotFloor);
         List<ArchivedSegment> segments = [];
         ContinuityUnavailable? failure = null;
         foreach (var (origin, _) in session.CurrentBookmark.Entries)
         {
-            failure = await ArchiveSegmentsAsync(origin, archivedThrough.GetValueOrDefault(origin), segments, cancellationToken);
+            failure = await ArchiveSegmentsAsync(origin, manifest.ArchivedThrough(origin, snapshotFloor), segments, cancellationToken);
             if (failure is not null)
             {
                 break;
@@ -97,17 +96,34 @@ internal sealed class SessionArchiver(
 
     private bool SnapshotDue(ArchiveManifest manifest, bool forceSnapshot)
     {
-        if (ManifestCodec.Snapshots(manifest).MaxBy(static snapshot => snapshot.Archived.TakenAtUtc) is not { } latest)
+        ArchivedSnapshot? latestArchived = null;
+        CausalBookmark? latestBookmark = null;
+        for (var index = manifest.Snapshots.Count - 1; index >= 0; index--)
+        {
+            var candidate = manifest.Snapshots[index];
+            if (latestArchived is not null && candidate.TakenAtUtc <= latestArchived.TakenAtUtc)
+            {
+                continue;
+            }
+
+            if (CausalBookmark.TryDecode(candidate.Bookmark, out var bookmark))
+            {
+                latestArchived = candidate;
+                latestBookmark = bookmark;
+            }
+        }
+
+        if (latestArchived is null || latestBookmark is null)
         {
             return true;
         }
 
-        if (latest.Bookmark.Equals(session.CurrentBookmark))
+        if (latestBookmark.Equals(session.CurrentBookmark))
         {
             return false;
         }
 
-        return forceSnapshot || timeProvider.GetUtcNow() - latest.Archived.TakenAtUtc >= options.SnapshotInterval;
+        return forceSnapshot || timeProvider.GetUtcNow() - latestArchived.TakenAtUtc >= options.SnapshotInterval;
     }
 
     private async ValueTask<ContinuityUnavailable?> ArchiveSegmentsAsync(
@@ -129,9 +145,10 @@ internal sealed class SessionArchiver(
         List<ArchivedSegment> staged,
         CancellationToken cancellationToken)
     {
-        foreach (var segment in segments.OrderBy(static segment => segment.FirstSequence))
+        var ordered = OrderSegments(segments);
+        for (var index = 0; index < ordered.Count; index++)
         {
-            var uploaded = await UploadSegmentAsync(segment, cancellationToken);
+            var uploaded = await UploadSegmentAsync(ordered[index], cancellationToken);
             var failure = uploaded switch
             {
                 ArchivedSegment archived => Stage(staged, archived),
@@ -144,6 +161,31 @@ internal sealed class SessionArchiver(
         }
 
         return null;
+
+        static IReadOnlyList<CommitLogSegment> OrderSegments(IReadOnlyList<CommitLogSegment> items)
+        {
+            if (items.Count <= 1)
+            {
+                return items;
+            }
+
+            for (var index = 1; index < items.Count; index++)
+            {
+                if (items[index - 1].FirstSequence > items[index].FirstSequence)
+                {
+                    var sorted = new CommitLogSegment[items.Count];
+                    for (var copy = 0; copy < items.Count; copy++)
+                    {
+                        sorted[copy] = items[copy];
+                    }
+
+                    Array.Sort(sorted, static (left, right) => left.FirstSequence.CompareTo(right.FirstSequence));
+                    return sorted;
+                }
+            }
+
+            return items;
+        }
 
         static ContinuityUnavailable? Stage(List<ArchivedSegment> staged, ArchivedSegment segment)
         {
@@ -182,8 +224,25 @@ internal sealed class SessionArchiver(
         }
 
         metrics.Uploaded(ArchiveObjectKind.Segment, segment.SizeBytes);
-        var first = await CommittedAtAsync(segment.OriginRegion, segment.FirstSequence, cancellationToken);
-        var last = await CommittedAtAsync(segment.OriginRegion, segment.LastSequence, cancellationToken);
+        if (segment.FirstCommittedAtUtc is { } knownFirstAt && segment.LastCommittedAtUtc is { } knownLastAt)
+        {
+            return new ArchivedSegment(
+                key,
+                segment.OriginRegion,
+                segment.FirstSequence,
+                segment.LastSequence,
+                segment.SizeBytes,
+                segment.SealedAtUtc,
+                knownFirstAt,
+                knownLastAt);
+        }
+
+        var first = segment.FirstCommittedAtUtc is { } firstCommitted
+            ? (SegmentCommitTimeOutcome)firstCommitted
+            : await CommittedAtAsync(segment.OriginRegion, segment.FirstSequence, cancellationToken);
+        var last = segment.LastCommittedAtUtc is { } lastCommitted
+            ? (SegmentCommitTimeOutcome)lastCommitted
+            : await CommittedAtAsync(segment.OriginRegion, segment.LastSequence, cancellationToken);
         return first switch
         {
             ContinuityUnavailable unavailable => unavailable,

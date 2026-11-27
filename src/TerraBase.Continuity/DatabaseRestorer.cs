@@ -534,22 +534,58 @@ public sealed class DatabaseRestorer(
 
     private static DecodedSnapshot? ChooseSnapshot(ArchiveManifest manifest, RestoreTarget target)
     {
-        var ordered = ManifestCodec.Snapshots(manifest).OrderBy(static snapshot => snapshot.Archived.TakenAtUtc).ToArray();
-        return target switch
+        DecodedSnapshot? best = null;
+        for (var index = 0; index < manifest.Snapshots.Count; index++)
         {
-            DateTimeOffset at => ordered.LastOrDefault(snapshot => snapshot.Archived.TakenAtUtc <= at),
-            CausalBookmark bookmark => bookmark.IsEmpty ? ordered.LastOrDefault() : ordered.LastOrDefault(snapshot => bookmark.Dominates(snapshot.Bookmark)),
-        };
+            var archived = manifest.Snapshots[index];
+            if (!CausalBookmark.TryDecode(archived.Bookmark, out var bookmark))
+            {
+                continue;
+            }
+
+            var eligible = target switch
+            {
+                DateTimeOffset at => archived.TakenAtUtc <= at,
+                CausalBookmark requested => requested.IsEmpty || requested.Dominates(bookmark),
+            };
+            if (!eligible)
+            {
+                continue;
+            }
+
+            if (best is null || archived.TakenAtUtc >= best.Archived.TakenAtUtc)
+            {
+                best = new DecodedSnapshot(archived, bookmark);
+            }
+        }
+
+        return best;
     }
 
     private static List<ArchivedSegment> Chain(IReadOnlyList<ArchivedSegment> segments, long from)
     {
         List<ArchivedSegment> chain = [];
         var expected = from;
-        while (segments
-            .Where(segment => chain.Count == 0 ? segment.FirstSequence <= expected && segment.LastSequence >= expected : segment.FirstSequence == expected)
-            .MaxBy(static segment => segment.LastSequence) is { } next)
+        while (true)
         {
+            ArchivedSegment? next = null;
+            for (var index = 0; index < segments.Count; index++)
+            {
+                var segment = segments[index];
+                var matches = chain.Count == 0
+                    ? segment.FirstSequence <= expected && segment.LastSequence >= expected
+                    : segment.FirstSequence == expected;
+                if (matches && (next is null || segment.LastSequence > next.LastSequence))
+                {
+                    next = segment;
+                }
+            }
+
+            if (next is null)
+            {
+                break;
+            }
+
             chain.Add(next);
             expected = next.LastSequence + 1;
         }

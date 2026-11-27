@@ -26,14 +26,41 @@ prepare() {
     echo "missing ${missing[*]}: nix shell nixpkgs#nss.tools nixpkgs#postgresql -c bash e2e/env/local.sh" >&2
     exit 1
   fi
-  mkdir -p "$E2E_STATE"
+  mkdir -p "$E2E_STATE" "$E2E_BUILD" "$E2E_SDK_BUILD"
   chmod 700 "$E2E_STATE"
-  bash "$here/tools.sh"
-  for service in terrabase ts-platform ts-auth dashboard; do bash "$here/build.sh" "$repo" "$E2E_BUILD" "$service"; done
-  for sdk in dotnet go rust python js; do bash "$e2e/sdk/build.sh" "$sdk"; done
-  npm ci --prefix "$e2e" --no-audit --no-fund
-  (cd "$e2e" && npx playwright install chromium)
-  bash "$here/pki.sh"
+  local pids=() pid failed=0
+  (
+    for service in terrabase ts-platform ts-auth dashboard; do
+      bash "$here/build.sh" "$repo" "$E2E_BUILD" "$service"
+    done
+    bash "$e2e/sdk/build.sh" dotnet
+  ) &
+  pids+=($!)
+  (
+    bash "$here/tools.sh"
+    bash "$e2e/sdk/build.sh" python
+  ) &
+  pids+=($!)
+  bash "$e2e/sdk/build.sh" go &
+  pids+=($!)
+  bash "$e2e/sdk/build.sh" rust &
+  pids+=($!)
+  (
+    bash "$e2e/sdk/build.sh" js
+    npm ci --prefix "$e2e" --no-audit --no-fund
+    cd "$e2e" && npx playwright install chromium
+  ) &
+  pids+=($!)
+  bash "$here/pki.sh" &
+  pids+=($!)
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+      failed=1
+    fi
+  done
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
 }
 start() {
   printf '%s\n' "${E2E_REGIONS:-1}" > "$E2E_STATE/regions"

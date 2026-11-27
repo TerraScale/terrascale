@@ -165,9 +165,25 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
 
         public void Observe(CausalBookmark bookmark)
         {
+            if (bookmark.IsEmpty)
+            {
+                return;
+            }
+
+            var current = Volatile.Read(ref _bookmark);
+            if (ReferenceEquals(current, bookmark) || current.Dominates(bookmark))
+            {
+                return;
+            }
+
             lock (_gate)
             {
-                Volatile.Write(ref _bookmark, _bookmark.Merge(bookmark));
+                if (_bookmark.Dominates(bookmark))
+                {
+                    return;
+                }
+
+                Volatile.Write(ref _bookmark, bookmark.Dominates(_bookmark) ? bookmark : _bookmark.Merge(bookmark));
             }
         }
 

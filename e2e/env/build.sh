@@ -13,9 +13,25 @@ published() {
     [ -f "$directory/runtimes/linux-x64/native/$library" ] || { echo "$directory lacks runtimes/linux-x64/native/$library" >&2; exit 1; }
   done
 }
+ensure_native() {
+  local runtime=$1
+  local native_out="native/runtimes/$runtime"
+  local inputs
+  inputs=$(cat native/native-pin.env native/build-native.sh | sha256sum | cut -d' ' -f1)
+  if [ -f "$native_out/native/libsqlite3mc.so" ] \
+    && [ -f "$native_out/native/libmsquic.so.2" ] \
+    && [ -f "$native_out/native/libnuma.so.1" ] \
+    && [ -f "$native_out/inputs.sha256" ] \
+    && [ "$(cat "$native_out/inputs.sha256")" = "$inputs" ]; then
+    return 0
+  fi
+  bash native/build-native.sh "$runtime"
+  mkdir -p "$native_out"
+  printf '%s\n' "$inputs" > "$native_out/inputs.sha256"
+}
 case $service in
   terrabase)
-    bash native/build-native.sh linux-x64
+    ensure_native linux-x64
     dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
     rm -rf "$out/terrabase"
     dotnet publish src/TerraBase/TerraBase.csproj --configuration Release --no-restore \
@@ -27,7 +43,7 @@ case $service in
     python3 e2e/usage/build.py "$root" "$out/usage"
     ;;
   ts-platform)
-    bash native/build-native.sh linux-x64
+    ensure_native linux-x64
     dotnet restore src/TerraScale.Platform/TerraScale.Platform.csproj --locked-mode
     rm -rf "$out/ts-platform"
     dotnet publish src/TerraScale.Platform/TerraScale.Platform.csproj --configuration Release --no-restore \

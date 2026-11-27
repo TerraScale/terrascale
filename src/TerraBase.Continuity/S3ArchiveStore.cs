@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.InteropServices;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -106,7 +107,7 @@ public sealed class S3ArchiveStore : IDisposable
 
     public async ValueTask<ArchiveWriteOutcome> PutBytesAsync(string key, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken)
     {
-        using var stream = new MemoryStream(content.ToArray(), writable: false);
+        using var stream = CreateReadOnlyStream(content);
         return await UploadStreamAsync(key, stream, contentType, cancellationToken);
     }
 
@@ -123,7 +124,7 @@ public sealed class S3ArchiveStore : IDisposable
         var uploaded = await InvokeAsync(
             async (client, bucket, token) =>
             {
-                using var stream = new MemoryStream(content.ToArray(), writable: false);
+                using var stream = CreateReadOnlyStream(content);
                 var request = Put(bucket, key, stream, contentType);
                 if (expectedETag is not null)
                 {
@@ -161,9 +162,15 @@ public sealed class S3ArchiveStore : IDisposable
             async (client, bucket, token) =>
             {
                 using var response = await client.GetObjectAsync(new GetObjectRequest { BucketName = bucket, Key = key }, token);
-                using var buffer = new MemoryStream();
+                var capacity = response.ContentLength is > 0 and <= int.MaxValue ? (int)response.ContentLength : 0;
+                using var buffer = capacity > 0 ? new MemoryStream(capacity) : new MemoryStream();
                 await response.ResponseStream.CopyToAsync(buffer, token);
-                payload = buffer.ToArray();
+                payload = buffer.TryGetBuffer(out var segment)
+                    && segment.Offset == 0
+                    && segment.Array is { } raw
+                    && segment.Count == raw.Length
+                    ? raw
+                    : buffer.ToArray();
                 etag = response.ETag;
             },
             cancellationToken);
@@ -343,7 +350,10 @@ public sealed class S3ArchiveStore : IDisposable
                 cancellationToken);
             if (response.S3Objects is { } objects)
             {
-                keys.AddRange(objects.Select(static item => item.Key));
+                for (var index = 0; index < objects.Count; index++)
+                {
+                    keys.Add(objects[index].Key);
+                }
             }
 
             continuation = response.IsTruncated is true ? response.NextContinuationToken : null;
@@ -352,6 +362,11 @@ public sealed class S3ArchiveStore : IDisposable
 
         return keys;
     }
+
+    private static MemoryStream CreateReadOnlyStream(ReadOnlyMemory<byte> content) =>
+        MemoryMarshal.TryGetArray(content, out var segment) && segment.Array is { } buffer
+            ? new MemoryStream(buffer, segment.Offset, segment.Count, writable: false)
+            : new MemoryStream(content.ToArray(), writable: false);
 
     private static PutObjectRequest Put(string bucket, string key, Stream content, string contentType) => new()
     {

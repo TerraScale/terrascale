@@ -24,7 +24,8 @@ internal sealed class ServerStreamCall<TRes>(
     CancellationToken cancellationToken) : IAsyncDisposable
     where TRes : IBinaryMessage<TRes>
 {
-    private readonly CallScope _scope = new(QuicMeshLimits.CallTimeout, timeProvider, client.ServerStreamToken, cancellationToken);
+    private readonly CallScope _scope = CallScope.Create(QuicMeshLimits.CallTimeout, timeProvider, client.ServerStreamToken, cancellationToken);
+    private readonly QuicFrameReader _reader = new();
     private readonly long _started = timeProvider.GetTimestamp();
     private StreamLease? _lease;
     private bool _entered;
@@ -52,10 +53,10 @@ internal sealed class ServerStreamCall<TRes>(
             return new StreamEnded();
         }
 
-        var outcome = await QuicIo.ReadFrameAsync(lease.Stream, _scope);
+        var outcome = await _reader.ReadNextAsync(lease.Stream, _scope);
         return outcome switch
         {
-            PooledFrame frame => Interpret(frame),
+            FrameReady => Interpret(_reader.CurrentHeader, _reader.CurrentPayload, _reader.CurrentTotalLength),
             StreamEnded => Finish(new QuicRemoteError(QuicRemoteError.ProtocolViolation, $"The peer ended server stream {requestId} without an end-of-stream frame."), QuicOutcome.RemoteError),
             QuicFault fault => FailRead(lease, fault),
         };
@@ -63,13 +64,14 @@ internal sealed class ServerStreamCall<TRes>(
 
     public async ValueTask DisposeAsync()
     {
+        _reader.Dispose();
         if (_lease is { } lease)
         {
             _lease = null;
             if (!_completed)
             {
                 lease.Stream.Abort(QuicAbortDirection.Both, QuicProtocol.StreamErrorCode);
-                _ = lease.ReleaseAsync();
+                lease.ReleaseFireAndForget();
             }
             else
             {
@@ -108,19 +110,17 @@ internal sealed class ServerStreamCall<TRes>(
         return new StreamOpened();
     }
 
-    private ServerStreamReadOutcome<TRes> Interpret(PooledFrame frame)
+    private ServerStreamReadOutcome<TRes> Interpret(FrameHeader header, ReadOnlyMemory<byte> payload, int totalLength)
     {
-        metrics.Received(QuicSide.Client, frame.TotalLength);
-        var header = frame.Header;
+        metrics.Received(QuicSide.Client, totalLength);
         if (header.IsEndOfStream && !header.IsError && header.RequestId == requestId && header.MessageType == messageTypeId)
         {
-            frame.Dispose();
             _completed = true;
             _finished = true;
             return new StreamEnded();
         }
 
-        var decoded = QuicRpcClientCore.Decode<TRes>(frame, messageTypeId, requestId);
+        var decoded = QuicRpcClientCore.DecodePayload<TRes>(header, payload.Span, messageTypeId, requestId);
         var outcome = QuicRpcClientCore.Outcome(decoded);
         if (outcome == QuicOutcome.Ok)
         {

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
@@ -45,6 +46,12 @@ public sealed class QuicMeshMetrics
 {
     public const string MeterName = "TerraScale.QuicRpc";
 
+    private static readonly ConcurrentDictionary<ushort, object> BoxedMessageTypes = new();
+    private static readonly KeyValuePair<string, object?> ClientSideTag = new("quic.side", "client");
+    private static readonly KeyValuePair<string, object?> ServerSideTag = new("quic.side", "server");
+    private static readonly KeyValuePair<string, object?> SentDirectionTag = new("quic.direction", "sent");
+    private static readonly KeyValuePair<string, object?> ReceivedDirectionTag = new("quic.direction", "received");
+
     private readonly Counter<long> _calls;
     private readonly Histogram<double> _duration;
     private readonly UpDownCounter<long> _activeStreams;
@@ -68,57 +75,128 @@ public sealed class QuicMeshMetrics
         _bytes = meter.CreateCounter<long>("terrascale.quic.bytes", "By", "QUIC RPC frame bytes, by side and direction.");
     }
 
+    internal bool IsCallMetricsEnabled => _calls.Enabled || _duration.Enabled;
+
     internal void Completed(QuicSide side, QuicPattern pattern, ushort messageType, QuicOutcome outcome, TimeSpan elapsed)
     {
+        if (!_calls.Enabled && !_duration.Enabled)
+        {
+            return;
+        }
+
+        var boxedType = BoxedMessageTypes.GetOrAdd(messageType, static id => (int)id);
         var tags = new TagList
         {
             { "quic.side", SideTag(side) },
             { "quic.pattern", PatternTag(pattern) },
-            { "quic.message_type", (int)messageType },
+            { "quic.message_type", boxedType },
             { "quic.outcome", OutcomeTag(outcome) },
         };
-        _calls.Add(1, tags);
-        _duration.Record(elapsed.TotalSeconds, tags);
+        if (_calls.Enabled)
+        {
+            _calls.Add(1, tags);
+        }
+
+        if (_duration.Enabled)
+        {
+            _duration.Record(elapsed.TotalSeconds, tags);
+        }
     }
 
-    internal void StreamOpened(QuicSide side) => _activeStreams.Add(1, new KeyValuePair<string, object?>("quic.side", SideTag(side)));
+    internal void StreamOpened(QuicSide side)
+    {
+        if (_activeStreams.Enabled)
+        {
+            _activeStreams.Add(1, SidePair(side));
+        }
+    }
 
-    internal void StreamClosed(QuicSide side) => _activeStreams.Add(-1, new KeyValuePair<string, object?>("quic.side", SideTag(side)));
+    internal void StreamClosed(QuicSide side)
+    {
+        if (_activeStreams.Enabled)
+        {
+            _activeStreams.Add(-1, SidePair(side));
+        }
+    }
 
     internal void ConnectionOpened(QuicSide side, bool reconnect)
     {
-        var tag = new KeyValuePair<string, object?>("quic.side", SideTag(side));
-        _activeConnections.Add(1, tag);
-        _connects.Add(1, tag);
-        if (reconnect)
+        var tag = SidePair(side);
+        if (_activeConnections.Enabled)
+        {
+            _activeConnections.Add(1, tag);
+        }
+
+        if (_connects.Enabled)
+        {
+            _connects.Add(1, tag);
+        }
+
+        if (reconnect && _reconnects.Enabled)
         {
             _reconnects.Add(1, tag);
         }
     }
 
-    internal void ConnectionClosed(QuicSide side) => _activeConnections.Add(-1, new KeyValuePair<string, object?>("quic.side", SideTag(side)));
-
-    internal void Error(QuicSide side, QuicErrorKind kind) =>
-        _errors.Add(1, new KeyValuePair<string, object?>("quic.side", SideTag(side)), new KeyValuePair<string, object?>("quic.error", ErrorTag(kind)));
-
-    internal void Error(QuicSide side, QuicFault fault) => Error(side, fault switch
+    internal void ConnectionClosed(QuicSide side)
     {
-        ConnectionLost => QuicErrorKind.ConnectionLost,
-        StreamReset => QuicErrorKind.StreamReset,
-        LocalAbort => QuicErrorKind.LocalAbort,
-        DeadlineExceeded => QuicErrorKind.Deadline,
-        TransportShutdown => QuicErrorKind.Shutdown,
-        PeerRejected => QuicErrorKind.PeerRejected,
-        StorageFormatMismatch => QuicErrorKind.StorageFormatMismatch,
-        ProtocolFault => QuicErrorKind.Protocol,
-        PeerUnknown => QuicErrorKind.PeerUnknown,
-    });
+        if (_activeConnections.Enabled)
+        {
+            _activeConnections.Add(-1, SidePair(side));
+        }
+    }
 
-    internal void Sent(QuicSide side, long bytes) =>
-        _bytes.Add(bytes, new KeyValuePair<string, object?>("quic.side", SideTag(side)), new KeyValuePair<string, object?>("quic.direction", "sent"));
+    internal void Error(QuicSide side, QuicErrorKind kind)
+    {
+        if (_errors.Enabled)
+        {
+            _errors.Add(1, SidePair(side), new KeyValuePair<string, object?>("quic.error", ErrorTag(kind)));
+        }
+    }
 
-    internal void Received(QuicSide side, long bytes) =>
-        _bytes.Add(bytes, new KeyValuePair<string, object?>("quic.side", SideTag(side)), new KeyValuePair<string, object?>("quic.direction", "received"));
+    internal void Error(QuicSide side, QuicFault fault)
+    {
+        if (!_errors.Enabled)
+        {
+            return;
+        }
+
+        Error(side, fault switch
+        {
+            ConnectionLost => QuicErrorKind.ConnectionLost,
+            StreamReset => QuicErrorKind.StreamReset,
+            LocalAbort => QuicErrorKind.LocalAbort,
+            DeadlineExceeded => QuicErrorKind.Deadline,
+            TransportShutdown => QuicErrorKind.Shutdown,
+            PeerRejected => QuicErrorKind.PeerRejected,
+            StorageFormatMismatch => QuicErrorKind.StorageFormatMismatch,
+            ProtocolFault => QuicErrorKind.Protocol,
+            PeerUnknown => QuicErrorKind.PeerUnknown,
+        });
+    }
+
+    internal void Sent(QuicSide side, long bytes)
+    {
+        if (_bytes.Enabled)
+        {
+            _bytes.Add(bytes, SidePair(side), SentDirectionTag);
+        }
+    }
+
+    internal void Received(QuicSide side, long bytes)
+    {
+        if (_bytes.Enabled)
+        {
+            _bytes.Add(bytes, SidePair(side), ReceivedDirectionTag);
+        }
+    }
+
+    private static KeyValuePair<string, object?> SidePair(QuicSide side) => side switch
+    {
+        QuicSide.Client => ClientSideTag,
+        QuicSide.Server => ServerSideTag,
+        _ => throw new UnreachableException(),
+    };
 
     private static string SideTag(QuicSide side) => side switch
     {

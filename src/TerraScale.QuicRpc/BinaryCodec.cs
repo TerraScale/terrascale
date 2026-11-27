@@ -1,5 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using TerraScale.Contracts.Quic;
 
 namespace TerraScale.QuicRpc;
@@ -12,6 +14,7 @@ internal readonly record struct FrameHeader(int PayloadLength, ushort MessageTyp
 
     public bool IsError => (Control & QuicProtocol.ControlError) != 0;
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WriteTo(Span<byte> destination)
     {
         BinaryPrimitives.WriteUInt32LittleEndian(destination, (uint)PayloadLength);
@@ -20,6 +23,7 @@ internal readonly record struct FrameHeader(int PayloadLength, ushort MessageTyp
         BinaryPrimitives.WriteUInt64LittleEndian(destination[7..], RequestId);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool TryRead(ReadOnlySpan<byte> source, out FrameHeader header)
     {
         var length = BinaryPrimitives.ReadUInt32LittleEndian(source);
@@ -39,54 +43,148 @@ internal readonly record struct FrameHeader(int PayloadLength, ushort MessageTyp
     }
 }
 
-internal sealed class PooledFrame(FrameHeader header, byte[] buffer) : IDisposable
+internal sealed class PooledFrame : IDisposable
 {
-    private byte[] _buffer = buffer;
+    private const int MaxPoolSize = 64;
 
-    public FrameHeader Header { get; } = header;
+    private static readonly ConcurrentQueue<PooledFrame> Pool = new();
+    private static int PoolCount;
 
-    public ReadOnlyMemory<byte> Payload => _buffer.AsMemory(0, Header.PayloadLength);
+    [ThreadStatic]
+    private static PooledFrame? ThreadLocal;
+
+    private byte[] _buffer = [];
+    private int _offset;
+    private int _disposed;
+
+    public FrameHeader Header { get; private set; }
+
+    public ReadOnlyMemory<byte> Payload => _buffer.AsMemory(_offset, Header.PayloadLength);
 
     public int TotalLength => QuicProtocol.FrameHeaderSize + Header.PayloadLength;
 
+    public static PooledFrame Rent(FrameHeader header, byte[] buffer, int offset = 0)
+    {
+        var frame = ThreadLocal;
+        if (frame is not null)
+        {
+            ThreadLocal = null;
+        }
+        else if (Pool.TryDequeue(out frame))
+        {
+            Interlocked.Decrement(ref PoolCount);
+        }
+        else
+        {
+            frame = new PooledFrame();
+        }
+
+        frame.Header = header;
+        frame._buffer = buffer;
+        frame._offset = offset;
+        frame._disposed = 0;
+        return frame;
+    }
+
     public void Dispose()
     {
-        var rented = Interlocked.Exchange(ref _buffer, []);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        var rented = _buffer;
+        _buffer = [];
+        _offset = 0;
+        Header = default;
         if (rented.Length > 0)
         {
             ArrayPool<byte>.Shared.Return(rented);
+        }
+
+        if (ThreadLocal is null)
+        {
+            ThreadLocal = this;
+        }
+        else if (Interlocked.Increment(ref PoolCount) <= MaxPoolSize)
+        {
+            Pool.Enqueue(this);
+        }
+        else
+        {
+            Interlocked.Decrement(ref PoolCount);
         }
     }
 }
 
 internal sealed class FrameBuilder : IBufferWriter<byte>, IDisposable
 {
-    private const int InitialPayloadCapacity = 256;
+    private const int InitialBufferCapacity = 4 * 1024;
+    private const int MaxPooledBufferSize = 256 * 1024;
+    private const int MaxPoolSize = 64;
 
-    private byte[] _buffer = ArrayPool<byte>.Shared.Rent(QuicProtocol.FrameHeaderSize + InitialPayloadCapacity);
-    private int _written = QuicProtocol.FrameHeaderSize;
+    private static readonly ConcurrentQueue<FrameBuilder> Pool = new();
+    private static int PoolCount;
+
+    [ThreadStatic]
+    private static FrameBuilder? ThreadLocal;
+
+    private byte[] _buffer = [];
+    private int _written;
+    private bool _disposed;
+
+    private FrameBuilder()
+    {
+    }
 
     public int PayloadLength => _written - QuicProtocol.FrameHeaderSize;
+
+    public static FrameBuilder Rent()
+    {
+        var builder = ThreadLocal;
+        if (builder is not null)
+        {
+            ThreadLocal = null;
+        }
+        else if (Pool.TryDequeue(out builder))
+        {
+            Interlocked.Decrement(ref PoolCount);
+        }
+        else
+        {
+            builder = new FrameBuilder();
+        }
+
+        if (builder._buffer.Length == 0)
+        {
+            builder._buffer = ArrayPool<byte>.Shared.Rent(InitialBufferCapacity);
+        }
+
+        builder._written = QuicProtocol.FrameHeaderSize;
+        builder._disposed = false;
+        return builder;
+    }
 
     public static FrameBuilder Encode<T>(T message)
         where T : IBinaryMessage<T>
     {
         ArgumentNullException.ThrowIfNull(message);
-        var builder = new FrameBuilder();
+        var builder = Rent();
         message.WriteTo(builder);
         return builder;
     }
 
     public static FrameBuilder EncodeError(QuicRemoteError error)
     {
-        var builder = new FrameBuilder();
+        var builder = Rent();
         builder.WriteString(error.Code);
         builder.WriteString(error.Message);
         return builder;
     }
 
-    public static FrameBuilder Empty() => new();
+    public static FrameBuilder Empty() => Rent();
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Advance(int count)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
@@ -94,56 +192,79 @@ internal sealed class FrameBuilder : IBufferWriter<byte>, IDisposable
         _written += count;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Memory<byte> GetMemory(int sizeHint = 0)
     {
         Ensure(sizeHint);
         return _buffer.AsMemory(_written);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<byte> GetSpan(int sizeHint = 0)
     {
         Ensure(sizeHint);
         return _buffer.AsSpan(_written);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ReadOnlyMemory<byte> Seal(ushort messageType, byte control, ulong requestId)
     {
-        ObjectDisposedException.ThrowIf(_buffer.Length == 0, this);
+        ObjectDisposedException.ThrowIf(_disposed || _buffer.Length == 0, this);
         new FrameHeader(PayloadLength, messageType, control, requestId).WriteTo(_buffer);
         return _buffer.AsMemory(0, _written);
     }
 
-    public byte[] Detach(out int length)
-    {
-        ObjectDisposedException.ThrowIf(_buffer.Length == 0, this);
-        var detached = _buffer;
-        length = _written;
-        _buffer = [];
-        _written = 0;
-        return detached;
-    }
-
     public void Dispose()
     {
-        var rented = _buffer;
-        _buffer = [];
-        _written = 0;
-        if (rented.Length > 0)
+        if (_disposed)
         {
-            ArrayPool<byte>.Shared.Return(rented);
+            return;
+        }
+
+        _disposed = true;
+        _written = 0;
+
+        if (_buffer.Length > MaxPooledBufferSize)
+        {
+            ArrayPool<byte>.Shared.Return(_buffer);
+            _buffer = [];
+        }
+
+        if (ThreadLocal is null)
+        {
+            ThreadLocal = this;
+        }
+        else if (Interlocked.Increment(ref PoolCount) <= MaxPoolSize)
+        {
+            Pool.Enqueue(this);
+        }
+        else
+        {
+            Interlocked.Decrement(ref PoolCount);
+            if (_buffer.Length > 0)
+            {
+                ArrayPool<byte>.Shared.Return(_buffer);
+                _buffer = [];
+            }
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Ensure(int sizeHint)
     {
-        ObjectDisposedException.ThrowIf(_buffer.Length == 0, this);
-        var required = Math.Max(sizeHint, 1);
+        ObjectDisposedException.ThrowIf(_disposed || _buffer.Length == 0, this);
+        var required = sizeHint > 0 ? sizeHint : 1;
         if (_buffer.Length - _written >= required)
         {
             return;
         }
 
-        ArgumentOutOfRangeException.ThrowIfGreaterThan((long)PayloadLength + required, QuicProtocol.MaxPayloadBytes, nameof(sizeHint));
+        Grow(required);
+    }
+
+    private void Grow(int required)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan((long)PayloadLength + required, QuicProtocol.MaxPayloadBytes, nameof(required));
         var next = ArrayPool<byte>.Shared.Rent(Math.Min(
             Math.Max(_buffer.Length * 2, _written + required),
             QuicProtocol.FrameHeaderSize + QuicProtocol.MaxPayloadBytes));
