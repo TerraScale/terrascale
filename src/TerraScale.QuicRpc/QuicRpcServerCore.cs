@@ -540,7 +540,7 @@ internal sealed class QuicRpcServerCore(
             var keepAlive = supportsPersistentUnary && !reader.CurrentHeader.IsEndOfStream;
             if (keepAlive)
             {
-                idleReadScope = CallScope.CreateArmable(timeProvider, _idleUnary.Token, cancellationToken);
+                idleReadScope = CallScope.CreateArmable(timeProvider, _idleUnary.Token, _handlers.Token);
             }
 
             while (true)
@@ -556,11 +556,17 @@ internal sealed class QuicRpcServerCore(
                     metrics.Error(QuicSide.Server, QuicErrorKind.Unmapped);
                     var unmapped = new QuicRemoteError(QuicRemoteError.UnmappedMessageType, $"No unary or server-stream handler is mapped for message type {header.MessageType}.");
                     var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
+                    closingAfterReply |= Volatile.Read(ref _draining) != 0;
                     EnsureWriteDeadline(ref writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
                     var written = await WriteErrorWithScopeAsync(stream, context, unmapped, closingAfterReply, writeScope);
                     Complete(context, QuicPattern.Unary, started, written, QuicOutcome.RemoteError);
                     if (closingAfterReply || Fault(written) is not null)
                     {
+                        if (closingAfterReply && Fault(written) is null && keepAlive && !header.IsEndOfStream)
+                        {
+                            stream.Abort(QuicAbortDirection.Read, QuicProtocol.PeerClosedErrorCode);
+                        }
+
                         return;
                     }
                 }
@@ -589,6 +595,7 @@ internal sealed class QuicRpcServerCore(
 
                         var started = metrics.IsCallMetricsEnabled ? timeProvider.GetTimestamp() : 0;
                         var reply = await unaryRoute(context, payload, cancellationToken);
+                        closingAfterReply |= Volatile.Read(ref _draining) != 0;
                         EnsureWriteDeadline(ref writeScope, isSystemClock, ref writeArmed, ref writeArmedTicks);
                         var (replyBuilder, replyError) = UnpackUnaryReply(reply);
                         QuicIoWriteOutcome written;
@@ -616,6 +623,11 @@ internal sealed class QuicRpcServerCore(
                         Complete(context, QuicPattern.Unary, started, written, outcome);
                         if (closingAfterReply || Fault(written) is not null)
                         {
+                            if (closingAfterReply && Fault(written) is null && keepAlive && !header.IsEndOfStream)
+                            {
+                                stream.Abort(QuicAbortDirection.Read, QuicProtocol.PeerClosedErrorCode);
+                            }
+
                             return;
                         }
                     }
@@ -623,6 +635,8 @@ internal sealed class QuicRpcServerCore(
 
                 if (Volatile.Read(ref _draining) != 0)
                 {
+                    stream.CompleteWrites();
+                    stream.Abort(QuicAbortDirection.Read, QuicProtocol.PeerClosedErrorCode);
                     return;
                 }
 
@@ -641,8 +655,23 @@ internal sealed class QuicRpcServerCore(
                     continue;
                 }
 
-                if (nextEnded || Volatile.Read(ref _draining) != 0 || nextFault is DeadlineExceeded or TransportShutdown)
+                if (nextEnded)
                 {
+                    stream.CompleteWrites();
+                    return;
+                }
+
+                if (Volatile.Read(ref _draining) != 0 || nextFault is TransportShutdown)
+                {
+                    stream.CompleteWrites();
+                    stream.Abort(QuicAbortDirection.Read, QuicProtocol.PeerClosedErrorCode);
+                    return;
+                }
+
+                if (nextFault is DeadlineExceeded)
+                {
+                    stream.CompleteWrites();
+                    stream.Abort(QuicAbortDirection.Read, QuicProtocol.StreamErrorCode);
                     return;
                 }
 

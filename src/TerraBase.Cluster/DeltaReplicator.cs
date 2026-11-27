@@ -47,6 +47,21 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
     public CausalBookmark Acknowledged(Ulid databaseId, string nodeId) => _acknowledged.GetValueOrDefault((databaseId, nodeId), CausalBookmark.Empty);
 
+    public ValueTask FlushInboundAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        FlushInboundAsync(databaseId, Timeout.InfiniteTimeSpan, cancellationToken);
+
+    public ValueTask FlushInboundAsync(Ulid databaseId, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _disposed) != 0
+            || (timeout != Timeout.InfiniteTimeSpan && timeout <= TimeSpan.Zero)
+            || !_inboxes.TryGetValue(databaseId, out var mailbox))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        return FlushInboundCoreAsync(databaseId, mailbox, timeout, cancellationToken);
+    }
+
     public void Map(QuicRpcHost host)
     {
         ArgumentNullException.ThrowIfNull(host);
@@ -453,6 +468,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                 }
 
                 mailbox.Queue.Enqueue(item);
+                mailbox.EnqueuedCount++;
                 if (!mailbox.Draining)
                 {
                     mailbox.Draining = true;
@@ -493,6 +509,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                 else
                 {
                     mailbox.Queue.Enqueue(item);
+                    mailbox.EnqueuedCount++;
                     if (!mailbox.Draining)
                     {
                         mailbox.Draining = true;
@@ -576,16 +593,158 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
     private void ReleaseMailboxOnStop(Ulid databaseId, InboundMailbox mailbox)
     {
         Queue<TaskCompletionSource>? waiters;
+        List<(long Target, TaskCompletionSource Signal)>? flushWaiters;
         lock (mailbox.Gate)
         {
             mailbox.Draining = false;
             mailbox.Removed = true;
             waiters = mailbox.Waiters;
             mailbox.Waiters = null;
+            flushWaiters = mailbox.FlushWaiters;
+            mailbox.FlushWaiters = null;
         }
 
         _ = _inboxes.TryRemove(KeyValuePair.Create(databaseId, mailbox));
         SignalWaiters(waiters);
+        SignalFlushWaiters(flushWaiters);
+    }
+
+    private ValueTask FlushInboundCoreAsync(Ulid databaseId, InboundMailbox mailbox, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        while (Volatile.Read(ref _disposed) == 0)
+        {
+            TaskCompletionSource? signal = null;
+            long target = 0;
+            var removed = false;
+            lock (mailbox.Gate)
+            {
+                if (mailbox.Removed)
+                {
+                    removed = true;
+                }
+                else
+                {
+                    target = mailbox.EnqueuedCount;
+                    if (mailbox.AppliedCount >= target)
+                    {
+                        return ValueTask.CompletedTask;
+                    }
+
+                    signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    mailbox.FlushWaiters ??= [];
+                    mailbox.FlushWaiters.Add((target, signal));
+                }
+            }
+
+            if (removed)
+            {
+                if (_inboxes.TryGetValue(databaseId, out var next) && !ReferenceEquals(next, mailbox))
+                {
+                    mailbox = next;
+                    continue;
+                }
+
+                return ValueTask.CompletedTask;
+            }
+
+            if (signal is not null)
+            {
+                return WaitFlushAsync(mailbox, target, signal, timeout, cancellationToken);
+            }
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private async ValueTask WaitFlushAsync(InboundMailbox mailbox, long target, TaskCompletionSource signal, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var completed = false;
+        try
+        {
+            if (timeout == Timeout.InfiniteTimeSpan)
+            {
+                await signal.Task.WaitAsync(cancellationToken);
+                completed = true;
+            }
+            else
+            {
+                using var delay = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var winner = await Task.WhenAny(signal.Task, Task.Delay(timeout, timeProvider, delay.Token));
+                await delay.CancelAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+                completed = ReferenceEquals(winner, signal.Task);
+            }
+        }
+        finally
+        {
+            if (!completed)
+            {
+                lock (mailbox.Gate)
+                {
+                    var waiters = mailbox.FlushWaiters;
+                    if (waiters is not null)
+                    {
+                        for (var index = waiters.Count - 1; index >= 0; index--)
+                        {
+                            if (ReferenceEquals(waiters[index].Signal, signal) && waiters[index].Target == target)
+                            {
+                                waiters.RemoveAt(index);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static void CompleteInboundBatch(InboundMailbox mailbox, long appliedCount)
+    {
+        TaskCompletionSource? single = null;
+        List<TaskCompletionSource>? multiple = null;
+        lock (mailbox.Gate)
+        {
+            if (appliedCount > mailbox.AppliedCount)
+            {
+                mailbox.AppliedCount = appliedCount;
+            }
+
+            var waiters = mailbox.FlushWaiters;
+            if (waiters is not null && waiters.Count > 0)
+            {
+                for (var index = waiters.Count - 1; index >= 0; index--)
+                {
+                    if (waiters[index].Target <= mailbox.AppliedCount)
+                    {
+                        var ready = waiters[index].Signal;
+                        waiters.RemoveAt(index);
+                        if (single is null && multiple is null)
+                        {
+                            single = ready;
+                        }
+                        else
+                        {
+                            if (multiple is null)
+                            {
+                                multiple = single is { } first ? [first] : [];
+                                single = null;
+                            }
+
+                            multiple.Add(ready);
+                        }
+                    }
+                }
+            }
+        }
+
+        _ = single?.TrySetResult();
+        if (multiple is not null)
+        {
+            for (var index = 0; index < multiple.Count; index++)
+            {
+                _ = multiple[index].TrySetResult();
+            }
+        }
     }
 
     private async Task DrainInboundMailboxAsync(Ulid databaseId, InboundMailbox mailbox, CancellationToken cancellationToken)
@@ -595,7 +754,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (!TryDequeueInboundBatch(databaseId, mailbox, ref combined, ref ackPeers, out var batch, out var singleSender, out var singleAck))
+            if (!TryDequeueInboundBatch(databaseId, mailbox, ref combined, ref ackPeers, out var batch, out var singleSender, out var singleAck, out var batchEnd))
             {
                 return;
             }
@@ -604,6 +763,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             var (session, resolveFailure) = UnpackResolved(resolved);
             if (session is null)
             {
+                CompleteInboundBatch(mailbox, batchEnd);
                 ClusterLog.RemoteApplyDeferred(logger, databaseId, singleSender, resolveFailure);
                 _ = databases.RequestCatchUp(databaseId, FrontierOf(batch));
                 combined?.Clear();
@@ -617,6 +777,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                 while (true)
                 {
                     var applied = await ApplyToSessionAsync(session, batch, requestCatchUpOnBuffered: true, cancellationToken);
+                    CompleteInboundBatch(mailbox, batchEnd);
                     var bookmark = UnpackAppliedBookmark(applied);
                     if (bookmark is null)
                     {
@@ -636,7 +797,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                         break;
                     }
 
-                    if (!TryDequeueInboundBatch(databaseId, mailbox, ref combined, ref ackPeers, out batch, out singleSender, out singleAck))
+                    if (!TryDequeueInboundBatch(databaseId, mailbox, ref combined, ref ackPeers, out batch, out singleSender, out singleAck, out batchEnd))
                     {
                         return;
                     }
@@ -667,11 +828,13 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         ref List<string>? ackPeers,
         out IReadOnlyList<CommitMetadata> batch,
         out string primarySender,
-        out bool singleAck)
+        out bool singleAck,
+        out long batchEnd)
     {
         var outOfOrder = false;
         var empty = false;
         Queue<TaskCompletionSource>? drainWaiters = null;
+        List<(long Target, TaskCompletionSource Signal)>? flushWaiters = null;
         TaskCompletionSource? singleWaiter = null;
         List<TaskCompletionSource>? multiWaiters = null;
 
@@ -681,13 +844,17 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             {
                 mailbox.Draining = false;
                 mailbox.Removed = true;
+                mailbox.AppliedCount = mailbox.EnqueuedCount;
                 _ = _inboxes.TryRemove(KeyValuePair.Create(databaseId, mailbox));
                 drainWaiters = mailbox.Waiters;
                 mailbox.Waiters = null;
+                flushWaiters = mailbox.FlushWaiters;
+                mailbox.FlushWaiters = null;
                 empty = true;
                 batch = [];
                 primarySender = string.Empty;
                 singleAck = false;
+                batchEnd = mailbox.EnqueuedCount;
             }
             else
             {
@@ -699,6 +866,8 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                 if (mailbox.Queue.Count == 0)
                 {
                     batch = first.Commits;
+                    mailbox.DequeuedCount += dequeued;
+                    batchEnd = mailbox.DequeuedCount;
                     PopWaitersLocked(mailbox, dequeued, ref singleWaiter, ref multiWaiters);
                 }
                 else
@@ -732,6 +901,8 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
                     }
 
                     batch = combined;
+                    mailbox.DequeuedCount += dequeued;
+                    batchEnd = mailbox.DequeuedCount;
                     PopWaitersLocked(mailbox, dequeued, ref singleWaiter, ref multiWaiters);
                 }
             }
@@ -740,6 +911,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         if (empty)
         {
             SignalWaiters(drainWaiters);
+            SignalFlushWaiters(flushWaiters);
             return false;
         }
 
@@ -911,6 +1083,19 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         }
     }
 
+    private static void SignalFlushWaiters(List<(long Target, TaskCompletionSource Signal)>? waiters)
+    {
+        if (waiters is null)
+        {
+            return;
+        }
+
+        for (var index = 0; index < waiters.Count; index++)
+        {
+            _ = waiters[index].Signal.TrySetResult();
+        }
+    }
+
     private void EnqueueInboundAcks(Ulid databaseId, CausalBookmark bookmark, string singleSender, bool singleAck, List<string>? ackPeers)
     {
         if (ackPeers is { Count: > 0 })
@@ -995,6 +1180,7 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
             return Forbidden;
         }
 
+        await FlushInboundAsync(payload.DatabaseId, cancellationToken);
         CommitMetadata[] single = [payload.Commit];
         var applied = await ApplyAsync(payload.DatabaseId, single, cancellationToken);
         var failure = applied switch
@@ -1304,6 +1490,14 @@ public sealed class DeltaReplicator(ClusterTopology topology, QuicRpcClient clie
         public Queue<InboundItem> Queue { get; } = new();
 
         public Queue<TaskCompletionSource>? Waiters { get; set; }
+
+        public List<(long Target, TaskCompletionSource Signal)>? FlushWaiters { get; set; }
+
+        public long EnqueuedCount { get; set; }
+
+        public long DequeuedCount { get; set; }
+
+        public long AppliedCount { get; set; }
 
         public bool Draining { get; set; }
 

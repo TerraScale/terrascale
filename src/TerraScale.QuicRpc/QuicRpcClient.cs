@@ -497,6 +497,12 @@ internal sealed class QuicRpcClientCore : IAsyncDisposable
 
             if (ended)
             {
+                if (stream.WritesClosed.IsFaulted
+                    && stream.WritesClosed.Exception?.InnerException is QuicException { QuicError: QuicError.StreamAborted, ApplicationErrorCode: QuicProtocol.PeerClosedErrorCode })
+                {
+                    _pool.InvalidateIfDead(unarySlot.Slot, unarySlot.Connection, new StreamReset(QuicProtocol.PeerClosedErrorCode, "The peer closed the unary stream while draining."));
+                }
+
                 if (allowRetry)
                 {
                     return null;

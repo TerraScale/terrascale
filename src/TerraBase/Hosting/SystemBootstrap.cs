@@ -5,6 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Health;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
+using TerraBase.Features.UserAuth;
 using TerraBase.Storage;
 using ZLogger;
 
@@ -20,12 +21,14 @@ internal sealed class SystemBootstrap(
     StorageEngineOptions storage,
     AntiEntropyService antiEntropy,
     IContinuityDatabaseCatalog catalog,
+    TokenVerifier tokens,
     NodeReadiness readiness,
     IHostApplicationLifetime lifetime,
     ILogger<SystemBootstrap> logger)
     : IHostedService
 {
     private static readonly TimeSpan StartupSyncBudget = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan AuthWarmupBudget = TimeSpan.FromSeconds(3);
 
     public ConfigurationError? Failure { get; private set; }
 
@@ -68,10 +71,9 @@ internal sealed class SystemBootstrap(
             return;
         }
 
-        if (cluster.Peers.Count > 0)
-        {
-            await SyncOnStartupAsync(cancellationToken);
-        }
+        await (cluster.Peers.Count > 0
+            ? Task.WhenAll(SyncOnStartupAsync(cancellationToken), tokens.WarmPlatformAsync(AuthWarmupBudget, cancellationToken))
+            : tokens.WarmPlatformAsync(AuthWarmupBudget, cancellationToken));
 
         var (node, region, bootstrap) = (cluster.NodeId, cluster.Region, cluster.IsBootstrapNode);
         logger.ZLogInformation($"System catalog open on {node}.{region} (bootstrap node: {bootstrap})");

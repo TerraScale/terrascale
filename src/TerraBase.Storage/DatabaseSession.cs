@@ -75,6 +75,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         _cipher = cipher;
         _strict = strict;
         _release = release;
+        _lastCheckpointTimestamp = context.Time.GetTimestamp();
         _logOptions = new CommitLogOptions(context.Options.SegmentMaxBytes, context.Options.SegmentMaxAge, context.Options.FsyncCommitLog);
         _readers = Channel.CreateBounded<SqliteConnection?>(new BoundedChannelOptions(context.Options.ReaderCount) { FullMode = BoundedChannelFullMode.Wait });
         for (var index = 0; index < context.Options.ReaderCount; index++)
@@ -1097,14 +1098,6 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             {
                 _ = _readers.Writer.TryWrite(null);
             }
-        }
-    }
-
-    private bool HasActiveReaders()
-    {
-        lock (_readersGate)
-        {
-            return _rentedReaders.Count > 0;
         }
     }
 

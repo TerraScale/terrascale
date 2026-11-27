@@ -79,6 +79,31 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         return TryGetCachedToken(TokenDigest.HashUtf8(token), out caller);
     }
 
+    public async Task WarmPlatformAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (_platform is not { } entry
+            || (entry.Fresh is { } fresh && time.GetElapsedTime(fresh.FetchedTimestamp) < ConfigurationLifetime))
+        {
+            return;
+        }
+
+        var retrieval = Retrieval(entry, unknownKey: false, recordFailureCooldown: false);
+        if (retrieval.IsCompleted)
+        {
+            _ = await retrieval;
+            return;
+        }
+
+        using var delay = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var winner = await Task.WhenAny(retrieval, Task.Delay(timeout, time, delay.Token));
+        await delay.CancelAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ReferenceEquals(winner, retrieval))
+        {
+            _ = await retrieval;
+        }
+    }
+
     public ValueTask<CallerAuthenticationOutcome> VerifyAsync(string token, CancellationToken cancellationToken)
     {
         if (_platform is null || _platformIssuer is not { } platformIssuer)
@@ -627,7 +652,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     private async Task<FreshConfigurationState?> RefreshFreshAsync(IssuerEntry entry, CancellationToken cancellationToken) =>
         await Retrieval(entry, unknownKey: true).WaitAsync(cancellationToken);
 
-    private Task<FreshConfigurationState?> Retrieval(IssuerEntry entry, bool unknownKey)
+    private Task<FreshConfigurationState?> Retrieval(IssuerEntry entry, bool unknownKey, bool recordFailureCooldown = true)
     {
         lock (entry.Gate)
         {
@@ -644,13 +669,13 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
                 return Task.FromResult(failed ? null : entry.Fresh);
             }
 
-            var started = RetrieveAsync(Pin(entry), unknownKey);
+            var started = RetrieveAsync(Pin(entry), unknownKey, recordFailureCooldown);
             entry.Inflight = started;
             return started;
         }
     }
 
-    private async Task<FreshConfigurationState?> RetrieveAsync(IssuerEntry entry, bool unknownKey)
+    private async Task<FreshConfigurationState?> RetrieveAsync(IssuerEntry entry, bool unknownKey, bool recordFailureCooldown)
     {
         await Task.Yield();
         OpenIdConnectConfiguration? fetched = null;
@@ -664,12 +689,15 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             var now = time.GetTimestamp();
             lock (entry.Gate)
             {
-                entry.LastRefreshAttemptTimestamp = now;
-                entry.LastRefreshFailed = fetched is null;
-                if (unknownKey)
+                if (fetched is not null || recordFailureCooldown)
                 {
-                    entry.LastUnknownKeyAttemptTimestamp = now;
-                    entry.LastUnknownKeyFailed = fetched is null;
+                    entry.LastRefreshAttemptTimestamp = now;
+                    entry.LastRefreshFailed = fetched is null;
+                    if (unknownKey)
+                    {
+                        entry.LastUnknownKeyAttemptTimestamp = now;
+                        entry.LastUnknownKeyFailed = fetched is null;
+                    }
                 }
 
                 if (fetched is not null)
