@@ -375,7 +375,7 @@ internal sealed class PgCopyReader(PgCopyOptions options, IReadOnlyList<int> oid
             }
 
             var oid = index < oids.Count ? oids[index] : PgOid.Text;
-            if (!PgValueCodec.TryDecode(oid, 1, pending.Slice(consumed, length).ToArray(), out values[index]))
+            if (!PgValueCodec.TryDecode(oid, 1, pending.Slice(consumed, length), out values[index]))
             {
                 return -1;
             }

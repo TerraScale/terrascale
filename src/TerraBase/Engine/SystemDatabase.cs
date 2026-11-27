@@ -37,13 +37,21 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         ("backup_policies", "CREATE TABLE backup_policies (database_id TEXT PRIMARY KEY, retention_days INTEGER NOT NULL, full_backup_cron TEXT, updated_at INTEGER NOT NULL)"),
     ];
 
-    private ISqlDatabaseSession? _session;
+    private readonly Lock _stateGate = new();
+
+    private long _nextEpoch = 1;
+
+    private SessionState? _state;
 
     public static BackendUnavailable Opening { get; } = new("the system database is opening; retry", "system_opening");
 
-    public ISqlDatabaseSession Session => Volatile.Read(ref _session) ?? throw new InvalidOperationException("the system database is not open");
+    public ISqlDatabaseSession Session => Volatile.Read(ref _state)?.Session ?? throw new InvalidOperationException("the system database is not open");
 
-    public bool IsOpen => Volatile.Read(ref _session) is not null;
+    public bool IsOpen => Volatile.Read(ref _state) is not null;
+
+    public long ChangeGeneration => Volatile.Read(ref _state) is { Session.IsUsable: true } state
+        ? state.Offset + state.Session.ChangeGeneration
+        : 0;
 
     public string KeyId => FileText.Read(Path.Combine(options.DataDirectory, KeyIdFile))?.Trim() ?? keyring.ActiveKeyId;
 
@@ -88,7 +96,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         Func<CancellationToken, ValueTask>? sync,
         CancellationToken cancellationToken)
     {
-        _session = session;
+        _ = Adopt(session);
         if (WriteKeyId(keyFile, keyId) is { } unwritable)
         {
             return unwritable;
@@ -143,13 +151,13 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
     public ValueTask<SystemWriteOutcome> WriteAsync(SqlStatement statement, ConsistencyMode mode, CancellationToken cancellationToken) =>
         WriteAsync([statement], mode, cancellationToken);
 
-    public async ValueTask<ISqlDatabaseSession> UsableSessionAsync(CancellationToken cancellationToken)
-    {
-        if (Session is { IsUsable: true } current)
-        {
-            return current;
-        }
+    public ValueTask<ISqlDatabaseSession> UsableSessionAsync(CancellationToken cancellationToken) =>
+        Volatile.Read(ref _state) is { Session: { IsUsable: true } current }
+            ? ValueTask.FromResult(current)
+            : ReopenSessionAsync(cancellationToken);
 
+    private async ValueTask<ISqlDatabaseSession> ReopenSessionAsync(CancellationToken cancellationToken)
+    {
         var reopened = await databases.OpenAsync(Id, KeyId, cancellationToken);
         return reopened switch
         {
@@ -160,9 +168,29 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
 
     private ISqlDatabaseSession Adopt(ISqlDatabaseSession session)
     {
-        Volatile.Write(ref _session, session);
-        return session;
+        lock (_stateGate)
+        {
+            if (_state is { } current)
+            {
+                if (ReferenceEquals(current.Session, session))
+                {
+                    return session;
+                }
+
+                var previousMax = current.Offset + current.Session.ChangeGeneration;
+                if (previousMax >= _nextEpoch)
+                {
+                    _nextEpoch = previousMax + 1;
+                }
+            }
+
+            var offset = _nextEpoch;
+            Volatile.Write(ref _state, new SessionState(session, offset));
+            return session;
+        }
     }
+
+    private sealed record SessionState(ISqlDatabaseSession Session, long Offset);
 
     private static SystemQueryOutcome Rows(IReadOnlyList<SqlResultSet> sets) =>
         sets.Count == 0 ? new([]) : new(sets[^1].Rows);

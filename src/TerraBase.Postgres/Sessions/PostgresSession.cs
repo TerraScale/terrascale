@@ -76,11 +76,33 @@ internal sealed class PostgresTransactionBlock(ConsistencyMode mode, SqlAccess a
 
 internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup startup, TimeProvider timeProvider) : IPostgresCancellable
 {
-    private readonly Lock _gate = new();
-    private CancellationTokenSource? _statement;
-    private bool _canceled;
+    private const int MaxParseCacheEntries = 2048;
 
-    public int ProcessId { get; set; }
+    private sealed class CachedParseEntry(IReadOnlyList<PgCommand> commands)
+    {
+        public IReadOnlyList<PgCommand> Commands => commands;
+
+        public int[]? InferredOids { get; set; }
+    }
+
+    private readonly Lock _gate = new();
+    private readonly Dictionary<string, CachedParseEntry> _parseCache = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _statementCts;
+    private CancellationTokenSource? _activeStatement;
+    private PgRewriteContext? _rewriteContext;
+    private int _processId;
+    private bool _canceled;
+    private bool _aborted;
+
+    public int ProcessId
+    {
+        get => _processId;
+        set
+        {
+            _processId = value;
+            _rewriteContext = null;
+        }
+    }
 
     public int SecretKey { get; } = RandomNumberGenerator.GetInt32(int.MaxValue);
 
@@ -92,9 +114,11 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
 
     public PgSettings Settings { get; } = new(startup.User, startup.ApplicationName);
 
-    public PgRewriteContext RewriteContext => new(grant.DatabaseName, startup.User, ProcessId, Settings.Values);
+    public PgRewriteContext RewriteContext => _rewriteContext ??= new(grant.DatabaseName, startup.User, _processId, Settings.Values);
 
     public CausalBookmark Bookmark { get; private set; } = CausalBookmark.Empty;
+
+    public ulong SchemaEpoch { get; private set; }
 
     public PostgresTransactionBlock? Transaction { get; set; }
 
@@ -102,8 +126,73 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
 
     public Dictionary<string, PgPortal> Portals { get; } = new(StringComparer.Ordinal);
 
+    public bool TryGetCachedParse(string sql, out IReadOnlyList<PgCommand> commands)
+    {
+        if (_parseCache.TryGetValue(sql, out var entry))
+        {
+            commands = entry.Commands;
+            return true;
+        }
+
+        commands = [];
+        return false;
+    }
+
+    public void CacheParse(string sql, IReadOnlyList<PgCommand> commands)
+    {
+        if (!IsCacheable(commands))
+        {
+            return;
+        }
+
+        if (_parseCache.Count >= MaxParseCacheEntries)
+        {
+            _parseCache.Clear();
+        }
+
+        _parseCache[sql] = new CachedParseEntry(commands);
+    }
+
+    public bool TryGetCachedInferredOids(string sql, out int[] oids)
+    {
+        if (_parseCache.TryGetValue(sql, out var entry) && entry.InferredOids is { } cached)
+        {
+            oids = cached;
+            return true;
+        }
+
+        oids = [];
+        return false;
+    }
+
+    public void CacheInferredOids(string sql, int[] oids)
+    {
+        if (_parseCache.TryGetValue(sql, out var entry))
+        {
+            entry.InferredOids = oids;
+        }
+    }
+
+    public void ObserveSchemaEpoch(ulong epoch)
+    {
+        if (epoch == SchemaEpoch)
+        {
+            return;
+        }
+
+        SchemaEpoch = epoch;
+        _parseCache.Clear();
+    }
+
+    public void InvalidateSchemaCache() => _parseCache.Clear();
+
     public long PortalBytes(string? except = null)
     {
+        if (Portals.Count == 0 || (Portals.Count == 1 && except is not null && Portals.ContainsKey(except)))
+        {
+            return 0;
+        }
+
         long total = 0;
         foreach (var (name, portal) in Portals)
         {
@@ -145,6 +234,17 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
 
     public char Status => Transaction is null ? 'I' : Transaction.Failed ? 'E' : 'T';
 
+    internal bool WasCanceledOrAborted
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _canceled || _aborted;
+            }
+        }
+    }
+
     public void Observe(CausalBookmark bookmark)
     {
         var merged = Bookmark.Merge(bookmark);
@@ -169,15 +269,44 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
 
     public PostgresStatementScope BeginStatement(CancellationToken connection)
     {
-        var timeout = new CancellationTokenSource(Settings.StatementTimeout, timeProvider);
-        var linked = CancellationTokenSource.CreateLinkedTokenSource(connection, timeout.Token, grant.Revocation, grant.Shutdown);
+        CancellationTokenSource cts;
         lock (_gate)
         {
-            _statement = linked;
+            if (_statementCts is { } existing && existing.TryReset())
+            {
+                cts = existing;
+            }
+            else
+            {
+                _statementCts?.Dispose();
+                cts = new CancellationTokenSource(Timeout.InfiniteTimeSpan, timeProvider);
+                _statementCts = cts;
+            }
+
+            _activeStatement = cts;
             _canceled = false;
+            _aborted = false;
+            if (connection.IsCancellationRequested || grant.Revocation.IsCancellationRequested || grant.Shutdown.IsCancellationRequested)
+            {
+                _aborted = true;
+                cts.Cancel();
+            }
+            else
+            {
+                cts.CancelAfter(Settings.StatementTimeout);
+            }
         }
 
-        return new PostgresStatementScope(this, linked, timeout);
+        return new PostgresStatementScope(this, cts);
+    }
+
+    public void AbortStatement()
+    {
+        lock (_gate)
+        {
+            _aborted = true;
+            _activeStatement?.Cancel();
+        }
     }
 
     public void Cancel()
@@ -185,36 +314,55 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
         lock (_gate)
         {
             _canceled = true;
-            _statement?.Cancel();
+            _activeStatement?.Cancel();
         }
     }
 
-    internal bool EndStatement(CancellationTokenSource linked)
+    internal void EndStatement(CancellationTokenSource cts)
     {
         lock (_gate)
         {
-            if (ReferenceEquals(_statement, linked))
+            if (ReferenceEquals(_activeStatement, cts))
             {
-                _statement = null;
+                _activeStatement = null;
             }
 
-            return _canceled;
+            if (!cts.IsCancellationRequested)
+            {
+                cts.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
         }
+    }
+
+    internal void DisposeStatementCts()
+    {
+        lock (_gate)
+        {
+            _activeStatement = null;
+            _statementCts?.Dispose();
+            _statementCts = null;
+        }
+    }
+
+    private static bool IsCacheable(IReadOnlyList<PgCommand> commands)
+    {
+        for (var index = 0; index < commands.Count; index++)
+        {
+            if (commands[index] is PgSqlCommand { Rewrite.DependsOnSettings: true })
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
-internal sealed class PostgresStatementScope(PostgresSession session, CancellationTokenSource linked, CancellationTokenSource timeout) : IDisposable
+internal readonly struct PostgresStatementScope(PostgresSession session, CancellationTokenSource cts) : IDisposable
 {
-    public CancellationToken Token => linked.Token;
+    public CancellationToken Token => cts.Token;
 
-    public bool TimedOut => timeout.IsCancellationRequested;
+    public bool TimedOut => cts.IsCancellationRequested && !session.WasCanceledOrAborted;
 
-    public bool Canceled { get; private set; }
-
-    public void Dispose()
-    {
-        Canceled = session.EndStatement(linked);
-        linked.Dispose();
-        timeout.Dispose();
-    }
+    public void Dispose() => session.EndStatement(cts);
 }

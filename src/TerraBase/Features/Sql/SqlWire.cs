@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraBase.Engine;
 using TerraScale.Contracts.Http;
 
 namespace TerraBase.Features.Sql;
@@ -33,8 +35,6 @@ public sealed record ExecuteBody(IReadOnlyList<ResultBody> Results, string Bookm
 
 internal static class SqlWire
 {
-    private static readonly IReadOnlyDictionary<string, JsonElement> NoNamed = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-
     public static SqlStatementsParse Statements(IReadOnlyList<SqlHttpStatement>? statements)
     {
         if (statements is not { Count: > 0 and <= SqlPlan.MaxStatements })
@@ -42,7 +42,7 @@ internal static class SqlWire
             return SqlRefusal.Invalid("statements holds 1 to 256 statements", 0);
         }
 
-        List<SqlStatement> converted = [];
+        var converted = new SqlStatement[statements.Count];
         for (var index = 0; index < statements.Count; index++)
         {
             if (Statement(statements[index], index) is not { } statement)
@@ -50,7 +50,7 @@ internal static class SqlWire
                 return SqlRefusal.Invalid("arguments are null, finite numbers, booleans, strings or {\"base64\": …} blobs", index);
             }
 
-            converted.Add(statement);
+            converted[index] = statement;
         }
 
         return converted;
@@ -63,26 +63,46 @@ internal static class SqlWire
             return null;
         }
 
-        List<SqlValue> args = [];
-        foreach (var arg in statement.Args ?? [])
+        IReadOnlyList<SqlValue> args;
+        if (statement.Args is { Count: > 0 } rawArgs)
         {
-            if (Value(arg) is not { } value)
+            var positional = new SqlValue[rawArgs.Count];
+            for (var i = 0; i < rawArgs.Count; i++)
             {
-                return null;
+                if (Value(rawArgs[i]) is not { } value)
+                {
+                    return null;
+                }
+
+                positional[i] = value;
             }
 
-            args.Add(value);
+            args = positional;
+        }
+        else
+        {
+            args = [];
         }
 
-        Dictionary<string, SqlValue> named = new(StringComparer.Ordinal);
-        foreach (var (name, arg) in statement.Named ?? NoNamed)
+        IReadOnlyDictionary<string, SqlValue> named;
+        if (statement.Named is { Count: > 0 } rawNamed)
         {
-            if (Value(arg) is not { } value)
+            var bound = new Dictionary<string, SqlValue>(rawNamed.Count, StringComparer.Ordinal);
+            foreach (var (name, arg) in rawNamed)
             {
-                return null;
+                if (Value(arg) is not { } value)
+                {
+                    return null;
+                }
+
+                bound[name] = value;
             }
 
-            named[name] = value;
+            named = bound;
+        }
+        else
+        {
+            named = SqlBuild.NoNamed;
         }
 
         return new SqlStatement(sql, args, named);
@@ -101,24 +121,90 @@ internal static class SqlWire
         _ => throw new UnreachableException(),
     };
 
-    public static LegacyExecuteBody Legacy(IReadOnlyList<SqlResultSet> results) =>
-        new([.. results.Select(static result => new LegacyResultBody(
-            [.. result.Columns.Select(static column => new LegacyColumnBody(column.Name, column.DeclaredType))],
-            result.Rows, result.RowsAffected, result.LastInsertRowId))]);
+    public static LegacyExecuteBody Legacy(IReadOnlyList<SqlResultSet> results)
+    {
+        if (results.Count == 0)
+        {
+            return new LegacyExecuteBody([]);
+        }
 
-    public static IReadOnlyList<ResultBody> Results(IReadOnlyList<SqlResultSet> results) =>
-        [.. results.Select(static result => new ResultBody(
-            [.. result.Columns.Select(static column => new ResultColumnBody(column.Name, column.DeclaredType))],
-            result.Rows, result.RowsAffected, result.LastInsertRowId))];
+        var converted = new LegacyResultBody[results.Count];
+        for (var i = 0; i < results.Count; i++)
+        {
+            var result = results[i];
+            LegacyColumnBody[] columns;
+            if (result.Columns.Count == 0)
+            {
+                columns = [];
+            }
+            else
+            {
+                columns = new LegacyColumnBody[result.Columns.Count];
+                for (var j = 0; j < result.Columns.Count; j++)
+                {
+                    var column = result.Columns[j];
+                    columns[j] = new LegacyColumnBody(column.Name, column.DeclaredType);
+                }
+            }
+
+            converted[i] = new LegacyResultBody(columns, result.Rows, result.RowsAffected, result.LastInsertRowId);
+        }
+
+        return new LegacyExecuteBody(converted);
+    }
+
+    public static IReadOnlyList<ResultBody> Results(IReadOnlyList<SqlResultSet> results)
+    {
+        if (results.Count == 0)
+        {
+            return [];
+        }
+
+        var converted = new ResultBody[results.Count];
+        for (var i = 0; i < results.Count; i++)
+        {
+            var result = results[i];
+            ResultColumnBody[] columns;
+            if (result.Columns.Count == 0)
+            {
+                columns = [];
+            }
+            else
+            {
+                columns = new ResultColumnBody[result.Columns.Count];
+                for (var j = 0; j < result.Columns.Count; j++)
+                {
+                    var column = result.Columns[j];
+                    columns[j] = new ResultColumnBody(column.Name, column.DeclaredType);
+                }
+            }
+
+            converted[i] = new ResultBody(columns, result.Rows, result.RowsAffected, result.LastInsertRowId);
+        }
+
+        return converted;
+    }
 
     private static SqlValue? Blob(JsonElement value)
     {
-        if (!value.TryGetProperty("base64", out var encoded) || encoded.ValueKind != JsonValueKind.String || value.EnumerateObject().Count() != 1)
+        var properties = value.EnumerateObject();
+        if (!properties.MoveNext())
         {
             return null;
         }
 
-        if (encoded.GetString() is not { } text)
+        var property = properties.Current;
+        if (properties.MoveNext() || !property.NameEquals("base64"u8) || property.Value.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        if (property.Value.TryGetBytesFromBase64(out var decoded))
+        {
+            return SqlValue.FromBlob(decoded);
+        }
+
+        if (property.Value.GetString() is not { } text)
         {
             return null;
         }
@@ -137,16 +223,66 @@ public sealed class SqlRowsConverter : JsonConverter<IReadOnlyList<IReadOnlyList
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(value);
-        writer.WriteStartArray();
-        foreach (var row in value)
-        {
-            writer.WriteStartArray();
-            foreach (var cell in row)
-            {
-                WriteValue(writer, cell);
-            }
+        WriteRows(writer, value);
+    }
 
-            writer.WriteEndArray();
+    public static void WriteRows(Utf8JsonWriter writer, IReadOnlyList<IReadOnlyList<SqlValue>> value)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(value);
+        writer.WriteStartArray();
+        if (value is List<IReadOnlyList<SqlValue>> list)
+        {
+            var span = CollectionsMarshal.AsSpan(list);
+            for (var r = 0; r < span.Length; r++)
+            {
+                WriteRow(writer, span[r]);
+            }
+        }
+        else if (value is IReadOnlyList<SqlValue>[] array)
+        {
+            for (var r = 0; r < array.Length; r++)
+            {
+                WriteRow(writer, array[r]);
+            }
+        }
+        else
+        {
+            var count = value.Count;
+            for (var r = 0; r < count; r++)
+            {
+                WriteRow(writer, value[r]);
+            }
+        }
+
+        writer.WriteEndArray();
+    }
+
+    private static void WriteRow(Utf8JsonWriter writer, IReadOnlyList<SqlValue> row)
+    {
+        writer.WriteStartArray();
+        if (row is SqlValue[] array)
+        {
+            for (var c = 0; c < array.Length; c++)
+            {
+                WriteValue(writer, array[c]);
+            }
+        }
+        else if (row is List<SqlValue> list)
+        {
+            var span = CollectionsMarshal.AsSpan(list);
+            for (var c = 0; c < span.Length; c++)
+            {
+                WriteValue(writer, span[c]);
+            }
+        }
+        else
+        {
+            var count = row.Count;
+            for (var c = 0; c < count; c++)
+            {
+                WriteValue(writer, row[c]);
+            }
         }
 
         writer.WriteEndArray();
@@ -155,27 +291,38 @@ public sealed class SqlRowsConverter : JsonConverter<IReadOnlyList<IReadOnlyList
     public static void WriteValue(Utf8JsonWriter writer, SqlValue cell)
     {
         ArgumentNullException.ThrowIfNull(writer);
-        if (cell.TryGetIntegral(out var integer))
+        switch (cell.Kind)
         {
-            writer.WriteNumberValue(integer);
-        }
-        else if (cell.TryGetReal(out var real))
-        {
-            writer.WriteNumberValue(real);
-        }
-        else if (cell.TryGetText(out var text))
-        {
-            writer.WriteStringValue(text);
-        }
-        else if (cell.TryGetBlob(out var blob))
-        {
-            writer.WriteStartObject();
-            writer.WriteBase64String("base64", blob.Span);
-            writer.WriteEndObject();
-        }
-        else
-        {
-            writer.WriteNullValue();
+            case SqlValueKind.Null:
+                writer.WriteNullValue();
+                break;
+            case SqlValueKind.Integral:
+                cell.TryGetIntegral(out var integer);
+                writer.WriteNumberValue(integer);
+                break;
+            case SqlValueKind.Real:
+                cell.TryGetReal(out var real);
+                writer.WriteNumberValue(real);
+                break;
+            case SqlValueKind.Text:
+                if (cell.TryGetText(out var text))
+                {
+                    writer.WriteStringValue(text);
+                }
+                else
+                {
+                    writer.WriteNullValue();
+                }
+
+                break;
+            case SqlValueKind.Blob:
+                cell.TryGetBlob(out var blob);
+                writer.WriteStartObject();
+                writer.WriteBase64String("base64"u8, blob.Span);
+                writer.WriteEndObject();
+                break;
+            default:
+                throw new UnreachableException();
         }
     }
 }

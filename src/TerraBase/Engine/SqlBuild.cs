@@ -8,6 +8,8 @@ internal static class SqlBuild
 {
     public static readonly IReadOnlyDictionary<string, SqlValue> NoNamed = FrozenDictionary<string, SqlValue>.Empty;
 
+    public static SqlStatement Statement(string sql) => new(sql, [], NoNamed);
+
     public static SqlStatement Statement(string sql, params SqlValue[] args) => new(sql, args, NoNamed);
 
     public static SqlValue Text(string value) => SqlValue.FromText(value);

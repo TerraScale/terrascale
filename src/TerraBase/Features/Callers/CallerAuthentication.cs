@@ -11,7 +11,9 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
 {
     public const string UserHeader = "X-TerraBase-User-Id";
 
-    public async ValueTask<CallerAuthenticationOutcome> AuthenticateAsync(HttpContext context, CancellationToken cancellationToken)
+    private const string BearerPrefix = "Bearer ";
+
+    public ValueTask<CallerAuthenticationOutcome> AuthenticateAsync(HttpContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         var admitted = context.Features.Get<AdmittedCaller>();
@@ -19,34 +21,62 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         {
             if (acting is not [{ Length: 26 } user] || !Ulid.TryParse(user, out _))
             {
-                return new CredentialRejected(UserHeader + " must be one canonical uppercase ULID", "invalid_user");
+                return ValueTask.FromResult<CallerAuthenticationOutcome>(new CredentialRejected(UserHeader + " must be one canonical uppercase ULID", "invalid_user"));
             }
 
-            return admitted.Identity is { } identity && !identity.Grants.Contains("act-as")
+            CallerAuthenticationOutcome acted = admitted.Identity is { } identity && !identity.Grants.Contains("act-as")
                 ? new CredentialRejected("acting as a user needs the act-as grant", "forbidden_caller")
                 : new UserCaller(user, ViaOperator: true);
+            return ValueTask.FromResult(acted);
         }
 
-        if (Bearer(context.Request) is { } token)
+        if (TryReadBearer(context.Request, out var source, out var start, out var length))
         {
-            return await AuthenticateBearerAsync(token, cancellationToken);
+            var tokenSpan = source.AsSpan(start, length);
+            if (tokenSpan.StartsWith(ApiKeyStore.SecretPrefix, StringComparison.Ordinal))
+            {
+                if (keys.TryFindCached(tokenSpan, out var lookup))
+                {
+                    return ValueTask.FromResult(MapApiKeyOutcome(lookup));
+                }
+
+                return AuthenticateApiKeyAsync(new string(tokenSpan), cancellationToken);
+            }
+
+            if (tokens.TryVerifyCached(tokenSpan, out var verified))
+            {
+                return ValueTask.FromResult<CallerAuthenticationOutcome>(verified);
+            }
+
+            return tokens.VerifyAsync(new string(tokenSpan), cancellationToken);
         }
 
-        return admitted switch
+        CallerAuthenticationOutcome fallback = admitted switch
         {
             { Identity: { } identity } => new ServiceCaller(identity.Key.Caller, identity.Grants),
             not null => new PeerCaller(),
             null => AnonymousCaller.Instance,
         };
+        return ValueTask.FromResult(fallback);
     }
 
-    public async ValueTask<CallerAuthenticationOutcome> AuthenticateBearerAsync(string token, CancellationToken cancellationToken)
+    public ValueTask<CallerAuthenticationOutcome> AuthenticateBearerAsync(string token, CancellationToken cancellationToken)
     {
         if (!token.StartsWith(ApiKeyStore.SecretPrefix, StringComparison.Ordinal))
         {
-            return await tokens.VerifyAsync(token, cancellationToken);
+            return tokens.VerifyAsync(token, cancellationToken);
         }
 
+        if (keys.TryFindCached(token, out var lookup))
+        {
+            return ValueTask.FromResult(MapApiKeyOutcome(lookup));
+        }
+
+        return AuthenticateApiKeyAsync(token, cancellationToken);
+    }
+
+    private async ValueTask<CallerAuthenticationOutcome> AuthenticateApiKeyAsync(string token, CancellationToken cancellationToken)
+    {
         using var permit = await gate.EnterAsync(cancellationToken);
         if (!permit.IsAcquired)
         {
@@ -54,13 +84,15 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         }
 
         var outcome = await keys.FindAsync(token, cancellationToken);
-        return outcome switch
-        {
-            ApiKeyRecord key => new ApiKeyCaller(key),
-            ResourceNotFound missing => new CredentialRejected(missing.Message, "invalid_key"),
-            BackendUnavailable unavailable => unavailable,
-        };
+        return MapApiKeyOutcome(outcome);
     }
+
+    private static CallerAuthenticationOutcome MapApiKeyOutcome(ApiKeyLookup outcome) => outcome switch
+    {
+        ApiKeyRecord key => new ApiKeyCaller(key),
+        ResourceNotFound missing => new CredentialRejected(missing.Message, "invalid_key"),
+        BackendUnavailable unavailable => unavailable,
+    };
 
     public async ValueTask<CallerAuthenticationOutcome> AuthenticatePasswordAsync(string secret, string project, CancellationToken cancellationToken)
     {
@@ -78,10 +110,64 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         };
     }
 
-    public static string? Bearer(HttpRequest request)
+    public static string? Bearer(HttpRequest request) =>
+        TryReadBearer(request, out var source, out var start, out var length)
+            ? new string(source.AsSpan(start, length))
+            : null;
+
+    private static bool TryReadBearer(HttpRequest request, out string source, out int start, out int length)
     {
-        var header = request.Headers.Authorization.ToString();
-        return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) && header["Bearer ".Length..].Trim() is { Length: > 0 } token ? token : null;
+        var values = request.Headers.Authorization;
+        if (values.Count == 0)
+        {
+            source = string.Empty;
+            start = 0;
+            length = 0;
+            return false;
+        }
+
+        var raw = values.Count == 1 ? values[0] : values.ToString();
+        if (raw is null)
+        {
+            source = string.Empty;
+            start = 0;
+            length = 0;
+            return false;
+        }
+
+        var span = raw.AsSpan();
+        if (!span.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            source = string.Empty;
+            start = 0;
+            length = 0;
+            return false;
+        }
+
+        var sliceStart = BearerPrefix.Length;
+        var sliceEnd = span.Length;
+        while (sliceStart < sliceEnd && char.IsWhiteSpace(span[sliceStart]))
+        {
+            sliceStart++;
+        }
+
+        while (sliceEnd > sliceStart && char.IsWhiteSpace(span[sliceEnd - 1]))
+        {
+            sliceEnd--;
+        }
+
+        if (sliceEnd <= sliceStart)
+        {
+            source = string.Empty;
+            start = 0;
+            length = 0;
+            return false;
+        }
+
+        source = raw;
+        start = sliceStart;
+        length = sliceEnd - sliceStart;
+        return true;
     }
 }
 

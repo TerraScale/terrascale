@@ -102,6 +102,7 @@ internal sealed partial class PostgresConnection
 
     private PgError? Committed(CommitMetadata metadata)
     {
+        session.ObserveSchemaEpoch(metadata.SchemaEpoch);
         session.Observe(metadata.Bookmark);
         return null;
     }

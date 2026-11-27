@@ -30,18 +30,22 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         }
 
         session.Transaction = null;
+        session.DisposeStatementCts();
     }
 
     public async Task RunAsync()
     {
+        using var closedRegistration = closed.Register(session.AbortStatement);
         using var revocation = session.Grant.Revocation.Register(() =>
         {
             _revoked = true;
+            session.AbortStatement();
             Reader.Interrupt();
         });
         using var shutdown = session.Grant.Shutdown.Register(() =>
         {
             _shuttingDown = true;
+            session.AbortStatement();
             Reader.Interrupt();
         });
         while (true)
@@ -58,7 +62,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
                 return;
             }
 
-            if (session.Status == 'I' && !await DeliverNotificationsAsync())
+            if (session.Channels.Count > 0 && session.Status == 'I' && !await DeliverNotificationsAsync())
             {
                 return;
             }
@@ -95,39 +99,48 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         }
     }
 
-    private async ValueTask<bool> HandleAsync(PgFrontendMessage message)
+    private ValueTask<bool> HandleAsync(PgFrontendMessage message)
     {
         if (session.SkipUntilSync && message is not (PgSyncMessage or PgTerminateMessage))
         {
-            return true;
+            return ValueTask.FromResult(true);
         }
 
         return message switch
         {
-            PgQueryMessage query => await SimpleQueryAsync(query.Sql),
-            PgParseMessage parse => await ExtendedAsync(ParseAsync(parse)),
-            PgBindMessage bind => await ExtendedAsync(ValueTask.FromResult(Bind(bind))),
-            PgDescribeMessage describe => await ExtendedAsync(DescribeAsync(describe)),
-            PgExecuteMessage execute => await ExtendedAsync(ExecuteAsync(execute)),
-            PgCloseMessage close => await ExtendedAsync(ValueTask.FromResult(Close(close))),
-            PgSyncMessage => await SyncAsync(),
-            PgFlushMessage => await Writer.FlushAsync(closed),
-            PgTerminateMessage => false,
-            PgCopyDataMessage or PgCopyDoneMessage or PgCopyFailMessage => true,
-            PgFunctionCallMessage => await FunctionCallAsync(),
-            PgPasswordMessage => await FatalAsync(PgError.ProtocolViolation("unexpected password message")),
-            PgUnknownMessage unknown => await FatalAsync(PgError.ProtocolViolation($"invalid frontend message type {(int)unknown.Type}")),
+            PgQueryMessage query => SimpleQueryAsync(query.Sql),
+            PgParseMessage parse => ExtendedAsync(ParseAsync(parse)),
+            PgBindMessage bind => Bind(bind) is { } bindError ? HandleExtendedErrorAsync(bindError) : ValueTask.FromResult(true),
+            PgDescribeMessage describe => ExtendedAsync(DescribeAsync(describe)),
+            PgExecuteMessage execute => ExtendedAsync(ExecuteAsync(execute)),
+            PgCloseMessage close => Close(close) is { } closeError ? HandleExtendedErrorAsync(closeError) : ValueTask.FromResult(true),
+            PgSyncMessage => SyncAsync(),
+            PgFlushMessage => Writer.FlushAsync(closed),
+            PgTerminateMessage => ValueTask.FromResult(false),
+            PgCopyDataMessage or PgCopyDoneMessage or PgCopyFailMessage => ValueTask.FromResult(true),
+            PgFunctionCallMessage => FunctionCallAsync(),
+            PgPasswordMessage => FatalAsync(PgError.ProtocolViolation("unexpected password message")),
+            PgUnknownMessage unknown => FatalAsync(PgError.ProtocolViolation($"invalid frontend message type {(int)unknown.Type}")),
         };
     }
 
     private async ValueTask<bool> SimpleQueryAsync(string sql)
     {
-        var parsed = PgCommandParser.Parse(sql, session.RewriteContext);
-        var failure = parsed switch
+        PgError? failure;
+        if (session.TryGetCachedParse(sql, out var cached))
         {
-            IReadOnlyList<PgCommand> commands => await RunCommandsAsync(commands),
-            PgError error => error,
-        };
+            failure = await RunCommandsAsync(cached);
+        }
+        else
+        {
+            var parsed = PgCommandParser.Parse(sql, session.RewriteContext);
+            failure = parsed switch
+            {
+                IReadOnlyList<PgCommand> commands => await CacheAndRunAsync(sql, commands),
+                PgError error => error,
+            };
+        }
+
         if (failure is not null)
         {
             Writer.Error(failure);
@@ -140,6 +153,12 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         }
 
         return await ReadyAsync();
+    }
+
+    private ValueTask<PgError?> CacheAndRunAsync(string sql, IReadOnlyList<PgCommand> commands)
+    {
+        session.CacheParse(sql, commands);
+        return RunCommandsAsync(commands);
     }
 
     private async ValueTask<PgError?> RunCommandsAsync(IReadOnlyList<PgCommand> commands)

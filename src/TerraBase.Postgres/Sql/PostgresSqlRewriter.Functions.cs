@@ -1,9 +1,11 @@
+using System.Collections.Frozen;
+using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Postgres.Protocol;
 
 namespace TerraBase.Postgres.Sql;
 
-internal sealed partial class PostgresSqlRewriter
+internal ref partial struct PostgresSqlRewriter
 {
     public const string NowExpression = NowSql;
 
@@ -13,178 +15,362 @@ internal sealed partial class PostgresSqlRewriter
     private const string RandomSql = "((random() & 9007199254740991) / 9007199254740992.0)";
     private const string UuidSql = "lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))";
 
+    private enum PgFuncKind : byte
+    {
+        Now,
+        CurrentSchema,
+        CurrentSchemas,
+        CurrentDatabase,
+        Version,
+        CurrentUser,
+        PgGetUserById,
+        PgBackendPid,
+        AlwaysFalse,
+        AlwaysTrue,
+        AlwaysNull,
+        PgEncodingToChar,
+        AlwaysZero,
+        GenRandomUuid,
+        Random,
+        CurrentSetting,
+        SetConfig,
+        KeepFirstParen,
+        PgSizePretty,
+        PgGetIndexDef,
+        PgGetConstraintDef,
+        PgGetViewDef,
+        PgPartitionAncestors,
+        FormatType,
+        StringAgg,
+        Greatest,
+        Least,
+        Strpos,
+        CharLength,
+        JsonBuildObject,
+        JsonBuildArray,
+        JsonAgg,
+        JsonObjectAgg,
+        JsonbArrayLength,
+        JsonTypeof,
+        ToJson,
+        Left,
+        Deferred,
+        Extract,
+        DatePart,
+    }
+
+    private static readonly FrozenDictionary<string, PgFuncKind> FunctionKinds = new Dictionary<string, PgFuncKind>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["now"] = PgFuncKind.Now,
+        ["clock_timestamp"] = PgFuncKind.Now,
+        ["statement_timestamp"] = PgFuncKind.Now,
+        ["transaction_timestamp"] = PgFuncKind.Now,
+        ["current_schema"] = PgFuncKind.CurrentSchema,
+        ["current_schemas"] = PgFuncKind.CurrentSchemas,
+        ["current_database"] = PgFuncKind.CurrentDatabase,
+        ["current_catalog"] = PgFuncKind.CurrentDatabase,
+        ["version"] = PgFuncKind.Version,
+        ["current_user"] = PgFuncKind.CurrentUser,
+        ["session_user"] = PgFuncKind.CurrentUser,
+        ["pg_get_userbyid"] = PgFuncKind.PgGetUserById,
+        ["pg_backend_pid"] = PgFuncKind.PgBackendPid,
+        ["pg_is_in_recovery"] = PgFuncKind.AlwaysFalse,
+        ["pg_relation_is_publishable"] = PgFuncKind.AlwaysFalse,
+        ["pg_table_is_visible"] = PgFuncKind.AlwaysTrue,
+        ["pg_type_is_visible"] = PgFuncKind.AlwaysTrue,
+        ["pg_function_is_visible"] = PgFuncKind.AlwaysTrue,
+        ["has_table_privilege"] = PgFuncKind.AlwaysTrue,
+        ["has_schema_privilege"] = PgFuncKind.AlwaysTrue,
+        ["has_database_privilege"] = PgFuncKind.AlwaysTrue,
+        ["has_column_privilege"] = PgFuncKind.AlwaysTrue,
+        ["has_any_column_privilege"] = PgFuncKind.AlwaysTrue,
+        ["has_sequence_privilege"] = PgFuncKind.AlwaysTrue,
+        ["has_function_privilege"] = PgFuncKind.AlwaysTrue,
+        ["pg_advisory_lock"] = PgFuncKind.AlwaysTrue,
+        ["pg_advisory_unlock"] = PgFuncKind.AlwaysTrue,
+        ["pg_advisory_xact_lock"] = PgFuncKind.AlwaysTrue,
+        ["pg_try_advisory_lock"] = PgFuncKind.AlwaysTrue,
+        ["pg_try_advisory_xact_lock"] = PgFuncKind.AlwaysTrue,
+        ["pg_advisory_unlock_all"] = PgFuncKind.AlwaysTrue,
+        ["obj_description"] = PgFuncKind.AlwaysNull,
+        ["col_description"] = PgFuncKind.AlwaysNull,
+        ["shobj_description"] = PgFuncKind.AlwaysNull,
+        ["pg_get_serial_sequence"] = PgFuncKind.AlwaysNull,
+        ["inet_server_addr"] = PgFuncKind.AlwaysNull,
+        ["inet_client_addr"] = PgFuncKind.AlwaysNull,
+        ["pg_postmaster_start_time"] = PgFuncKind.AlwaysNull,
+        ["pg_conf_load_time"] = PgFuncKind.AlwaysNull,
+        ["pg_tablespace_location"] = PgFuncKind.AlwaysNull,
+        ["pg_encoding_to_char"] = PgFuncKind.PgEncodingToChar,
+        ["pg_relation_size"] = PgFuncKind.AlwaysZero,
+        ["pg_total_relation_size"] = PgFuncKind.AlwaysZero,
+        ["pg_table_size"] = PgFuncKind.AlwaysZero,
+        ["pg_indexes_size"] = PgFuncKind.AlwaysZero,
+        ["pg_database_size"] = PgFuncKind.AlwaysZero,
+        ["gen_random_uuid"] = PgFuncKind.GenRandomUuid,
+        ["uuid_generate_v4"] = PgFuncKind.GenRandomUuid,
+        ["random"] = PgFuncKind.Random,
+        ["current_setting"] = PgFuncKind.CurrentSetting,
+        ["set_config"] = PgFuncKind.SetConfig,
+        ["pg_get_expr"] = PgFuncKind.KeepFirstParen,
+        ["quote_ident"] = PgFuncKind.KeepFirstParen,
+        ["pg_size_pretty"] = PgFuncKind.PgSizePretty,
+        ["pg_get_indexdef"] = PgFuncKind.PgGetIndexDef,
+        ["pg_get_constraintdef"] = PgFuncKind.PgGetConstraintDef,
+        ["pg_get_viewdef"] = PgFuncKind.PgGetViewDef,
+        ["pg_partition_ancestors"] = PgFuncKind.PgPartitionAncestors,
+        ["format_type"] = PgFuncKind.FormatType,
+        ["string_agg"] = PgFuncKind.StringAgg,
+        ["greatest"] = PgFuncKind.Greatest,
+        ["least"] = PgFuncKind.Least,
+        ["strpos"] = PgFuncKind.Strpos,
+        ["char_length"] = PgFuncKind.CharLength,
+        ["character_length"] = PgFuncKind.CharLength,
+        ["json_build_object"] = PgFuncKind.JsonBuildObject,
+        ["jsonb_build_object"] = PgFuncKind.JsonBuildObject,
+        ["json_build_array"] = PgFuncKind.JsonBuildArray,
+        ["jsonb_build_array"] = PgFuncKind.JsonBuildArray,
+        ["json_agg"] = PgFuncKind.JsonAgg,
+        ["jsonb_agg"] = PgFuncKind.JsonAgg,
+        ["array_agg"] = PgFuncKind.JsonAgg,
+        ["json_object_agg"] = PgFuncKind.JsonObjectAgg,
+        ["jsonb_object_agg"] = PgFuncKind.JsonObjectAgg,
+        ["jsonb_array_length"] = PgFuncKind.JsonbArrayLength,
+        ["json_typeof"] = PgFuncKind.JsonTypeof,
+        ["jsonb_typeof"] = PgFuncKind.JsonTypeof,
+        ["to_json"] = PgFuncKind.ToJson,
+        ["to_jsonb"] = PgFuncKind.ToJson,
+        ["left"] = PgFuncKind.Left,
+        ["right"] = PgFuncKind.Deferred,
+        ["split_part"] = PgFuncKind.Deferred,
+        ["extract"] = PgFuncKind.Extract,
+        ["date_part"] = PgFuncKind.DatePart,
+    }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly FrozenSet<string> NonFunctionPredecessors = FrozenSet.Create(StringComparer.OrdinalIgnoreCase,
+        ["TABLE", "INTO", "REFERENCES", "ON", "FROM", "JOIN", "UPDATE", "EXISTS", "INDEX", "VIEW", "TRIGGER"]);
+
     private PgError? RewriteFunctions()
     {
+        var funcLookup = FunctionKinds.GetAlternateLookup<ReadOnlySpan<char>>();
+        var predecessorLookup = NonFunctionPredecessors.GetAlternateLookup<ReadOnlySpan<char>>();
+        var hasSpecial = _tokens.HasFlag(PgSyntaxFlags.SpecialKeyword);
+        var hasCall = _tokens.HasFlag(PgSyntaxFlags.FunctionCall);
         for (var index = 0; index < _tokens.Count; index++)
         {
-            if (_tokens.IsDead(index) || _tokens.Kind(index) != PgTokenKind.Word || _tokens.IsEdited(index)
-                || (_tokens.Kind(index - 1) == PgTokenKind.Period && !_tokens.IsEdited(index - 1))
-                || _tokens.IsAnyWord(index - 1, "TABLE", "INTO", "REFERENCES", "ON", "FROM", "JOIN", "UPDATE", "EXISTS", "INDEX", "VIEW", "TRIGGER"))
+            if (_tokens.Kind(index) != PgTokenKind.Word)
             {
                 continue;
             }
 
-            var name = _tokens.Text(index).ToLowerInvariant();
-            if (_tokens.Kind(index + 1) != PgTokenKind.LeftParen)
+            var isCall = _tokens.Kind(index + 1) == PgTokenKind.LeftParen;
+            if (isCall)
             {
-                RewriteKeyword(index, name);
-                continue;
-            }
+                if (!hasCall)
+                {
+                    continue;
+                }
 
-            if (RewriteCall(index, name, index + 1, _tokens.Match(index + 1)) is { } error)
+                var raw = _tokens.Raw(index);
+                if (!funcLookup.TryGetValue(raw, out var funcKind))
+                {
+                    continue;
+                }
+
+                if (IsSkippedFunctionTarget(index, predecessorLookup))
+                {
+                    continue;
+                }
+
+                if (RewriteCall(index, funcKind, index + 1, _tokens.Match(index + 1)) is { } error)
+                {
+                    return error;
+                }
+            }
+            else if (hasSpecial)
             {
-                return error;
+                var raw = _tokens.Raw(index);
+                if (raw.Length is < 12 or > 15 || (raw[0] | 0x20) is not ('c' or 's' or 'l'))
+                {
+                    continue;
+                }
+
+                if (IsSkippedFunctionTarget(index, predecessorLookup))
+                {
+                    continue;
+                }
+
+                RewriteKeyword(index, raw);
             }
         }
 
         return null;
     }
 
-    private void RewriteKeyword(int index, string name)
+    private bool IsSkippedFunctionTarget(int index, FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>> predecessorLookup) =>
+        _tokens.IsDead(index)
+        || _tokens.IsEdited(index)
+        || (_tokens.Kind(index - 1) == PgTokenKind.Period && !_tokens.IsEdited(index - 1))
+        || (_tokens.Kind(index - 1) == PgTokenKind.Word && predecessorLookup.Contains(_tokens.Raw(index - 1)));
+
+    private void RewriteKeyword(int index, ReadOnlySpan<char> raw)
     {
         if (_tokens.IsWord(index - 1, "AS") || _tokens.Kind(index + 1) == PgTokenKind.Period)
         {
             return;
         }
 
-        var replacement = name switch
+        string? replacement;
+        if (raw.Equals("current_schema", StringComparison.OrdinalIgnoreCase))
         {
-            "current_schema" => "'public'",
-            "current_user" or "session_user" or "current_role" => PgRewriteContext.Literal(_context.UserName),
-            "current_catalog" => PgRewriteContext.Literal(_context.DatabaseName),
-            "localtimestamp" => NowSql,
-            _ => null,
-        };
-        if (replacement is not null)
-        {
-            _tokens.Replace(index, _tokens.IsWord(index - 1, "DEFAULT") ? "(" + replacement + ")" : replacement);
+            replacement = "'public'";
         }
+        else if (raw.Equals("current_user", StringComparison.OrdinalIgnoreCase)
+            || raw.Equals("session_user", StringComparison.OrdinalIgnoreCase)
+            || raw.Equals("current_role", StringComparison.OrdinalIgnoreCase))
+        {
+            replacement = PgRewriteContext.Literal(_context.UserName);
+        }
+        else if (raw.Equals("current_catalog", StringComparison.OrdinalIgnoreCase))
+        {
+            replacement = PgRewriteContext.Literal(_context.DatabaseName);
+        }
+        else if (raw.Equals("localtimestamp", StringComparison.OrdinalIgnoreCase))
+        {
+            replacement = NowSql;
+        }
+        else
+        {
+            return;
+        }
+
+        _tokens.Replace(index, _tokens.IsWord(index - 1, "DEFAULT") ? string.Concat("(", replacement, ")") : replacement);
     }
 
-    private PgError? RewriteCall(int index, string name, int open, int close)
+    private PgError? RewriteCall(int index, PgFuncKind kind, int open, int close)
     {
-        switch (name)
+        switch (kind)
         {
-            case "now" or "clock_timestamp" or "statement_timestamp" or "transaction_timestamp":
+            case PgFuncKind.Now:
                 ReplaceCall(index, open, close, NowSql);
                 break;
-            case "current_schema":
+            case PgFuncKind.CurrentSchema:
                 ReplaceCall(index, open, close, "'public'");
                 break;
-            case "current_schemas":
+            case PgFuncKind.CurrentSchemas:
                 ReplaceCall(index, open, close, "'{public}'");
                 break;
-            case "current_database" or "current_catalog":
+            case PgFuncKind.CurrentDatabase:
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(_context.DatabaseName));
                 break;
-            case "version":
+            case PgFuncKind.Version:
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(PgRewriteContext.Version));
                 break;
-            case "current_user" or "session_user":
+            case PgFuncKind.CurrentUser:
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(_context.UserName));
                 break;
-            case "pg_get_userbyid":
+            case PgFuncKind.PgGetUserById:
                 ReplaceCall(index, open, close, PgRewriteContext.Literal(_context.UserName));
                 break;
-            case "pg_backend_pid":
+            case PgFuncKind.PgBackendPid:
                 ReplaceCall(index, open, close, _context.ProcessId.ToString(CultureInfo.InvariantCulture));
                 break;
-            case "pg_is_in_recovery" or "pg_relation_is_publishable":
+            case PgFuncKind.AlwaysFalse:
                 ReplaceCall(index, open, close, "FALSE");
                 break;
-            case "pg_table_is_visible" or "pg_type_is_visible" or "pg_function_is_visible" or "has_table_privilege" or "has_schema_privilege"
-                or "has_database_privilege" or "has_column_privilege" or "has_any_column_privilege" or "has_sequence_privilege" or "has_function_privilege"
-                or "pg_advisory_lock" or "pg_advisory_unlock" or "pg_advisory_xact_lock" or "pg_try_advisory_lock" or "pg_try_advisory_xact_lock" or "pg_advisory_unlock_all":
+            case PgFuncKind.AlwaysTrue:
                 ReplaceCall(index, open, close, "TRUE");
                 break;
-            case "obj_description" or "col_description" or "shobj_description" or "pg_get_serial_sequence" or "inet_server_addr" or "inet_client_addr"
-                or "pg_postmaster_start_time" or "pg_conf_load_time" or "pg_tablespace_location":
+            case PgFuncKind.AlwaysNull:
                 ReplaceCall(index, open, close, "NULL");
                 break;
-            case "pg_encoding_to_char":
+            case PgFuncKind.PgEncodingToChar:
                 ReplaceCall(index, open, close, "'UTF8'");
                 break;
-            case "pg_relation_size" or "pg_total_relation_size" or "pg_table_size" or "pg_indexes_size" or "pg_database_size":
+            case PgFuncKind.AlwaysZero:
                 ReplaceCall(index, open, close, "0");
                 break;
-            case "gen_random_uuid" or "uuid_generate_v4":
+            case PgFuncKind.GenRandomUuid:
                 ReplaceCall(index, open, close, UuidSql);
                 break;
-            case "random" when close == open + 1:
+            case PgFuncKind.Random when close == open + 1:
                 ReplaceCall(index, open, close, RandomSql);
                 break;
-            case "current_setting":
+            case PgFuncKind.Random:
+                break;
+            case PgFuncKind.CurrentSetting:
+                _dependsOnSettings = true;
                 var setting = FirstLiteral(open, close) is { } settingName && _context.Settings.TryGetValue(settingName, out var settingValue)
                     ? PgRewriteContext.Literal(settingValue)
                     : "NULL";
                 ReplaceCall(index, open, close, setting);
                 break;
-            case "set_config":
+            case PgFuncKind.SetConfig:
                 var arguments = Arguments(open, close);
-                ReplaceCall(index, open, close, arguments.Count == 3 && _literals.TryGetValue(arguments[1].Start, out var configured)
+                ReplaceCall(index, open, close, arguments.Count == 3 && TryGetLiteralString(arguments[1].Start, out var configured)
                     ? PgRewriteContext.Literal(configured)
                     : "NULL");
                 break;
-            case "pg_get_expr" or "quote_ident":
+            case PgFuncKind.KeepFirstParen:
                 KeepFirstArgument(index, open, close, "(", ")");
                 break;
-            case "pg_size_pretty":
+            case PgFuncKind.PgSizePretty:
                 KeepFirstArgument(index, open, close, "(CAST(", " AS TEXT) || ' bytes')");
                 break;
-            case "pg_get_indexdef":
+            case PgFuncKind.PgGetIndexDef:
                 _usesCatalog = true;
                 KeepFirstArgument(index, open, close, $"(SELECT _tb_indexdef FROM ({PgCatalogSql.PgIndexRelation}) WHERE indexrelid = (", "))");
                 break;
-            case "pg_get_constraintdef":
+            case PgFuncKind.PgGetConstraintDef:
                 _usesCatalog = true;
                 KeepFirstArgument(index, open, close, $"(SELECT _tb_def FROM ({PgCatalogSql.PgConstraintRelation}) WHERE oid = (", "))");
                 break;
-            case "pg_get_viewdef":
+            case PgFuncKind.PgGetViewDef:
                 KeepFirstArgument(index, open, close, $"(SELECT sql FROM sqlite_schema WHERE {PgCatalogSql.FirstObjectOid} + rowid = (", "))");
                 break;
-            case "pg_partition_ancestors":
+            case PgFuncKind.PgPartitionAncestors:
                 KeepFirstArgument(index, open, close, "(SELECT CAST(", " AS INTEGER) AS relid)");
                 break;
-            case "format_type":
+            case PgFuncKind.FormatType:
                 RewriteFormatType(index, open, close);
                 break;
-            case "string_agg":
+            case PgFuncKind.StringAgg:
                 _tokens.Replace(index, "group_concat");
                 break;
-            case "greatest":
+            case PgFuncKind.Greatest:
                 _tokens.Replace(index, "max");
                 break;
-            case "least":
+            case PgFuncKind.Least:
                 _tokens.Replace(index, "min");
                 break;
-            case "strpos":
+            case PgFuncKind.Strpos:
                 _tokens.Replace(index, "instr");
                 break;
-            case "char_length" or "character_length":
+            case PgFuncKind.CharLength:
                 _tokens.Replace(index, "length");
                 break;
-            case "json_build_object" or "jsonb_build_object":
+            case PgFuncKind.JsonBuildObject:
                 _tokens.Replace(index, "json_object");
                 break;
-            case "json_build_array" or "jsonb_build_array":
+            case PgFuncKind.JsonBuildArray:
                 _tokens.Replace(index, "json_array");
                 break;
-            case "json_agg" or "jsonb_agg" or "array_agg":
+            case PgFuncKind.JsonAgg:
                 _tokens.Replace(index, "json_group_array");
                 break;
-            case "json_object_agg" or "jsonb_object_agg":
+            case PgFuncKind.JsonObjectAgg:
                 _tokens.Replace(index, "json_group_object");
                 break;
-            case "jsonb_array_length":
+            case PgFuncKind.JsonbArrayLength:
                 _tokens.Replace(index, "json_array_length");
                 break;
-            case "json_typeof" or "jsonb_typeof":
+            case PgFuncKind.JsonTypeof:
                 _tokens.Replace(index, "json_type");
                 break;
-            case "to_json" or "to_jsonb":
+            case PgFuncKind.ToJson:
                 _tokens.Replace(index, "json_quote");
                 break;
-            case "left":
+            case PgFuncKind.Left:
                 if (Arguments(open, close) is [_, var count])
                 {
                     _tokens.Replace(index, "substr");
@@ -192,11 +378,15 @@ internal sealed partial class PostgresSqlRewriter
                 }
 
                 break;
-            case "right" or "split_part":
-                _deferred.Add(index);
+            case PgFuncKind.Deferred:
+                (_deferred ??= []).Add(index);
                 break;
-            case "extract" or "date_part":
-                return RewriteExtract(index, open, close, name == "date_part");
+            case PgFuncKind.Extract:
+                return RewriteExtract(index, open, close, datePart: false);
+            case PgFuncKind.DatePart:
+                return RewriteExtract(index, open, close, datePart: true);
+            default:
+                throw new UnreachableException();
         }
 
         return null;
@@ -257,7 +447,7 @@ internal sealed partial class PostgresSqlRewriter
             return PgError.Syntax("syntax error in EXTRACT");
         }
 
-        var field = _literals.TryGetValue(fieldIndex, out var literalField) ? literalField : _tokens.Text(fieldIndex);
+        var field = TryGetLiteralString(fieldIndex, out var literalField) ? literalField : _tokens.Text(fieldIndex);
         (string Prefix, string Suffix)? shape = field.ToLowerInvariant() switch
         {
             "epoch" => ("((julianday(", ") - 2440587.5) * 86400.0)"),
@@ -286,8 +476,15 @@ internal sealed partial class PostgresSqlRewriter
 
     private void RunDeferred()
     {
-        foreach (var index in _deferred.OrderDescending())
+        if (_deferred is null)
         {
+            return;
+        }
+
+        _deferred.Sort();
+        for (var position = _deferred.Count - 1; position >= 0; position--)
+        {
+            var index = _deferred[position];
             var open = index + 1;
             var close = _tokens.Match(open);
             var arguments = Arguments(open, close);
@@ -298,10 +495,10 @@ internal sealed partial class PostgresSqlRewriter
                 _tokens.Replace(count.Start - 1, ", -(");
                 _tokens.Replace(close, "), " + rendered + ")");
             }
-            else if (_tokens.IsWord(index, "split_part") && arguments is [var text, var delimiter, var position])
+            else if (_tokens.IsWord(index, "split_part") && arguments is [var text, var delimiter, var partPosition])
             {
                 var sql = "(WITH RECURSIVE _tb_sp(n, d, rest, part, i) AS (SELECT q.n, q.d, q.s || q.d, NULL, 0 FROM (SELECT "
-                    + _tokens.Render(position.Start, position.End) + " AS n, "
+                    + _tokens.Render(partPosition.Start, partPosition.End) + " AS n, "
                     + _tokens.Render(delimiter.Start, delimiter.End) + " AS d, "
                     + _tokens.Render(text.Start, text.End) + " AS s) AS q UNION ALL SELECT n, d, substr(rest, instr(rest, d) + length(d)), "
                     + "substr(rest, 1, instr(rest, d) - 1), i + 1 FROM _tb_sp WHERE i < n AND instr(rest, d) > 0) "
@@ -313,7 +510,7 @@ internal sealed partial class PostgresSqlRewriter
     }
 
     private string? FirstLiteral(int open, int close) =>
-        Arguments(open, close) is [var first, ..] && first.Start == first.End && _literals.TryGetValue(first.Start, out var literal) ? literal : null;
+        Arguments(open, close) is [var first, ..] && first.Start == first.End && TryGetLiteralString(first.Start, out var literal) ? literal : null;
 
     private List<(int Start, int End)> Arguments(int open, int close)
     {

@@ -96,7 +96,23 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
         return target.EndUser is { } auth
             ? await rules.ApplyAsync(target.Database.Id, auth, statements, cancellationToken, catalog)
-            : new EnforcedSql([.. statements.Select(static statement => statement.Statement)], null);
+            : new EnforcedSql(ExtractStatements(statements), null);
+    }
+
+    public ValueTask<EnforcementOutcome> PrepareBatchAsync(
+        ResolvedDatabase target, SqlBatch batch, ISqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(batch);
+        var firstWrite = FirstWrite(batch.Statements);
+        if (firstWrite >= 0 && !target.CanWrite)
+        {
+            return ValueTask.FromResult<EnforcementOutcome>(SqlRefusal.ForbiddenScope(firstWrite));
+        }
+
+        return target.EndUser is { } auth
+            ? rules.ApplyAsync(target.Database.Id, auth, batch.Statements, cancellationToken, RulesEnforcer.Catalog(transaction))
+            : ValueTask.FromResult<EnforcementOutcome>(new EnforcedSql(batch.Sql, null));
     }
 
     public async ValueTask<SqlWaitOutcome> WaitAsync(ResolvedDatabase target, CausalBookmark after, CancellationToken cancellationToken)
@@ -120,10 +136,22 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(results);
+        long rowsRead = 0;
+        long rowsWritten = 0;
+        for (var index = 0; index < results.Count; index++)
+        {
+            var result = results[index];
+            rowsRead += result.Rows.Count;
+            if (wrote)
+            {
+                rowsWritten += result.RowsAffected;
+            }
+        }
+
         usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.Requests, 1);
         usage.Record(target.Project.Id, target.Database.Id, wrote ? UsageMetrics.Writes : UsageMetrics.Reads, 1);
-        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.RowsRead, results.Sum(static result => (long)result.Rows.Count));
-        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.RowsWritten, wrote ? results.Sum(static result => result.RowsAffected) : 0);
+        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.RowsRead, rowsRead);
+        usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.RowsWritten, rowsWritten);
         usage.Record(target.Project.Id, target.Database.Id, UsageMetrics.StrongCommits, wrote && mode == ConsistencyMode.Strong ? 1 : 0);
     }
 
@@ -145,7 +173,9 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         {
             Completed => await access.OpenAsync(target.Database, cancellationToken) switch
             {
-                ISqlDatabaseSession session => await PrepareAsync(target, batch.Statements, RulesEnforcer.Catalog(session), cancellationToken) switch
+                ISqlDatabaseSession session when target.EndUser is null =>
+                    await ExecuteAsync(target, session, batch.Sql, batch.Writes, mode, causality.After, null, serviceRead, cancellationToken),
+                ISqlDatabaseSession session => await rules.ApplyAsync(target.Database.Id, target.EndUser, batch.Statements, cancellationToken, RulesEnforcer.Catalog(session)) switch
                 {
                     EnforcedSql enforced => await ExecuteAsync(target, session, enforced.Statements, batch.Writes, mode, causality.After, enforced.RulesVersion, serviceRead, cancellationToken),
                     SqlRefusal refusal => refusal,
@@ -192,6 +222,22 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
     {
         Meter(target, results, wrote, mode);
         return new SqlRun(results, bookmark, mode, rulesVersion);
+    }
+
+    private static SqlStatement[] ExtractStatements(IReadOnlyList<PlannedStatement> statements)
+    {
+        if (statements.Count == 0)
+        {
+            return [];
+        }
+
+        var extracted = new SqlStatement[statements.Count];
+        for (var index = 0; index < statements.Count; index++)
+        {
+            extracted[index] = statements[index].Statement;
+        }
+
+        return extracted;
     }
 
     private static int FirstWrite(IReadOnlyList<PlannedStatement> statements)

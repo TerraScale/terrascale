@@ -14,6 +14,11 @@ internal sealed partial class PostgresConnection
             return true;
         }
 
+        return await HandleExtendedErrorAsync(error);
+    }
+
+    private async ValueTask<bool> HandleExtendedErrorAsync(PgError error)
+    {
         Writer.Error(error);
         await MarkFailedAsync();
         await EndImplicitAsync(commit: false);
@@ -39,40 +44,93 @@ internal sealed partial class PostgresConnection
             return new PgError("54000", $"at most {PostgresLimits.MaxPreparedStatements.ToString(CultureInfo.InvariantCulture)} prepared statements per session");
         }
 
-        (PgCommand? Command, PgError? Error) parsed = PgCommandParser.Parse(message.Sql, session.RewriteContext) switch
+        PgCommand command;
+        if (session.TryGetCachedParse(message.Sql, out var cached))
         {
-            IReadOnlyList<PgCommand> and [var single] => (single, (PgError?)null),
-            IReadOnlyList<PgCommand> => ((PgCommand?)null, PgError.Syntax("cannot insert multiple commands into a prepared statement")),
-            PgError error => (null, error),
-        };
-        if (parsed.Command is not { } command)
+            if (cached.Count != 1)
+            {
+                return PgError.Syntax("cannot insert multiple commands into a prepared statement");
+            }
+
+            command = cached[0];
+        }
+        else
         {
-            return parsed.Error;
+            (PgCommand? Command, PgError? Error) parsed = PgCommandParser.Parse(message.Sql, session.RewriteContext) switch
+            {
+                IReadOnlyList<PgCommand> and [var single] => CacheSingle(message.Sql, single),
+                IReadOnlyList<PgCommand> => ((PgCommand?)null, PgError.Syntax("cannot insert multiple commands into a prepared statement")),
+                PgError error => (null, error),
+            };
+            if (parsed.Command is not { } resolved)
+            {
+                return parsed.Error;
+            }
+
+            command = resolved;
         }
 
         var count = Math.Max(message.ParameterOids.Length, command is PgSqlCommand sql ? sql.Rewrite.ParameterCount : 0);
-        var oids = new int[count];
-        message.ParameterOids.CopyTo(oids, 0);
-        if (command is PgSqlCommand typed)
+        int[] oids;
+        if (count == 0)
         {
-            foreach (var (parameter, oid) in typed.Rewrite.ParameterTypes)
+            oids = [];
+        }
+        else if (message.ParameterOids.Length == count && Array.IndexOf(message.ParameterOids, 0) < 0)
+        {
+            oids = message.ParameterOids;
+        }
+        else
+        {
+            oids = new int[count];
+            message.ParameterOids.CopyTo(oids, 0);
+            if (command is PgSqlCommand typed)
             {
-                if (parameter <= count && oids[parameter - 1] == 0)
+                foreach (var (parameter, oid) in typed.Rewrite.ParameterTypes)
                 {
-                    oids[parameter - 1] = oid;
+                    if (parameter <= count && oids[parameter - 1] == 0)
+                    {
+                        oids[parameter - 1] = oid;
+                    }
                 }
-            }
 
-            if (Array.IndexOf(oids, 0) >= 0 && typed.Rewrite.ParameterColumns.Count > 0
-                && await InferParameterTypesAsync(typed, oids) is { } inferenceError)
-            {
-                return inferenceError;
+                if (Array.IndexOf(oids, 0) >= 0 && typed.Rewrite.ParameterColumns.Count > 0)
+                {
+                    if (session.TryGetCachedInferredOids(message.Sql, out var cachedOids) && cachedOids.Length >= count)
+                    {
+                        for (var index = 0; index < count; index++)
+                        {
+                            if (oids[index] == 0)
+                            {
+                                oids[index] = cachedOids[index];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (await InferParameterTypesAsync(typed, oids) is { } inferenceError)
+                        {
+                            return inferenceError;
+                        }
+
+                        if (message.ParameterOids.Length == 0 || Array.TrueForAll(message.ParameterOids, static oid => oid == 0))
+                        {
+                            session.CacheInferredOids(message.Sql, [.. oids]);
+                        }
+                    }
+                }
             }
         }
 
         session.Statements[message.Name] = new PgPreparedStatement(message.Name, command, oids);
         Writer.Empty('1');
         return null;
+    }
+
+    private (PgCommand?, PgError?) CacheSingle(string sql, PgCommand command)
+    {
+        session.CacheParse(sql, [command]);
+        return (command, null);
     }
 
     private async ValueTask<PgError?> InferParameterTypesAsync(PgSqlCommand command, int[] oids)
@@ -163,25 +221,30 @@ internal sealed partial class PostgresConnection
             return new PgError("26000", $"prepared statement \"{message.Statement}\" does not exist");
         }
 
-        if (message.Parameters.Length != statement.ParameterOids.Length)
+        if (message.ParameterCount != statement.ParameterOids.Length)
         {
             return new PgError("08P01",
-                $"bind message supplies {message.Parameters.Length.ToString(CultureInfo.InvariantCulture)} parameters, but prepared statement \"{message.Statement}\" requires {statement.ParameterOids.Length.ToString(CultureInfo.InvariantCulture)}");
+                $"bind message supplies {message.ParameterCount.ToString(CultureInfo.InvariantCulture)} parameters, but prepared statement \"{message.Statement}\" requires {statement.ParameterOids.Length.ToString(CultureInfo.InvariantCulture)}");
         }
 
-        if (message.ParameterFormats.Length > 1 && message.ParameterFormats.Length != message.Parameters.Length)
+        if (message.ParameterFormats.Length > 1 && message.ParameterFormats.Length != message.ParameterCount)
         {
             return new PgError("08P01", "bind message has an invalid number of parameter formats");
         }
 
         var budget = PostgresLimits.MaxPortalBytes - session.PortalBytes(except: message.Portal);
         var bytes = PgValueCodec.Footprint(message.ResultFormats);
-        var values = new SqlValue[message.Parameters.Length];
+        var values = message.ParameterCount == 0 ? [] : new SqlValue[message.ParameterCount];
         for (var index = 0; index < values.Length; index++)
         {
             var format = message.ParameterFormats.Length == 0 ? (short)0 : message.ParameterFormats[Math.Min(index, message.ParameterFormats.Length - 1)];
             var oid = statement.ParameterOids[index];
-            if (!PgValueCodec.TryDecode(oid, format, message.Parameters[index], out values[index]))
+            var slice = message.Parameters[index];
+            if (slice.Length == -1)
+            {
+                values[index] = SqlValue.Null;
+            }
+            else if (!PgValueCodec.TryDecode(oid, format, message.ParameterBuffer.AsSpan(slice.Offset, slice.Length), out values[index]))
             {
                 return new PgError(PgValueCodec.DecodeFailureState(oid, format),
                     $"invalid input for parameter ${(index + 1).ToString(CultureInfo.InvariantCulture)} of type {PgOid.FormatName(oid)}");

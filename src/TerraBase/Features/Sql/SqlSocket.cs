@@ -15,7 +15,7 @@ internal readonly union SocketAnswerOutcome(SocketAnswer, SqlRefusal);
 
 internal sealed record SocketAnswer(IReadOnlyList<SqlResultSet> Results);
 
-internal sealed record SocketMessage(byte[] Payload, long Started, long Completed);
+internal readonly record struct SocketMessage(byte[] Buffer, int Length, long Started, long Completed);
 
 internal sealed record SocketServices(
     SqlRunner Runner,
@@ -38,6 +38,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private const long MaxPendingBytes = 4L * 1024 * 1024;
 
+    private const int MaxRetainedBufferBytes = 64 * 1024;
+
     private static readonly TimeSpan PartialDrainBudget = TimeSpan.FromSeconds(2);
 
     private static readonly TimeSpan CloseBudget = TimeSpan.FromSeconds(2);
@@ -53,8 +55,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private readonly long _accepted = services.Time.GetTimestamp();
     private readonly CancellationTokenSource _pumpStop = new();
     private readonly Lock _progress = new();
+    private ArrayBufferWriter<byte> _sendBuffer = new(4096);
+    private Utf8JsonWriter? _sendWriter;
+    private ArrayBufferWriter<byte>? _multiFrame;
     private Channel<SocketMessage>? _inbox;
     private Task _pump = Task.CompletedTask;
+    private ReceiveDeadline? _waitingDeadline;
     private ReceiveDeadline? _waiting;
     private ReceiveDeadline? _inFlight;
     private (long Started, int Bytes, long Sequence)? _partial;
@@ -70,6 +76,8 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private bool _failed;
     private long _transactionStarted;
     private CausalBookmark _bookmark = CausalBookmark.Empty;
+    private CausalBookmark _encodedBookmarkKey = CausalBookmark.Empty;
+    private string? _encodedBookmarkValue;
 
     private bool InTransaction => _transaction is not null || _failed;
 
@@ -93,10 +101,11 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return;
         }
 
+        _waitingDeadline = new ReceiveDeadline(time, ExpireAsync, cancellationToken);
         while (!cancellationToken.IsCancellationRequested)
         {
-            var message = _target is null ? await ReceiveAsync(cancellationToken) : await NextAsync(Inbox(), cancellationToken);
-            if (message is null)
+            var received = _target is null ? await ReceiveAsync() : await NextAsync(Inbox());
+            if (received is not { } message)
             {
                 return;
             }
@@ -118,6 +127,17 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         await _pumpStop.CancelAsync();
         await _pump;
         _pumpStop.Dispose();
+        if (_inbox is { } inbox)
+        {
+            while (inbox.Reader.TryRead(out var leftover))
+            {
+                ReturnPayload(leftover.Buffer);
+            }
+        }
+
+        _waitingDeadline?.Dispose();
+        _inFlight?.Dispose();
+        _sendWriter?.Dispose();
         if (_transaction is { } transaction)
         {
             _transaction = null;
@@ -128,10 +148,19 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         _tenantSession?.Dispose();
     }
 
-    private async Task<bool> HandleAsync(SocketMessage message, SqlCausality causality, CancellationToken cancellationToken)
+    private async ValueTask<bool> HandleAsync(SocketMessage message, SqlCausality causality, CancellationToken cancellationToken)
     {
-        var payload = message.Payload;
-        if (Parse(payload) is not { } frame)
+        SocketFrame? parsed;
+        try
+        {
+            parsed = Parse(message.Buffer.AsSpan(0, message.Length));
+        }
+        finally
+        {
+            ReturnPayload(message.Buffer);
+        }
+
+        if (parsed is not { } frame)
         {
             await ErrorAsync(null, SqlRefusal.Invalid("frames are JSON objects with id and type", 0), cancellationToken);
             return true;
@@ -291,9 +320,12 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
     private async ValueTask<SocketAnswerOutcome> AutocommitAsync(ResolvedDatabase target, SqlBatch batch, ConsistencyMode? mode, CancellationToken cancellationToken)
     {
-        if (batch.Statements.Any(static statement => statement.Kind is StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback))
+        for (var index = 0; index < batch.Statements.Count; index++)
         {
-            return new SqlRefusal("transaction_state", "BEGIN, COMMIT and ROLLBACK go in their own frame", "25000", 0, StatusCodes.Status400BadRequest);
+            if (batch.Statements[index].Kind is StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback)
+            {
+                return new SqlRefusal("transaction_state", "BEGIN, COMMIT and ROLLBACK go in their own frame", "25000", 0, StatusCodes.Status400BadRequest);
+            }
         }
 
         var outcome = await runner.RunAsync(target, batch.Sql, new SqlCausality(batch.Mode ?? mode ?? _mode, _bookmark), cancellationToken);
@@ -357,7 +389,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             return new SqlRefusal("transaction_aborted", "the transaction failed; only rollback is accepted", "25P02", 0, StatusCodes.Status400BadRequest);
         }
 
-        var outcome = await runner.PrepareAsync(target, batch.Statements, RulesEnforcer.Catalog(transaction), cancellationToken);
+        var outcome = await runner.PrepareBatchAsync(target, batch, transaction, cancellationToken);
         return outcome switch
         {
             EnforcedSql enforced => await RunInTransactionAsync(target, transaction, enforced.Statements, batch.Writes, cancellationToken),
@@ -368,13 +400,13 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
     private async ValueTask<SocketAnswerOutcome> RunInTransactionAsync(
         ResolvedDatabase target, ISqlTransaction transaction, IReadOnlyList<SqlStatement> statements, bool writes, CancellationToken cancellationToken)
     {
-        List<SqlResultSet> results = [];
-        foreach (var statement in statements)
+        var results = new SqlResultSet[statements.Count];
+        for (var index = 0; index < statements.Count; index++)
         {
-            var failureOutcome = await transaction.ExecuteAsync(statement, cancellationToken);
+            var failureOutcome = await transaction.ExecuteAsync(statements[index], cancellationToken);
             var failure = failureOutcome switch
             {
-                SqlResultSet result => Collect(results, result),
+                SqlResultSet result => AssignResult(results, index, result),
                 SqlError error => SqlRefusal.From(error),
                 StorageBusy busy => SqlRefusal.From(busy),
                 StorageTimeout timeout => SqlRefusal.From(timeout),
@@ -454,15 +486,15 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         return new SocketAnswer([]);
     }
 
-    private static SqlRefusal? Collect(List<SqlResultSet> results, SqlResultSet result)
+    private static SqlRefusal? AssignResult(SqlResultSet[] results, int index, SqlResultSet result)
     {
-        results.Add(result);
+        results[index] = result;
         return null;
     }
 
     private static ConsistencyMode? Mode(string? value) => value is not null && ConsistencyHeaders.TryParse(value, out var mode) ? mode : null;
 
-    private static SocketFrame? Parse(byte[] payload)
+    private static SocketFrame? Parse(ReadOnlySpan<byte> payload)
     {
         try
         {
@@ -474,27 +506,165 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         }
     }
 
-    private Task ResultAsync(long? id, IReadOnlyList<SqlResultSet> results, CancellationToken cancellationToken) => v2
-        ? SendAsync(JsonSerializer.SerializeToUtf8Bytes(new SocketServerFrame("result", id ?? 0, SqlWire.Results(results), _bookmark.Encode(), InTransaction, null),
-            SqlSocketJsonContext.Default.SocketServerFrame), cancellationToken)
-        : SendAsync(JsonSerializer.SerializeToUtf8Bytes(new LegacySocketResult(id, "result", SqlWire.Legacy(results).Results, InTransaction),
-            SqlSocketJsonContext.Default.LegacySocketResult), cancellationToken);
+    private string EncodedBookmark()
+    {
+        if (_encodedBookmarkValue is not null && _encodedBookmarkKey.Equals(_bookmark))
+        {
+            return _encodedBookmarkValue;
+        }
 
-    private Task ErrorAsync(long? id, SqlRefusal refusal, CancellationToken cancellationToken) => v2
-        ? SendAsync(JsonSerializer.SerializeToUtf8Bytes(new SocketServerFrame("error", id ?? 0, null, _bookmark.Encode(), InTransaction, refusal.Body),
-            SqlSocketJsonContext.Default.SocketServerFrame), cancellationToken)
-        : SendAsync(JsonSerializer.SerializeToUtf8Bytes(new LegacySocketError(id, "error",
-            new LegacySocketErrorBody(refusal.Code, refusal.Message, refusal.Statement, refusal.SqlState), InTransaction),
-            SqlSocketJsonContext.Default.LegacySocketError), cancellationToken);
+        _encodedBookmarkKey = _bookmark;
+        _encodedBookmarkValue = _bookmark.Encode();
+        return _encodedBookmarkValue;
+    }
 
-    private async Task SendAsync(byte[] payload, CancellationToken cancellationToken)
+    private Utf8JsonWriter ResetSendWriter()
+    {
+        _sendBuffer.ResetWrittenCount();
+        if (_sendWriter is { } writer)
+        {
+            writer.Reset(_sendBuffer);
+            return writer;
+        }
+
+        writer = new Utf8JsonWriter(_sendBuffer);
+        _sendWriter = writer;
+        return writer;
+    }
+
+    private ValueTask ResultAsync(long? id, IReadOnlyList<SqlResultSet> results, CancellationToken cancellationToken)
+    {
+        var writer = ResetSendWriter();
+        if (v2)
+        {
+            WriteV2Result(writer, id ?? 0, results, EncodedBookmark(), InTransaction);
+        }
+        else
+        {
+            WriteLegacyResult(writer, id, results, InTransaction);
+        }
+
+        writer.Flush();
+        return SendBufferedAsync(cancellationToken);
+    }
+
+    private static void WriteV2Result(Utf8JsonWriter writer, long id, IReadOnlyList<SqlResultSet> results, string bookmark, bool inTransaction)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("type"u8, "result"u8);
+        writer.WriteNumber("id"u8, id);
+        writer.WritePropertyName("results"u8);
+        writer.WriteStartArray();
+        for (var i = 0; i < results.Count; i++)
+        {
+            var result = results[i];
+            writer.WriteStartObject();
+            writer.WritePropertyName("columns"u8);
+            writer.WriteStartArray();
+            for (var j = 0; j < result.Columns.Count; j++)
+            {
+                var column = result.Columns[j];
+                writer.WriteStartObject();
+                writer.WriteString("name"u8, column.Name);
+                if (column.DeclaredType is { } declaredType)
+                {
+                    writer.WriteString("type"u8, declaredType);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WritePropertyName("rows"u8);
+            SqlRowsConverter.WriteRows(writer, result.Rows);
+            writer.WriteNumber("rowsAffected"u8, result.RowsAffected);
+            writer.WriteNumber("lastInsertRowId"u8, result.LastInsertRowId);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+        writer.WriteString("bookmark"u8, bookmark);
+        writer.WriteBoolean("transaction"u8, inTransaction);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteLegacyResult(Utf8JsonWriter writer, long? id, IReadOnlyList<SqlResultSet> results, bool inTransaction)
+    {
+        writer.WriteStartObject();
+        if (id is { } frameId)
+        {
+            writer.WriteNumber("id"u8, frameId);
+        }
+
+        writer.WriteString("type"u8, "result"u8);
+        writer.WritePropertyName("results"u8);
+        writer.WriteStartArray();
+        for (var i = 0; i < results.Count; i++)
+        {
+            var result = results[i];
+            writer.WriteStartObject();
+            writer.WritePropertyName("columns"u8);
+            writer.WriteStartArray();
+            for (var j = 0; j < result.Columns.Count; j++)
+            {
+                var column = result.Columns[j];
+                writer.WriteStartObject();
+                writer.WriteString("name"u8, column.Name);
+                if (column.DeclaredType is { } decltype)
+                {
+                    writer.WriteString("decltype"u8, decltype);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WritePropertyName("rows"u8);
+            SqlRowsConverter.WriteRows(writer, result.Rows);
+            writer.WriteNumber("rows_affected"u8, result.RowsAffected);
+            writer.WriteNumber("last_insert_rowid"u8, result.LastInsertRowId);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+        writer.WriteBoolean("transaction"u8, inTransaction);
+        writer.WriteEndObject();
+    }
+
+    private ValueTask ErrorAsync(long? id, SqlRefusal refusal, CancellationToken cancellationToken)
+    {
+        var writer = ResetSendWriter();
+        if (v2)
+        {
+            JsonSerializer.Serialize(writer, new SocketServerFrame("error", id ?? 0, null, EncodedBookmark(), InTransaction, refusal.Body),
+                SqlSocketJsonContext.Default.SocketServerFrame);
+        }
+        else
+        {
+            JsonSerializer.Serialize(writer, new LegacySocketError(id, "error",
+                new LegacySocketErrorBody(refusal.Code, refusal.Message, refusal.Statement, refusal.SqlState), InTransaction),
+                SqlSocketJsonContext.Default.LegacySocketError);
+        }
+
+        writer.Flush();
+        return SendBufferedAsync(cancellationToken);
+    }
+
+    private async ValueTask SendBufferedAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+            await socket.SendAsync(_sendBuffer.WrittenMemory, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
         }
         catch (WebSocketException)
         {
+        }
+        finally
+        {
+            if (_sendBuffer.Capacity > MaxRetainedBufferBytes)
+            {
+                _sendBuffer = new ArrayBufferWriter<byte>(4096);
+            }
         }
     }
 
@@ -503,20 +673,30 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         : _transaction is not null ? QosPolicy.MaxTransaction - time.GetElapsedTime(_transactionStarted)
         : QosPolicy.IdleTimeout;
 
-    private async Task<SocketMessage?> ReceiveAsync(CancellationToken cancellationToken)
+    private async ValueTask<SocketMessage?> ReceiveAsync()
     {
+        if (_waitingDeadline is not { } deadline)
+        {
+            return null;
+        }
+
         var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
-        using var deadline = new ReceiveDeadline(time, IdleBudget(), ExpireAsync);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        deadline.Arm(IdleBudget());
         try
         {
-            if (await ReadMessageAsync(buffer, MaxAuthFrameBytes, "the auth frame is at most 32 KiB", linked.Token) is not { } payload)
+            if (await ReadMessageAsync(buffer, MaxAuthFrameBytes, "the auth frame is at most 32 KiB", deadline.Token) is not { } payload)
             {
                 return null;
             }
 
             var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp(), 0);
-            return deadline.Complete() ? new SocketMessage(payload, arrived.Started, arrived.Completed) : null;
+            if (!deadline.Complete())
+            {
+                ReturnPayload(payload.Buffer);
+                return null;
+            }
+
+            return new SocketMessage(payload.Buffer, payload.Length, arrived.Started, arrived.Completed);
         }
         finally
         {
@@ -540,6 +720,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             SingleWriter = true,
         });
         _inbox = inbox;
+        _inFlight = new ReceiveDeadline(time, ExpirePartialAsync);
         input.Failed = MarkTerminal;
         input.Progress = Progressed;
         _pump = PumpAsync(inbox.Writer, _pumpStop.Token);
@@ -551,8 +732,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         lock (_progress)
         {
             _partial = (started, bytes, sequence);
-            _inFlight ??= new ReceiveDeadline(time, QosPolicy.MessageBudget(bytes) - time.GetElapsedTime(started), ExpirePartialAsync);
-            _inFlight.Progress(started, bytes);
+            _inFlight?.ArmPartial(started, bytes);
             _waiting?.Progress(started, bytes);
         }
     }
@@ -564,24 +744,25 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         _pumpStop.CancelAfter(PartialDrainBudget);
     }
 
-    private async Task<bool> ArrivedOnTimeAsync()
+    private ValueTask<bool> ArrivedOnTimeAsync()
     {
-        ReceiveDeadline? inFlight;
-        lock (_progress)
+        if (_inFlight is not { } inFlight)
         {
-            inFlight = _inFlight;
-            _inFlight = null;
+            return ValueTask.FromResult(true);
         }
 
-        if (inFlight is null)
+        if (inFlight.Complete())
         {
-            return true;
+            return ValueTask.FromResult(true);
         }
 
-        var onTime = inFlight.Complete();
+        return AwaitInFlightExpiryAsync(inFlight);
+    }
+
+    private static async ValueTask<bool> AwaitInFlightExpiryAsync(ReceiveDeadline inFlight)
+    {
         await inFlight.Expiry;
-        inFlight.Dispose();
-        return onTime;
+        return false;
     }
 
     private async Task PumpAsync(ChannelWriter<SocketMessage> inbox, CancellationToken cancellationToken)
@@ -594,16 +775,17 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
             {
                 if (!await ArrivedOnTimeAsync())
                 {
+                    ReturnPayload(payload.Buffer);
                     return;
                 }
 
                 var arrived = input.Complete() ?? new ArrivedMessage(time.GetTimestamp(), time.GetTimestamp(), 0);
-                var message = new SocketMessage(payload, arrived.Started, arrived.Completed);
+                var message = new SocketMessage(payload.Buffer, payload.Length, arrived.Started, arrived.Completed);
 
                 bool published;
                 lock (_progress)
                 {
-                    published = Interlocked.Add(ref _pendingBytes, message.Payload.Length) <= MaxPendingBytes && inbox.TryWrite(message);
+                    published = Interlocked.Add(ref _pendingBytes, message.Length) <= MaxPendingBytes && inbox.TryWrite(message);
                     if (published && _partial is { } partial && partial.Sequence == arrived.Sequence)
                     {
                         _partial = null;
@@ -612,6 +794,7 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
 
                 if (!published)
                 {
+                    ReturnPayload(message.Buffer);
                     MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.PolicyViolation, "too many frames are waiting; wait for answers before sending more");
                     return;
@@ -634,32 +817,51 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         }
     }
 
-    private async Task<SocketMessage?> NextAsync(ChannelReader<SocketMessage> inbox, CancellationToken cancellationToken)
+    private ValueTask<SocketMessage?> NextAsync(ChannelReader<SocketMessage> inbox)
     {
-        ReceiveDeadline armed;
+        if (_waitingDeadline is not { } deadline)
+        {
+            return ValueTask.FromResult<SocketMessage?>(null);
+        }
+
         lock (_progress)
         {
             if (inbox.TryRead(out var ready))
             {
-                Interlocked.Add(ref _pendingBytes, -ready.Payload.Length);
-                return Volatile.Read(ref _terminal) == 0 ? ready : null;
+                Interlocked.Add(ref _pendingBytes, -ready.Length);
+                if (Volatile.Read(ref _terminal) == 0)
+                {
+                    return ValueTask.FromResult<SocketMessage?>(ready);
+                }
+
+                ReturnPayload(ready.Buffer);
+                return ValueTask.FromResult<SocketMessage?>(null);
             }
 
-            armed = new ReceiveDeadline(time, IdleBudget(), ExpireAsync, _partial is { } partial ? (partial.Started, partial.Bytes) : null);
-            _waiting = armed;
+            deadline.Arm(IdleBudget(), _partial is { } partial ? (partial.Started, partial.Bytes) : null);
+            _waiting = deadline;
         }
 
-        using var deadline = armed;
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        return WaitNextAsync(inbox, deadline);
+    }
+
+    private async ValueTask<SocketMessage?> WaitNextAsync(ChannelReader<SocketMessage> inbox, ReceiveDeadline deadline)
+    {
         try
         {
-            if (!await inbox.WaitToReadAsync(linked.Token) || !inbox.TryRead(out var message))
+            if (!await inbox.WaitToReadAsync(deadline.Token) || !inbox.TryRead(out var message))
             {
                 return null;
             }
 
-            Interlocked.Add(ref _pendingBytes, -message.Payload.Length);
-            return deadline.Complete() && Volatile.Read(ref _terminal) == 0 ? message : null;
+            Interlocked.Add(ref _pendingBytes, -message.Length);
+            if (deadline.Complete() && Volatile.Read(ref _terminal) == 0)
+            {
+                return message;
+            }
+
+            ReturnPayload(message.Buffer);
+            return null;
         }
         catch (OperationCanceledException)
         {
@@ -677,11 +879,47 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         }
     }
 
-    private async Task<byte[]?> ReadMessageAsync(byte[] buffer, int limit, string limitReason, CancellationToken cancellationToken)
+    private async ValueTask<(byte[] Buffer, int Length)?> ReadMessageAsync(byte[] buffer, int limit, string limitReason, CancellationToken cancellationToken)
     {
         try
         {
-            using var message = new MemoryStream();
+            var first = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
+            if (first.MessageType == WebSocketMessageType.Close)
+            {
+                MarkTerminal();
+                await CloseAsync(WebSocketCloseStatus.NormalClosure, "closed");
+                return null;
+            }
+
+            if (first.MessageType == WebSocketMessageType.Binary)
+            {
+                MarkTerminal();
+                await CloseAsync(WebSocketCloseStatus.InvalidMessageType, "frames are JSON text");
+                return null;
+            }
+
+            if (first.Count > limit)
+            {
+                MarkTerminal();
+                await CloseAsync(WebSocketCloseStatus.MessageTooBig, limitReason);
+                return null;
+            }
+
+            if (first.EndOfMessage)
+            {
+                if (first.Count == 0)
+                {
+                    return ([], 0);
+                }
+
+                var rented = ArrayPool<byte>.Shared.Rent(first.Count);
+                buffer.AsSpan(0, first.Count).CopyTo(rented);
+                return (rented, first.Count);
+            }
+
+            var writer = _multiFrame ??= new ArrayBufferWriter<byte>(Math.Max(first.Count * 2, 4096));
+            writer.ResetWrittenCount();
+            writer.Write(buffer.AsSpan(0, first.Count));
             while (true)
             {
                 var read = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
@@ -699,17 +937,34 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
                     return null;
                 }
 
-                if (message.Length + read.Count > limit)
+                if (writer.WrittenCount + read.Count > limit)
                 {
                     MarkTerminal();
                     await CloseAsync(WebSocketCloseStatus.MessageTooBig, limitReason);
                     return null;
                 }
 
-                message.Write(buffer, 0, read.Count);
+                writer.Write(buffer.AsSpan(0, read.Count));
                 if (read.EndOfMessage)
                 {
-                    return message.ToArray();
+                    var total = writer.WrittenCount;
+                    if (total == 0)
+                    {
+                        return ([], 0);
+                    }
+
+                    var rented = ArrayPool<byte>.Shared.Rent(total);
+                    writer.WrittenSpan.CopyTo(rented);
+                    if (writer.Capacity > MaxRetainedBufferBytes)
+                    {
+                        _multiFrame = null;
+                    }
+                    else
+                    {
+                        writer.ResetWrittenCount();
+                    }
+
+                    return (rented, total);
                 }
             }
         }
@@ -717,6 +972,14 @@ internal sealed class SqlSocket(WebSocket socket, SocketInput input, bool v2, st
         {
             MarkTerminal();
             return null;
+        }
+    }
+
+    private static void ReturnPayload(byte[] buffer)
+    {
+        if (buffer.Length > 0)
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

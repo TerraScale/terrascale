@@ -179,6 +179,29 @@ internal static class PgCatalogSql
 
     public static bool IsAlwaysEmpty(string schema, string name) => schema == "pg_catalog" && EmptyRelations.ContainsKey(name);
 
+    public static bool IsAlwaysEmpty(ReadOnlySpan<char> schema, ReadOnlySpan<char> name)
+    {
+        if (!schema.SequenceEqual("pg_catalog"))
+        {
+            return false;
+        }
+
+        var lookup = EmptyRelations.GetAlternateLookup<ReadOnlySpan<char>>();
+        if (lookup.ContainsKey(name))
+        {
+            return true;
+        }
+
+        if (name.Length > 64)
+        {
+            return false;
+        }
+
+        Span<char> lowered = stackalloc char[name.Length];
+        name.ToLowerInvariant(lowered);
+        return lookup.ContainsKey(lowered);
+    }
+
     public static bool TryGetRelation(string schema, string name, PgRewriteContext context, out string sql)
     {
         sql = string.Empty;

@@ -27,6 +27,24 @@ internal sealed class CallerRegistry(FrozenDictionary<string, CallerKey> keys, i
 
     public FrozenDictionary<string, CallerKey> Keys { get; } = keys;
 
+    public FrozenDictionary<string, JsonWebKey> SigningKeys { get; } = BuildSigningKeys(keys);
+
+    private static FrozenDictionary<string, JsonWebKey> BuildSigningKeys(FrozenDictionary<string, CallerKey> keys)
+    {
+        if (keys.Count == 0)
+        {
+            return FrozenDictionary<string, JsonWebKey>.Empty;
+        }
+
+        Dictionary<string, JsonWebKey> signing = new(keys.Count, StringComparer.Ordinal);
+        foreach (var (kid, entry) in keys)
+        {
+            signing.Add(kid, new JsonWebKey(entry.Jwk.GetRawText()) { Kid = entry.Kid });
+        }
+
+        return signing.ToFrozenDictionary(StringComparer.Ordinal);
+    }
+
     public static bool IsGrant(string grant) => Grants.Contains(grant)
         || (grant.StartsWith("data:", StringComparison.Ordinal) && Ulid.TryParse(grant["data:".Length..], out _));
 
