@@ -108,11 +108,12 @@ public sealed class BackupContinuityService(
 
     internal void PruneInactive(HashSet<Ulid> active)
     {
-        foreach (var databaseId in _pendingPeerRewinds.Keys)
+        var now = timeProvider.GetUtcNow();
+        foreach (var (databaseId, pending) in _pendingPeerRewinds)
         {
-            if (!active.Contains(databaseId))
+            if (!active.Contains(databaseId) || now >= pending.ExpiresAtUtc)
             {
-                _ = _pendingPeerRewinds.TryRemove(databaseId, out _);
+                _ = _pendingPeerRewinds.TryRemove(new KeyValuePair<Ulid, PendingPeerRewind>(databaseId, pending));
             }
         }
     }
@@ -490,23 +491,17 @@ public sealed class BackupContinuityService(
             return rewoundTo;
         }
 
-        if (cachedBefore is not null)
+        if (!restorer.Layout.Exists(databaseId))
         {
-            var marks = PreRewindMarksBeyond(cachedBefore, rewoundTo);
-            if (marks.Count > 0)
-            {
-                _pendingPeerRewinds[databaseId] = new PendingPeerRewind(rewoundTo, marks, timeProvider.GetUtcNow() + PeerRewindRecheckWindow);
-            }
-            else
-            {
-                _ = _pendingPeerRewinds.TryRemove(databaseId, out _);
-            }
-        }
-        else
-        {
-            _pendingPeerRewinds[databaseId] = new PendingPeerRewind(rewoundTo, null, timeProvider.GetUtcNow() + PeerRewindRecheckWindow);
+            _ = _pendingPeerRewinds.TryRemove(databaseId, out _);
+            return rewoundTo;
         }
 
+        var marks = cachedBefore is not null ? PreRewindMarksBeyond(cachedBefore, rewoundTo) : null;
+        _pendingPeerRewinds[databaseId] = new PendingPeerRewind(
+            rewoundTo,
+            marks is { Count: > 0 } ? marks : null,
+            timeProvider.GetUtcNow() + PeerRewindRecheckWindow);
         return rewoundTo;
     }
 
@@ -697,34 +692,40 @@ public sealed class BackupContinuityService(
         var archived = await archiver.RunAsync(manifest, forceSnapshot, cancellationToken);
         return archived switch
         {
-            ArchiveManifest stored => await ScheduledStatusForSessionAsync(stored, session, scheduled, cancellationToken),
+            ArchiveManifest stored => await ScheduledStatusForSessionAsync(manifest, stored, session, scheduled, cancellationToken),
             ContinuityUnavailable unavailable => unavailable,
         };
     }
 
     private async ValueTask<ScheduledArchiveOutcome> ScheduledStatusForSessionAsync(
-        ArchiveManifest manifest,
+        ArchiveManifest loaded,
+        ArchiveManifest stored,
         ISqlDatabaseSession session,
         bool scheduled,
         CancellationToken cancellationToken)
     {
-        var measured = await StatusForSessionAsync(manifest, session, cancellationToken);
+        var measured = await StatusForSessionAsync(stored, session, cancellationToken);
         return measured switch
         {
-            BackupStatus status => ScheduledStatus(manifest, status, session, scheduled),
+            BackupStatus status => ScheduledStatus(loaded, stored, status, session, scheduled),
             ContinuityNotFound missing => missing,
             ContinuityUnavailable unavailable => unavailable,
         };
     }
 
-    private ScheduledArchiveStatus ScheduledStatus(ArchiveManifest manifest, BackupStatus status, ISqlDatabaseSession session, bool scheduled)
+    private ScheduledArchiveStatus ScheduledStatus(
+        ArchiveManifest loaded,
+        ArchiveManifest stored,
+        BackupStatus status,
+        ISqlDatabaseSession session,
+        bool scheduled)
     {
         var localBehind = !session.CurrentBookmark.Dominates(status.ArchivedThrough);
-        var peerRewindPending = scheduled && IsPeerRewindPending(session.DatabaseId, manifest);
+        var peerRewindPending = scheduled && IsPeerRewindPending(session.DatabaseId, loaded, stored);
         return new ScheduledArchiveStatus(status, localBehind || peerRewindPending);
     }
 
-    private bool IsPeerRewindPending(Ulid databaseId, ArchiveManifest manifest)
+    private bool IsPeerRewindPending(Ulid databaseId, ArchiveManifest loaded, ArchiveManifest stored)
     {
         if (!_pendingPeerRewinds.TryGetValue(databaseId, out var pending))
         {
@@ -738,8 +739,8 @@ public sealed class BackupContinuityService(
         }
 
         var stillPresent = pending.PreRewindObjects is { } marks
-            ? ContainsAnyMark(manifest, marks)
-            : HasHistoryBeyond(manifest, pending.RewoundTo);
+            ? ContainsAnyMark(loaded, marks) && ContainsAnyMark(stored, marks)
+            : HasHistoryBeyond(loaded, pending.RewoundTo) && HasHistoryBeyond(stored, pending.RewoundTo);
         if (!stillPresent)
         {
             _ = _pendingPeerRewinds.TryRemove(new KeyValuePair<Ulid, PendingPeerRewind>(databaseId, pending));
