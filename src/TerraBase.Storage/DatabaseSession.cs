@@ -720,7 +720,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         }
     }
 
-    internal int TrimIdleResources(TimeSpan readerIdleAfter, bool shrinkWriter)
+    internal int TrimIdleResources(TimeSpan readerIdleAfter, TimeSpan? shrinkWriterAfter)
     {
         if (!IsUsable)
         {
@@ -758,9 +758,9 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             reader.Dispose();
         }
 
-        if (shrinkWriter)
+        if (shrinkWriterAfter is { } minWriterIdle)
         {
-            QueueShrinkWriter();
+            QueueShrinkWriter(minWriterIdle);
         }
 
         return trimmed.Count;
@@ -793,10 +793,10 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private TimeSpan IdleElapsed() => _context.Time.GetElapsedTime(Volatile.Read(ref _lastActivityTimestamp));
 
-    private void QueueShrinkWriter()
+    private void QueueShrinkWriter(TimeSpan minIdle)
     {
         var activity = Volatile.Read(ref _lastActivityTimestamp);
-        if (Volatile.Read(ref _lastShrunkActivityTimestamp) == activity)
+        if (_context.Time.GetElapsedTime(activity) < minIdle || Volatile.Read(ref _lastShrunkActivityTimestamp) == activity)
         {
             return;
         }
@@ -806,7 +806,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return;
         }
 
-        if (!IsUsable || !_requests.Writer.TryWrite(new ShrinkWriterRequest(activity)))
+        if (!IsUsable || !_requests.Writer.TryWrite(new ShrinkWriterRequest(activity, minIdle)))
         {
             Volatile.Write(ref _shrinkWriterQueued, 0);
         }

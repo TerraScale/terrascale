@@ -59,10 +59,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
     }
 
-    public static int TrimIdleResources(ISqlDatabaseSession session, TimeSpan readerIdleAfter, bool shrinkWriter)
+    public static int TrimIdleResources(ISqlDatabaseSession session, TimeSpan readerIdleAfter, TimeSpan? shrinkWriterAfter)
     {
         ArgumentNullException.ThrowIfNull(session);
-        return session is DatabaseSession sqlite ? sqlite.TrimIdleResources(readerIdleAfter, shrinkWriter) : 0;
+        return session is DatabaseSession sqlite ? sqlite.TrimIdleResources(readerIdleAfter, shrinkWriterAfter) : 0;
     }
 
     public static bool IsIdle(ISqlDatabaseSession session, TimeSpan idleFor)

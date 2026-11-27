@@ -198,8 +198,10 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         {
             if (entry.Session.IsUsable)
             {
-                var shrinkWriter = IdleFor(entry) >= shrinkWriterAfter && SqliteStorageEngine.IsIdle(entry.Session, shrinkWriterAfter);
-                trimmed += SqliteStorageEngine.TrimIdleResources(entry.Session, readerIdleAfter, shrinkWriter);
+                var shrinkAfter = IdleFor(entry) >= shrinkWriterAfter && SqliteStorageEngine.IsIdle(entry.Session, shrinkWriterAfter)
+                    ? shrinkWriterAfter
+                    : (TimeSpan?)null;
+                trimmed += SqliteStorageEngine.TrimIdleResources(entry.Session, readerIdleAfter, shrinkAfter);
             }
         }
 

@@ -43,7 +43,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
             {
                 foreach (var databaseId in databases.Due())
                 {
-                    await SyncTrackedAsync(databaseId, databases.BeginSync(databaseId), DatabaseResolveMode.Transient, cancellationToken);
+                    await SyncTrackedAsync(databaseId, databases.BeginSync(databaseId), cancellationToken);
                 }
             }
         }
@@ -59,7 +59,7 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         {
             await foreach (var request in databases.CatchUpRequests.ReadAllAsync(cancellationToken))
             {
-                await SyncTrackedAsync(request.DatabaseId, databases.BeginSync(request), DatabaseResolveMode.Warm, cancellationToken);
+                await SyncTrackedAsync(request.DatabaseId, databases.BeginSync(request), cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -68,29 +68,29 @@ public sealed class AntiEntropyService(ClusterOptions options, ClusterTopology t
         }
     }
 
-    private async Task SyncTrackedAsync(Ulid databaseId, ClusterDatabases.TrackedDatabase? tracked, DatabaseResolveMode mode, CancellationToken cancellationToken)
+    private async Task SyncTrackedAsync(Ulid databaseId, ClusterDatabases.SyncLease? lease, CancellationToken cancellationToken)
     {
-        if (tracked is null)
+        if (lease is not { } current)
         {
             return;
         }
 
-        if (!databases.IsCurrent(databaseId, tracked))
+        if (!databases.IsCurrent(databaseId, current.Tracked))
         {
-            databases.EndSync(databaseId, tracked, progressed: false, requeue: false);
+            databases.EndSync(databaseId, current.Tracked, progressed: false, requeue: false);
             return;
         }
 
         var progressed = false;
         try
         {
-            var report = await SyncFromAsync(databaseId, options.Peers, options.CatchUpTimeout, mode, cancellationToken);
+            var report = await SyncFromAsync(databaseId, options.Peers, options.CatchUpTimeout, current.Mode, cancellationToken);
             progressed = report.Applied > 0;
             ReportFailures(report);
         }
         finally
         {
-            databases.EndSync(databaseId, tracked, progressed, requeue: !cancellationToken.IsCancellationRequested);
+            databases.EndSync(databaseId, current.Tracked, progressed, requeue: !cancellationToken.IsCancellationRequested);
         }
     }
 

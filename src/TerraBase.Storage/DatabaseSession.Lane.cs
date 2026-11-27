@@ -49,7 +49,7 @@ internal sealed partial class DatabaseSession
 
     private sealed record class CommitStagedRequest(StagedDescriptor Descriptor, HlcTimestamp CommitHlc, long? LeaseDeadline, TaskCompletionSource<CommitStagedOutcome> Completion) : LaneRequest;
 
-    private sealed record class ShrinkWriterRequest(long ExpectedActivityTimestamp) : LaneRequest;
+    private sealed record class ShrinkWriterRequest(long ExpectedActivityTimestamp, TimeSpan MinIdle) : LaneRequest;
 
     private WriteScope WriterScope() => _laneScope ??= new WriteScope(_writer, _metaCache);
 
@@ -385,10 +385,12 @@ internal sealed partial class DatabaseSession
         _ = _writer.Exec("PRAGMA wal_checkpoint(PASSIVE);");
     }
 
-    private bool ShrinkWriterMemory(long expectedActivityTimestamp)
+    private bool ShrinkWriterMemory(long expectedActivityTimestamp, TimeSpan minIdle)
     {
         Volatile.Write(ref _shrinkWriterQueued, 0);
-        if (_writer.InTransaction || Volatile.Read(ref _lastActivityTimestamp) != expectedActivityTimestamp)
+        if (_writer.InTransaction
+            || Volatile.Read(ref _lastActivityTimestamp) != expectedActivityTimestamp
+            || _context.Time.GetElapsedTime(expectedActivityTimestamp) < minIdle)
         {
             return false;
         }
@@ -412,7 +414,7 @@ internal sealed partial class DatabaseSession
             CommitStagedRequest staged => staged.Completion.TrySetResult(CommitStaged(staged.Descriptor, staged.CommitHlc, staged.LeaseDeadline)),
             StageRequest stage => RunSerialStage(stage),
             LocalWriteRequest => ProcessGroupWithSavepoints([request]),
-            ShrinkWriterRequest shrink => ShrinkWriterMemory(shrink.ExpectedActivityTimestamp),
+            ShrinkWriterRequest shrink => ShrinkWriterMemory(shrink.ExpectedActivityTimestamp, shrink.MinIdle),
         };
     }
 

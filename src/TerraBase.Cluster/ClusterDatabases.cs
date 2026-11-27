@@ -61,11 +61,15 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             .Select(static entry => entry.Key)];
     }
 
-    internal TrackedDatabase? BeginSync(Ulid databaseId) =>
-        _tracked.TryGetValue(databaseId, out var tracked) && tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: false) ? tracked : null;
+    internal SyncLease? BeginSync(Ulid databaseId) =>
+        _tracked.TryGetValue(databaseId, out var tracked) && tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: false, out var mode)
+            ? new SyncLease(tracked, mode)
+            : null;
 
-    internal TrackedDatabase? BeginSync(QueuedCatchUp request) =>
-        IsCurrent(request.DatabaseId, request.Tracked) && request.Tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: true) ? request.Tracked : null;
+    internal SyncLease? BeginSync(QueuedCatchUp request) =>
+        IsCurrent(request.DatabaseId, request.Tracked) && request.Tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: true, out var mode)
+            ? new SyncLease(request.Tracked, mode)
+            : null;
 
     public bool RequestCatchUp(Ulid databaseId) => RequestCatchUp(databaseId, null);
 
@@ -118,17 +122,21 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         var resolved = await resolver(databaseId, mode, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => Observed(session),
+            ISqlDatabaseSession session => Observed(session, mode),
             DatabaseNotFound notFound => Missing(notFound, tracked, mode),
             ClusterUnavailable unavailable => unavailable,
         };
     }
 
-    private DatabaseResolveOutcome Observed(ISqlDatabaseSession session)
+    private DatabaseResolveOutcome Observed(ISqlDatabaseSession session, DatabaseResolveMode mode)
     {
         if (_tracked.TryGetValue(session.DatabaseId, out var current))
         {
             current.Observe(session.CurrentBookmark);
+            if (mode == DatabaseResolveMode.Warm)
+            {
+                current.ClearNeedsWarm();
+            }
         }
 
         return session;
@@ -145,6 +153,8 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
     }
 
     internal readonly record struct QueuedCatchUp(Ulid DatabaseId, TrackedDatabase Tracked);
+
+    internal readonly record struct SyncLease(TrackedDatabase Tracked, DatabaseResolveMode Mode);
 
     internal sealed class TrackedDatabase
     {
@@ -170,6 +180,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         private bool _onDemandAttempt;
         private bool _bypassGranted;
         private bool _frontierSaturated;
+        private bool _needsWarm;
 
         public CausalBookmark Bookmark => Volatile.Read(ref _bookmark);
 
@@ -208,10 +219,19 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             }
         }
 
-        public bool BeginSync(DateTimeOffset now, bool onDemand)
+        public void ClearNeedsWarm()
         {
             lock (_gate)
             {
+                _needsWarm = false;
+            }
+        }
+
+        public bool BeginSync(DateTimeOffset now, bool onDemand, out DatabaseResolveMode mode)
+        {
+            lock (_gate)
+            {
+                mode = DatabaseResolveMode.Transient;
                 if (onDemand)
                 {
                     _queued = false;
@@ -237,6 +257,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
 
                 _syncing = true;
                 _onDemandAttempt = onDemand || _deferred || !_requestedFrontier.IsEmpty;
+                mode = _onDemandAttempt || _needsWarm ? DatabaseResolveMode.Warm : DatabaseResolveMode.Transient;
                 _deferred = false;
                 _bypassGranted = false;
                 _attemptedFrontier = _requestedFrontier;
@@ -280,6 +301,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         {
             lock (_gate)
             {
+                _needsWarm = true;
                 if (peerFrontier is not null && !IsCovered(peerFrontier))
                 {
                     RequestFrontier(peerFrontier, now);

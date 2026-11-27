@@ -455,7 +455,7 @@ public static class BackupCostBenchmarks
             await Task.Delay(IdleSettleWindow, TimeProvider.System, cancellationToken);
             foreach (var session in sessions)
             {
-                _ = SqliteStorageEngine.TrimIdleResources(session, TimeSpan.FromSeconds(1), shrinkWriter: true);
+                _ = SqliteStorageEngine.TrimIdleResources(session, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(250), TimeProvider.System, cancellationToken);
