@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
@@ -33,6 +34,9 @@ public static class MutationBatchCodec
 {
     private const byte FormatVersion = 2;
 
+    [ThreadStatic]
+    private static EncodeScratch? _scratch;
+
     public static byte[] Encode(DeltaBatch batch)
     {
         ArgumentNullException.ThrowIfNull(batch);
@@ -41,64 +45,82 @@ public static class MutationBatchCodec
             return [];
         }
 
-        Dictionary<string, int> lookup = new(StringComparer.Ordinal);
-        List<string> strings = [];
-        foreach (var mutation in batch.Mutations)
+        var scratch = _scratch ??= new EncodeScratch();
+        var lookup = scratch.Lookup;
+        var strings = scratch.Strings;
+        var writer = new PooledBufferWriter(64 + (batch.Mutations.Count * 64));
+        try
         {
-            Intern(mutation.Table, lookup, strings);
-            foreach (var change in mutation.Changes)
+            var mutations = batch.Mutations;
+            for (var mutationIndex = 0; mutationIndex < mutations.Count; mutationIndex++)
             {
-                Intern(change.Column, lookup, strings);
-            }
-        }
-
-        var writer = new ArrayBufferWriter<byte>(64 + (batch.Mutations.Count * 48));
-        WireWriter.Byte(writer, FormatVersion);
-        WireWriter.VarUInt(writer, (ulong)strings.Count);
-        foreach (var value in strings)
-        {
-            WireWriter.String(writer, value);
-        }
-
-        WireWriter.VarUInt(writer, (ulong)batch.Ddl.Count);
-        foreach (var ddl in batch.Ddl)
-        {
-            WireWriter.String(writer, ddl);
-        }
-
-        WireWriter.VarUInt(writer, (ulong)batch.Mutations.Count);
-        foreach (var mutation in batch.Mutations)
-        {
-            WireWriter.VarUInt(writer, (ulong)lookup[mutation.Table]);
-            WireWriter.Byte(writer, (byte)mutation.Op);
-            WireWriter.VarUInt(writer, mutation.CausalLength);
-            WireWriter.VarUInt(writer, (ulong)mutation.PrimaryKey.Count);
-            foreach (var key in mutation.PrimaryKey)
-            {
-                WireWriter.Value(writer, key);
-            }
-
-            WireWriter.VarUInt(writer, (ulong)mutation.Changes.Count);
-            foreach (var change in mutation.Changes)
-            {
-                WireWriter.VarUInt(writer, (ulong)lookup[change.Column]);
-                WireWriter.Byte(writer, (byte)change.Kind);
-                WireWriter.VarUInt(writer, change.Epoch);
-                switch (change.Kind)
+                var mutation = mutations[mutationIndex];
+                Intern(mutation.Table, lookup, strings);
+                var changes = mutation.Changes;
+                for (var changeIndex = 0; changeIndex < changes.Count; changeIndex++)
                 {
-                    case ChangeKind.Assign or ChangeKind.AbsoluteReset:
-                        WireWriter.Value(writer, change.Value);
-                        break;
-                    case ChangeKind.DeltaOp:
-                        WireWriter.VarInt(writer, change.Delta);
-                        break;
-                    default:
-                        throw new UnreachableException();
+                    Intern(changes[changeIndex].Column, lookup, strings);
                 }
             }
-        }
 
-        return writer.WrittenSpan.ToArray();
+            writer.Byte(FormatVersion);
+            writer.VarUInt((ulong)strings.Count);
+            for (var index = 0; index < strings.Count; index++)
+            {
+                writer.String(strings[index]);
+            }
+
+            var ddl = batch.Ddl;
+            writer.VarUInt((ulong)ddl.Count);
+            for (var index = 0; index < ddl.Count; index++)
+            {
+                writer.String(ddl[index]);
+            }
+
+            writer.VarUInt((ulong)mutations.Count);
+            for (var mutationIndex = 0; mutationIndex < mutations.Count; mutationIndex++)
+            {
+                var mutation = mutations[mutationIndex];
+                writer.VarUInt((ulong)lookup[mutation.Table]);
+                writer.Byte((byte)mutation.Op);
+                writer.VarUInt(mutation.CausalLength);
+                var keys = mutation.PrimaryKey;
+                writer.VarUInt((ulong)keys.Count);
+                for (var keyIndex = 0; keyIndex < keys.Count; keyIndex++)
+                {
+                    writer.Value(keys[keyIndex]);
+                }
+
+                var changes = mutation.Changes;
+                writer.VarUInt((ulong)changes.Count);
+                for (var changeIndex = 0; changeIndex < changes.Count; changeIndex++)
+                {
+                    var change = changes[changeIndex];
+                    writer.VarUInt((ulong)lookup[change.Column]);
+                    writer.Byte((byte)change.Kind);
+                    writer.VarUInt(change.Epoch);
+                    switch (change.Kind)
+                    {
+                        case ChangeKind.Assign or ChangeKind.AbsoluteReset:
+                            writer.Value(change.Value);
+                            break;
+                        case ChangeKind.DeltaOp:
+                            writer.VarInt(change.Delta);
+                            break;
+                        default:
+                            throw new UnreachableException();
+                    }
+                }
+            }
+
+            return writer.ToArray();
+        }
+        finally
+        {
+            writer.Dispose();
+            lookup.Clear();
+            strings.Clear();
+        }
     }
 
     public static bool TryDecode(ReadOnlySpan<byte> payload, out DeltaBatch batch)
@@ -115,19 +137,22 @@ public static class MutationBatchCodec
             return false;
         }
 
-        var strings = new string[reader.Count()];
+        var stringCount = reader.Count();
+        var strings = stringCount == 0 ? [] : new string[stringCount];
         for (var index = 0; index < strings.Length && !reader.Failed; index++)
         {
             strings[index] = reader.String();
         }
 
-        var ddl = new string[reader.Count()];
+        var ddlCount = reader.Count();
+        var ddl = ddlCount == 0 ? [] : new string[ddlCount];
         for (var index = 0; index < ddl.Length && !reader.Failed; index++)
         {
             ddl[index] = reader.String();
         }
 
-        var mutations = new RowMutation[reader.Count()];
+        var mutationCount = reader.Count();
+        var mutations = mutationCount == 0 ? [] : new RowMutation[mutationCount];
         for (var index = 0; index < mutations.Length && !reader.Failed; index++)
         {
             var table = Lookup(ref reader, strings);
@@ -138,13 +163,15 @@ public static class MutationBatchCodec
             }
 
             var causalLength = reader.VarUInt();
-            var keys = new SqlValue[reader.Count()];
+            var keyCount = reader.Count();
+            var keys = keyCount == 0 ? [] : new SqlValue[keyCount];
             for (var key = 0; key < keys.Length && !reader.Failed; key++)
             {
                 keys[key] = reader.Value();
             }
 
-            var changes = new ColumnChange[reader.Count()];
+            var changeCount = reader.Count();
+            var changes = changeCount == 0 ? [] : new ColumnChange[changeCount];
             for (var change = 0; change < changes.Length && !reader.Failed; change++)
             {
                 var column = Lookup(ref reader, strings);
@@ -190,25 +217,51 @@ public static class MutationBatchCodec
         var index = reader.VarUInt();
         return index < (ulong)strings.Length ? strings[(int)index] : string.Empty;
     }
+
+    private sealed class EncodeScratch
+    {
+        public Dictionary<string, int> Lookup { get; } = new(32, StringComparer.Ordinal);
+
+        public List<string> Strings { get; } = new(32);
+    }
 }
 
 internal record struct ColumnMeta(HlcTimestamp Hlc, ulong Epoch, long DeltaSum);
 
 internal sealed class RowMeta
 {
+    public RowMeta()
+    {
+        Columns = [];
+    }
+
+    public RowMeta(int columnCapacity)
+    {
+        Columns = columnCapacity > 0 ? new Dictionary<int, ColumnMeta>(columnCapacity) : [];
+    }
+
     public ulong CausalLength { get; set; }
 
     public HlcTimestamp RowHlc { get; set; }
 
-    public Dictionary<int, ColumnMeta> Columns { get; } = [];
+    public Dictionary<int, ColumnMeta> Columns { get; }
 
     public bool Alive => (CausalLength & 1) == 1;
+
+    public int MaxEncodedSize => 22 + (Columns.Count * 32);
 
     public static RowMeta? Decode(ReadOnlySpan<byte> blob)
     {
         var reader = new WireReader(blob);
-        var meta = new RowMeta { CausalLength = reader.VarUInt(), RowHlc = reader.Hlc() };
+        var causalLength = reader.VarUInt();
+        var rowHlc = reader.Hlc();
         var count = reader.UInt16();
+        if (reader.Failed)
+        {
+            return null;
+        }
+
+        var meta = new RowMeta(count) { CausalLength = causalLength, RowHlc = rowHlc };
         for (var index = 0; index < count && !reader.Failed; index++)
         {
             var ordinal = reader.UInt16();
@@ -221,22 +274,93 @@ internal sealed class RowMeta
         return reader.Failed || !reader.End ? null : meta;
     }
 
-    public byte[] Encode()
+    public int EncodeTo(Span<byte> destination)
     {
-        var writer = new ArrayBufferWriter<byte>(16 + (Columns.Count * 16));
-        WireWriter.VarUInt(writer, CausalLength);
-        WireWriter.Hlc(writer, RowHlc);
-        WireWriter.UInt16(writer, (ushort)Columns.Count);
-        foreach (var (ordinal, column) in Columns.OrderBy(static pair => pair.Key))
+        var offset = WireWriter.WriteVarUInt(destination, CausalLength);
+        HlcCodec.Write(destination[offset..], RowHlc);
+        offset += HlcTimestamp.EncodedSize;
+        var count = Columns.Count;
+        BinaryPrimitives.WriteUInt16LittleEndian(destination[offset..], (ushort)count);
+        offset += 2;
+        if (count == 0)
         {
-            WireWriter.UInt16(writer, (ushort)ordinal);
-            WireWriter.Hlc(writer, column.Hlc);
-            WireWriter.VarUInt(writer, column.Epoch);
-            WireWriter.VarInt(writer, column.DeltaSum);
+            return offset;
         }
 
-        return writer.WrittenSpan.ToArray();
+        if (count <= 16)
+        {
+            Span<int> ordinals = stackalloc int[16];
+            return WriteColumns(destination, offset, ordinals[..count]);
+        }
+
+        var rented = ArrayPool<int>.Shared.Rent(count);
+        try
+        {
+            return WriteColumns(destination, offset, rented.AsSpan(0, count));
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(rented);
+        }
+    }
+
+    public byte[] Encode()
+    {
+        var maxSize = MaxEncodedSize;
+        if (maxSize <= 512)
+        {
+            Span<byte> stack = stackalloc byte[512];
+            var written = EncodeTo(stack);
+            return stack[..written].ToArray();
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent(maxSize);
+        try
+        {
+            var written = EncodeTo(rented);
+            return rented.AsSpan(0, written).ToArray();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     public ColumnMeta Column(int ordinal) => Columns.GetValueOrDefault(ordinal);
+
+    private int WriteColumns(Span<byte> destination, int offset, Span<int> ordinals)
+    {
+        var index = 0;
+        var previous = int.MinValue;
+        var sorted = true;
+        foreach (var key in Columns.Keys)
+        {
+            if (key < previous)
+            {
+                sorted = false;
+            }
+
+            previous = key;
+            ordinals[index++] = key;
+        }
+
+        if (!sorted)
+        {
+            ordinals.Sort();
+        }
+
+        for (var ordinalIndex = 0; ordinalIndex < ordinals.Length; ordinalIndex++)
+        {
+            var ordinal = ordinals[ordinalIndex];
+            var column = Columns[ordinal];
+            BinaryPrimitives.WriteUInt16LittleEndian(destination[offset..], (ushort)ordinal);
+            offset += 2;
+            HlcCodec.Write(destination[offset..], column.Hlc);
+            offset += HlcTimestamp.EncodedSize;
+            offset += WireWriter.WriteVarUInt(destination[offset..], column.Epoch);
+            offset += WireWriter.WriteVarInt(destination[offset..], column.DeltaSum);
+        }
+
+        return offset;
+    }
 }

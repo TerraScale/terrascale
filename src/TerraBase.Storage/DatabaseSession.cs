@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Buffers.Binary;
-using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
@@ -49,6 +48,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private readonly VersionVector _versions = new();
     private readonly Func<DatabaseSession, Task> _release;
     private readonly bool _strict;
+    private SqliteOpenOptions? _readerOptions;
     private Task _lane = Task.CompletedTask;
     private LaneRequest[] _inFlight = [];
     private WriteTransaction? _activeTransaction;
@@ -58,6 +58,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     private int _laneFaulted;
     private int _recoveredQuarantined;
     private int _readerCount;
+    private int _openingReaders;
     private bool _writeGroupBroken;
 
     private DatabaseSession(SessionContext context, SqliteConnection writer, PreupdateCapture capture, CommitLogCipher cipher, bool strict, Func<DatabaseSession, Task> release)
@@ -82,6 +83,8 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
     public ulong SchemaEpoch => (ulong)Interlocked.Read(ref _schemaEpoch);
 
     public CausalBookmark CurrentBookmark => _versions.Snapshot();
+
+    public long ChangeGeneration => _versions.Generation;
 
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
 
@@ -126,17 +129,40 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private static SessionOpenResult Initialize(SessionContext context, SqliteOpenOptions options, SqliteConnection writer, bool create, bool strict, Func<DatabaseSession, Task> release)
     {
-        var setup = writer.Exec(MetaStore.SchemaSql);
-        if (setup.IsOk && create)
-        {
-            setup = writer.Exec(string.Concat("PRAGMA application_id = ", (ApplicationIdBase | (strict ? 1 : 0)).ToString(CultureInfo.InvariantCulture), ";"));
-        }
-
+        SqliteStatus setup;
         var applicationId = 0L;
-        if (setup.IsOk)
+        if (create)
+        {
+            applicationId = ApplicationIdBase | (strict ? 1 : 0);
+            setup = writer.Begin("BEGIN IMMEDIATE;");
+            if (setup.IsOk)
+            {
+                setup = writer.Exec(MetaStore.SchemaSql);
+            }
+
+            if (setup.IsOk)
+            {
+                setup = writer.Exec(string.Concat("PRAGMA application_id = ", applicationId.ToString(CultureInfo.InvariantCulture), ";"));
+            }
+
+            if (setup.IsOk)
+            {
+                setup = writer.Exec("COMMIT;");
+            }
+
+            if (!setup.IsOk && writer.InTransaction)
+            {
+                _ = writer.Exec("ROLLBACK;");
+            }
+        }
+        else
         {
             setup = writer.QueryFirst("PRAGMA application_id", out var row);
             _ = row is not null && row[0].TryGetIntegral(out applicationId);
+            if (setup.IsOk && (applicationId & ~1L) != ApplicationIdBase)
+            {
+                setup = writer.Exec(MetaStore.SchemaSql);
+            }
         }
 
         if (setup.IsOk)
@@ -164,29 +190,9 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private SessionOpenResult OpenReaders(SqliteOpenOptions readerOptions)
     {
-        for (var index = 0; index < Options.ReaderCount; index++)
-        {
-            var opened = SqliteConnection.Open(readerOptions);
-            var failure = opened switch
-            {
-                SqliteConnection reader => AddReader(reader),
-                SqliteStatus status => status,
-            };
-            if (!failure.IsOk)
-            {
-                return Abandon(OpenFailure(_context, failure));
-            }
-        }
-
+        _readerOptions = readerOptions;
         _lane = Task.Run(RunGuardedLaneAsync);
         return this;
-    }
-
-    private SqliteStatus AddReader(SqliteConnection reader)
-    {
-        _ = _readers.Writer.TryWrite(reader);
-        _readerCount++;
-        return SqliteStatus.Success;
     }
 
     private SessionOpenResult Abandon(SessionOpenResult failure)
@@ -224,7 +230,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                 rented.Interrupt();
             }
 
-            if (_rentedReaders.Count == 0)
+            if (_rentedReaders.Count == 0 && _openingReaders == 0)
             {
                 _readersDrained.TrySetResult();
             }
@@ -426,82 +432,68 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return new InvalidSegment("segment sequence range is invalid");
         }
 
-        var start = content.Position;
-        var validation = await ReadArchivedFramesAsync(segment, content, replay: null, cancellationToken);
-        return validation switch
-        {
-            ArchivedSegmentRead => await ReplayValidatedSegmentAsync(segment, content, start, replay, cancellationToken),
-            ArchivedSegmentReplayStopped => throw new UnreachableException(),
-            InvalidSegment invalid => invalid,
-            StorageCorrupted corrupted => corrupted,
-        };
-    }
-
-    private ValueTask<ReadArchivedSegmentOutcome> ReplayValidatedSegmentAsync(
-        CommitLogSegment segment, Stream content, long start, ReplayArchivedCommitBatch replay, CancellationToken cancellationToken)
-    {
-        content.Position = start;
-        return ReadArchivedFramesAsync(segment, content, replay, cancellationToken);
-    }
-
-    private async ValueTask<ReadArchivedSegmentOutcome> ReadArchivedFramesAsync(
-        CommitLogSegment segment, Stream content, ReplayArchivedCommitBatch? replay, CancellationToken cancellationToken)
-    {
-        var prefix = new byte[CommitFrame.PrefixSize];
         var remaining = segment.SizeBytes;
         var through = segment.FirstSequence - 1;
         var batchBytes = 0L;
         var maxEntries = Math.Min(Options.MaxPendingRemoteCommits, HistoryPageSize);
+        List<List<CommitMetadata>> batches = [];
         List<CommitMetadata> batch = [];
-        while (remaining > 0)
+        var initialBufferSize = Math.Clamp((int)Math.Min(segment.SizeBytes, 64 * 1024), CommitFrame.PrefixSize, 64 * 1024);
+        var rented = ArrayPool<byte>.Shared.Rent(initialBufferSize);
+        try
         {
-            if (remaining < prefix.Length
-                || await content.ReadAtLeastAsync(prefix, prefix.Length, throwOnEndOfStream: false, cancellationToken) != prefix.Length)
+            while (remaining > 0)
             {
-                return new InvalidSegment("segment ended inside a commit log frame");
-            }
-
-            var bodySize = BinaryPrimitives.ReadUInt32LittleEndian(prefix);
-            var frameSize = prefix.Length + (long)bodySize + CommitFrame.CrcSize;
-            if (bodySize > CommitFrame.MaxBodySize || frameSize > remaining)
-            {
-                return new InvalidSegment("segment contains a frame outside its declared size");
-            }
-
-            var length = (int)bodySize + CommitFrame.CrcSize;
-            using var buffer = MemoryPool<byte>.Shared.Rent(length);
-            var frame = buffer.Memory[..length];
-            if (await content.ReadAtLeastAsync(frame, length, throwOnEndOfStream: false, cancellationToken) != length
-                || !CommitFrame.TryDecodeChecked(frame.Span, segment.OriginRegion, _cipher, out var commit))
-            {
-                return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
-            }
-
-            if (through >= segment.LastSequence || commit.Sequence != through + 1)
-            {
-                return new InvalidSegment("segment sequences are not contiguous");
-            }
-
-            remaining -= frameSize;
-            through = commit.Sequence;
-            if (replay is null)
-            {
-                continue;
-            }
-
-            if (batch.Count > 0 && (batch.Count >= maxEntries || batchBytes + frameSize > Options.SegmentMaxBytes))
-            {
-                if (!await replay(batch, cancellationToken))
+                var prefix = rented.AsMemory(0, CommitFrame.PrefixSize);
+                if (remaining < CommitFrame.PrefixSize
+                    || await content.ReadAtLeastAsync(prefix, CommitFrame.PrefixSize, throwOnEndOfStream: false, cancellationToken) != CommitFrame.PrefixSize)
                 {
-                    return new ArchivedSegmentReplayStopped();
+                    return new InvalidSegment("segment ended inside a commit log frame");
                 }
 
-                batch = [];
-                batchBytes = 0;
-            }
+                var bodySize = BinaryPrimitives.ReadUInt32LittleEndian(prefix.Span);
+                var frameSize = CommitFrame.PrefixSize + (long)bodySize + CommitFrame.CrcSize;
+                if (bodySize > CommitFrame.MaxBodySize || frameSize > remaining)
+                {
+                    return new InvalidSegment("segment contains a frame outside its declared size");
+                }
 
-            batch.Add(commit);
-            batchBytes += frameSize;
+                var length = (int)bodySize + CommitFrame.CrcSize;
+                if (rented.Length < length)
+                {
+                    var grown = ArrayPool<byte>.Shared.Rent(length);
+                    ArrayPool<byte>.Shared.Return(rented);
+                    rented = grown;
+                }
+
+                var frame = rented.AsMemory(0, length);
+                if (await content.ReadAtLeastAsync(frame, length, throwOnEndOfStream: false, cancellationToken) != length
+                    || !CommitFrame.TryDecodeChecked(frame.Span, segment.OriginRegion, _cipher, out var commit))
+                {
+                    return new StorageCorrupted(DatabaseId, "segment failed CRC32C or authentication");
+                }
+
+                if (through >= segment.LastSequence || commit.Sequence != through + 1)
+                {
+                    return new InvalidSegment("segment sequences are not contiguous");
+                }
+
+                remaining -= frameSize;
+                through = commit.Sequence;
+                if (batch.Count > 0 && (batch.Count >= maxEntries || batchBytes + frameSize > Options.SegmentMaxBytes))
+                {
+                    batches.Add(batch);
+                    batch = [];
+                    batchBytes = 0;
+                }
+
+                batch.Add(commit);
+                batchBytes += frameSize;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
         }
 
         if (through != segment.LastSequence)
@@ -509,9 +501,20 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
             return new InvalidSegment("segment range does not match its content");
         }
 
-        return replay is not null && batch.Count > 0 && !await replay(batch, cancellationToken)
-            ? new ArchivedSegmentReplayStopped()
-            : new ArchivedSegmentRead();
+        if (batch.Count > 0)
+        {
+            batches.Add(batch);
+        }
+
+        foreach (var validated in batches)
+        {
+            if (!await replay(validated, cancellationToken))
+            {
+                return new ArchivedSegmentReplayStopped();
+            }
+        }
+
+        return new ArchivedSegmentRead();
     }
 
     internal OriginLog? Log(string origin)
@@ -610,7 +613,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
                 foreach (var chunk in CommitFrame.Batches(page, Options.SegmentMaxBytes))
                 {
-                    var appended = destination.Append(chunk, out _);
+                    var appended = destination.AppendNoSync(chunk, out _);
                     if (!appended.IsOk)
                     {
                         return appended.ToBusy();
@@ -620,6 +623,12 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                 }
 
                 next = page[^1].Sequence + 1;
+            }
+
+            var synced = destination.Sync();
+            if (!synced.IsOk)
+            {
+                return synced.ToBusy();
             }
 
             return destination.SealCommitted(last) ? null : new StorageBusy(string.Concat("copied commit log for origin ", source.Origin, " could not be sealed"), TimeSpan.Zero);
@@ -690,28 +699,91 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     private async ValueTask<SqliteConnection?> RentReaderAsync(CancellationToken cancellationToken)
     {
-        while (await _readers.Reader.WaitToReadAsync(cancellationToken))
+        while (true)
         {
-            if (!_readers.Reader.TryRead(out var reader))
+            if (_readers.Reader.TryRead(out var reader))
             {
-                continue;
+                lock (_readersGate)
+                {
+                    if (IsClosed)
+                    {
+                        reader.Dispose();
+                        return null;
+                    }
+
+                    _ = _rentedReaders.Add(reader);
+                }
+
+                return reader;
             }
 
+            SqliteOpenOptions? openOptions = null;
+            SqliteConnection? pooled = null;
             lock (_readersGate)
             {
                 if (IsClosed)
                 {
-                    reader.Dispose();
                     return null;
                 }
 
-                _ = _rentedReaders.Add(reader);
+                if (_readers.Reader.TryRead(out var available))
+                {
+                    _ = _rentedReaders.Add(available);
+                    pooled = available;
+                }
+                else if (_readerCount < Options.ReaderCount && _readerOptions is { } configured)
+                {
+                    _readerCount++;
+                    _openingReaders++;
+                    openOptions = configured;
+                }
             }
 
-            return reader;
-        }
+            if (pooled is not null)
+            {
+                return pooled;
+            }
 
-        return null;
+            if (openOptions is not null)
+            {
+                var opened = SqliteConnection.Open(openOptions);
+                var connection = opened switch
+                {
+                    SqliteConnection created => created,
+                    SqliteStatus => null,
+                };
+                SqliteConnection? rented = null;
+                lock (_readersGate)
+                {
+                    _openingReaders--;
+                    if (connection is not null && !IsClosed)
+                    {
+                        _ = _rentedReaders.Add(connection);
+                        rented = connection;
+                    }
+                    else
+                    {
+                        _readerCount--;
+                        if (IsClosed && _rentedReaders.Count == 0 && _openingReaders == 0)
+                        {
+                            _readersDrained.TrySetResult();
+                        }
+                    }
+                }
+
+                if (rented is null)
+                {
+                    connection?.Dispose();
+                }
+
+                return rented;
+            }
+
+            if (!await _readers.Reader.WaitToReadAsync(cancellationToken))
+            {
+                return null;
+            }
+        }
     }
 
     internal bool RegisterReadTransaction(ReadTransaction transaction)
@@ -745,7 +817,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
         {
             _ = _rentedReaders.Remove(reader);
             closed = IsClosed;
-            if (closed && _rentedReaders.Count == 0)
+            if (closed && _rentedReaders.Count == 0 && _openingReaders == 0)
             {
                 _readersDrained.TrySetResult();
             }

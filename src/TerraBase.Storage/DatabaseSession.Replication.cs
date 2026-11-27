@@ -12,6 +12,9 @@ internal sealed partial class DatabaseSession
 {
     private static readonly DeltaBatch EmptyBatch = new([], []);
 
+    [ThreadStatic]
+    private static StatementInfo? _readerStatementInfo;
+
     public ValueTask<SqlReadOutcome> ExecuteReadAsync(SqlStatementRequest request, CancellationToken cancellationToken) =>
         ExecuteReadAsync(request, limitResults: true, cancellationToken);
 
@@ -31,38 +34,83 @@ internal sealed partial class DatabaseSession
             return Closing();
         }
 
+        var info = _readerStatementInfo ??= new StatementInfo();
         try
         {
-            var begun = reader.Begin("BEGIN;");
-            if (!begun.IsOk)
+            var singleStatement = request.Statements.Count == 1
+                && request.Statements[0].Scope is null
+                && !HasMultipleStatements(request.Statements[0].Sql);
+            if (singleStatement)
             {
-                return begun.ToBusy();
+                if (reader.InTransaction)
+                {
+                    var cleared = reader.RollbackOpenTransaction();
+                    if (!cleared.IsOk)
+                    {
+                        return cleared.ToBusy();
+                    }
+                }
+            }
+            else
+            {
+                var begun = reader.Begin("BEGIN;");
+                if (!begun.IsOk)
+                {
+                    return begun.ToBusy();
+                }
             }
 
-            var info = new StatementInfo();
-            List<SqlResultSet> results = [];
+            var results = request.Statements.Count == 0 ? [] : new SqlResultSet[request.Statements.Count];
             for (var index = 0; index < request.Statements.Count; index++)
             {
                 var executed = ExecuteOnReader(reader, request.Statements[index], index, info, null, limitResults, cancellationToken);
                 SqlError? failure = executed switch
                 {
-                    SqlResultSet result => Collect(results, result),
+                    SqlResultSet result => Assign(results, index, result),
                     SqlError error => error,
                 };
                 if (failure is not null)
                 {
-                    _ = reader.Exec("ROLLBACK;");
+                    if (!singleStatement)
+                    {
+                        _ = reader.Exec("ROLLBACK;");
+                    }
+
                     return failure;
                 }
             }
 
-            _ = reader.Exec("COMMIT;");
+            if (!singleStatement)
+            {
+                _ = reader.Exec("COMMIT;");
+            }
+
             return new SqlReadResult(results, observed);
         }
         finally
         {
+            info.Reset();
             ReturnReader(reader);
         }
+    }
+
+    private static bool HasMultipleStatements(string sql)
+    {
+        var semicolon = sql.IndexOf(';');
+        if (semicolon < 0)
+        {
+            return false;
+        }
+
+        for (var index = semicolon + 1; index < sql.Length; index++)
+        {
+            if (!char.IsWhiteSpace(sql[index]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public async ValueTask<ValidateReadSetOutcome> ValidateReadSetAsync(
@@ -177,9 +225,9 @@ internal sealed partial class DatabaseSession
         return (watermarks, epoch);
     }
 
-    private static SqlError? Collect(List<SqlResultSet> results, SqlResultSet result)
+    private static SqlError? Assign(SqlResultSet[] results, int index, SqlResultSet result)
     {
-        results.Add(result);
+        results[index] = result;
         return null;
     }
 
@@ -190,6 +238,12 @@ internal sealed partial class DatabaseSession
 
     private RecoverOutcome Recover()
     {
+        var tuned = _writer.Exec("PRAGMA journal_size_limit = 1048576;");
+        if (!tuned.IsOk)
+        {
+            return tuned.IsBusy ? tuned.ToBusy() : new StorageCorrupted(DatabaseId, tuned.Message);
+        }
+
         List<SqlValue[]> rows = [];
         var status = _writer.Query(MetaStore.SelectVersionsSql, rows);
         if (!status.IsOk)
@@ -522,13 +576,21 @@ internal sealed partial class DatabaseSession
         }
 
         _capture.Suppressed = true;
-        var scope = new WriteScope(_writer);
+        var scope = WriterScope();
+        scope.Reset();
+        var batchTables = _laneGroupTables;
+        batchTables.Clear();
+        var versions = _laneRemoteVersions;
+        versions.Clear();
         var nowMs = _context.Time.GetUtcNow().ToUnixTimeMilliseconds();
         var schemaChanged = false;
-        foreach (var (commit, batch, quarantined, savedEpoch) in order)
+        var hasRemoteOrigin = false;
+        for (var index = 0; index < order.Count; index++)
         {
+            var (commit, batch, quarantined, savedEpoch) = order[index];
             var receipt = quarantined ? HlcTimestamp.Zero : _context.Clock.Observe(commit.Hlc);
             var local = string.Equals(commit.OriginRegion, Region, StringComparison.Ordinal);
+            hasRemoteOrigin |= !local;
             if (quarantined)
             {
                 if (!local)
@@ -542,9 +604,9 @@ internal sealed partial class DatabaseSession
             }
             else
             {
-                foreach (var ddl in batch.Ddl)
+                for (var ddlIndex = 0; ddlIndex < batch.Ddl.Count; ddlIndex++)
                 {
-                    scope.Fail(_writer.Exec(ddl));
+                    scope.Fail(_writer.Exec(batch.Ddl[ddlIndex]));
                     schemaChanged = true;
                 }
 
@@ -553,52 +615,77 @@ internal sealed partial class DatabaseSession
                     scope.Fail(stale.IsEnvironmental ? stale : new SqliteStatus(SqliteNative.Schema, stale.Message));
                 }
 
-                Dictionary<string, HlcTimestamp> tables = new(StringComparer.OrdinalIgnoreCase);
-                foreach (var mutation in batch.Mutations)
+                if (batch.Ddl.Count > 0)
                 {
-                    CrdtApplier.Apply(scope, mutation, commit.Hlc, tables);
+                    _metaCache.Clear();
                 }
 
-                foreach (var table in tables.Keys.ToArray())
+                for (var mutationIndex = 0; mutationIndex < batch.Mutations.Count; mutationIndex++)
                 {
-                    tables[table] = receipt;
+                    CrdtApplier.Apply(scope, batch.Mutations[mutationIndex], commit.Hlc, receipt, batchTables);
                 }
 
-                MetaStore.TouchTables(scope, tables);
                 if (!local)
                 {
                     MetaStore.MarkApplied(scope, commit.TxId, nowMs);
                 }
             }
 
-            MetaStore.SaveVersion(scope, commit.OriginRegion, commit.Sequence, savedEpoch);
+            versions[commit.OriginRegion] = (commit.Sequence, savedEpoch);
             if (scope.Failed)
             {
                 break;
             }
         }
 
-        if (!scope.Failed && order.Exists(pending => !string.Equals(pending.Commit.OriginRegion, Region, StringComparison.Ordinal)))
+        if (!scope.Failed && batchTables.Count > 0)
+        {
+            MetaStore.TouchTables(scope, batchTables);
+        }
+
+        if (!scope.Failed)
+        {
+            foreach (var (origin, version) in versions)
+            {
+                MetaStore.SaveVersion(scope, origin, version.Sequence, version.SchemaEpoch);
+                if (scope.Failed)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (!scope.Failed && hasRemoteOrigin)
         {
             MetaStore.PruneApplied(scope, _context.Time.GetUtcNow());
         }
 
+        batchTables.Clear();
         dataFault = scope.Failed && !scope.Failure.IsEnvironmental;
         List<(OriginLog Log, long Length, long Last)> appended = [];
         if (!scope.Failed && persist)
         {
-            foreach (var group in order.Select(static item => item.Commit).GroupBy(static commit => commit.OriginRegion, StringComparer.Ordinal))
+            var fresh = _laneCommits;
+            foreach (var origin in versions.Keys)
             {
-                if (EnsureLog(group.Key, _versions.Get(group.Key)) is not { } log)
+                if (EnsureLog(origin, _versions.Get(origin)) is not { } log)
                 {
-                    scope.Fail(new SqliteStatus(SqliteNative.CantOpen, string.Concat("commit log unavailable for origin ", group.Key)));
+                    scope.Fail(new SqliteStatus(SqliteNative.CantOpen, string.Concat("commit log unavailable for origin ", origin)));
                     break;
                 }
 
                 var last = log.LastSequence;
-                CommitMetadata[] fresh = [.. order.Where(pending => pending.Commit.Sequence > last && string.Equals(pending.Commit.OriginRegion, group.Key, StringComparison.Ordinal))
-                    .Select(static pending => pending.Quarantined ? Preserved(pending.Commit) : pending.Commit)];
-                if (fresh.Length == 0)
+                fresh.Clear();
+                for (var index = 0; index < order.Count; index++)
+                {
+                    var pending = order[index];
+                    if (pending.Commit.Sequence > last && string.Equals(pending.Commit.OriginRegion, origin, StringComparison.Ordinal))
+                    {
+                        fresh.Add(pending.Quarantined ? Preserved(pending.Commit) : pending.Commit);
+                    }
+                }
+
+                if (fresh.Count == 0)
                 {
                     continue;
                 }
@@ -612,8 +699,11 @@ internal sealed partial class DatabaseSession
 
                 appended.Add((log, length, last));
             }
+
+            fresh.Clear();
         }
 
+        versions.Clear();
         if (!scope.Failed)
         {
             scope.Fail(LeaseExpired(leaseDeadline)
@@ -631,6 +721,7 @@ internal sealed partial class DatabaseSession
             }
 
             var cleared = _writer.RollbackOpenTransaction();
+            _metaCache.Clear();
             _writer.InvalidateSchemaCache();
             if (!truncated)
             {
@@ -652,6 +743,7 @@ internal sealed partial class DatabaseSession
         if (schemaChanged)
         {
             _writer.InvalidateSchemaCache();
+            _metaCache.Clear();
         }
 
         foreach (var (log, _, _) in appended)
@@ -690,7 +782,8 @@ internal sealed partial class DatabaseSession
             return cleared.ToBusy();
         }
 
-        var scope = new WriteScope(_writer);
+        var scope = WriterScope();
+        scope.Reset();
         List<RowKey> staleKeys = [];
         foreach (var observed in descriptor.Observed)
         {
@@ -741,7 +834,8 @@ internal sealed partial class DatabaseSession
         }
 
         Interlocked.Exchange(ref _schemaEpoch, (long)epoch);
-        _versions.Set([new(Region, sequence)]);
+        _laneVersionUpdate[0] = new KeyValuePair<string, long>(Region, sequence);
+        _versions.Set(_laneVersionUpdate);
         return commit;
     }
 }

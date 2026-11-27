@@ -210,6 +210,12 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                     ? await CopyLiveAsync(source, destination, cancellationToken)
                     : CopySnapshot(source, destination, target);
             }
+
+            if (copied is not null && FileIo.SyncFile(stagingContext.DatabasePath) is { } syncError)
+            {
+                return new StorageBusy(syncError, TimeSpan.FromSeconds(1));
+            }
+
             var createEmpty = false;
             CausalBookmark baseline;
             if (copied is { } snapshotBaseline)
@@ -247,6 +253,22 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                 return history;
             }
 
+            if (entries.Count == 0 && !createEmpty && baseline.Dominates(target))
+            {
+                if (FileIo.MoveDirectory(staging, branchContext.Directory) is { } moveError)
+                {
+                    return new StorageBusy(moveError, TimeSpan.FromSeconds(1));
+                }
+
+                var direct = DatabaseSession.Open(branchContext, create: false, strict: false, ReleaseAsync);
+                return direct switch
+                {
+                    DatabaseSession session => Branch(Track(session)),
+                    StorageCorrupted corrupted => new StorageBusy(corrupted.Message, TimeSpan.Zero),
+                    StorageBusy busy => busy,
+                };
+            }
+
             var opened = DatabaseSession.Open(stagingContext, create: createEmpty, strict: createEmpty && source.Strict, ReleaseAsync);
             var branch = opened switch
             {
@@ -259,6 +281,8 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
 
             return await ReplayBranchAsync(branch, branchContext, entries, target, cancellationToken);
+
+            static BranchDatabaseOutcome Branch(ISqlDatabaseSession session) => session;
         }
         finally
         {
@@ -352,7 +376,7 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             destination.Dispose();
             return outcome switch
             {
-                SnapshotCapture capture => new DatabaseSnapshot(databaseId, capture.Bookmark, capture.SchemaEpoch, new FileInfo(path).Length, taken, path),
+                SnapshotCapture capture => SyncSnapshot(databaseId, capture, taken, path),
                 StorageBusy busy => busy,
             };
         }
@@ -360,6 +384,16 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         {
             await session.DisposeAsync();
         }
+    }
+
+    private static SnapshotDatabaseOutcome SyncSnapshot(Ulid databaseId, SnapshotCapture capture, DateTimeOffset taken, string path)
+    {
+        if (FileIo.SyncFile(path) is { } syncError)
+        {
+            return new StorageBusy(syncError, TimeSpan.FromSeconds(1));
+        }
+
+        return new DatabaseSnapshot(databaseId, capture.Bookmark, capture.SchemaEpoch, new FileInfo(path).Length, taken, path);
     }
 
     public async ValueTask<DeleteDatabaseOutcome> DeleteAsync(Ulid databaseId, CancellationToken cancellationToken)
@@ -449,7 +483,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         new(databaseId, DatabaseDirectory(databaseId), DatabasePath(databaseId), rawKey.ToArray(), _options, _time, Clock, Snowflake);
 
     private static SqliteOpenOptions ConnectionOptions(SessionContext context) =>
-        new(context.DatabasePath, false, context.RawKey, context.Options.ReaderCacheSizeKib, context.DatabaseId, context.Options.DeltaColumns);
+        new(context.DatabasePath, false, context.RawKey, context.Options.ReaderCacheSizeKib, context.DatabaseId, context.Options.DeltaColumns)
+        {
+            BackupDestination = true,
+        };
 
     private SemaphoreSlim Gate(Ulid databaseId) => _gates.GetOrAdd(databaseId, static _ => new SemaphoreSlim(1, 1));
 

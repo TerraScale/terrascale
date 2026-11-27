@@ -1,5 +1,7 @@
+using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace TerraBase.Storage;
 
@@ -22,14 +24,23 @@ internal sealed record CaptureSavepoint(IReadOnlyList<TouchedState> Rows);
 
 internal sealed unsafe class PreupdateCapture : IDisposable
 {
+    private const int MaxCachedTableNames = 512;
+
+    private static readonly CaptureSavepoint EmptySavepoint = new([]);
+    private static readonly IReadOnlySet<string> EmptyAbsoluteColumns = FrozenSet<string>.Empty;
+
     private readonly SqliteConnection _connection;
-    private readonly Dictionary<(string Table, string Key), TouchedRow> _byKey = [];
+    private readonly Dictionary<RowLookupKey, TouchedRow> _byKey = new(RowLookupKeyComparer.Instance);
     private readonly List<TouchedRow> _touched = [];
+    private readonly Dictionary<byte[], TableNameEntry> _tableNames = new(Utf8BytesComparer.Instance);
+    private byte[]? _lastTableUtf8;
+    private string? _lastTableName;
     private GCHandle<PreupdateCapture> _self;
     private int _writtenRows;
     private int _remainingBytes;
     private bool _active;
     private bool _registered;
+    private bool _sawSavepointRollback;
 
     internal PreupdateCapture(SqliteConnection connection)
     {
@@ -53,6 +64,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         _writtenRows = 0;
         _remainingBytes = SqlLimits.MaxWriteBytes;
         Annotation = null;
+        _sawSavepointRollback = false;
         _active = true;
     }
 
@@ -63,6 +75,8 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             Fault = status;
         }
     }
+
+    public void MarkNeedsReselect() => _sawSavepointRollback = true;
 
     public TableSchema? Resolve(string table)
     {
@@ -86,18 +100,35 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         _touched.Clear();
         _byKey.Clear();
         Annotation = null;
+        _sawSavepointRollback = false;
         _active = false;
     }
 
-    public CaptureSavepoint MarkSavepoint() =>
-        new([.. _touched.Select(static row => new TouchedState(row.Replaced, Copy(row.Absolute)))]);
+    public CaptureSavepoint MarkSavepoint()
+    {
+        if (_touched.Count == 0)
+        {
+            return EmptySavepoint;
+        }
+
+        var rows = new TouchedState[_touched.Count];
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var row = _touched[index];
+            rows[index] = new TouchedState(row.Replaced, Copy(row.Absolute));
+        }
+
+        return new CaptureSavepoint(rows);
+    }
 
     public void RestoreSavepoint(CaptureSavepoint mark)
     {
+        _sawSavepointRollback = true;
         var kept = mark.Rows.Count;
-        foreach (var row in _touched.Skip(kept))
+        for (var index = kept; index < _touched.Count; index++)
         {
-            _ = _byKey.Remove((row.Table, PrimaryKeyCodec.ToKeyString(row.EncodedKey)));
+            var row = _touched[index];
+            _ = _byKey.Remove(new RowLookupKey(row.Table, row.EncodedKey));
         }
 
         _touched.RemoveRange(kept, _touched.Count - kept);
@@ -120,9 +151,9 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         }
 
         var status = SqliteStatus.Success;
-        Dictionary<TableSchema, TableSql> statements = [];
-        foreach (var row in _touched)
+        for (var index = 0; index < _touched.Count; index++)
         {
+            var row = _touched[index];
             if (Resolve(row.Table) is not { } schema)
             {
                 if (!Fault.IsOk)
@@ -134,19 +165,27 @@ internal sealed unsafe class PreupdateCapture : IDisposable
                 continue;
             }
 
-            if (!statements.TryGetValue(schema, out var sql))
+            SqlValue[]? final;
+            var requiresReselect = _sawSavepointRollback
+                || !row.HasCapturedFinal
+                || !ReferenceEquals(schema, row.Schema)
+                || schema.IsVirtual
+                || schema.HasVirtualGeneratedColumns;
+            if (!requiresReselect)
             {
-                sql = new TableSql(schema);
-                statements[schema] = sql;
+                final = row.Final;
+            }
+            else
+            {
+                status = _connection.QueryFirst(schema.Sql.SelectRow, out var current, row.PrimaryKey);
+                if (!status.IsOk)
+                {
+                    break;
+                }
+
+                final = current is null ? null : schema.DataColumns.Count == 0 ? [] : current;
             }
 
-            status = _connection.QueryFirst(sql.SelectRow, out var current, row.PrimaryKey);
-            if (!status.IsOk)
-            {
-                break;
-            }
-
-            var final = current is null ? null : schema.DataColumns.Count == 0 ? [] : current;
             if (Build(schema, row, Align(schema, row), final) is { } change)
             {
                 changes.Add(change);
@@ -203,7 +242,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
     private static NetChange? Build(TableSchema schema, TouchedRow row, SqlValue[]? originalValues, SqlValue[]? final)
     {
-        var absolute = row.Absolute ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var absolute = row.Absolute ?? EmptyAbsoluteColumns;
         switch (originalValues, final)
         {
             case (null, null):
@@ -213,16 +252,18 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             case ({ } original, null):
                 return new NetChange(schema, row.PrimaryKey, row.EncodedKey, MutationOp.Delete, original, null, [], absolute, row.Replaced);
             case ({ } original, { } updated):
-                List<int> changed = [];
-                for (var index = 0; index < schema.DataColumns.Count && index < original.Length && index < updated.Length; index++)
+                List<int>? changed = null;
+                var limit = Math.Min(schema.DataColumns.Count, Math.Min(original.Length, updated.Length));
+                for (var index = 0; index < limit; index++)
                 {
                     if (!original[index].Equals(updated[index]))
                     {
+                        changed ??= new List<int>(limit - index);
                         changed.Add(index);
                     }
                 }
 
-                return changed.Count == 0
+                return changed is null
                     ? null
                     : new NetChange(schema, row.PrimaryKey, row.EncodedKey, MutationOp.Update, original, updated, changed, absolute, row.Replaced);
         }
@@ -252,6 +293,54 @@ internal sealed unsafe class PreupdateCapture : IDisposable
 
     private void RecordFault(Exception error) => Fault = SqliteStatus.Fail(error.Message);
 
+    private string ResolveTableName(byte* table)
+    {
+        var span = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(table);
+        if (_lastTableUtf8 is { } lastUtf8 && span.SequenceEqual(lastUtf8) && _lastTableName is { } lastName)
+        {
+            return lastName;
+        }
+
+        var lookup = _tableNames.GetAlternateLookup<ReadOnlySpan<byte>>();
+        if (lookup.TryGetValue(span, out var cached))
+        {
+            _lastTableUtf8 = cached.Bytes;
+            _lastTableName = cached.Name;
+            return cached.Name;
+        }
+
+        var name = Encoding.UTF8.GetString(span);
+        if (_tableNames.Count < MaxCachedTableNames)
+        {
+            var bytes = span.ToArray();
+            _tableNames[bytes] = new TableNameEntry(bytes, name);
+            _lastTableUtf8 = bytes;
+            _lastTableName = name;
+        }
+
+        return name;
+    }
+
+    private bool CanCaptureFinal(TableSchema schema) =>
+        !_sawSavepointRollback && !schema.IsVirtual && !schema.IsShadow && !schema.HasVirtualGeneratedColumns;
+
+    private SqlValue[] ReadFinal(nint db, TableSchema schema, ReadOnlySpan<int> sources)
+    {
+        var count = schema.DataColumns.Count;
+        if (count == 0)
+        {
+            return [];
+        }
+
+        var values = new SqlValue[count];
+        for (var index = 0; index < count; index++)
+        {
+            values[index] = Read(db, sources[index], useNew: true);
+        }
+
+        return values;
+    }
+
     private void Handle(nint db, int op, byte* database, byte* table, long oldKey, long newKey)
     {
         if (!_active || Suppressed || !Fault.IsOk || !IsMain(database) || IsInternal(table))
@@ -259,7 +348,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             return;
         }
 
-        var name = SqliteNative.ReadUtf8(table);
+        var name = ResolveTableName(table);
         var schema = Resolve(name);
         if (schema is not null && SqliteNative.PreupdateCount(db) != schema.StorageColumnCount)
         {
@@ -279,7 +368,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
             return;
         }
 
-        IReadOnlyList<int> sources = [.. schema.DataColumns.Select(static column => column.Index)];
+        ReadOnlySpan<int> sources = schema.DataColumnIndices;
         if (schema.IsShadow)
         {
             if (schema.ContentOwner is not { } owner || Resolve(owner) is not { IsVirtual: true } virtualTable)
@@ -287,29 +376,50 @@ internal sealed unsafe class PreupdateCapture : IDisposable
                 return;
             }
 
-            sources = [.. schema.DataColumns.Take(virtualTable.DataColumns.Count).Select(static column => column.Index)];
+            var take = Math.Min(schema.DataColumnIndices.Length, virtualTable.DataColumns.Count);
+            sources = schema.DataColumnIndices.AsSpan(0, take);
             schema = virtualTable;
-            if (sources.Count != schema.DataColumns.Count)
+            if (sources.Length != schema.DataColumns.Count)
             {
                 Fault = SqliteStatus.Fail(string.Concat("virtual table content layout mismatch for ", owner));
                 return;
             }
         }
 
+        var captureFinal = CanCaptureFinal(schema);
         var depth = SqliteNative.PreupdateDepth(db);
         switch (op)
         {
             case SqliteNative.OpInsert:
                 if (ReadKey(db, schema, newKey, useNew: true) is { } inserted)
                 {
-                    Touch(db, schema, sources, inserted, existed: false).Replaced = true;
+                    var row = Touch(db, schema, sources, inserted, existed: false);
+                    row.Replaced = true;
+                    if (captureFinal)
+                    {
+                        row.Final = ReadFinal(db, schema, sources);
+                        row.HasCapturedFinal = true;
+                    }
+                    else
+                    {
+                        row.HasCapturedFinal = false;
+                    }
                 }
 
                 break;
             case SqliteNative.OpDelete:
                 if (ReadKey(db, schema, oldKey, useNew: false) is { } deleted)
                 {
-                    _ = Touch(db, schema, sources, deleted, existed: true);
+                    var row = Touch(db, schema, sources, deleted, existed: true);
+                    if (captureFinal)
+                    {
+                        row.Final = null;
+                        row.HasCapturedFinal = true;
+                    }
+                    else
+                    {
+                        row.HasCapturedFinal = false;
+                    }
                 }
 
                 break;
@@ -319,16 +429,44 @@ internal sealed unsafe class PreupdateCapture : IDisposable
                     return;
                 }
 
-                var row = Touch(db, schema, sources, before, existed: true);
+                var updated = Touch(db, schema, sources, before, existed: true);
                 if (depth == 0 && Annotation is { } annotation && string.Equals(annotation.Table, schema.Table, StringComparison.OrdinalIgnoreCase))
                 {
-                    row.Absolute ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    row.Absolute.UnionWith(annotation.AbsoluteColumns);
+                    updated.Absolute ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    updated.Absolute.UnionWith(annotation.AbsoluteColumns);
                 }
 
                 if (!before.AsSpan().SequenceEqual(after))
                 {
-                    _ = Touch(db, schema, sources, after, existed: false);
+                    if (captureFinal)
+                    {
+                        updated.Final = null;
+                        updated.HasCapturedFinal = true;
+                    }
+                    else
+                    {
+                        updated.HasCapturedFinal = false;
+                    }
+
+                    var moved = Touch(db, schema, sources, after, existed: false);
+                    if (captureFinal)
+                    {
+                        moved.Final = ReadFinal(db, schema, sources);
+                        moved.HasCapturedFinal = true;
+                    }
+                    else
+                    {
+                        moved.HasCapturedFinal = false;
+                    }
+                }
+                else if (captureFinal)
+                {
+                    updated.Final = ReadFinal(db, schema, sources);
+                    updated.HasCapturedFinal = true;
+                }
+                else
+                {
+                    updated.HasCapturedFinal = false;
                 }
 
                 break;
@@ -379,8 +517,9 @@ internal sealed unsafe class PreupdateCapture : IDisposable
     private bool MeasureRow(nint db, IReadOnlyList<TableColumn> columns, bool useNew, out int bytes)
     {
         bytes = 0;
-        foreach (var column in columns)
+        for (var index = 0; index < columns.Count; index++)
         {
+            var column = columns[index];
             nint value;
             var rc = useNew ? SqliteNative.PreupdateNew(db, column.Index, &value) : SqliteNative.PreupdateOld(db, column.Index, &value);
             if (rc == SqliteNative.Range && column.Generated)
@@ -422,16 +561,21 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         return true;
     }
 
-    private TouchedRow Touch(nint db, TableSchema schema, IReadOnlyList<int> sources, SqlValue[] key, bool existed)
+    private TouchedRow Touch(nint db, TableSchema schema, ReadOnlySpan<int> sources, SqlValue[] key, bool existed)
     {
-        var encoded = PrimaryKeyCodec.Encode(key);
-        var lookup = (schema.Table, PrimaryKeyCodec.ToKeyString(encoded));
-        ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(_byKey, lookup, out var exists);
-        if (exists && slot is { } found)
+        Span<byte> stackEncoded = stackalloc byte[128];
+        byte[]? heapEncoded = null;
+        var encodedSpan = PrimaryKeyCodec.TryEncode(key, stackEncoded, out var written)
+            ? (ReadOnlySpan<byte>)stackEncoded[..written]
+            : (heapEncoded = PrimaryKeyCodec.Encode(key));
+
+        var lookup = _byKey.GetAlternateLookup<RowLookupKeyRef>();
+        if (lookup.TryGetValue(new RowLookupKeyRef(schema.Table, encodedSpan), out var found))
         {
             return found;
         }
 
+        var encoded = heapEncoded ?? encodedSpan.ToArray();
         SqlValue[]? original = null;
         if (existed)
         {
@@ -443,7 +587,7 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         }
 
         var row = new TouchedRow(schema, key, encoded, original);
-        slot = row;
+        _byKey[new RowLookupKey(schema.Table, encoded)] = row;
         _touched.Add(row);
         return row;
     }
@@ -516,6 +660,82 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         return true;
     }
 
+    private readonly record struct TableNameEntry(byte[] Bytes, string Name);
+
+    private readonly record struct RowLookupKey(string Table, byte[] EncodedKey);
+
+    private readonly ref struct RowLookupKeyRef(string table, ReadOnlySpan<byte> encodedKey)
+    {
+        public string Table { get; } = table;
+
+        public ReadOnlySpan<byte> EncodedKey { get; } = encodedKey;
+    }
+
+    private sealed class Utf8BytesComparer : IEqualityComparer<byte[]>, IAlternateEqualityComparer<ReadOnlySpan<byte>, byte[]>
+    {
+        public static Utf8BytesComparer Instance { get; } = new();
+
+        private Utf8BytesComparer()
+        {
+        }
+
+        public bool Equals(byte[]? x, byte[]? y) =>
+            x is null || y is null ? x is null && y is null : x.AsSpan().SequenceEqual(y);
+
+        public int GetHashCode(byte[] obj)
+        {
+            var hash = new HashCode();
+            hash.AddBytes(obj);
+            return hash.ToHashCode();
+        }
+
+        public bool Equals(ReadOnlySpan<byte> alternate, byte[] other) => alternate.SequenceEqual(other);
+
+        public int GetHashCode(ReadOnlySpan<byte> alternate)
+        {
+            var hash = new HashCode();
+            hash.AddBytes(alternate);
+            return hash.ToHashCode();
+        }
+
+        public byte[] Create(ReadOnlySpan<byte> alternate) => alternate.ToArray();
+    }
+
+    private sealed class RowLookupKeyComparer : IEqualityComparer<RowLookupKey>, IAlternateEqualityComparer<RowLookupKeyRef, RowLookupKey>
+    {
+        public static RowLookupKeyComparer Instance { get; } = new();
+
+        private RowLookupKeyComparer()
+        {
+        }
+
+        public bool Equals(RowLookupKey x, RowLookupKey y) =>
+            string.Equals(x.Table, y.Table, StringComparison.OrdinalIgnoreCase)
+            && x.EncodedKey.AsSpan().SequenceEqual(y.EncodedKey);
+
+        public int GetHashCode(RowLookupKey obj)
+        {
+            var hash = new HashCode();
+            hash.Add(obj.Table, StringComparer.OrdinalIgnoreCase);
+            hash.AddBytes(obj.EncodedKey);
+            return hash.ToHashCode();
+        }
+
+        public bool Equals(RowLookupKeyRef alternate, RowLookupKey other) =>
+            string.Equals(alternate.Table, other.Table, StringComparison.OrdinalIgnoreCase)
+            && alternate.EncodedKey.SequenceEqual(other.EncodedKey);
+
+        public int GetHashCode(RowLookupKeyRef alternate)
+        {
+            var hash = new HashCode();
+            hash.Add(alternate.Table, StringComparer.OrdinalIgnoreCase);
+            hash.AddBytes(alternate.EncodedKey);
+            return hash.ToHashCode();
+        }
+
+        public RowLookupKey Create(RowLookupKeyRef alternate) => new(alternate.Table, alternate.EncodedKey.ToArray());
+    }
+
     private sealed class TouchedRow(TableSchema schema, SqlValue[] primaryKey, byte[] encodedKey, SqlValue[]? original)
     {
         public TableSchema Schema { get; } = schema;
@@ -527,6 +747,10 @@ internal sealed unsafe class PreupdateCapture : IDisposable
         public byte[] EncodedKey { get; } = encodedKey;
 
         public SqlValue[]? Original { get; } = original;
+
+        public SqlValue[]? Final { get; set; }
+
+        public bool HasCapturedFinal { get; set; }
 
         public HashSet<string>? Absolute { get; set; }
 

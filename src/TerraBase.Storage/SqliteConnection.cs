@@ -5,21 +5,48 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using Utf8Text = System.Text.Unicode.Utf8;
 
 namespace TerraBase.Storage;
 
 internal sealed record SqliteOpenOptions(string Path, bool ReadOnly, ReadOnlyMemory<byte> RawKey, int CacheSizeKib, Ulid DatabaseId, DeltaColumnRegistry DeltaColumns)
 {
     public TimeSpan StatementTimeout { get; init; } = Timeout.InfiniteTimeSpan;
+
+    public bool BackupDestination { get; init; }
 }
+
+internal sealed record CachedUserStatement(
+    string Sql,
+    nint Handle,
+    SqlColumn[] Columns,
+    bool ReadOnly,
+    bool IsExplain,
+    string[] ReadTables,
+    string[] WrittenTables,
+    bool HasWriterAnalysis,
+    string AnalyzedSql,
+    bool IsInsertOrReplace,
+    StatementAnnotation? Annotation);
 
 internal readonly union SqliteOpenResult(SqliteConnection, SqliteStatus);
 
 internal sealed unsafe partial class SqliteConnection : IDisposable
 {
     private const int MaxCachedStatements = 256;
+    private const int MaxCachedUserStatements = 256;
+    private const int ControlSqlCount = 7;
+
+    private static readonly SqlColumn[] EmptyColumns = [];
+    private static readonly IReadOnlyList<IReadOnlyList<SqlValue>> EmptyRows = [];
+    private static readonly string[] EmptyTableNames = [];
+    private static readonly SqliteStatus ResultTooLarge = new(SqliteNative.TooBig, "a result holds at most 4 MiB");
+    private static readonly SqliteStatus TooManyRows = new(SqliteNative.TooBig, "a result holds at most 10000 rows");
 
     private readonly Dictionary<string, nint> _statements = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LinkedListNode<CachedUserStatement>> _userStatements = new(StringComparer.Ordinal);
+    private readonly LinkedList<CachedUserStatement> _userLru = [];
+    private readonly nint[] _controlStatements = new nint[ControlSqlCount];
     private readonly Dictionary<string, TableSchema> _schemas = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _handleGate = new();
     private readonly SqliteOpenOptions _options;
@@ -29,10 +56,17 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     private CancellationToken _workCancellation;
     private long _workStarted;
     private bool _userMode;
+    private bool _limitsInUserMode;
     private bool _applyMode;
     private bool _applyModeDirty;
     private long _schemaCookie = -1;
     private int _deltaVersion = -1;
+    private long _userCacheCookie = -1;
+    private int _userCacheDeltaVersion = -1;
+    private bool _userCacheCheckedInTx;
+    private nint _schemaCookieStatement;
+    private nint _activeUserStatement;
+    private bool _activeUserStatementEvicted;
     private nint _db;
 
     private SqliteConnection(nint db, SqliteOpenOptions options)
@@ -64,11 +98,17 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             | SqliteNative.OpenNoMutex
             | SqliteNative.OpenExtendedResultCodes;
         nint db = 0;
-        var path = Utf8Z(options.Path);
+        Span<byte> pathBuffer = stackalloc byte[256];
+        var path = Utf8Z(options.Path, pathBuffer, out var rentedPath);
         int rc;
         fixed (byte* pathPointer = path)
         {
             rc = SqliteNative.OpenV2(pathPointer, &db, flags, null);
+        }
+
+        if (rentedPath is not null)
+        {
+            ArrayPool<byte>.Shared.Return(rentedPath);
         }
 
         if (rc != SqliteNative.Ok)
@@ -178,12 +218,32 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus Exec(string sql)
     {
-        var bytes = Utf8Z(sql);
+        if (sql == "ROLLBACK TO _tb_item; RELEASE _tb_item;")
+        {
+            var rolled = ExecControl(6);
+            return rolled.IsOk ? ExecControl(5) : rolled;
+        }
+
+        var control = ControlSqlIndex(sql);
+        if (control >= 0)
+        {
+            return ExecControl(control);
+        }
+
+        _userCacheCheckedInTx = false;
+        EnsureEngineLimits();
+        Span<byte> stackBuffer = stackalloc byte[256];
+        var bytes = Utf8Z(sql, stackBuffer, out var rented);
         byte* error = null;
         int rc;
         fixed (byte* sqlPointer = bytes)
         {
             rc = SqliteNative.Exec(Handle, sqlPointer, 0, 0, &error);
+        }
+
+        if (rented is not null)
+        {
+            ArrayPool<byte>.Shared.Return(rented);
         }
 
         if (rc == SqliteNative.Ok)
@@ -198,6 +258,68 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             SqliteNative.Free(error);
         }
 
+        return status;
+    }
+
+    private static int ControlSqlIndex(string sql) => sql switch
+    {
+        "BEGIN;" => 0,
+        "BEGIN IMMEDIATE;" => 1,
+        "COMMIT;" => 2,
+        "ROLLBACK;" => 3,
+        "SAVEPOINT _tb_item;" => 4,
+        "RELEASE _tb_item;" => 5,
+        "ROLLBACK TO _tb_item;" => 6,
+        _ => -1,
+    };
+
+    private static ReadOnlySpan<byte> ControlSqlUtf8(int index) => index switch
+    {
+        0 => "BEGIN;"u8,
+        1 => "BEGIN IMMEDIATE;"u8,
+        2 => "COMMIT;"u8,
+        3 => "ROLLBACK;"u8,
+        4 => "SAVEPOINT _tb_item;"u8,
+        5 => "RELEASE _tb_item;"u8,
+        6 => "ROLLBACK TO _tb_item;"u8,
+        _ => throw new UnreachableException(),
+    };
+
+    private SqliteStatus ExecControl(int index)
+    {
+        if (index is 2 or 3)
+        {
+            _userCacheCheckedInTx = false;
+        }
+
+        var statement = _controlStatements[index];
+        if (statement == 0)
+        {
+            var utf8 = ControlSqlUtf8(index);
+            byte* tail = null;
+            int rc;
+            fixed (byte* pointer = utf8)
+            {
+                rc = SqliteNative.PrepareV3(Handle, pointer, utf8.Length, SqliteNative.PreparePersistent, &statement, &tail);
+            }
+
+            if (rc != SqliteNative.Ok)
+            {
+                return Status(rc);
+            }
+
+            _controlStatements[index] = statement;
+        }
+
+        var step = SqliteNative.Step(statement);
+        if (step is SqliteNative.Done or SqliteNative.Row)
+        {
+            var reset = SqliteNative.Reset(statement);
+            return reset == SqliteNative.Ok ? SqliteStatus.Success : Status(reset);
+        }
+
+        var status = Status(step);
+        _ = SqliteNative.Reset(statement);
         return status;
     }
 
@@ -226,6 +348,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus Run(string sql, params ReadOnlySpan<SqlValue> parameters)
     {
+        EnsureEngineLimits();
         var status = Rent(sql, out var statement, out var cached);
         if (!status.IsOk)
         {
@@ -259,6 +382,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus Query(string sql, List<SqlValue[]> rows, params ReadOnlySpan<SqlValue> parameters)
     {
+        EnsureEngineLimits();
         var status = Rent(sql, out var statement, out var cached);
         if (!status.IsOk)
         {
@@ -300,6 +424,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     public SqliteStatus QueryFirst(string sql, out SqlValue[]? row, params ReadOnlySpan<SqlValue> parameters)
     {
         row = null;
+        EnsureEngineLimits();
         var status = Rent(sql, out var statement, out var cached);
         if (!status.IsOk)
         {
@@ -331,7 +456,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return status;
     }
 
-    public SqliteStatus PrepareUser(ReadOnlySpan<byte> sql, SqlRuleScope? scope, StatementInfo info, out nint statement, out int consumed)
+    public SqliteStatus PrepareUser(ReadOnlySpan<byte> sql, SqlRuleScope? scope, StatementInfo info, out nint statement, out int consumed, bool persistent = false)
     {
         info.Reset();
         if (scope is not null)
@@ -354,7 +479,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         {
             fixed (byte* sqlPointer = sql)
             {
-                rc = SqliteNative.PrepareV3(Handle, sqlPointer, sql.Length, 0, &handle, &tail);
+                rc = SqliteNative.PrepareV3(Handle, sqlPointer, sql.Length, persistent ? SqliteNative.PreparePersistent : 0, &handle, &tail);
                 consumed = tail is null ? sql.Length : (int)(tail - sqlPointer);
             }
         }
@@ -383,21 +508,219 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return status;
     }
 
-    private void EnterUserMode()
+    public CachedUserStatement? TryGetCachedUserStatement(string sql)
     {
-        _userMode = true;
-        if (HasUserLimits)
+        if (_userStatements.Count == 0)
         {
-            SqliteLimits.ApplyUser(Handle);
+            return null;
+        }
+
+        if (!_userCacheCheckedInTx || _options.DeltaColumns.Version != _userCacheDeltaVersion)
+        {
+            var status = ReadSchemaCookie(out var cookie);
+            if (!status.IsOk || cookie != _userCacheCookie || _options.DeltaColumns.Version != _userCacheDeltaVersion)
+            {
+                InvalidateSchemaCache();
+                return null;
+            }
+
+            if (InTransaction)
+            {
+                _userCacheCheckedInTx = true;
+            }
+        }
+
+        if (!_userStatements.TryGetValue(sql, out var node))
+        {
+            return null;
+        }
+
+        if (!ReferenceEquals(node, _userLru.First))
+        {
+            _userLru.Remove(node);
+            _userLru.AddFirst(node);
+        }
+
+        return node.Value;
+    }
+
+    public CachedUserStatement? CacheUserStatement(
+        string sql,
+        nint handle,
+        StatementInfo info,
+        bool hasWriterAnalysis,
+        string analyzedSql,
+        bool isInsertOrReplace,
+        StatementAnnotation? annotation)
+    {
+        if (_userCacheCookie < 0)
+        {
+            var status = ReadSchemaCookie(out var cookie);
+            if (!status.IsOk)
+            {
+                return null;
+            }
+
+            _userCacheCookie = cookie;
+            _userCacheDeltaVersion = _options.DeltaColumns.Version;
+            if (InTransaction)
+            {
+                _userCacheCheckedInTx = true;
+            }
+        }
+
+        var entry = new CachedUserStatement(
+            sql,
+            handle,
+            ReadColumns(handle),
+            IsReadOnly(handle),
+            IsExplain(handle),
+            info.ReadTables.Count == 0 ? EmptyTableNames : [.. info.ReadTables],
+            info.WrittenTables.Count == 0 ? EmptyTableNames : [.. info.WrittenTables],
+            hasWriterAnalysis,
+            analyzedSql,
+            isInsertOrReplace,
+            annotation);
+
+        if (_userStatements.TryGetValue(sql, out var existing))
+        {
+            if (existing.Value.Handle != handle)
+            {
+                FinalizeStatement(existing.Value.Handle);
+            }
+
+            _userLru.Remove(existing);
+            existing.Value = entry;
+            _userLru.AddFirst(existing);
+            return entry;
+        }
+
+        if (_userLru.Count >= MaxCachedUserStatements && _userLru.Last is { } oldest)
+        {
+            _userLru.RemoveLast();
+            _ = _userStatements.Remove(oldest.Value.Sql);
+            if (oldest.Value.Handle == _activeUserStatement && _activeUserStatement != 0)
+            {
+                _activeUserStatementEvicted = true;
+            }
+            else
+            {
+                FinalizeStatement(oldest.Value.Handle);
+            }
+        }
+
+        var added = _userLru.AddFirst(entry);
+        _userStatements[sql] = added;
+        return entry;
+    }
+
+    public static void ResetCachedUserStatement(nint statement)
+    {
+        if (statement != 0)
+        {
+            _ = SqliteNative.Reset(statement);
+            _ = SqliteNative.ClearBindings(statement);
         }
     }
 
-    private void LeaveUserMode()
+    public SqliteStatus StepCachedUser(CachedUserStatement cached, StatementInfo info, out SqlResultSet result, bool limitResults, CancellationToken cancellationToken)
     {
-        _userMode = false;
-        if (HasUserLimits)
+        _activeUserStatement = cached.Handle;
+        _activeUserStatementEvicted = false;
+        try
+        {
+            return StepUserCore(cached.Handle, info, cached.Columns, cached.ReadOnly, out result, limitResults, cancellationToken);
+        }
+        finally
+        {
+            var evicted = _activeUserStatementEvicted;
+            _activeUserStatement = 0;
+            _activeUserStatementEvicted = false;
+            if (evicted)
+            {
+                FinalizeStatement(cached.Handle);
+            }
+            else
+            {
+                _ = SqliteNative.Reset(cached.Handle);
+                _ = SqliteNative.ClearBindings(cached.Handle);
+            }
+        }
+    }
+
+    internal static bool IsTrailingEmpty(ReadOnlySpan<byte> tail)
+    {
+        foreach (var value in tail)
+        {
+            if (value is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or (byte)';'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void MarkUserCacheValidated(long cookie, int deltaVersion)
+    {
+        _userCacheCookie = cookie;
+        _userCacheDeltaVersion = deltaVersion;
+        if (InTransaction)
+        {
+            _userCacheCheckedInTx = true;
+        }
+    }
+
+    private void ClearStatementCaches()
+    {
+        _userCacheCookie = -1;
+        _userCacheDeltaVersion = -1;
+        _userCacheCheckedInTx = false;
+        foreach (var statement in _statements.Values)
+        {
+            _ = SqliteNative.Finalize(statement);
+        }
+
+        _statements.Clear();
+        foreach (var entry in _userLru)
+        {
+            if (entry.Handle == _activeUserStatement && _activeUserStatement != 0)
+            {
+                _activeUserStatementEvicted = true;
+            }
+            else
+            {
+                _ = SqliteNative.Finalize(entry.Handle);
+            }
+        }
+
+        _userLru.Clear();
+        _userStatements.Clear();
+    }
+
+    private void EnterUserMode()
+    {
+        _userMode = true;
+        EnsureUserLimits();
+    }
+
+    private void LeaveUserMode() => _userMode = false;
+
+    private void EnsureUserLimits()
+    {
+        if (HasUserLimits && !_limitsInUserMode)
+        {
+            SqliteLimits.ApplyUser(Handle);
+            _limitsInUserMode = true;
+        }
+    }
+
+    private void EnsureEngineLimits()
+    {
+        if (HasUserLimits && _limitsInUserMode && !_userMode)
         {
             SqliteLimits.ApplyEngine(Handle);
+            _limitsInUserMode = false;
         }
     }
 
@@ -405,13 +728,13 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     {
         if (scope.SchemaVersion is { } checkedVersion)
         {
-            var version = QueryFirst("PRAGMA schema_version", out var current);
+            var version = ReadSchemaCookie(out var live);
             if (!version.IsOk)
             {
                 return version;
             }
 
-            if (current is not [var value] || !value.TryGetIntegral(out var live) || live != checkedVersion)
+            if (live != checkedVersion)
             {
                 return new SqliteStatus(SqliteNative.Schema, "the schema changed after the rules were checked; retry the statement");
             }
@@ -448,6 +771,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus BindUser(nint statement, SqlStatement source)
     {
+        EnsureUserLimits();
         var count = SqliteNative.BindParameterCount(statement);
         var positional = Math.Min(count, source.Positional.Count);
         for (var index = 0; index < positional; index++)
@@ -477,39 +801,48 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return SqliteStatus.Success;
     }
 
-    public SqliteStatus StepUser(nint statement, StatementInfo info, out SqlResultSet result, bool limitResults, CancellationToken cancellationToken)
-    {
-        var columnCount = SqliteNative.ColumnCount(statement);
-        var columns = new SqlColumn[columnCount];
-        for (var index = 0; index < columnCount; index++)
-        {
-            columns[index] = new SqlColumn(
-                SqliteNative.ReadUtf8(SqliteNative.ColumnName(statement, index)),
-                SqliteNative.ReadOptionalUtf8(SqliteNative.ColumnDeclType(statement, index)));
-        }
+    public SqliteStatus StepUser(nint statement, StatementInfo info, out SqlResultSet result, bool limitResults, CancellationToken cancellationToken) =>
+        StepUserCore(statement, info, ReadColumns(statement), IsReadOnly(statement), out result, limitResults, cancellationToken);
 
-        List<IReadOnlyList<SqlValue>> rows = [];
-        var readOnly = SqliteNative.StatementReadOnly(statement) != 0;
+    private SqliteStatus StepUserCore(
+        nint statement,
+        StatementInfo info,
+        SqlColumn[] columns,
+        bool readOnly,
+        out SqlResultSet result,
+        bool limitResults,
+        CancellationToken cancellationToken)
+    {
+        List<IReadOnlyList<SqlValue>>? rows = null;
+        var monitorProgress = cancellationToken.CanBeCanceled || _options.StatementTimeout != Timeout.InfiniteTimeSpan;
         _workCancellation = cancellationToken;
-        _workStarted = Stopwatch.GetTimestamp();
+        _workStarted = monitorProgress && _options.StatementTimeout != Timeout.InfiniteTimeSpan ? Stopwatch.GetTimestamp() : 0;
         _collecting = info;
         EnterUserMode();
         SqliteStatus status;
         try
         {
-            SqliteNative.SetProgressHandler(Handle, 1000, &OnProgress, GCHandle<SqliteConnection>.ToIntPtr(_self));
-            status = ReadUserRows(statement, rows, columnCount, limitResults && HasUserLimits);
+            if (monitorProgress)
+            {
+                SqliteNative.SetProgressHandler(Handle, 1000, &OnProgress, GCHandle<SqliteConnection>.ToIntPtr(_self));
+            }
+
+            status = ReadUserRows(statement, ref rows, columns.Length, limitResults && HasUserLimits, monitorProgress);
         }
         finally
         {
-            SqliteNative.SetProgressHandler(Handle, 0, null, 0);
+            if (monitorProgress)
+            {
+                SqliteNative.SetProgressHandler(Handle, 0, null, 0);
+            }
+
             LeaveUserMode();
             _collecting = null;
             _workCancellation = default;
             info.Scope = null;
         }
 
-        result = new SqlResultSet(columns, rows, readOnly ? 0 : SqliteNative.Changes64(_db), SqliteNative.LastInsertRowId(_db));
+        result = new SqlResultSet(columns, rows ?? EmptyRows, readOnly ? 0 : SqliteNative.Changes64(_db), SqliteNative.LastInsertRowId(_db));
         return status.Code switch
         {
             SqliteNative.Interrupt when !cancellationToken.IsCancellationRequested => TimedOut,
@@ -518,10 +851,29 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         };
     }
 
-    private SqliteStatus ReadUserRows(nint statement, List<IReadOnlyList<SqlValue>> rows, int columnCount, bool limitResults)
+    private static SqlColumn[] ReadColumns(nint statement)
+    {
+        var columnCount = SqliteNative.ColumnCount(statement);
+        if (columnCount == 0)
+        {
+            return EmptyColumns;
+        }
+
+        var columns = new SqlColumn[columnCount];
+        for (var index = 0; index < columnCount; index++)
+        {
+            columns[index] = new SqlColumn(
+                SqliteNative.ReadUtf8(SqliteNative.ColumnName(statement, index)),
+                SqliteNative.ReadOptionalUtf8(SqliteNative.ColumnDeclType(statement, index)));
+        }
+
+        return columns;
+    }
+
+    private SqliteStatus ReadUserRows(nint statement, ref List<IReadOnlyList<SqlValue>>? rows, int columnCount, bool limitResults, bool monitorProgress)
     {
         var remainingBytes = SqlLimits.MaxResultBytes;
-        while (!IsWorkCanceled())
+        while (!monitorProgress || !IsWorkCanceled())
         {
             var rc = SqliteNative.Step(statement);
             if (Capture is { Fault.IsOk: false } capture)
@@ -539,38 +891,104 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
                 return Status(rc);
             }
 
-            if (limitResults)
+            if (limitResults && rows is { Count: SqlLimits.MaxResultRows })
             {
-                if (rows.Count == SqlLimits.MaxResultRows)
-                {
-                    return new SqliteStatus(SqliteNative.TooBig, "a result holds at most 10000 rows");
-                }
-
-                for (var index = 0; index < columnCount; index++)
-                {
-                    remainingBytes -= SqliteNative.ColumnType(statement, index) switch
-                    {
-                        SqliteNative.TypeBlob or SqliteNative.TypeText => Math.Max(1, SqliteNative.ColumnBytes(statement, index)),
-                        SqliteNative.TypeNull => 1,
-                        _ => sizeof(long),
-                    };
-                    if (remainingBytes < 0)
-                    {
-                        return new SqliteStatus(SqliteNative.TooBig, "a result holds at most 4 MiB");
-                    }
-                }
+                return TooManyRows;
             }
 
-            var read = ReadRow(statement, out var row);
+            var read = ReadUserRow(statement, columnCount, limitResults, ref remainingBytes, out var row);
             if (!read.IsOk)
             {
                 return read;
             }
 
+            rows ??= [];
             rows.Add(row);
         }
 
         return Canceled;
+    }
+
+    private static SqliteStatus ReadUserRow(nint statement, int columnCount, bool limitResults, ref int remainingBytes, out SqlValue[] row)
+    {
+        row = columnCount == 0 ? [] : new SqlValue[columnCount];
+        for (var index = 0; index < columnCount; index++)
+        {
+            switch (SqliteNative.ColumnType(statement, index))
+            {
+                case SqliteNative.TypeInteger:
+                    if (limitResults && (remainingBytes -= sizeof(long)) < 0)
+                    {
+                        return ResultTooLarge;
+                    }
+
+                    row[index] = SqlValue.FromIntegral(SqliteNative.ColumnInt64(statement, index));
+                    break;
+                case SqliteNative.TypeFloat:
+                    if (limitResults && (remainingBytes -= sizeof(long)) < 0)
+                    {
+                        return ResultTooLarge;
+                    }
+
+                    var real = SqliteNative.ColumnDouble(statement, index);
+                    if (!double.IsFinite(real))
+                    {
+                        return SqliteStatus.NonFiniteReal;
+                    }
+
+                    row[index] = SqlValue.FromReal(real);
+                    break;
+                case SqliteNative.TypeText:
+                    var textLength = SqliteNative.ColumnBytes(statement, index);
+                    if (limitResults && (remainingBytes -= Math.Max(1, textLength)) < 0)
+                    {
+                        return ResultTooLarge;
+                    }
+
+                    if (textLength == 0)
+                    {
+                        row[index] = SqlValue.FromText(string.Empty);
+                        break;
+                    }
+
+                    var textPointer = SqliteNative.ColumnText(statement, index);
+                    var textBytes = textPointer is null ? [] : new ReadOnlySpan<byte>(textPointer, textLength);
+                    if (!Utf8Text.IsValid(textBytes))
+                    {
+                        return SqliteStatus.InvalidUtf8;
+                    }
+
+                    row[index] = SqlValue.FromText(Encoding.UTF8.GetString(textBytes));
+                    break;
+                case SqliteNative.TypeBlob:
+                    var blobLength = SqliteNative.ColumnBytes(statement, index);
+                    if (limitResults && (remainingBytes -= Math.Max(1, blobLength)) < 0)
+                    {
+                        return ResultTooLarge;
+                    }
+
+                    if (blobLength == 0)
+                    {
+                        row[index] = SqlValue.FromBlob(ReadOnlyMemory<byte>.Empty);
+                        break;
+                    }
+
+                    var blobPointer = SqliteNative.ColumnBlob(statement, index);
+                    var blob = blobPointer is null ? [] : new ReadOnlySpan<byte>(blobPointer, blobLength).ToArray();
+                    row[index] = SqlValue.FromBlob(blob);
+                    break;
+                default:
+                    if (limitResults && (remainingBytes -= 1) < 0)
+                    {
+                        return ResultTooLarge;
+                    }
+
+                    row[index] = SqlValue.Null;
+                    break;
+            }
+        }
+
+        return SqliteStatus.Success;
     }
 
     private bool IsWorkCanceled() =>
@@ -643,6 +1061,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus ExplainQueryPlan(string sql, List<string> details)
     {
+        EnsureEngineLimits();
         var bytes = Encoding.UTF8.GetBytes(string.Concat("EXPLAIN QUERY PLAN ", sql));
         nint statement = 0;
         byte* tail = null;
@@ -718,6 +1137,28 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             }
 
             _statements.Clear();
+            foreach (var entry in _userLru)
+            {
+                _ = SqliteNative.Finalize(entry.Handle);
+            }
+
+            _userLru.Clear();
+            _userStatements.Clear();
+            for (var index = 0; index < _controlStatements.Length; index++)
+            {
+                if (_controlStatements[index] != 0)
+                {
+                    _ = SqliteNative.Finalize(_controlStatements[index]);
+                    _controlStatements[index] = 0;
+                }
+            }
+
+            if (_schemaCookieStatement != 0)
+            {
+                _ = SqliteNative.Finalize(_schemaCookieStatement);
+                _schemaCookieStatement = 0;
+            }
+
             _schemas.Clear();
             _ = SqliteNative.SetAuthorizer(db, null, 0);
             _db = 0;
@@ -778,7 +1219,9 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
         var pragmas = _options.ReadOnly
             ? string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA cache_size = -{_options.CacheSizeKib}; PRAGMA query_only = 1;")
-            : string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -{_options.CacheSizeKib};");
+            : _options.BackupDestination
+                ? string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF; PRAGMA foreign_keys = ON; PRAGMA cache_size = -{_options.CacheSizeKib};")
+                : string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -{_options.CacheSizeKib};");
         status = Exec(pragmas);
         if (!status.IsOk)
         {
@@ -939,7 +1382,17 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     private static int BindText(nint statement, int position, string text)
     {
         var maxBytes = Encoding.UTF8.GetMaxByteCount(text.Length);
-        var rented = ArrayPool<byte>.Shared.Rent(Math.Max(maxBytes, 1));
+        if (maxBytes <= 256)
+        {
+            Span<byte> buffer = stackalloc byte[256];
+            var count = Encoding.UTF8.GetBytes(text, buffer);
+            fixed (byte* pointer = buffer)
+            {
+                return SqliteNative.BindText(statement, position, pointer, count, SqliteNative.Transient);
+            }
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent(maxBytes);
         var written = Encoding.UTF8.GetBytes(text, rented);
         int rc;
         fixed (byte* textPointer = rented)
@@ -968,12 +1421,12 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     {
         if (name.Length > 0 && name[0] is ':' or '@' or '$' or '#' or '?')
         {
-            return ParameterIndexExact(statement, name);
+            return ParameterIndexExact(statement, 0, name);
         }
 
-        foreach (var prefix in ":@$#")
+        foreach (var prefix in ":@$#"u8)
         {
-            var index = ParameterIndexExact(statement, string.Concat(prefix.ToString(), name));
+            var index = ParameterIndexExact(statement, prefix, name);
             if (index != 0)
             {
                 return index;
@@ -983,13 +1436,46 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return 0;
     }
 
-    private static int ParameterIndexExact(nint statement, string name)
+    private static int ParameterIndexExact(nint statement, byte prefix, string name)
     {
-        var bytes = Utf8Z(name);
-        fixed (byte* namePointer = bytes)
+        var extra = prefix == 0 ? 1 : 2;
+        var maxBytes = Encoding.UTF8.GetMaxByteCount(name.Length) + extra;
+        if (maxBytes <= 256)
         {
-            return SqliteNative.BindParameterIndex(statement, namePointer);
+            Span<byte> buffer = stackalloc byte[256];
+            var offset = 0;
+            if (prefix != 0)
+            {
+                buffer[0] = prefix;
+                offset = 1;
+            }
+
+            var written = Encoding.UTF8.GetBytes(name, buffer[offset..]);
+            buffer[offset + written] = 0;
+            fixed (byte* namePointer = buffer)
+            {
+                return SqliteNative.BindParameterIndex(statement, namePointer);
+            }
         }
+
+        var rented = ArrayPool<byte>.Shared.Rent(maxBytes);
+        var start = 0;
+        if (prefix != 0)
+        {
+            rented[0] = prefix;
+            start = 1;
+        }
+
+        var length = Encoding.UTF8.GetBytes(name, rented.AsSpan(start));
+        rented[start + length] = 0;
+        int index;
+        fixed (byte* namePointer = rented)
+        {
+            index = SqliteNative.BindParameterIndex(statement, namePointer);
+        }
+
+        ArrayPool<byte>.Shared.Return(rented);
+        return index;
     }
 
     private static SqliteStatus ReadRow(nint statement, out SqlValue[] row)
@@ -1008,11 +1494,21 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return SqliteStatus.Success;
     }
 
-    private static byte[] Utf8Z(string value)
+    private static ReadOnlySpan<byte> Utf8Z(string value, Span<byte> stackBuffer, out byte[]? rented)
     {
-        var bytes = new byte[Encoding.UTF8.GetByteCount(value) + 1];
-        Encoding.UTF8.GetBytes(value, bytes);
-        return bytes;
+        var maxBytes = Encoding.UTF8.GetMaxByteCount(value.Length) + 1;
+        if (maxBytes <= stackBuffer.Length)
+        {
+            rented = null;
+            var written = Encoding.UTF8.GetBytes(value, stackBuffer);
+            stackBuffer[written] = 0;
+            return stackBuffer[..(written + 1)];
+        }
+
+        rented = ArrayPool<byte>.Shared.Rent(maxBytes);
+        var length = Encoding.UTF8.GetBytes(value, rented);
+        rented[length] = 0;
+        return rented.AsSpan(0, length + 1);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]

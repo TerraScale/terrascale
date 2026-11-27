@@ -18,6 +18,8 @@ internal sealed class StatementInfo
 {
     public bool IsDdl { get; set; }
 
+    public bool IsUncacheable { get; set; }
+
     public UserSavepoint? Savepoint { get; set; }
 
     public string? Denied { get; set; }
@@ -35,6 +37,7 @@ internal sealed class StatementInfo
     public void Reset()
     {
         IsDdl = false;
+        IsUncacheable = false;
         Savepoint = null;
         Denied = null;
         CreatedTable = null;
@@ -117,11 +120,16 @@ internal sealed unsafe partial class SqliteConnection
             case SqliteNative.ActionFunction when second is not null && DeniedFunctions.Contains(second):
                 return Deny(info, "the function is not permitted");
             case SqliteNative.ActionSavepoint:
+                info?.IsUncacheable = true;
                 return Savepoint(info, first, second);
             case SqliteNative.ActionPragma:
+                info?.IsUncacheable = true;
                 return first is not null && !IsInternal(second) && (ReadPragmas.Contains(first) || (second is null && QueryOnlyPragmas.Contains(first)))
                     ? SqliteNative.AuthOk
                     : Deny(info, string.Concat("PRAGMA ", first, " is not permitted"));
+            case SqliteNative.ActionReindex:
+                info?.IsUncacheable = true;
+                return SqliteNative.AuthOk;
             case SqliteNative.ActionRead:
                 if (first is not null && DeniedTables.Contains(first))
                 {
@@ -158,6 +166,7 @@ internal sealed unsafe partial class SqliteConnection
                     return Deny(info, "reserved table name");
                 }
 
+                info?.IsUncacheable = true;
                 info?.IsDdl = main;
                 if (action == SqliteNative.ActionCreateTable && main)
                 {
@@ -171,6 +180,7 @@ internal sealed unsafe partial class SqliteConnection
                     return Deny(info, "reserved object name");
                 }
 
+                info?.IsUncacheable = true;
                 info?.IsDdl = main;
                 return SqliteNative.AuthOk;
             case SqliteNative.ActionAlterTable:
@@ -179,6 +189,7 @@ internal sealed unsafe partial class SqliteConnection
                     return Deny(info, "reserved table name");
                 }
 
+                info?.IsUncacheable = true;
                 info?.IsDdl = true;
                 return SqliteNative.AuthOk;
             default:
