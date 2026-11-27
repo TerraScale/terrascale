@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
@@ -29,7 +30,7 @@ internal readonly union SourceAvailability(SourceReady, ContinuityNotFound, Cont
 
 internal sealed record ArchiveTruncated;
 
-internal sealed record ScheduledArchiveStatus(BackupStatus Status, bool LocalBehindArchive, bool RewindReconciled);
+internal sealed record ScheduledArchiveStatus(BackupStatus Status, bool DeferCache);
 
 internal readonly union ScheduledArchiveOutcome(ScheduledArchiveStatus, ContinuityNotFound, ContinuityUnavailable);
 
@@ -50,11 +51,13 @@ public sealed class BackupContinuityService(
     TimeProvider timeProvider) : IBackupContinuity
 {
     private static readonly ContinuityUnavailable Disabled = new("continuous backup is disabled on this node", "backup_disabled");
+    private static readonly TimeSpan PeerRewindRecheckWindow = S3ArchiveStore.RequestTimeout * 3;
 
     private readonly Lock _gate = new();
     private readonly Dictionary<Ulid, RestoreOperation> _operations = [];
     private readonly Queue<Ulid> _finished = new();
     private readonly HashSet<Ulid> _claimed = [];
+    private readonly ConcurrentDictionary<Ulid, PendingPeerRewind> _pendingPeerRewinds = new();
     private readonly Channel<OperationWork> _queue = Channel.CreateBounded<OperationWork>(new BoundedChannelOptions(options.OperationQueueCapacity)
     {
         FullMode = BoundedChannelFullMode.Wait,
@@ -100,10 +103,19 @@ public sealed class BackupContinuityService(
         }
 
         using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
-        return await ArchiveScheduledLockedAsync(databaseId, forceSnapshot: false, cancellationToken);
+        return await ArchiveScheduledLockedAsync(databaseId, forceSnapshot: false, scheduled: true, cancellationToken);
     }
 
-    internal void PruneInactive(HashSet<Ulid> active) => manifests.PruneStaleETags(active);
+    internal void PruneInactive(HashSet<Ulid> active)
+    {
+        foreach (var databaseId in _pendingPeerRewinds.Keys)
+        {
+            if (!active.Contains(databaseId))
+            {
+                _ = _pendingPeerRewinds.TryRemove(databaseId, out _);
+            }
+        }
+    }
 
     public ValueTask<RestoreStartOutcome> RestoreAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken)
     {
@@ -151,6 +163,7 @@ public sealed class BackupContinuityService(
     public async ValueTask<CryptoShredBackupOutcome> CryptoShredAsync(Ulid databaseId, CancellationToken cancellationToken)
     {
         using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
+        _ = _pendingPeerRewinds.TryRemove(databaseId, out _);
         var shredded = await sessions.Engine.CryptoShredAsync(databaseId, cancellationToken);
         var local = shredded switch
         {
@@ -460,13 +473,41 @@ public sealed class BackupContinuityService(
     {
         ArgumentNullException.ThrowIfNull(bookmark);
         using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
+        var cachedBefore = manifests.TryGetCached(databaseId);
         var operationId = Ulid.NewUlid(timeProvider.GetUtcNow());
         var rewound = await restorer.RewindAsync(operationId, databaseId, new RestoreTarget(bookmark), notifyPeers: false, cancellationToken);
         return rewound switch
         {
-            CausalBookmark applied => applied,
+            CausalBookmark applied => TrackPeerRewind(databaseId, applied, cachedBefore),
             OperationFailed failed => new ContinuityUnavailable(failed.Message, "rewind_failed"),
         };
+    }
+
+    private ContinuityRewindOutcome TrackPeerRewind(Ulid databaseId, CausalBookmark rewoundTo, ArchiveManifest? cachedBefore)
+    {
+        if (!manifests.IsEnabled)
+        {
+            return rewoundTo;
+        }
+
+        if (cachedBefore is not null)
+        {
+            var marks = PreRewindMarksBeyond(cachedBefore, rewoundTo);
+            if (marks.Count > 0)
+            {
+                _pendingPeerRewinds[databaseId] = new PendingPeerRewind(rewoundTo, marks, timeProvider.GetUtcNow() + PeerRewindRecheckWindow);
+            }
+            else
+            {
+                _ = _pendingPeerRewinds.TryRemove(databaseId, out _);
+            }
+        }
+        else
+        {
+            _pendingPeerRewinds[databaseId] = new PendingPeerRewind(rewoundTo, null, timeProvider.GetUtcNow() + PeerRewindRecheckWindow);
+        }
+
+        return rewoundTo;
     }
 
     private async ValueTask<ContinuityCopyOutcome> RewindLockedAsync(OperationWork work, CancellationToken cancellationToken)
@@ -496,10 +537,16 @@ public sealed class BackupContinuityService(
         };
         return archived switch
         {
-            BackupStatus => rewoundTo,
+            BackupStatus => Reconciled(databaseId, rewoundTo),
             ContinuityNotFound notFound => new OperationFailed(string.Concat("database was rewound but could not be archived: ", notFound.Message)),
             ContinuityUnavailable unavailable => new OperationFailed(string.Concat("database was rewound but could not be archived: ", unavailable.Message)),
         };
+    }
+
+    private ContinuityCopyOutcome Reconciled(Ulid databaseId, CausalBookmark rewoundTo)
+    {
+        _ = _pendingPeerRewinds.TryRemove(databaseId, out _);
+        return rewoundTo;
     }
 
     private async ValueTask<ArchiveTruncateOutcome> TruncateAsync(ArchiveManifest manifest, CausalBookmark rewoundTo, CancellationToken cancellationToken)
@@ -564,7 +611,7 @@ public sealed class BackupContinuityService(
 
     private async ValueTask<BackupStatusOutcome> ArchiveLockedAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken)
     {
-        var archived = await ArchiveScheduledLockedAsync(databaseId, forceSnapshot, cancellationToken);
+        var archived = await ArchiveScheduledLockedAsync(databaseId, forceSnapshot, scheduled: false, cancellationToken);
         return archived switch
         {
             ScheduledArchiveStatus scheduled => scheduled.Status,
@@ -573,12 +620,16 @@ public sealed class BackupContinuityService(
         };
     }
 
-    private async ValueTask<ScheduledArchiveOutcome> ArchiveScheduledLockedAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken)
+    private async ValueTask<ScheduledArchiveOutcome> ArchiveScheduledLockedAsync(
+        Ulid databaseId,
+        bool forceSnapshot,
+        bool scheduled,
+        CancellationToken cancellationToken)
     {
         var opened = await sessions.OpenAsync(databaseId, cancellationToken);
         return opened switch
         {
-            ISqlDatabaseSession session => await ArchiveSessionAsync(session, forceSnapshot, cancellationToken),
+            ISqlDatabaseSession session => await ArchiveSessionAsync(session, forceSnapshot, scheduled, cancellationToken),
             ContinuitySessionMissing missing when !forceSnapshot => await RetainRemoteArchiveScheduledAsync(missing, cancellationToken),
             ContinuitySessionMissing missing => new ContinuityNotFound(missing.Message, missing.Code),
             ContinuitySessionUnavailable unavailable => new ContinuityUnavailable(unavailable.Message, unavailable.Code),
@@ -590,7 +641,7 @@ public sealed class BackupContinuityService(
         var retained = await RetainRemoteArchiveAsync(missing, cancellationToken);
         return retained switch
         {
-            BackupStatus status => new ScheduledArchiveStatus(status, LocalBehindArchive: false, RewindReconciled: false),
+            BackupStatus status => new ScheduledArchiveStatus(status, DeferCache: false),
             ContinuityNotFound notFound => notFound,
             ContinuityUnavailable unavailable => unavailable,
         };
@@ -618,14 +669,18 @@ public sealed class BackupContinuityService(
         };
     }
 
-    private async ValueTask<ScheduledArchiveOutcome> ArchiveSessionAsync(ISqlDatabaseSession session, bool forceSnapshot, CancellationToken cancellationToken)
+    private async ValueTask<ScheduledArchiveOutcome> ArchiveSessionAsync(
+        ISqlDatabaseSession session,
+        bool forceSnapshot,
+        bool scheduled,
+        CancellationToken cancellationToken)
     {
         await using (session)
         {
             var loaded = await manifests.ReadCurrentAsync(session.DatabaseId, cancellationToken);
             return loaded switch
             {
-                ArchiveManifest manifest => await ArchivedAsync(manifest, session, forceSnapshot, cancellationToken),
+                ArchiveManifest manifest => await ArchivedAsync(manifest, session, forceSnapshot, scheduled, cancellationToken),
                 ContinuityUnavailable unavailable => unavailable,
             };
         }
@@ -635,13 +690,14 @@ public sealed class BackupContinuityService(
         ArchiveManifest manifest,
         ISqlDatabaseSession session,
         bool forceSnapshot,
+        bool scheduled,
         CancellationToken cancellationToken)
     {
         var archiver = new SessionArchiver(session, manifests, sessions, options, metrics, timeProvider);
         var archived = await archiver.RunAsync(manifest, forceSnapshot, cancellationToken);
         return archived switch
         {
-            ArchiveManifest stored => await ScheduledStatusForSessionAsync(stored, session, cancellationToken),
+            ArchiveManifest stored => await ScheduledStatusForSessionAsync(stored, session, scheduled, cancellationToken),
             ContinuityUnavailable unavailable => unavailable,
         };
     }
@@ -649,25 +705,124 @@ public sealed class BackupContinuityService(
     private async ValueTask<ScheduledArchiveOutcome> ScheduledStatusForSessionAsync(
         ArchiveManifest manifest,
         ISqlDatabaseSession session,
+        bool scheduled,
         CancellationToken cancellationToken)
     {
         var measured = await StatusForSessionAsync(manifest, session, cancellationToken);
         return measured switch
         {
-            BackupStatus status => ScheduledStatus(status, session),
+            BackupStatus status => ScheduledStatus(manifest, status, session, scheduled),
             ContinuityNotFound missing => missing,
             ContinuityUnavailable unavailable => unavailable,
         };
     }
 
-    private ScheduledArchiveStatus ScheduledStatus(BackupStatus status, ISqlDatabaseSession session)
+    private ScheduledArchiveStatus ScheduledStatus(ArchiveManifest manifest, BackupStatus status, ISqlDatabaseSession session, bool scheduled)
     {
-        var reconciliation = manifests.CheckReconciliation(session.DatabaseId, manifests.CurrentETag(session.DatabaseId));
-        return new ScheduledArchiveStatus(
-            status,
-            !session.CurrentBookmark.Dominates(status.ArchivedThrough) || reconciliation == ManifestReconciliation.Pending,
-            reconciliation == ManifestReconciliation.Observed);
+        var localBehind = !session.CurrentBookmark.Dominates(status.ArchivedThrough);
+        var peerRewindPending = scheduled && IsPeerRewindPending(session.DatabaseId, manifest);
+        return new ScheduledArchiveStatus(status, localBehind || peerRewindPending);
     }
+
+    private bool IsPeerRewindPending(Ulid databaseId, ArchiveManifest manifest)
+    {
+        if (!_pendingPeerRewinds.TryGetValue(databaseId, out var pending))
+        {
+            return false;
+        }
+
+        if (timeProvider.GetUtcNow() >= pending.ExpiresAtUtc)
+        {
+            _ = _pendingPeerRewinds.TryRemove(new KeyValuePair<Ulid, PendingPeerRewind>(databaseId, pending));
+            return false;
+        }
+
+        var stillPresent = pending.PreRewindObjects is { } marks
+            ? ContainsAnyMark(manifest, marks)
+            : HasHistoryBeyond(manifest, pending.RewoundTo);
+        if (!stillPresent)
+        {
+            _ = _pendingPeerRewinds.TryRemove(new KeyValuePair<Ulid, PendingPeerRewind>(databaseId, pending));
+            return false;
+        }
+
+        return true;
+    }
+
+    private static HashSet<RewindObjectMark> PreRewindMarksBeyond(ArchiveManifest manifest, CausalBookmark rewoundTo)
+    {
+        HashSet<RewindObjectMark> marks = [];
+        for (var index = 0; index < manifest.Segments.Count; index++)
+        {
+            var segment = manifest.Segments[index];
+            if (segment.LastSequence > rewoundTo.Get(segment.Origin))
+            {
+                _ = marks.Add(new RewindObjectMark(segment.Key, segment.SealedAtUtc));
+            }
+        }
+
+        var snapshots = ManifestCodec.Snapshots(manifest);
+        for (var index = 0; index < snapshots.Count; index++)
+        {
+            var snapshot = snapshots[index];
+            if (!rewoundTo.Dominates(snapshot.Bookmark))
+            {
+                _ = marks.Add(new RewindObjectMark(snapshot.Archived.Key, snapshot.Archived.TakenAtUtc));
+            }
+        }
+
+        return marks;
+    }
+
+    private static bool ContainsAnyMark(ArchiveManifest manifest, HashSet<RewindObjectMark> marks)
+    {
+        for (var index = 0; index < manifest.Segments.Count; index++)
+        {
+            var segment = manifest.Segments[index];
+            if (marks.Contains(new RewindObjectMark(segment.Key, segment.SealedAtUtc)))
+            {
+                return true;
+            }
+        }
+
+        for (var index = 0; index < manifest.Snapshots.Count; index++)
+        {
+            var snapshot = manifest.Snapshots[index];
+            if (marks.Contains(new RewindObjectMark(snapshot.Key, snapshot.TakenAtUtc)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasHistoryBeyond(ArchiveManifest manifest, CausalBookmark rewoundTo)
+    {
+        for (var index = 0; index < manifest.Segments.Count; index++)
+        {
+            var segment = manifest.Segments[index];
+            if (segment.LastSequence > rewoundTo.Get(segment.Origin))
+            {
+                return true;
+            }
+        }
+
+        var snapshots = ManifestCodec.Snapshots(manifest);
+        for (var index = 0; index < snapshots.Count; index++)
+        {
+            if (!rewoundTo.Dominates(snapshots[index].Bookmark))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private readonly record struct RewindObjectMark(string Key, DateTimeOffset Timestamp);
+
+    private sealed record PendingPeerRewind(CausalBookmark RewoundTo, HashSet<RewindObjectMark>? PreRewindObjects, DateTimeOffset ExpiresAtUtc);
 
     private async ValueTask<BackupStatusOutcome> StatusAsync(ArchiveManifest manifest, Ulid databaseId, CancellationToken cancellationToken)
     {
