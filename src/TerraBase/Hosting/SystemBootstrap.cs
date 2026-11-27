@@ -116,7 +116,7 @@ internal sealed class SystemBootstrap(
             await Parallel.ForEachAsync(
                 local,
                 new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = budget.Token },
-                async (id, ct) => _ = await antiEntropy.SyncAsync(id, ct));
+                async (id, ct) => _ = await antiEntropy.SyncTransientAsync(id, ct));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

@@ -58,21 +58,6 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         return false;
     }
 
-    internal bool TryGetTracked(Ulid databaseId, string keyId, [NotNullWhen(true)] out ISqlDatabaseSession? session)
-    {
-        lock (_gate)
-        {
-            if (TryFindTracked(databaseId, keyId, out var tracked))
-            {
-                session = tracked.Session;
-                return true;
-            }
-        }
-
-        session = null;
-        return false;
-    }
-
     private bool TryFindTracked(Ulid databaseId, string keyId, [NotNullWhen(true)] out TrackedSession? tracked)
     {
         if (_sessions.TryGetValue(databaseId, out var found)
@@ -114,16 +99,6 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
     public ValueTask<TenantReadyOutcome> OpenOrCreateAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken)
     {
         if (TryGetOpen(databaseId, keyId, out var cached))
-        {
-            return ValueTask.FromResult(Ready(cached));
-        }
-
-        return OpenOrCreateSlowAsync(databaseId, keyId, strict, cancellationToken);
-    }
-
-    public ValueTask<TenantReadyOutcome> OpenOrCreateForReplicationAsync(Ulid databaseId, string keyId, bool strict, CancellationToken cancellationToken)
-    {
-        if (TryGetTracked(databaseId, keyId, out var cached))
         {
             return ValueTask.FromResult(Ready(cached));
         }
@@ -223,8 +198,10 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
         {
             if (entry.Session.IsUsable)
             {
-                var shrinkWriter = IdleFor(entry) >= shrinkWriterAfter && SqliteStorageEngine.IsIdle(entry.Session, shrinkWriterAfter);
-                trimmed += SqliteStorageEngine.TrimIdleResources(entry.Session, readerIdleAfter, shrinkWriter);
+                var shrinkAfter = IdleFor(entry) >= shrinkWriterAfter && SqliteStorageEngine.IsIdle(entry.Session, shrinkWriterAfter)
+                    ? shrinkWriterAfter
+                    : (TimeSpan?)null;
+                trimmed += SqliteStorageEngine.TrimIdleResources(entry.Session, readerIdleAfter, shrinkAfter);
             }
         }
 
@@ -266,6 +243,7 @@ internal sealed class TenantDatabases(ISqlStorageEngine engine, DatabaseKeyring 
                     && _sessions.TryRemove(databaseId, out var removed))
                 {
                     evicted = removed.Session;
+                    cluster.UntrackDatabase(databaseId);
                 }
             }
 

@@ -5,9 +5,15 @@ using TerraScale.Contracts.Continuity;
 
 namespace TerraBase.Cluster;
 
+public enum DatabaseResolveMode
+{
+    Warm,
+    Transient,
+}
+
 public readonly union DatabaseResolveOutcome(ISqlDatabaseSession, DatabaseNotFound, ClusterUnavailable);
 
-public delegate ValueTask<DatabaseResolveOutcome> DatabaseSessionResolver(Ulid databaseId, CancellationToken cancellationToken);
+public delegate ValueTask<DatabaseResolveOutcome> DatabaseSessionResolver(Ulid databaseId, DatabaseResolveMode mode, CancellationToken cancellationToken);
 
 public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvider timeProvider)
 {
@@ -55,11 +61,15 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             .Select(static entry => entry.Key)];
     }
 
-    internal TrackedDatabase? BeginSync(Ulid databaseId) =>
-        _tracked.TryGetValue(databaseId, out var tracked) && tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: false) ? tracked : null;
+    internal SyncLease? BeginSync(Ulid databaseId) =>
+        _tracked.TryGetValue(databaseId, out var tracked) && tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: false, out var mode)
+            ? new SyncLease(tracked, mode)
+            : null;
 
-    internal TrackedDatabase? BeginSync(QueuedCatchUp request) =>
-        IsCurrent(request.DatabaseId, request.Tracked) && request.Tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: true) ? request.Tracked : null;
+    internal SyncLease? BeginSync(QueuedCatchUp request) =>
+        IsCurrent(request.DatabaseId, request.Tracked) && request.Tracked.BeginSync(timeProvider.GetUtcNow(), onDemand: true, out var mode)
+            ? new SyncLease(request.Tracked, mode)
+            : null;
 
     public bool RequestCatchUp(Ulid databaseId) => RequestCatchUp(databaseId, null);
 
@@ -83,7 +93,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         }
     }
 
-    private bool IsCurrent(Ulid databaseId, TrackedDatabase tracked) =>
+    internal bool IsCurrent(Ulid databaseId, TrackedDatabase tracked) =>
         _tracked.TryGetValue(databaseId, out var current) && ReferenceEquals(current, tracked);
 
     private bool Enqueue(Ulid databaseId, TrackedDatabase tracked, CausalBookmark? peerFrontier)
@@ -102,28 +112,39 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         return false;
     }
 
+    public ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken) =>
+        ResolveAsync(databaseId, DatabaseResolveMode.Warm, cancellationToken);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<DatabaseResolveOutcome>))]
-    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, DatabaseResolveMode mode, CancellationToken cancellationToken)
     {
         _tracked.TryGetValue(databaseId, out var tracked);
-        var resolved = await resolver(databaseId, cancellationToken);
+        var resolved = await resolver(databaseId, mode, cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession session => Observed(session, tracked),
-            DatabaseNotFound notFound => Missing(notFound, tracked),
+            ISqlDatabaseSession session => Observed(session, mode),
+            DatabaseNotFound notFound => Missing(notFound, tracked, mode),
             ClusterUnavailable unavailable => unavailable,
         };
     }
 
-    private static DatabaseResolveOutcome Observed(ISqlDatabaseSession session, TrackedDatabase? tracked)
+    private DatabaseResolveOutcome Observed(ISqlDatabaseSession session, DatabaseResolveMode mode)
     {
-        tracked?.Observe(session.CurrentBookmark);
+        if (_tracked.TryGetValue(session.DatabaseId, out var current))
+        {
+            current.Observe(session.CurrentBookmark);
+            if (mode == DatabaseResolveMode.Warm)
+            {
+                current.ClearNeedsWarm();
+            }
+        }
+
         return session;
     }
 
-    private DatabaseResolveOutcome Missing(DatabaseNotFound missing, TrackedDatabase? tracked)
+    private DatabaseResolveOutcome Missing(DatabaseNotFound missing, TrackedDatabase? tracked, DatabaseResolveMode mode)
     {
-        if (tracked is not null)
+        if (mode == DatabaseResolveMode.Warm && tracked is not null)
         {
             _ = _tracked.TryRemove(KeyValuePair.Create(missing.DatabaseId, tracked));
         }
@@ -132,6 +153,8 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
     }
 
     internal readonly record struct QueuedCatchUp(Ulid DatabaseId, TrackedDatabase Tracked);
+
+    internal readonly record struct SyncLease(TrackedDatabase Tracked, DatabaseResolveMode Mode);
 
     internal sealed class TrackedDatabase
     {
@@ -157,6 +180,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         private bool _onDemandAttempt;
         private bool _bypassGranted;
         private bool _frontierSaturated;
+        private bool _needsWarm;
 
         public CausalBookmark Bookmark => Volatile.Read(ref _bookmark);
 
@@ -195,10 +219,19 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
             }
         }
 
-        public bool BeginSync(DateTimeOffset now, bool onDemand)
+        public void ClearNeedsWarm()
         {
             lock (_gate)
             {
+                _needsWarm = false;
+            }
+        }
+
+        public bool BeginSync(DateTimeOffset now, bool onDemand, out DatabaseResolveMode mode)
+        {
+            lock (_gate)
+            {
+                mode = DatabaseResolveMode.Transient;
                 if (onDemand)
                 {
                     _queued = false;
@@ -224,6 +257,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
 
                 _syncing = true;
                 _onDemandAttempt = onDemand || _deferred || !_requestedFrontier.IsEmpty;
+                mode = _onDemandAttempt || _needsWarm ? DatabaseResolveMode.Warm : DatabaseResolveMode.Transient;
                 _deferred = false;
                 _bypassGranted = false;
                 _attemptedFrontier = _requestedFrontier;
@@ -267,6 +301,7 @@ public sealed class ClusterDatabases(DatabaseSessionResolver resolver, TimeProvi
         {
             lock (_gate)
             {
+                _needsWarm = true;
                 if (peerFrontier is not null && !IsCovered(peerFrontier))
                 {
                     RequestFrontier(peerFrontier, now);

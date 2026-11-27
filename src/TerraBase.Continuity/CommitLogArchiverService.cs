@@ -134,11 +134,10 @@ public sealed class CommitLogArchiverService(
 
         changefeed.Activity.Enable();
         using var timer = new PeriodicTimer(options.ArchiveInterval, timeProvider);
-        do
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             await PassAsync(stoppingToken);
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     private async Task PassAsync(CancellationToken stoppingToken)

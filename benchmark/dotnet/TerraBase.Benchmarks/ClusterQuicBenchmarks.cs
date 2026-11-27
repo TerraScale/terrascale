@@ -498,8 +498,8 @@ public static class ClusterQuicBenchmarks
             Certificates = certsB,
         }.Validate();
 
-        var databasesA = new ClusterDatabases((id, token) => ResolveDatabaseAsync(engineA, id, rawKey, token), TimeProvider.System);
-        var databasesB = new ClusterDatabases((id, token) => ResolveDatabaseAsync(engineB, id, rawKey, token), TimeProvider.System);
+        var databasesA = new ClusterDatabases((id, _, token) => ResolveDatabaseAsync(engineA, id, rawKey, token), TimeProvider.System);
+        var databasesB = new ClusterDatabases((id, _, token) => ResolveDatabaseAsync(engineB, id, rawKey, token), TimeProvider.System);
         databasesA.Track(databaseId);
         databasesB.Track(databaseId);
 
@@ -615,7 +615,7 @@ public static class ClusterQuicBenchmarks
         var singleStorage = new StorageEngineOptions(singleDir, singleOptions.StorageOrigin, 10, 10, new DeltaColumnRegistry()) { FsyncCommitLog = false };
         await using var singleEngine = new SqliteStorageEngine(singleStorage, TimeProvider.System);
         await using var singleSession = RequireCreated(await singleEngine.CreateAsync(new DatabaseCreateRequest(databaseId, rawKey, false), cancellationToken));
-        var singleDatabases = new ClusterDatabases((id, token) => ResolveDatabaseAsync(singleEngine, id, rawKey, token), TimeProvider.System);
+        var singleDatabases = new ClusterDatabases((id, _, token) => ResolveDatabaseAsync(singleEngine, id, rawKey, token), TimeProvider.System);
         singleDatabases.Track(databaseId);
         var emptyChangefeed = new ChangefeedPublisher([], TimeProvider.System);
         var singleLocks = new StrongLockTable(TimeProvider.System);
@@ -696,7 +696,7 @@ public static class ClusterQuicBenchmarks
                 var storage = new StorageEngineOptions(nodeDir, options.StorageOrigin, (ushort)(20 + index), (byte)(20 + index), new DeltaColumnRegistry()) { FsyncCommitLog = false };
                 var engine = new SqliteStorageEngine(storage, TimeProvider.System);
                 var session = RequireCreated(await engine.CreateAsync(new DatabaseCreateRequest(databaseId, rawKey, false), cancellationToken));
-                var databases = new ClusterDatabases((id, token) => ResolveDatabaseAsync(engine, id, rawKey, token), TimeProvider.System);
+                var databases = new ClusterDatabases((id, _, token) => ResolveDatabaseAsync(engine, id, rawKey, token), TimeProvider.System);
                 databases.Track(databaseId);
                 var locks = new StrongLockTable(TimeProvider.System);
                 var topology = new ClusterTopology(options);

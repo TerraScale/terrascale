@@ -10,6 +10,7 @@ internal sealed class TenantMemoryReclaimerService(TenantDatabases tenants, Terr
     private static readonly TimeSpan WriterIdle = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ColdTenantIdle = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan PressureReaderIdle = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan PressureWriterIdle = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PressureTenantIdle = TimeSpan.FromSeconds(30);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -17,15 +18,20 @@ internal sealed class TenantMemoryReclaimerService(TenantDatabases tenants, Terr
         using var timer = new PeriodicTimer(Interval, time);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            var reclaimed = UnderPressure() ? await ReclaimUnderPressureAsync() : await ReclaimIdleAsync();
+            var threshold = PressureThreshold();
+            var reclaimed = Environment.WorkingSet > threshold ? await ReclaimUnderPressureAsync(threshold) : await ReclaimIdleAsync();
             if (reclaimed.Evicted > 0 || reclaimed.Trimmed > 0)
             {
-                logger.ZLogInformation($"Reclaimed tenant memory: trimmed {reclaimed.Trimmed:@Trimmed} idle resources, evicted {reclaimed.Evicted:@Evicted} idle sessions; working set {Environment.WorkingSet:@WorkingSet} bytes, budget {options.MemoryBudget:@MemoryBudget} bytes");
+                logger.ZLogInformation($"Reclaimed tenant memory: trimmed {reclaimed.Trimmed:@Trimmed} idle resources, evicted {reclaimed.Evicted:@Evicted} idle sessions; working set {Environment.WorkingSet:@WorkingSet} bytes, threshold {threshold:@Threshold} bytes");
             }
         }
     }
 
-    private bool UnderPressure() => Environment.WorkingSet > options.MemoryBudget;
+    private long PressureThreshold()
+    {
+        var available = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        return available > 0 ? available - (available / 4) : options.MemoryBudget;
+    }
 
     private async ValueTask<Reclaimed> ReclaimIdleAsync()
     {
@@ -42,13 +48,13 @@ internal sealed class TenantMemoryReclaimerService(TenantDatabases tenants, Terr
         return new Reclaimed(trimmed, evicted);
     }
 
-    private async ValueTask<Reclaimed> ReclaimUnderPressureAsync()
+    private async ValueTask<Reclaimed> ReclaimUnderPressureAsync(long threshold)
     {
-        var trimmed = tenants.TrimIdle(PressureReaderIdle, TimeSpan.Zero);
+        var trimmed = tenants.TrimIdle(PressureReaderIdle, PressureWriterIdle);
         var evicted = 0;
         foreach (var databaseId in tenants.IdleDatabaseIds(PressureTenantIdle))
         {
-            if (!UnderPressure())
+            if (Environment.WorkingSet <= threshold)
             {
                 break;
             }

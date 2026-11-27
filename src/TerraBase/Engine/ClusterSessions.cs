@@ -44,12 +44,12 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
 
     private ILogger<ClusterSessions> Logger => services.GetRequiredService<ILogger<ClusterSessions>>();
 
-    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, CancellationToken cancellationToken)
+    public async ValueTask<DatabaseResolveOutcome> ResolveAsync(Ulid databaseId, DatabaseResolveMode mode, CancellationToken cancellationToken)
     {
         var placed = await PlacementAsync(databaseId, cancellationToken);
         return placed switch
         {
-            DatabasePlacement placement => await OpenPlacedAsync(databaseId, placement, cancellationToken),
+            DatabasePlacement placement => await OpenPlacedAsync(databaseId, placement, mode, cancellationToken),
             ResourceNotFound missing => new DatabaseNotFound(databaseId, missing.Message),
             BackendUnavailable unavailable => new ClusterUnavailable(unavailable.Message, unavailable.Code),
         };
@@ -266,24 +266,14 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
         };
     }
 
-    private async ValueTask<DatabaseResolveOutcome> OpenPlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
+    private async ValueTask<DatabaseResolveOutcome> OpenPlacedAsync(Ulid databaseId, DatabasePlacement placement, DatabaseResolveMode mode, CancellationToken cancellationToken)
     {
-        if (Databases.TryGetTracked(databaseId, placement.KeyId, out _))
+        if (mode == DatabaseResolveMode.Transient)
         {
             return await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
         }
 
-        var leased = await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
-        return leased switch
-        {
-            ISqlDatabaseSession or ClusterUnavailable => leased,
-            DatabaseNotFound => await CreatePlacedAsync(databaseId, placement, cancellationToken),
-        };
-    }
-
-    private async ValueTask<DatabaseResolveOutcome> CreatePlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
-    {
-        var ready = await Databases.OpenOrCreateForReplicationAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken);
+        var ready = await Databases.OpenOrCreateAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken);
         return ready switch
         {
             ISqlDatabaseSession => await LeaseAsync(databaseId, placement.KeyId, cancellationToken),
