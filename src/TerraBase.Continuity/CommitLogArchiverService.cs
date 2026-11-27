@@ -206,10 +206,10 @@ public sealed class CommitLogArchiverService(
     {
         try
         {
-            var archived = await continuity.ArchiveAsync(databaseId, forceSnapshot: false, stoppingToken);
+            var archived = await continuity.ArchiveScheduledAsync(databaseId, stoppingToken);
             var failure = archived switch
             {
-                BackupStatus status => await CheckedAsync(databaseId, status, stoppingToken),
+                ScheduledArchiveStatus scheduled => await CheckedAsync(databaseId, scheduled, stoppingToken),
                 ContinuityNotFound => Idle(databaseId),
                 ContinuityUnavailable unavailable => unavailable.Message,
             };
@@ -228,8 +228,15 @@ public sealed class CommitLogArchiverService(
         }
     }
 
-    private async ValueTask<string?> CheckedAsync(Ulid databaseId, BackupStatus status, CancellationToken cancellationToken)
+    private async ValueTask<string?> CheckedAsync(Ulid databaseId, ScheduledArchiveStatus scheduled, CancellationToken cancellationToken)
     {
+        if (scheduled.LocalBehindArchive)
+        {
+            _ = _checks.TryRemove(databaseId, out _);
+            return null;
+        }
+
+        var status = scheduled.Status;
         var now = timeProvider.GetUtcNow();
         var sweep = now + RetentionSweepInterval;
         var interval = await catalog.IsPreferredArchiverAsync(databaseId, cancellationToken)
