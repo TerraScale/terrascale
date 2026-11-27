@@ -455,7 +455,7 @@ public sealed class BackupContinuityService(
     private async ValueTask<ContinuityCopyOutcome> RewindLockedAsync(OperationWork work, CancellationToken cancellationToken)
     {
         using var lease = await manifests.AcquireAsync(work.TargetDatabaseId, cancellationToken);
-        var rewound = await restorer.RewindAsync(work.OperationId, work.TargetDatabaseId, work.Target, notifyPeers: true, cancellationToken);
+        var rewound = await restorer.RewindAsync(work.OperationId, work.TargetDatabaseId, work.Target, notifyPeers: !manifests.IsEnabled, cancellationToken);
         return rewound switch
         {
             CausalBookmark bookmark when manifests.IsEnabled => await ReconcileArchiveAsync(work.TargetDatabaseId, bookmark, cancellationToken),
@@ -466,7 +466,7 @@ public sealed class BackupContinuityService(
 
     private async ValueTask<ContinuityCopyOutcome> ReconcileArchiveAsync(Ulid databaseId, CausalBookmark rewoundTo, CancellationToken cancellationToken)
     {
-        var loaded = await manifests.LoadAsync(databaseId, cancellationToken);
+        var loaded = await manifests.ReadCurrentAsync(databaseId, cancellationToken);
         ArchiveTruncateOutcome truncated = loaded switch
         {
             ArchiveManifest manifest => await TruncateAsync(manifest, rewoundTo, cancellationToken),
@@ -474,8 +474,8 @@ public sealed class BackupContinuityService(
         };
         var archived = truncated switch
         {
-            ArchiveTruncated => await ArchiveLockedAsync(databaseId, forceSnapshot: true, cancellationToken),
-            ContinuityUnavailable unavailable => (BackupStatusOutcome)unavailable,
+            ArchiveTruncated => await NotifyAndArchiveAsync(databaseId, rewoundTo, cancellationToken),
+            ContinuityUnavailable unavailable => unavailable,
         };
         return archived switch
         {
@@ -483,6 +483,12 @@ public sealed class BackupContinuityService(
             ContinuityNotFound notFound => new OperationFailed(string.Concat("database was rewound but could not be archived: ", notFound.Message)),
             ContinuityUnavailable unavailable => new OperationFailed(string.Concat("database was rewound but could not be archived: ", unavailable.Message)),
         };
+    }
+
+    private async ValueTask<BackupStatusOutcome> NotifyAndArchiveAsync(Ulid databaseId, CausalBookmark rewoundTo, CancellationToken cancellationToken)
+    {
+        await sessions.Catalog.DatabaseReplacedAsync(databaseId, rewoundTo, cancellationToken);
+        return await ArchiveLockedAsync(databaseId, forceSnapshot: true, cancellationToken);
     }
 
     private async ValueTask<ArchiveTruncateOutcome> TruncateAsync(ArchiveManifest manifest, CausalBookmark rewoundTo, CancellationToken cancellationToken)
@@ -583,7 +589,7 @@ public sealed class BackupContinuityService(
     {
         await using (session)
         {
-            var loaded = await manifests.LoadAsync(session.DatabaseId, cancellationToken);
+            var loaded = await manifests.ReadCurrentAsync(session.DatabaseId, cancellationToken);
             return loaded switch
             {
                 ArchiveManifest manifest => await ArchivedAsync(manifest, session, forceSnapshot, cancellationToken),

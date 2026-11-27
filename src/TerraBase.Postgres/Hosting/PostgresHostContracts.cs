@@ -68,5 +68,7 @@ public interface IPostgresDatabaseExecutor
         ISqlTransaction transaction,
         CancellationToken cancellationToken);
 
+    ValueTask<StorageBusy?> EnsureUsableAsync(CancellationToken cancellationToken) => ValueTask.FromResult<StorageBusy?>(null);
+
     IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, CancellationToken cancellationToken);
 }

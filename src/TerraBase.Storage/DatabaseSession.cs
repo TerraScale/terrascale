@@ -398,7 +398,7 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
                 cursor[origin] = sequence;
             }
 
-            while (!IsClosed)
+            while (IsUsable)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var signal = _versions.WhenChanged();

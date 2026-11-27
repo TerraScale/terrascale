@@ -151,17 +151,27 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     {
         List<Ulid> active = [SystemDatabase.Id];
         string? after = null;
-        while (await Catalog.AllDatabasesAsync(after, CatalogPage, cancellationToken) switch
+        while (true)
         {
-            IReadOnlyList<DatabaseRecord> records => records,
-            BackendUnavailable => null,
-        } is { Count: > 0 } page)
-        {
+            var listed = await Catalog.AllDatabasesAsync(after, CatalogPage, cancellationToken);
+            var page = listed switch
+            {
+                IReadOnlyList<DatabaseRecord> records => records,
+                BackendUnavailable => null,
+            };
+            if (page is null)
+            {
+                return [];
+            }
+
+            if (page.Count == 0)
+            {
+                return active;
+            }
+
             active.AddRange(page.Select(static record => record.Id));
             after = page[^1].Id.ToString();
         }
-
-        return active;
     }
 
     public async ValueTask<ContinuityRawKeyOutcome> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken)

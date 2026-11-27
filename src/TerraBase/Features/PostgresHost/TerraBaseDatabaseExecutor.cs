@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Rules;
 using TerraBase.Features.Sql;
@@ -58,37 +57,35 @@ internal sealed class TerraBaseDatabaseExecutor(
         };
     }
 
-    public async ValueTask<ClusterCommitTransactionOutcome> CommitAsync(ISqlTransaction transaction, CancellationToken cancellationToken)
+    public ValueTask<ClusterCommitTransactionOutcome> CommitAsync(ISqlTransaction transaction, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transaction);
+        return coordinator.CommitTransactionAsync(
+            Volatile.Read(ref _session),
+            transaction is RulesTransaction wrapped ? wrapped.Inner : transaction,
+            cancellationToken);
+    }
+
+    public async ValueTask<StorageBusy?> EnsureUsableAsync(CancellationToken cancellationToken)
+    {
         var resolved = await ResolveSessionAsync(cancellationToken);
         return resolved switch
         {
-            ISqlDatabaseSession current => await coordinator.CommitTransactionAsync(current, transaction is RulesTransaction wrapped ? wrapped.Inner : transaction, cancellationToken),
+            ISqlDatabaseSession => null,
             StorageBusy busy => busy,
         };
     }
 
-    public async IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var resolved = await ResolveSessionAsync(cancellationToken);
-        var current = resolved switch
-        {
-            ISqlDatabaseSession opened => opened,
-            StorageBusy => Volatile.Read(ref _session),
-        };
-        await foreach (var entry in current.SubscribeChangesAsync(after, cancellationToken))
-        {
-            yield return entry;
-        }
-    }
+    public IAsyncEnumerable<ChangefeedEntry> SubscribeChangesAsync(CausalBookmark after, CancellationToken cancellationToken) =>
+        Volatile.Read(ref _session).SubscribeChangesAsync(after, cancellationToken);
 
     private async ValueTask<PostgresSessionOutcome> ResolveSessionAsync(CancellationToken cancellationToken)
     {
-        var opened = await access.OpenAsync(target.Database, cancellationToken);
+        var opened = await access.ReopenAsync(target.Database, cancellationToken);
         return opened switch
         {
             ISqlDatabaseSession current => Track(current),
+            ResourceNotFound missing => new StorageBusy(missing.Message, ReopenRetryAfter),
             BackendUnavailable unavailable => new StorageBusy(unavailable.Message, ReopenRetryAfter),
         };
     }

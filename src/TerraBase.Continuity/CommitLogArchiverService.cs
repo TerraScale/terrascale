@@ -154,6 +154,11 @@ public sealed class CommitLogArchiverService(
             return;
         }
 
+        if (databases.Count == 0)
+        {
+            return;
+        }
+
         Prune(databases);
         var now = timeProvider.GetUtcNow();
         List<Ulid> due = [];
