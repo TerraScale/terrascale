@@ -560,13 +560,16 @@ public sealed class BackupContinuityService(
         };
     }
 
-    private async ValueTask<BackupStatusOutcome> ArchiveLockedAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken) =>
-        await ArchiveScheduledLockedAsync(databaseId, forceSnapshot, cancellationToken) switch
+    private async ValueTask<BackupStatusOutcome> ArchiveLockedAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken)
+    {
+        var archived = await ArchiveScheduledLockedAsync(databaseId, forceSnapshot, cancellationToken);
+        return archived switch
         {
             ScheduledArchiveStatus scheduled => scheduled.Status,
             ContinuityNotFound missing => missing,
             ContinuityUnavailable unavailable => unavailable,
         };
+    }
 
     private async ValueTask<ScheduledArchiveOutcome> ArchiveScheduledLockedAsync(Ulid databaseId, bool forceSnapshot, CancellationToken cancellationToken)
     {
@@ -580,13 +583,16 @@ public sealed class BackupContinuityService(
         };
     }
 
-    private async ValueTask<ScheduledArchiveOutcome> RetainRemoteArchiveScheduledAsync(ContinuitySessionMissing missing, CancellationToken cancellationToken) =>
-        await RetainRemoteArchiveAsync(missing, cancellationToken) switch
+    private async ValueTask<ScheduledArchiveOutcome> RetainRemoteArchiveScheduledAsync(ContinuitySessionMissing missing, CancellationToken cancellationToken)
+    {
+        var retained = await RetainRemoteArchiveAsync(missing, cancellationToken);
+        return retained switch
         {
             BackupStatus status => new ScheduledArchiveStatus(status, LocalBehindArchive: false),
             ContinuityNotFound notFound => notFound,
             ContinuityUnavailable unavailable => unavailable,
         };
+    }
 
     private async ValueTask<BackupStatusOutcome> RetainRemoteArchiveAsync(ContinuitySessionMissing missing, CancellationToken cancellationToken)
     {
@@ -641,13 +647,16 @@ public sealed class BackupContinuityService(
     private async ValueTask<ScheduledArchiveOutcome> ScheduledStatusForSessionAsync(
         ArchiveManifest manifest,
         ISqlDatabaseSession session,
-        CancellationToken cancellationToken) =>
-        await StatusForSessionAsync(manifest, session, cancellationToken) switch
+        CancellationToken cancellationToken)
+    {
+        var measured = await StatusForSessionAsync(manifest, session, cancellationToken);
+        return measured switch
         {
             BackupStatus status => new ScheduledArchiveStatus(status, !session.CurrentBookmark.Dominates(status.ArchivedThrough)),
             ContinuityNotFound missing => missing,
             ContinuityUnavailable unavailable => unavailable,
         };
+    }
 
     private async ValueTask<BackupStatusOutcome> StatusAsync(ArchiveManifest manifest, Ulid databaseId, CancellationToken cancellationToken)
     {

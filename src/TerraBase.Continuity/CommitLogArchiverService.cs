@@ -121,8 +121,10 @@ public sealed class CommitLogArchiverService(
     ILogger<CommitLogArchiverService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetentionSweepInterval = TimeSpan.FromHours(1);
+    private static readonly TimeSpan RewindRecheckWindow = TimeSpan.FromMinutes(2);
 
     private readonly ConcurrentDictionary<Ulid, ArchiveCheckState> _checks = new();
+    private readonly ConcurrentDictionary<Ulid, DateTimeOffset> _rewindRecheckUntil = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -180,6 +182,7 @@ public sealed class CommitLogArchiverService(
     {
         if (changefeed.Activity.TakeInvalidated(databaseId))
         {
+            _rewindRecheckUntil[databaseId] = now + RewindRecheckWindow;
             _ = _checks.TryRemove(databaseId, out _);
             return true;
         }
@@ -198,6 +201,14 @@ public sealed class CommitLogArchiverService(
             if (!active.Contains(databaseId))
             {
                 _ = _checks.TryRemove(databaseId, out _);
+            }
+        }
+
+        foreach (var databaseId in _rewindRecheckUntil.Keys)
+        {
+            if (!active.Contains(databaseId))
+            {
+                _ = _rewindRecheckUntil.TryRemove(databaseId, out _);
             }
         }
     }
@@ -230,14 +241,25 @@ public sealed class CommitLogArchiverService(
 
     private async ValueTask<string?> CheckedAsync(Ulid databaseId, ScheduledArchiveStatus scheduled, CancellationToken cancellationToken)
     {
+        var now = timeProvider.GetUtcNow();
         if (scheduled.LocalBehindArchive)
         {
             _ = _checks.TryRemove(databaseId, out _);
             return null;
         }
 
+        if (_rewindRecheckUntil.TryGetValue(databaseId, out var recheckUntil))
+        {
+            if (now < recheckUntil)
+            {
+                _ = _checks.TryRemove(databaseId, out _);
+                return null;
+            }
+
+            _ = _rewindRecheckUntil.TryRemove(new KeyValuePair<Ulid, DateTimeOffset>(databaseId, recheckUntil));
+        }
+
         var status = scheduled.Status;
-        var now = timeProvider.GetUtcNow();
         var sweep = now + RetentionSweepInterval;
         var interval = await catalog.IsPreferredArchiverAsync(databaseId, cancellationToken)
             ? options.SnapshotInterval
