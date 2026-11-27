@@ -257,8 +257,14 @@ jobs:
             status=1
           fi
           bash .github/scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"} || status=1
-          wait "$scan_pid" || { echo '::error::Legacy terms found; see the legacy-hits artifact.'; status=1; }
-          head -1 legacy-scan.log
+          scan_status=0
+          wait "$scan_pid" || scan_status=$?
+          case $scan_status in
+            0) rm -f legacy-hits.md ;;
+            1) echo '::error::Legacy terms found; see the legacy-hits artifact.'; status=1 ;;
+            *) echo "::error::Legacy scan errored (exit $scan_status); see legacy-scan.log."; cat legacy-scan.log >&2; status=1 ;;
+          esac
+          if [[ -s legacy-scan.log ]]; then head -1 legacy-scan.log; fi
           exit "$status"
       - name: Retain legacy hits
         if: ${{ !cancelled() && hashFiles('legacy-hits.md') != '' }}
