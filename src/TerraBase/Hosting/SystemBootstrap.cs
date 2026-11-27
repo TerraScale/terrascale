@@ -27,6 +27,7 @@ internal sealed class SystemBootstrap(
     ILogger<SystemBootstrap> logger)
     : IHostedService
 {
+    private const int WarmStartupTenants = 8;
     private static readonly TimeSpan StartupSyncBudget = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AuthWarmupBudget = TimeSpan.FromSeconds(3);
 
@@ -99,7 +100,7 @@ internal sealed class SystemBootstrap(
         {
             _ = await antiEntropy.SyncAsync(SystemDatabase.Id, budget.Token);
             var active = await catalog.ListActiveDatabasesAsync(budget.Token);
-            List<Ulid> local = [];
+            List<(Ulid Id, long LastWriteTicks)> local = [];
             foreach (var id in active)
             {
                 if (id == SystemDatabase.Id)
@@ -107,16 +108,26 @@ internal sealed class SystemBootstrap(
                     continue;
                 }
 
-                if (File.Exists(Path.Combine(storage.RootDirectory, id.ToString(), string.Concat(id.ToString(), ".db"))))
+                var dbPath = Path.Combine(storage.RootDirectory, id.ToString(), string.Concat(id.ToString(), ".db"));
+                if (File.Exists(dbPath))
                 {
-                    local.Add(id);
+                    var walPath = string.Concat(dbPath, "-wal");
+                    var lastWrite = Math.Max(File.GetLastWriteTimeUtc(dbPath).Ticks, File.GetLastWriteTimeUtc(walPath).Ticks);
+                    local.Add((id, lastWrite));
                 }
             }
 
+            local.Sort(static (left, right) =>
+            {
+                var byTime = right.LastWriteTicks.CompareTo(left.LastWriteTicks);
+                return byTime != 0 ? byTime : left.Id.CompareTo(right.Id);
+            });
             await Parallel.ForEachAsync(
-                local,
+                Enumerable.Range(0, local.Count),
                 new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = budget.Token },
-                async (id, ct) => _ = await antiEntropy.SyncTransientAsync(id, ct));
+                async (index, ct) => _ = index < WarmStartupTenants
+                    ? await antiEntropy.SyncAsync(local[index].Id, ct)
+                    : await antiEntropy.SyncTransientAsync(local[index].Id, ct));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

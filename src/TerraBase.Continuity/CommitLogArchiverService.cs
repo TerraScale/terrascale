@@ -121,6 +121,7 @@ public sealed class CommitLogArchiverService(
     ILogger<CommitLogArchiverService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetentionSweepInterval = TimeSpan.FromHours(1);
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(1);
 
     private readonly ConcurrentDictionary<Ulid, ArchiveCheckState> _checks = new();
 
@@ -133,11 +134,13 @@ public sealed class CommitLogArchiverService(
         }
 
         changefeed.Activity.Enable();
+        await Task.Delay(StartupDelay, timeProvider, stoppingToken);
         using var timer = new PeriodicTimer(options.ArchiveInterval, timeProvider);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        do
         {
             await PassAsync(stoppingToken);
         }
+        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     private async Task PassAsync(CancellationToken stoppingToken)
