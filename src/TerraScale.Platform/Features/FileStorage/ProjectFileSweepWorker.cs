@@ -12,6 +12,7 @@ public sealed class ProjectFileSweepWorker(
 {
     private const int PageSize = 100;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan GracePeriod = FileStorageService.UploadLifetime + FileStorageService.UploadSettle;
     private static readonly TimeSpan FastGraceWindow = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan[] GraceBackoff =
@@ -21,55 +22,60 @@ public sealed class ProjectFileSweepWorker(
         TimeSpan.FromSeconds(60),
         TimeSpan.FromMinutes(5),
     ];
-    private static readonly TimeSpan IdleInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan RowsIdleInterval = TimeSpan.FromMinutes(1);
     private readonly Dictionary<string, GraceSweepState> graceSweeps = new(StringComparer.Ordinal);
     private DateTimeOffset rowsDueAt;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval, timeProvider);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        var wait = Interval;
+        while (true)
         {
+            await Task.Delay(wait, timeProvider, stoppingToken);
             if (!readiness.SchemaReady)
             {
+                wait = Interval;
                 continue;
             }
 
+            var swept = true;
             try
             {
-                await TickAsync(stoppingToken);
+                swept = await TickAsync(stoppingToken);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested && error is not OutOfMemoryException)
             {
                 logger.ZLogWarning(error, $"Closed project file sweep failed");
             }
+
+            wait = swept ? Interval : IdleWake.Backoff(wait, IdleInterval);
         }
     }
 
-    private async Task TickAsync(CancellationToken cancellationToken)
+    private async Task<bool> TickAsync(CancellationToken cancellationToken)
     {
-        await SweepRowsAsync(cancellationToken);
-        if (options.Files is not null)
-        {
-            await SweepAsync(cancellationToken);
-        }
+        var rowsSwept = await SweepRowsAsync(cancellationToken);
+        var filesSwept = options.Files is not null && await SweepAsync(cancellationToken);
+        return rowsSwept || filesSwept;
     }
 
-    private async Task SweepRowsAsync(CancellationToken cancellationToken)
+    private async Task<bool> SweepRowsAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         if (now < rowsDueAt)
         {
-            return;
+            return false;
         }
 
         var outcome = await erasure.SweepClosedRowsAsync(cancellationToken);
-        rowsDueAt = outcome switch
+        var (nextDue, swept) = outcome switch
         {
-            ClosedFileRowsSwept => now,
-            ClosedFileRowsIdle => now + IdleInterval,
-            PlatformUnavailable unavailable => RowsDeferred(unavailable.Message, now + IdleInterval),
+            ClosedFileRowsSwept => (now, true),
+            ClosedFileRowsIdle => (now + RowsIdleInterval, false),
+            PlatformUnavailable unavailable => (RowsDeferred(unavailable.Message, now + RowsIdleInterval), false),
         };
+        rowsDueAt = nextDue;
+        return swept;
     }
 
     private DateTimeOffset RowsDeferred(string message, DateTimeOffset retryAt)
@@ -78,7 +84,7 @@ public sealed class ProjectFileSweepWorker(
         return retryAt;
     }
 
-    private async Task SweepAsync(CancellationToken cancellationToken)
+    private async Task<bool> SweepAsync(CancellationToken cancellationToken)
     {
         var known = await store.ReadAsync(SqlValues.Statement(ProjectFileErasure.RegionsQuery), cancellationToken);
         var regions = known switch
@@ -89,7 +95,7 @@ public sealed class ProjectFileSweepWorker(
         };
         if (regions.Count == 0)
         {
-            return;
+            return false;
         }
 
         var graceMs = (long)GracePeriod.TotalMilliseconds;
@@ -98,6 +104,7 @@ public sealed class ProjectFileSweepWorker(
         var cutoff = sweptAt - graceMs;
         var after = string.Empty;
         HashSet<string> seen = new(StringComparer.Ordinal);
+        var found = false;
         while (true)
         {
             var page = await store.ReadAsync(SqlValues.Statement(
@@ -111,7 +118,7 @@ public sealed class ProjectFileSweepWorker(
             };
             if (projects is null)
             {
-                return;
+                return false;
             }
 
             foreach (var row in projects)
@@ -124,6 +131,7 @@ public sealed class ProjectFileSweepWorker(
                     continue;
                 }
 
+                found = true;
                 var erased = await erasure.SweepAsync(Ulid.Parse(after), Ulid.Parse(row.Text(1)), regions, cancellationToken);
                 var result = erased switch
                 {
@@ -181,7 +189,7 @@ public sealed class ProjectFileSweepWorker(
             if (projects.Count < PageSize)
             {
                 PruneGraceSweeps(seen);
-                return;
+                return found;
             }
         }
     }

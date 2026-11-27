@@ -59,18 +59,22 @@ public sealed class ShapeRegistry(PlatformStore store, TimeProvider timeProvider
 
     private const string ChunkColumns = "chunk_offset, object, sha256, size, epoch, digest";
 
+    public IdleWake Touched { get; } = new();
+
     public async ValueTask<RegisterShapeOutcome> EnsureAsync(ShapeRecord shape, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(shape);
         var now = timeProvider.GetUtcNow().UnixMs();
         var outcome = await store.ExecuteAsync([Touch(shape, now), Current(shape.ShapeId)], SqlContext.Fast, cancellationToken);
-        return outcome switch
+        RegisterShapeOutcome registered = outcome switch
         {
             SqlExecuteResponse { Results: var results } when results[1].FirstRow() is { } row => Record(row),
             SqlExecuteResponse => await CreateAsync(shape, now, CreateAttempts, cancellationToken),
             PlatformConflict conflict => new PlatformUnavailable(conflict.Message, "platform_state"),
             PlatformUnavailable unavailable => unavailable,
         };
+        Touched.Signal();
+        return registered;
     }
 
     private async ValueTask<RegisterShapeOutcome> CreateAsync(ShapeRecord shape, long now, int attempts, CancellationToken cancellationToken)

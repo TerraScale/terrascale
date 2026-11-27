@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+using System.IO.Hashing;
 using TerraBase.Cluster;
 using TerraBase.Continuity;
 using TerraBase.Features.Catalog;
@@ -17,6 +19,13 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     private const int CatalogPage = 512;
     private static readonly TimeSpan PeerRewindTimeout = TimeSpan.FromSeconds(15);
 
+    private static readonly FrozenDictionary<string, string> ArchiveHomeRegions = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["sa-saopaulo-1"] = "gru",
+        ["eu-frankfurt-1"] = "fra",
+        ["us-sanjose-1"] = "sjc",
+    }.ToFrozenDictionary(StringComparer.Ordinal);
+
     private TenantDatabases Databases => services.GetRequiredService<TenantDatabases>();
 
     private SystemDatabase System => services.GetRequiredService<SystemDatabase>();
@@ -26,6 +35,10 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     private ManagementService Management => services.GetRequiredService<ManagementService>();
 
     private ClusterOptions Cluster => services.GetRequiredService<ClusterOptions>();
+
+    private IClusterCoordinator Coordinator => services.GetRequiredService<IClusterCoordinator>();
+
+    private ContinuityOptions Continuity => services.GetRequiredService<ContinuityOptions>();
 
     private QuicRpcClient Quic => services.GetRequiredService<QuicRpcClient>();
 
@@ -71,21 +84,94 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
         };
     }
 
+    public async ValueTask<bool> IsPreferredArchiverAsync(Ulid databaseId, CancellationToken cancellationToken)
+    {
+        var cluster = Cluster;
+        if (cluster.Peers.Count == 0)
+        {
+            return true;
+        }
+
+        ArchiverCandidate[] healthy =
+        [
+            new(cluster.NodeId, cluster.Region),
+            .. Coordinator.Peers
+                .Where(static health => health.Status == PeerStatus.Healthy)
+                .Select(static health => new ArchiverCandidate(health.Peer.NodeId, health.Peer.Region)),
+        ];
+        ArchiverCandidate[] eligible = healthy;
+        if (databaseId != SystemDatabase.Id)
+        {
+            var found = await Catalog.GetDatabaseAsync(databaseId, cancellationToken);
+            var placed = found switch
+            {
+                DatabaseRecord database => database,
+                ResourceNotFound or BackendUnavailable => null,
+            };
+            if (placed is not null)
+            {
+                eligible = [.. healthy.Where(candidate => placed.PlacedIn(candidate.Region))];
+                if (eligible.Length == 0)
+                {
+                    eligible = healthy;
+                }
+            }
+        }
+
+        var home = ArchiveHomeRegion(cluster);
+        ArchiverCandidate[] preferred = home is null ? [] : [.. eligible.Where(candidate => string.Equals(candidate.Region, home, StringComparison.Ordinal))];
+        ArchiverCandidate[] candidates = [.. (preferred.Length > 0 ? preferred : eligible).OrderBy(static candidate => candidate.NodeId, StringComparer.Ordinal)];
+        var chosen = candidates[(int)(ArchiverHash(databaseId) % (ulong)candidates.Length)];
+        return string.Equals(chosen.NodeId, cluster.NodeId, StringComparison.Ordinal);
+    }
+
+    private string? ArchiveHomeRegion(ClusterOptions cluster)
+    {
+        if (Continuity.Archive is not { } archive)
+        {
+            return null;
+        }
+
+        if (cluster.Regions.Contains(archive.Region, StringComparer.Ordinal))
+        {
+            return archive.Region;
+        }
+
+        return ArchiveHomeRegions.TryGetValue(archive.Region, out var mapped) ? mapped : null;
+    }
+
+    private static ulong ArchiverHash(Ulid databaseId)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        _ = databaseId.TryWriteBytes(bytes);
+        return XxHash64.HashToUInt64(bytes);
+    }
+
     public async ValueTask<IReadOnlyList<Ulid>> ListActiveDatabasesAsync(CancellationToken cancellationToken)
     {
         List<Ulid> active = [SystemDatabase.Id];
         string? after = null;
-        while (await Catalog.AllDatabasesAsync(after, CatalogPage, cancellationToken) switch
+        while (true)
         {
-            IReadOnlyList<DatabaseRecord> records => records,
-            BackendUnavailable => null,
-        } is { Count: > 0 } page)
-        {
+            var listed = await Catalog.AllDatabasesAsync(after, CatalogPage, cancellationToken);
+            var page = listed switch
+            {
+                IReadOnlyList<DatabaseRecord> records => records,
+                BackendUnavailable => null,
+            };
+            if (page is null)
+            {
+                return [];
+            }
+
+            if (page.Count == 0)
+            {
+                return active;
+            }
+
             active.AddRange(page.Select(static record => record.Id));
             after = page[^1].Id.ToString();
         }
-
-        return active;
     }
 
     public async ValueTask<ContinuityRawKeyOutcome> ResolveRawKeyAsync(Ulid databaseId, CancellationToken cancellationToken)
@@ -128,6 +214,8 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
     public async ValueTask DatabaseReplacedAsync(Ulid databaseId, CausalBookmark? rewoundTo, CancellationToken cancellationToken)
     {
         await Databases.EvictAsync(databaseId);
+        services.GetRequiredService<ArchiveManifests>().Invalidate(databaseId);
+        services.GetRequiredService<ChangefeedHub>().Activity.Invalidate(databaseId);
         if (rewoundTo is not { } bookmark || Cluster.Peers.Count == 0)
         {
             return;
@@ -180,7 +268,22 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
 
     private async ValueTask<DatabaseResolveOutcome> OpenPlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
     {
-        var ready = await Databases.OpenOrCreateAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken);
+        if (Databases.TryGetTracked(databaseId, placement.KeyId, out _))
+        {
+            return await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
+        }
+
+        var leased = await LeaseAsync(databaseId, placement.KeyId, cancellationToken);
+        return leased switch
+        {
+            ISqlDatabaseSession or ClusterUnavailable => leased,
+            DatabaseNotFound => await CreatePlacedAsync(databaseId, placement, cancellationToken),
+        };
+    }
+
+    private async ValueTask<DatabaseResolveOutcome> CreatePlacedAsync(Ulid databaseId, DatabasePlacement placement, CancellationToken cancellationToken)
+    {
+        var ready = await Databases.OpenOrCreateForReplicationAsync(databaseId, placement.KeyId, placement.Strict, cancellationToken);
         return ready switch
         {
             ISqlDatabaseSession => await LeaseAsync(databaseId, placement.KeyId, cancellationToken),
@@ -212,5 +315,7 @@ internal sealed class ClusterSessions(IServiceProvider services, ISqlStorageEngi
 }
 
 internal sealed record DatabasePlacement(string KeyId, bool Strict);
+
+internal readonly record struct ArchiverCandidate(string NodeId, string Region);
 
 internal readonly union DatabasePlacementOutcome(DatabasePlacement, ResourceNotFound, BackendUnavailable);

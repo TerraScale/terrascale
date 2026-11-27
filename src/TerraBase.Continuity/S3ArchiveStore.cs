@@ -25,6 +25,8 @@ public sealed record ArchiveUnavailable(string Message, string Code);
 
 public sealed record ArchiveTimedOut(string Message, string Code);
 
+public sealed record ArchiveNotModified;
+
 public readonly union ArchiveWriteOutcome(ArchiveObjectWritten, ArchiveUnavailable, ArchiveTimedOut);
 
 public readonly union ArchiveConditionalWriteOutcome(ArchiveConditionalWritten, ArchivePreconditionFailed, ArchiveUnavailable, ArchiveTimedOut);
@@ -32,6 +34,8 @@ public readonly union ArchiveConditionalWriteOutcome(ArchiveConditionalWritten, 
 public readonly union ArchiveBytesOutcome(byte[], ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
 
 public readonly union ArchiveVersionedBytesOutcome(ArchiveVersionedBytes, ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
+
+public readonly union ArchiveConditionalBytesOutcome(ArchiveVersionedBytes, ArchiveNotModified, ArchiveObjectMissing, ArchiveUnavailable, ArchiveTimedOut);
 
 public readonly union ArchiveDownloadOutcome(long, ArchiveObjectMissing, ArchiveObjectTooLarge, ArchiveUnavailable, ArchiveTimedOut);
 
@@ -44,6 +48,8 @@ public sealed class S3ArchiveStore : IDisposable
     internal static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(5);
 
     private const string NoSuchBucket = "NoSuchBucket";
+    private const string NoSuchKey = "NoSuchKey";
+    private const int MaxDeleteBatch = 1000;
 
     private static readonly ArchiveUnavailable Disabled = new("continuous backup is disabled on this node", "backup_disabled");
 
@@ -162,15 +168,7 @@ public sealed class S3ArchiveStore : IDisposable
             async (client, bucket, token) =>
             {
                 using var response = await client.GetObjectAsync(new GetObjectRequest { BucketName = bucket, Key = key }, token);
-                var capacity = response.ContentLength is > 0 and <= int.MaxValue ? (int)response.ContentLength : 0;
-                using var buffer = capacity > 0 ? new MemoryStream(capacity) : new MemoryStream();
-                await response.ResponseStream.CopyToAsync(buffer, token);
-                payload = buffer.TryGetBuffer(out var segment)
-                    && segment.Offset == 0
-                    && segment.Array is { } raw
-                    && segment.Count == raw.Length
-                    ? raw
-                    : buffer.ToArray();
+                payload = await ReadAllAsync(response, token);
                 etag = response.ETag;
             },
             cancellationToken);
@@ -183,6 +181,67 @@ public sealed class S3ArchiveStore : IDisposable
                 ArchiveUnavailable unavailable => unavailable,
                 ArchiveTimedOut timeout => timeout,
             };
+        }
+
+        if (payload is not { } content)
+        {
+            throw new UnreachableException();
+        }
+
+        return new ArchiveVersionedBytes(content, etag);
+    }
+
+    public async ValueTask<ArchiveConditionalBytesOutcome> GetBytesIfChangedAsync(string key, string? ifNoneMatchETag, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        byte[]? payload = null;
+        string? etag = null;
+        var notModified = false;
+        var fetched = await InvokeAsync(
+            async (client, bucket, token) =>
+            {
+                var request = new GetObjectRequest { BucketName = bucket, Key = key };
+                if (ifNoneMatchETag is { Length: > 0 } expected)
+                {
+                    request.EtagToNotMatch = expected;
+                }
+
+                GetObjectResponse response;
+                try
+                {
+                    response = await client.GetObjectAsync(request, token);
+                }
+                catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotModified)
+                {
+                    notModified = true;
+                    return;
+                }
+
+                using var owned = response;
+                if (owned.HttpStatusCode == HttpStatusCode.NotModified)
+                {
+                    notModified = true;
+                    return;
+                }
+
+                payload = await ReadAllAsync(owned, token);
+                etag = owned.ETag;
+            },
+            cancellationToken);
+        if (fetched is { } failure)
+        {
+            return failure switch
+            {
+                ArchiveObjectMissing missing => missing,
+                ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
+                ArchiveUnavailable unavailable => unavailable,
+                ArchiveTimedOut timeout => timeout,
+            };
+        }
+
+        if (notModified)
+        {
+            return new ArchiveNotModified();
         }
 
         if (payload is not { } content)
@@ -323,18 +382,69 @@ public sealed class S3ArchiveStore : IDisposable
                 _ = await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = bucket, Key = key }, token);
             },
             cancellationToken);
-        if (deleted is not { } failure)
+        return Deleted(deleted);
+    }
+
+    public async ValueTask<ArchiveWriteOutcome> DeleteObjectsAsync(IReadOnlyList<string> keys, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (keys.Count == 0)
         {
             return new ArchiveObjectWritten();
         }
 
-        return failure switch
+        if (keys.Count == 1)
         {
-            ArchiveObjectMissing => new ArchiveObjectWritten(),
-            ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
-            ArchiveUnavailable unavailable => unavailable,
-            ArchiveTimedOut timeout => timeout,
-        };
+            return await DeleteAsync(keys[0], cancellationToken);
+        }
+
+        for (var start = 0; start < keys.Count; start += MaxDeleteBatch)
+        {
+            var end = Math.Min(keys.Count, start + MaxDeleteBatch);
+            List<KeyVersion> objects = new(end - start);
+            for (var index = start; index < end; index++)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(keys[index]);
+                objects.Add(new KeyVersion { Key = keys[index] });
+            }
+
+            DeleteError? refused = null;
+            var deleted = await InvokeAsync(
+                async (client, bucket, token) =>
+                {
+                    var request = new DeleteObjectsRequest
+                    {
+                        BucketName = bucket,
+                        Objects = objects,
+                        Quiet = true,
+                        ChecksumAlgorithm = ChecksumAlgorithm.SHA256,
+                    };
+                    DeleteObjectsResponse response;
+                    try
+                    {
+                        response = await client.DeleteObjectsAsync(request, token);
+                    }
+                    catch (DeleteObjectsException exception)
+                    {
+                        response = exception.Response;
+                    }
+
+                    refused = FirstRefused(response.DeleteErrors);
+                },
+                cancellationToken);
+            if (deleted is not null)
+            {
+                return Deleted(deleted);
+            }
+
+            if (refused is not null)
+            {
+                ContinuityLog.ArchiveDeleteRefused(_logger, refused.Code, refused.Message);
+                return new ArchiveUnavailable("the backup archive refused to delete an object; retry", "archive_delete_refused");
+            }
+        }
+
+        return new ArchiveObjectWritten();
     }
 
     public void Dispose() => _client?.Dispose();
@@ -361,6 +471,53 @@ public sealed class S3ArchiveStore : IDisposable
         while (continuation is not null);
 
         return keys;
+    }
+
+    private static DeleteError? FirstRefused(List<DeleteError>? errors)
+    {
+        if (errors is null)
+        {
+            return null;
+        }
+
+        for (var index = 0; index < errors.Count; index++)
+        {
+            if (!string.Equals(errors[index].Code, NoSuchKey, StringComparison.Ordinal))
+            {
+                return errors[index];
+            }
+        }
+
+        return null;
+    }
+
+    private static ArchiveWriteOutcome Deleted(ArchiveTransportFailure? result)
+    {
+        if (result is not { } failure)
+        {
+            return new ArchiveObjectWritten();
+        }
+
+        return failure switch
+        {
+            ArchiveObjectMissing => new ArchiveObjectWritten(),
+            ArchivePreconditionFailed conflict => new ArchiveUnavailable(conflict.Message, conflict.Code),
+            ArchiveUnavailable unavailable => unavailable,
+            ArchiveTimedOut timeout => timeout,
+        };
+    }
+
+    private static async Task<byte[]> ReadAllAsync(GetObjectResponse response, CancellationToken cancellationToken)
+    {
+        var capacity = response.ContentLength is > 0 and <= int.MaxValue ? (int)response.ContentLength : 0;
+        using var buffer = capacity > 0 ? new MemoryStream(capacity) : new MemoryStream();
+        await response.ResponseStream.CopyToAsync(buffer, cancellationToken);
+        return buffer.TryGetBuffer(out var segment)
+            && segment.Offset == 0
+            && segment.Array is { } raw
+            && segment.Count == raw.Length
+            ? raw
+            : buffer.ToArray();
     }
 
     private static MemoryStream CreateReadOnlyStream(ReadOnlyMemory<byte> content) =>

@@ -231,6 +231,24 @@ internal static partial class FileIo
         }
     }
 
+    public static string? Replace(string source, string destination)
+    {
+        try
+        {
+            File.Move(source, destination, overwrite: true);
+            SyncDirectory(Path.GetDirectoryName(destination));
+            return null;
+        }
+        catch (IOException exception)
+        {
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            return exception.Message;
+        }
+    }
+
     public static string? MoveDirectory(string source, string destination)
     {
         try
@@ -338,6 +356,44 @@ internal static partial class FileIo
         }
         catch (UnauthorizedAccessException exception)
         {
+            return exception.Message;
+        }
+    }
+
+    public static string? ListFiles(string directory, string searchPattern, out string[] files)
+    {
+        try
+        {
+            files = Directory.GetFiles(directory, searchPattern, SearchOption.TopDirectoryOnly);
+            return null;
+        }
+        catch (IOException exception)
+        {
+            files = [];
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            files = [];
+            return exception.Message;
+        }
+    }
+
+    public static string? ListDirectories(string directory, out string[] directories)
+    {
+        try
+        {
+            directories = Directory.GetDirectories(directory, "*", SearchOption.TopDirectoryOnly);
+            return null;
+        }
+        catch (IOException exception)
+        {
+            directories = [];
+            return exception.Message;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            directories = [];
             return exception.Message;
         }
     }

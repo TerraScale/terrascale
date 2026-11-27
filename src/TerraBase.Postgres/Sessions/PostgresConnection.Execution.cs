@@ -97,7 +97,7 @@ internal sealed partial class PostgresConnection
             PgShowCommand show => Show(show),
             PgDeallocateCommand deallocate => Deallocate(deallocate),
             PgDiscardCommand => await DiscardAsync(),
-            PgListenCommand listen => Listen(listen),
+            PgListenCommand listen => await ListenAsync(listen, cancellationToken),
             PgUnlistenCommand unlisten => await UnlistenAsync(unlisten),
             PgNoOpCommand noOp => PgResult.Command(noOp.Tag),
             PgCopyFromCommand copyFrom => await CopyFromAsync(copyFrom, cancellationToken),

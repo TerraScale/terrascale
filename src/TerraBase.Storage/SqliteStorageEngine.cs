@@ -10,6 +10,10 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 {
     private const string SnapshotDirectory = "snapshots";
     private const string BranchStagingDirectory = ".branches";
+    private const long SnapshotVacuumMinFreePages = 64;
+    private const long SnapshotVacuumFreePercent = 15;
+    private const string CompactSuffix = ".compact";
+    private const string CompactJournalSuffix = ".compact-journal";
 
     private readonly StorageEngineOptions _options;
     private readonly TimeProvider _time;
@@ -55,12 +59,65 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         }
     }
 
+    public static int TrimIdleResources(ISqlDatabaseSession session, TimeSpan readerIdleAfter, bool shrinkWriter)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session is DatabaseSession sqlite ? sqlite.TrimIdleResources(readerIdleAfter, shrinkWriter) : 0;
+    }
+
+    public static bool IsIdle(ISqlDatabaseSession session, TimeSpan idleFor)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session is DatabaseSession sqlite && sqlite.IsIdleFor(idleFor);
+    }
+
     public static StorageBusy? RecoverBranchStaging(string rootDirectory)
     {
         var staging = Path.Combine(rootDirectory, BranchStagingDirectory);
-        return Directory.Exists(staging) && FileIo.DeleteDirectory(staging) is { } error
-            ? new StorageBusy(error, TimeSpan.FromSeconds(1))
-            : null;
+        if (Directory.Exists(staging) && FileIo.DeleteDirectory(staging) is { } error)
+        {
+            return new StorageBusy(error, TimeSpan.FromSeconds(1));
+        }
+
+        return RecoverSnapshotCompaction(rootDirectory);
+    }
+
+    private static StorageBusy? RecoverSnapshotCompaction(string rootDirectory)
+    {
+        if (!Directory.Exists(rootDirectory))
+        {
+            return null;
+        }
+
+        if (FileIo.ListDirectories(rootDirectory, out var databases) is { } listError)
+        {
+            return new StorageBusy(listError, TimeSpan.FromSeconds(1));
+        }
+
+        foreach (var database in databases)
+        {
+            var snapshots = Path.Combine(database, SnapshotDirectory);
+            if (!Directory.Exists(snapshots))
+            {
+                continue;
+            }
+
+            if (FileIo.ListFiles(snapshots, string.Concat("*", CompactSuffix, "*"), out var files) is { } filesError)
+            {
+                return new StorageBusy(filesError, TimeSpan.FromSeconds(1));
+            }
+
+            foreach (var file in files)
+            {
+                if ((file.EndsWith(CompactSuffix, StringComparison.Ordinal) || file.EndsWith(CompactJournalSuffix, StringComparison.Ordinal))
+                    && FileIo.DeleteFile(file) is { } deleteError)
+                {
+                    return new StorageBusy(deleteError, TimeSpan.FromSeconds(1));
+                }
+            }
+        }
+
+        return null;
     }
 
     public static StorageBusy? CopyHistory(ISqlDatabaseSession source, string targetDirectory, Ulid targetDatabaseId, ReadOnlyMemory<byte> targetRawKey, CausalBookmark through)
@@ -366,11 +423,14 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
 
             var taken = _time.GetUtcNow();
             var path = Path.Combine(directory, string.Concat(Ulid.NewUlid(taken).ToString(), ".db"));
+            var compactPath = string.Concat(path, CompactSuffix);
+            var compactJournalPath = string.Concat(path, CompactJournalSuffix);
             var context = Context(databaseId, session.RawKey) with { DatabasePath = path };
             var completed = false;
             try
             {
                 SnapshotOutcome outcome;
+                var compacted = false;
                 using (var destination = SqliteConnection.OpenOrNull(ConnectionOptions(context)))
                 {
                     if (destination is null)
@@ -378,10 +438,21 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
                         return new StorageBusy("snapshot file could not be created", TimeSpan.FromSeconds(1));
                     }
 
-                    outcome = await session.BackupToAsync(destination, cancellationToken);
+                    var captured = await session.BackupToAsync(destination, cancellationToken);
+                    outcome = captured switch
+                    {
+                        SnapshotCapture capture => CompactSnapshot(destination, capture, compactPath, out compacted, cancellationToken),
+                        StorageBusy busy => busy,
+                    };
                 }
 
-                var snapshot = outcome switch
+                var finalized = outcome switch
+                {
+                    SnapshotCapture capture => compacted ? ReplaceWithCompacted(capture, compactPath, path) : capture,
+                    StorageBusy busy => busy,
+                };
+
+                var snapshot = finalized switch
                 {
                     SnapshotCapture capture => SyncSnapshot(databaseId, capture, taken, path),
                     StorageBusy busy => busy,
@@ -395,6 +466,16 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
             }
             finally
             {
+                if (File.Exists(compactPath))
+                {
+                    _ = FileIo.DeleteFile(compactPath);
+                }
+
+                if (File.Exists(compactJournalPath))
+                {
+                    _ = FileIo.DeleteFile(compactJournalPath);
+                }
+
                 if (!completed)
                 {
                     _ = FileIo.DeleteFile(path);
@@ -405,6 +486,70 @@ public sealed class SqliteStorageEngine : ISqlStorageEngine
         {
             await session.DisposeAsync();
         }
+    }
+
+    private static SnapshotOutcome CompactSnapshot(SqliteConnection destination, SnapshotCapture capture, string compactPath, out bool compacted, CancellationToken cancellationToken)
+    {
+        compacted = false;
+        var status = destination.QueryFirst("PRAGMA page_count;", out var pages);
+        if (!status.IsOk)
+        {
+            return status.ToBusy();
+        }
+
+        status = destination.QueryFirst("PRAGMA freelist_count;", out var free);
+        if (!status.IsOk)
+        {
+            return status.ToBusy();
+        }
+
+        if (pages is not [var pageValue, ..] || free is not [var freeValue, ..]
+            || !pageValue.TryGetIntegral(out var pageCount) || !freeValue.TryGetIntegral(out var freelistCount))
+        {
+            return new StorageBusy("snapshot page counts could not be read", TimeSpan.FromSeconds(1));
+        }
+
+        if (pageCount <= 0 || freelistCount <= SnapshotVacuumMinFreePages || freelistCount * 100L < pageCount * SnapshotVacuumFreePercent)
+        {
+            return capture;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return new StorageBusy("snapshot compaction was canceled", TimeSpan.Zero);
+        }
+
+        SqliteStatus vacuumed;
+        using (cancellationToken.UnsafeRegister(static state =>
+        {
+            if (state is SqliteConnection connection)
+            {
+                connection.Interrupt();
+            }
+        }, destination))
+        {
+            vacuumed = destination.Exec(string.Concat("VACUUM INTO '", compactPath.Replace("'", "''", StringComparison.Ordinal), "';"));
+        }
+
+        if (!vacuumed.IsOk)
+        {
+            return vacuumed.ToBusy();
+        }
+
+        compacted = true;
+        return capture;
+    }
+
+    private static SnapshotOutcome ReplaceWithCompacted(SnapshotCapture capture, string compactPath, string path)
+    {
+        if (FileIo.SyncFile(compactPath) is { } syncError)
+        {
+            return new StorageBusy(syncError, TimeSpan.FromSeconds(1));
+        }
+
+        return FileIo.Replace(compactPath, path) is { } replaceError
+            ? new StorageBusy(replaceError, TimeSpan.FromSeconds(1))
+            : capture;
     }
 
     private static SnapshotDatabaseOutcome SyncSnapshot(Ulid databaseId, SnapshotCapture capture, DateTimeOffset taken, string path)
