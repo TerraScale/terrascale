@@ -121,7 +121,7 @@ public sealed class CommitLogArchiverService(
     ILogger<CommitLogArchiverService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetentionSweepInterval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan RewindRecheckWindow = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan RewindRecheckWindow = S3ArchiveStore.RequestTimeout * 3;
 
     private readonly ConcurrentDictionary<Ulid, ArchiveCheckState> _checks = new();
     private readonly ConcurrentDictionary<Ulid, DateTimeOffset> _rewindRecheckUntil = new();
@@ -196,6 +196,7 @@ public sealed class CommitLogArchiverService(
     {
         HashSet<Ulid> active = [.. databases];
         changefeed.Activity.PruneInactive(active);
+        continuity.PruneInactive(active);
         foreach (var databaseId in _checks.Keys)
         {
             if (!active.Contains(databaseId))
@@ -250,13 +251,15 @@ public sealed class CommitLogArchiverService(
 
         if (_rewindRecheckUntil.TryGetValue(databaseId, out var recheckUntil))
         {
-            if (now < recheckUntil)
+            if (scheduled.RewindReconciled || now >= recheckUntil)
+            {
+                _ = _rewindRecheckUntil.TryRemove(new KeyValuePair<Ulid, DateTimeOffset>(databaseId, recheckUntil));
+            }
+            else
             {
                 _ = _checks.TryRemove(databaseId, out _);
                 return null;
             }
-
-            _ = _rewindRecheckUntil.TryRemove(new KeyValuePair<Ulid, DateTimeOffset>(databaseId, recheckUntil));
         }
 
         var status = scheduled.Status;

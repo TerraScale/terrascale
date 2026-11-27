@@ -29,7 +29,7 @@ internal readonly union SourceAvailability(SourceReady, ContinuityNotFound, Cont
 
 internal sealed record ArchiveTruncated;
 
-internal sealed record ScheduledArchiveStatus(BackupStatus Status, bool LocalBehindArchive);
+internal sealed record ScheduledArchiveStatus(BackupStatus Status, bool LocalBehindArchive, bool RewindReconciled);
 
 internal readonly union ScheduledArchiveOutcome(ScheduledArchiveStatus, ContinuityNotFound, ContinuityUnavailable);
 
@@ -102,6 +102,8 @@ public sealed class BackupContinuityService(
         using var lease = await manifests.AcquireAsync(databaseId, cancellationToken);
         return await ArchiveScheduledLockedAsync(databaseId, forceSnapshot: false, cancellationToken);
     }
+
+    internal void PruneInactive(HashSet<Ulid> active) => manifests.PruneStaleETags(active);
 
     public ValueTask<RestoreStartOutcome> RestoreAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken)
     {
@@ -588,7 +590,7 @@ public sealed class BackupContinuityService(
         var retained = await RetainRemoteArchiveAsync(missing, cancellationToken);
         return retained switch
         {
-            BackupStatus status => new ScheduledArchiveStatus(status, LocalBehindArchive: false),
+            BackupStatus status => new ScheduledArchiveStatus(status, LocalBehindArchive: false, RewindReconciled: false),
             ContinuityNotFound notFound => notFound,
             ContinuityUnavailable unavailable => unavailable,
         };
@@ -652,10 +654,19 @@ public sealed class BackupContinuityService(
         var measured = await StatusForSessionAsync(manifest, session, cancellationToken);
         return measured switch
         {
-            BackupStatus status => new ScheduledArchiveStatus(status, !session.CurrentBookmark.Dominates(status.ArchivedThrough)),
+            BackupStatus status => ScheduledStatus(status, session),
             ContinuityNotFound missing => missing,
             ContinuityUnavailable unavailable => unavailable,
         };
+    }
+
+    private ScheduledArchiveStatus ScheduledStatus(BackupStatus status, ISqlDatabaseSession session)
+    {
+        var reconciliation = manifests.CheckReconciliation(session.DatabaseId, manifests.CurrentETag(session.DatabaseId));
+        return new ScheduledArchiveStatus(
+            status,
+            !session.CurrentBookmark.Dominates(status.ArchivedThrough) || reconciliation == ManifestReconciliation.Pending,
+            reconciliation == ManifestReconciliation.Observed);
     }
 
     private async ValueTask<BackupStatusOutcome> StatusAsync(ArchiveManifest manifest, Ulid databaseId, CancellationToken cancellationToken)

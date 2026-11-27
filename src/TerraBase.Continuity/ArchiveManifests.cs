@@ -19,6 +19,13 @@ internal readonly union ArchivePurgeOutcome(ArchivePurged, ContinuityUnavailable
 
 internal sealed record CachedManifest(ArchiveManifest Manifest, string? ETag);
 
+internal enum ManifestReconciliation
+{
+    Unknown,
+    Pending,
+    Observed,
+}
+
 internal readonly union CachedManifestOutcome(CachedManifest, ContinuityUnavailable);
 
 internal sealed record StagedArchiveRetirement(string Key, PendingArchiveRetirement Retirement);
@@ -35,6 +42,7 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
     private static readonly TimeSpan RetirementSweepInterval = TimeSpan.FromHours(1);
 
     private readonly ConcurrentDictionary<Ulid, CachedManifest> _cache = new();
+    private readonly ConcurrentDictionary<Ulid, string> _staleETags = new();
     private readonly ConcurrentDictionary<Ulid, SemaphoreSlim> _gates = new();
     private readonly ConcurrentDictionary<Ulid, DateTimeOffset> _nextRetirementSweep = new();
 
@@ -74,7 +82,42 @@ public sealed class ArchiveManifests(S3ArchiveStore store, ContinuityMetrics met
         };
     }
 
-    public void Invalidate(Ulid databaseId) => _ = _cache.TryRemove(databaseId, out _);
+    public void Invalidate(Ulid databaseId)
+    {
+        if (_cache.TryRemove(databaseId, out var removed) && removed.ETag is { Length: > 0 } etag)
+        {
+            _staleETags[databaseId] = etag;
+        }
+    }
+
+    internal string? CurrentETag(Ulid databaseId) => _cache.TryGetValue(databaseId, out var cached) ? cached.ETag : null;
+
+    internal ManifestReconciliation CheckReconciliation(Ulid databaseId, string? etag)
+    {
+        if (!_staleETags.TryGetValue(databaseId, out var stale))
+        {
+            return ManifestReconciliation.Unknown;
+        }
+
+        if (string.Equals(stale, etag, StringComparison.Ordinal))
+        {
+            return ManifestReconciliation.Pending;
+        }
+
+        _ = _staleETags.TryRemove(new KeyValuePair<Ulid, string>(databaseId, stale));
+        return ManifestReconciliation.Observed;
+    }
+
+    internal void PruneStaleETags(HashSet<Ulid> active)
+    {
+        foreach (var databaseId in _staleETags.Keys)
+        {
+            if (!active.Contains(databaseId))
+            {
+                _ = _staleETags.TryRemove(databaseId, out _);
+            }
+        }
+    }
 
     private ArchiveManifestOutcome Replace(Ulid databaseId, CachedManifest? observed, ArchiveVersionedBytes versioned)
     {
