@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Data;
@@ -97,7 +98,7 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("Send 1 to " + MaxEdits + " edits.");
         }
 
-        var rows = new OrderedDictionary<string, (OrderedDictionary<string, string> Sets, OrderedDictionary<string, string> Guards)>(StringComparer.Ordinal);
+        var rows = new OrderedDictionary<string, (string Where, OrderedDictionary<string, string> Sets, OrderedDictionary<string, string> Guards)>(StringComparer.Ordinal);
         var editsKey = false;
         foreach (var edit in edits.EnumerateArray())
         {
@@ -108,7 +109,7 @@ public static class TableRowMutations
                 return new TableRowPayloadInvalid("Each edit names its row keys, a column, an expected value and a new value.");
             }
 
-            if (Match(table, keys, out var where) is { } refused)
+            if (Match(table, keys, out var where, out var rowKey) is { } refused)
             {
                 return refused;
             }
@@ -133,10 +134,10 @@ public static class TableRowMutations
                 return new TableRowPayloadInvalid("The expected value for " + column.Name + " must be text, a number or null.");
             }
 
-            if (!rows.TryGetValue(where, out var entry))
+            if (!rows.TryGetValue(rowKey, out var entry))
             {
-                entry = (new(StringComparer.Ordinal), new(StringComparer.Ordinal));
-                rows.Add(where, entry);
+                entry = (where, new(StringComparer.Ordinal), new(StringComparer.Ordinal));
+                rows.Add(rowKey, entry);
             }
 
             if (!entry.Guards.TryAdd(column.Name, guard))
@@ -153,9 +154,9 @@ public static class TableRowMutations
         }
 
         var target = DatabaseTables.Identifier(table.Name);
-        string[] statements = [.. rows.Select(row => "UPDATE " + target + "\nSET " +
-            string.Join(", ", row.Value.Sets.Select(set => DatabaseTables.Identifier(set.Key) + " = " + set.Value)) +
-            "\nWHERE " + row.Key + " AND " + string.Join(" AND ", row.Value.Guards.Values) + ";")];
+        string[] statements = [.. rows.Values.Select(row => "UPDATE " + target + "\nSET " +
+            string.Join(", ", row.Sets.Select(set => DatabaseTables.Identifier(set.Key) + " = " + set.Value)) +
+            "\nWHERE " + row.Where + " AND " + string.Join(" AND ", row.Guards.Values) + ";")];
         return new TableRowBatch(statements, string.Join("\n", statements), statements.Length);
     }
 
@@ -200,7 +201,7 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("Name the row to delete with a keys object.");
         }
 
-        if (Match(table, keys, out var where) is { } refused)
+        if (Match(table, keys, out var where, out _) is { } refused)
         {
             return refused;
         }
@@ -209,9 +210,10 @@ public static class TableRowMutations
         return new TableRowBatch([statement], statement, 1);
     }
 
-    private static TableRowPlan? Match(DatabaseSqlTable table, JsonElement keys, out string where)
+    private static TableRowPlan? Match(DatabaseSqlTable table, JsonElement keys, out string where, out string rowKey)
     {
         where = "";
+        rowKey = "";
         DatabaseTableColumn[] primary = [.. table.Schema.Where(column => column.PrimaryKey > 0).OrderBy(column => column.PrimaryKey)];
         if (primary.Length == 0)
         {
@@ -223,7 +225,7 @@ public static class TableRowMutations
             return new TableRowPayloadInvalid("Name the row with a keys object.");
         }
 
-        var predicates = new Dictionary<string, string>(StringComparer.Ordinal);
+        var predicates = new Dictionary<string, (string Predicate, string Key)>(StringComparer.Ordinal);
         foreach (var property in keys.EnumerateObject())
         {
             if (Column(table, property.Name) is not { } column)
@@ -236,7 +238,8 @@ public static class TableRowMutations
                 return new TableRowKeyRequired(column.Name + " is not part of the primary key of " + table.Name + ".");
             }
 
-            if (ValuePredicate(column.Name, property.Value, false) is not { } predicate || !predicates.TryAdd(column.Name, predicate))
+            if (ValuePredicate(column.Name, property.Value, false) is not { } predicate ||
+                CanonicalKey(property.Value) is not { } key || !predicates.TryAdd(column.Name, (predicate, key)))
             {
                 return new TableRowPayloadInvalid("Key " + column.Name + " needs one text or number value.");
             }
@@ -247,8 +250,38 @@ public static class TableRowMutations
             return new TableRowKeyRequired("Name the row's " + missing.Name + " value.");
         }
 
-        where = string.Join(" AND ", primary.Select(column => predicates[column.Name]));
+        where = string.Join(" AND ", primary.Select(column => predicates[column.Name].Predicate));
+        rowKey = string.Join('\0', primary.Select(column => predicates[column.Name].Key));
         return null;
+    }
+
+    private static string? CanonicalKey(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String when value.GetString() is { } text && !text.Contains('\0', StringComparison.Ordinal) => "s:" + text.Length.ToString(CultureInfo.InvariantCulture) + ":" + text,
+            JsonValueKind.Number => CanonicalNumber(value),
+            JsonValueKind.String or JsonValueKind.Null or JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Undefined => null,
+            _ => throw new UnreachableException(),
+        };
+    }
+
+    private static string? CanonicalNumber(JsonElement value)
+    {
+        if (value.TryGetInt64(out var integer))
+        {
+            return "i:" + integer.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (!value.TryGetDouble(out var real) || !double.IsFinite(real))
+        {
+            return null;
+        }
+
+        var normalized = real == 0 ? 0d : real;
+        return Math.Truncate(normalized) == normalized && normalized is >= -9223372036854775808.0 and < 9223372036854775808.0
+            ? "i:" + ((long)normalized).ToString(CultureInfo.InvariantCulture)
+            : "r:" + BitConverter.DoubleToInt64Bits(normalized).ToString(CultureInfo.InvariantCulture);
     }
 
     private static string? ValuePredicate(string columnName, JsonElement value, bool allowNull)
@@ -257,9 +290,9 @@ public static class TableRowMutations
         return value.ValueKind switch
         {
             JsonValueKind.String when Literal(value, false) is { } literal => "typeof(" + ident + ") = 'text' AND " + ident + " COLLATE BINARY = " + literal,
-            JsonValueKind.Number => "typeof(" + ident + ") IN ('integer', 'real') AND " + ident + " = " + value.GetRawText(),
+            JsonValueKind.Number when CanonicalNumber(value) is not null => "typeof(" + ident + ") IN ('integer', 'real') AND " + ident + " = " + value.GetRawText(),
             JsonValueKind.Null when allowNull => ident + " IS NULL",
-            JsonValueKind.String or JsonValueKind.Null or JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Undefined => null,
+            JsonValueKind.String or JsonValueKind.Number or JsonValueKind.Null or JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Undefined => null,
             _ => throw new UnreachableException(),
         };
     }
@@ -275,7 +308,7 @@ public static class TableRowMutations
         {
             JsonValueKind.String => value.GetString() is { } text && !text.Contains('\0', StringComparison.Ordinal)
                 ? "'" + text.Replace("'", "''", StringComparison.Ordinal) + "'" : null,
-            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.Number => CanonicalNumber(value) is not null ? value.GetRawText() : null,
             JsonValueKind.Null => allowNull ? "NULL" : null,
             JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.Undefined => null,
             _ => throw new UnreachableException(),
