@@ -28,6 +28,7 @@ internal static class Program
         "postgres",
         "server",
         "resources",
+        "backup-cost",
     };
 
     public static async Task<int> Main(string[] args)
@@ -241,6 +242,11 @@ internal static class Program
             await ServerLayerBenchmarks.RunAsync(ctx, cancellationToken);
         }
 
+        if (ctx.IsSuiteSelected("backup-cost"))
+        {
+            await BackupCostBenchmarks.RunAsync(ctx, cancellationToken);
+        }
+
         var totalWallSeconds = Stopwatch.GetElapsedTime(wallStart).TotalSeconds;
         BenchRunnerContext.PrintSummaryTable(ctx.Results);
 
@@ -363,7 +369,7 @@ internal static class Program
     private static int UsageError(string message)
     {
         Console.Error.WriteLine(string.Concat("TerraBase.Benchmarks: ", message));
-        Console.Error.WriteLine("Usage: TerraBase.Benchmarks [--suite all|storage|crdt|commitlog|cluster|quic|replication|continuity|postgres|server|resources] [--filter name1,name2] [--rounds N] [--scale S] [--quick] [--out|--json path.json] [--label name] [--compare base.json] [--compare-only a.json b.json [c.json]] [--compare-md out.md] | --bdn [--filter ...]");
+        Console.Error.WriteLine("Usage: TerraBase.Benchmarks [--suite all|storage|crdt|commitlog|cluster|quic|replication|continuity|postgres|server|resources|backup-cost] [--filter name1,name2] [--rounds N] [--scale S] [--quick] [--out|--json path.json] [--label name] [--compare base.json] [--compare-only a.json b.json [c.json]] [--compare-md out.md] | --bdn [--filter ...]");
         return 2;
     }
 }
